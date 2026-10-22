@@ -54,4 +54,4 @@
 - [x] 6.2 Prove the guardrails actually fail: temporarily add a bad dep, a hard-coded name, a `Color32::` literal, an `unwrap()` in non-test code, a credential-shaped string in an error, and a `0644` prefs file — each must be caught — then revert
 - [x] 6.3 `docs/development.md`: real build/run commands, the `#[ignore]` window checklist, config-dir paths; `docs/architecture.md` §13 threat model kept in sync with what landed
 - [x] 6.4 Append `log/devlog.md` entry (what landed, test counts, still open) and mark change 1 done in `docs/roadmap.md`
-- [ ] 6.5 Commit the scaffold when the user asks; then `/opsx-archive scaffold-workspace`
+- [x] 6.5 Commit the scaffold when the user asks; then `/opsx-archive scaffold-workspace`
