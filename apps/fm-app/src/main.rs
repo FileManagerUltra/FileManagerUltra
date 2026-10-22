@@ -1,5 +1,5 @@
 //! Application shell (the product name comes from `fm_brand::APP_NAME`): eframe
-//! window, menus, shortcuts, status bar.
+//! window, menus, shortcuts, pane tree, status bar.
 //!
 //! The shell owns a [`fm_engine::Session`] and routes every interaction through
 //! `Session::dispatch` — it performs no filesystem work itself.
@@ -10,8 +10,10 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use fm_engine::{Session, ThemePreference};
+use fm_engine::{Params, Session, ThemePreference};
+use fm_layout::{Axis, PaneNode};
 use fm_ui::theme;
+use fm_vfs::VfsUri;
 
 struct App {
     session: Session,
@@ -48,33 +50,164 @@ fn set_egui_theme_preference(ctx: &egui::Context, pref: ThemePreference) {
     });
 }
 
+/// Navigate a pane to `uri` through the engine (`nav.open`).
+fn open_uri(session: &mut Session, uri: &VfsUri) {
+    if let Err(err) = session.dispatch("nav.open", &Params::String(uri.path_str().to_string())) {
+        eprintln!("nav.open failed: {err}");
+    }
+}
+
+/// Render the pane tree recursively. `Split` nodes lay out two children along
+/// their axis with a drag handle that writes the ratio back into the layout.
+fn render_pane_node(
+    ui: &mut egui::Ui,
+    session: &mut Session,
+    node: &PaneNode,
+    tokens: &theme::Tokens,
+) -> Option<VfsUri> {
+    match node {
+        PaneNode::Leaf(id) => fm_ui::pane::show(ui, session, *id, tokens),
+        PaneNode::Split { axis, ratio, a, b } => {
+            let handle = a.panes().first().copied();
+            let mut open = None;
+            match axis {
+                Axis::Horizontal => {
+                    ui.horizontal(|ui| {
+                        let total = ui.available_width();
+                        let handle_w = 6.0;
+                        let a_w = ((total - handle_w) * ratio).clamp(80.0, total - handle_w - 80.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(a_w, ui.available_height()),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                if let Some(target) = render_pane_node(ui, session, a, tokens) {
+                                    open = Some(target);
+                                }
+                            },
+                        );
+                        let (rect, drag) = ui.allocate_exact_size(
+                            egui::vec2(handle_w, ui.available_height()),
+                            egui::Sense::click_and_drag(),
+                        );
+                        ui.painter().rect_filled(rect, 0.0, tokens.border);
+                        if drag.dragged()
+                            && let Some(handle) = handle
+                        {
+                            let dx = drag.drag_delta().x;
+                            let new_ratio = *ratio + dx / total.max(1.0);
+                            session.layout.set_ratio(handle, new_ratio);
+                        }
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), ui.available_height()),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                if let Some(target) = render_pane_node(ui, session, b, tokens) {
+                                    open = Some(target);
+                                }
+                            },
+                        );
+                    });
+                }
+                Axis::Vertical => {
+                    ui.vertical(|ui| {
+                        let total = ui.available_height();
+                        let handle_w = 6.0;
+                        let a_h = ((total - handle_w) * ratio).clamp(60.0, total - handle_w - 60.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), a_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                if let Some(target) = render_pane_node(ui, session, a, tokens) {
+                                    open = Some(target);
+                                }
+                            },
+                        );
+                        let (rect, drag) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), handle_w),
+                            egui::Sense::click_and_drag(),
+                        );
+                        ui.painter().rect_filled(rect, 0.0, tokens.border);
+                        if drag.dragged()
+                            && let Some(handle) = handle
+                        {
+                            let dy = drag.drag_delta().y;
+                            let new_ratio = *ratio + dy / total.max(1.0);
+                            session.layout.set_ratio(handle, new_ratio);
+                        }
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), ui.available_height()),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                if let Some(target) = render_pane_node(ui, session, b, tokens) {
+                                    open = Some(target);
+                                }
+                            },
+                        );
+                    });
+                }
+            }
+            open
+        }
+    }
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.sync_theme(&ctx);
+        let _ = self.session.poll();
 
         egui::Panel::top("menu_bar").show(ui, |ui| {
             menu::menu_bar(ui, &mut self.session);
         });
 
+        let tokens = theme::Tokens::resolve(self.session.prefs.theme, self.applied.1);
         egui::Panel::bottom("status_bar").show(ui, |ui| {
-            let tokens = theme::Tokens::resolve(self.session.prefs.theme, self.applied.1);
+            let focused = self.session.layout.focused();
+            let location = self
+                .session
+                .layout
+                .state(focused)
+                .map(|p| p.location.path_str().to_string())
+                .unwrap_or_default();
+            let (count, selected) = {
+                let state = self.session.layout.state(focused);
+                let selected = state.map(|p| p.listing.selected_count()).unwrap_or(0);
+                let count = self
+                    .session
+                    .pane_view(focused)
+                    .map(|(_, ix)| ix.order.len())
+                    .unwrap_or(0);
+                (count, selected)
+            };
             ui.horizontal(|ui| {
-                ui.label(tokens.muted(match self.session.prefs.theme {
-                    ThemePreference::System => "Theme: system",
-                    ThemePreference::Dark => "Theme: dark",
-                    ThemePreference::Light => "Theme: light",
-                }));
+                ui.label(tokens.muted(location));
+                ui.label(tokens.muted(format!("{count} items")));
+                if selected > 0 {
+                    ui.label(tokens.muted(format!("{selected} selected")));
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(tokens.muted(fm_brand::APP_NAME));
+                    ui.label(tokens.muted(format!(
+                        "Theme: {}",
+                        match self.session.prefs.theme {
+                            ThemePreference::System => "system",
+                            ThemePreference::Dark => "dark",
+                            ThemePreference::Light => "light",
+                        }
+                    )));
                 });
             });
         });
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading(fm_brand::APP_NAME);
-            ui.label("no panes yet — the multi-pane shell lands in change 2");
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                let root = self.session.layout.root.clone();
+                if let Some(uri) = render_pane_node(ui, &mut self.session, &root, &tokens) {
+                    open_uri(&mut self.session, &uri);
+                }
+            });
 
         if self.session.about_open {
             let mut open = self.session.about_open;
@@ -121,6 +254,14 @@ fn main() -> eframe::Result {
         }
     };
     session.prefs = prefs;
+    // Kick off the first pane's read so the UI starts in the loading state
+    // and the first paint never blocks on I/O.
+    if let Some(state) = session.layout.state(session.layout.focused()) {
+        let location = state.location.clone();
+        if let Err(err) = session.ensure_read(location) {
+            eprintln!("startup read failed: {err}");
+        }
+    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -180,9 +321,7 @@ mod tests {
     #[test]
     fn quit_command_stops_the_app_flag() {
         let mut session = Session::new().expect("session");
-        session
-            .dispatch(menu::QUIT, &fm_engine::Params::Null)
-            .expect("quit");
+        session.dispatch(menu::QUIT, &Params::Null).expect("quit");
         assert!(!session.running);
     }
 

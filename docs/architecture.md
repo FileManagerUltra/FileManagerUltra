@@ -176,48 +176,52 @@ The product name must be changeable in one commit. Therefore:
 
 ```rust
 pub struct Session {
-    pub layout: Layout,             // pane tree + per-pane state (from fm-layout)
-    pub jobs: JobQueue,
-    pub dirs: DirCache,             // uri -> (revision, Vec<Entry>)
     pub registry: Registry,         // command id -> CommandSpec
-    pub watcher: WatchHandle,
-    pub clipboard: Option<Clipboard>, // cut/copy buffer for Ctrl+C/V
     pub prefs: Prefs,
+    pub jobs: JobQueue,
+    pub layout: Layout,             // pane tree + per-pane state (from fm-layout)
+    pub running: bool,              // app.quit flips it; the shell closes the window
+    pub about_open: bool,           // app.about raises it; the shell shows the dialog
+    pub dirs: DirCache,             // uri -> DirState (Absent|Loading|Ready|Failed), revisioned
+    pub backends: VfsRegistry,      // scheme -> Arc<dyn Vfs>; LocalFs registered by default
+    // private: inbox (staged reads), reads/inflight (dedup), indexes (per-pane sort views)
 }
 
 pub struct CommandSpec {
-    pub id: &'static str,           // e.g. "edit.paste", "pane.swap", "file.copy"
+    pub id: &'static str,           // e.g. "pane.swap", "nav.open", "view.sort.size"
     pub label: &'static str,
-    pub menu: &'static [&'static str],
-    pub shortcut: Option<Shortcut>,
-    pub params: &'static str,       // human doc for future automation
+    pub menu: &'static [&'static str],  // non-empty; drives the app menu catalogue
+    pub shortcut: Option<&'static str>, // display form ("Ctrl+R"); the egui binding table must agree
+    pub params: &'static str,       // "none" | human doc; UI tests dispatch Null only when "none"
     pub enabled: fn(&Session) -> bool,
-    pub run: fn(&mut Session, Params) -> Result<(), FmError>,
+    pub run: fn(&mut Session, &Params) -> Result<(), FmError>,  // Params = serde_json::Value
 }
 ```
 
-- `Session::dispatch(id, params)` is the **only** entry point for behaviour — menus, shortcuts, toolbar buttons and (later) the control channel all call it.
-- Commands that take longer than a frame enqueue a `Job` and return `Ok(())`; progress arrives asynchronously (§7).
-- Pane/tree/listing view state (scroll, expansion, sort, selection) lives in `fm-layout`'s per-pane state so it survives pane splits and can be serialized into a session file later.
+- `Session::dispatch(id, params)` is the **only** entry point for behaviour — menus, shortcuts and (later) the control channel all call it. Dispatch caps params (size/depth) before a command sees them and does **not** check `enabled` — a command must defensively no-op with `Ok(())` when disabled.
+- Directory reads never block the UI: `Session::ensure_read/submit_read` enqueue on the scheme's lane (in-flight dedup), workers only *stage* results into an inbox, and `Session::poll()` applies them into `DirCache` (loading → ready | failed, strictly monotonic per-uri revision), prunes vanished selections and rebuilds per-pane sort indexes.
+- Per-pane sorted views are engine-side: `Session::view_index/pane_view` return an `Arc` of entry indices ordered by the pane's `SortSpec`, cached per (pane, revision, sort) and invalidated on sort changes — sorting never re-reads the disk.
+- Pane/tree/listing view state (scroll, expansion, sort, selection by **name**, history, tree width) lives in `fm-layout`'s per-pane state so it survives pane splits and can be serialized later.
+- New commands live in their own module (`engine/src/<area>_cmds.rs`) and are appended to `commands::specs()`; the UI's id catalogue is cross-checked by `cargo xtask brand-check`.
 
 ### Layout model
 
 ```rust
 pub enum PaneNode {
     Leaf(PaneId),
-    Split { axis: Axis, ratio: f32, first: Box<PaneNode>, second: Box<PaneNode> },
+    Split { axis: Axis, ratio: f32, a: Box<PaneNode>, b: Box<PaneNode> },
 }
 
-pub struct Pane {
-    pub id: PaneId,
+pub struct PaneState {
     pub location: VfsUri,          // current directory of the listing
-    pub tree: TreeState,           // root, expanded set, scroll, lazy children
-    pub listing: ListingState,     // sort, selection, scroll, focused row
-    pub history: History,          // back/forward stack
+    pub tree: TreeState,           // root (always expanded), expanded set, scroll
+    pub listing: ListingState,     // SortSpec, selection (names), focused row, scroll
+    pub history: History,          // back/forward stacks (current() -> Option)
+    pub tree_width: f32,           // drag-resized tree column
 }
 ```
 
-Splits are pure data: `layout::split(pane, axis)` / `layout::close(pane)` / `layout::swap(a, b)` (Tab), with unit tests for ratio preservation and single-pane degenerate cases.
+Splits are pure data: `Layout::split(pane, axis)` / `close(pane)` / `swap(a, b)` / `set_ratio(handle, r)` (handle = left/top leaf id), plus focus bookkeeping (`focus_pane`, `swap_focused_with_previous` for Tab, `focus_next`) — unit-tested for ratio clamping, single-pane degenerate cases and dangling-focus regressions. `PaneState::up_target()` returns `None` at the pane's tree root so `nav.up` is a no-op there.
 
 ---
 
@@ -235,19 +239,14 @@ UI thread (eframe)                 engine workers                backends
 
 - **Lanes, not a shared pool:** `local` (4 threads), `smb` (1 thread — matches pavao's global lock), `sftp` (2 threads). A hung share blocks only the `smb` lane.
 - **Channels:** `crossbeam-channel` for job submission/events. The UI drains job events once per frame (`Session::poll()`), applies them to `Session`, then repaints if anything changed. Workers never touch egui.
-- **Job model:** `JobId`, `JobKind` (Copy/Move/Delete/Mkdir/Rename/Connect), `Progress { done, total, current_uri }`, `cancel: Arc<AtomicBool>` (checked between chunks), `JobEvent::Done(Result<usize, FmError>)`.
-- **Conflict policy** is resolved by a UI dialog *before* the job starts (batch of decisions: overwrite / keep-both / skip / cancel), never inside a worker.
+- **Read lane in use today:** directory reads (`ensure_read/submit_read/refresh_read`) run on the scheme's lane; the worker calls `Vfs::read_dir` and *stages* a `ReadOutcome` (entries or error) into the session inbox — only `poll()` writes the `DirCache`. One in-flight read per uri (dedup), `refresh_read` invalidates then re-reads.
+- **Job model (ops pipeline, change 3+):** `JobId`, `JobKind` (Copy/Move/Delete/Mkdir/Rename/Connect), `Progress { done, total, current_uri }`, `cancel: Arc<AtomicBool>` (checked between chunks), `JobEvent::{Started, Progress, Done, Cancelled, Failed}`.
+- **Conflict policy** (change 3+) is resolved by a UI dialog *before* the job starts (batch of decisions: overwrite / keep-both / skip / cancel), never inside a worker.
 - **Undo/trash:** delete moves entries to the platform trash (`trash` crate) and records a journal entry (`trash://` ids + original uris) for Undo; `ops::restore` puts them back.
 
 ### Watching
 
-`notify` (non-recursive, per watched directory) with a 100 ms debounce, owned by `engine`:
-
-1. event → normalize to `VfsUri` → `DirCache::invalidate(uri)` → increment revision
-2. panes whose `location` or tree node matches a changed uri re-read on next frame (worker) and repaint
-3. remotes without a watcher (SMB/SFTP) refresh on focus regain + a 5 s poll while visible
-
-The cache is invalidated, never patched — one code path, no stale-entry bugs.
+`DirCache::invalidate(uri)` (revision bump) is the only mutation path — the cache is invalidated, never patched. The `notify`-based watcher (non-recursive, per watched directory, 100 ms debounce) lands with the ops change; until then panes refresh via `nav.refresh` (`Ctrl+R`), and remotes will refresh on focus regain + a 5 s poll while visible.
 
 ---
 
@@ -294,17 +293,18 @@ Guards enforced by `ops` regardless of UI: never drop a directory into itself or
 
 ## 9. UI architecture (`fm-ui` + `fm-app`)
 
-- **Pane chrome:** `fm-app` renders `PaneNode` recursively into `egui` panels with draggable split handles; ratio changes update `Layout` only (no I/O).
-- **Listing:** fixed row height + `ScrollArea::show_rows` (virtualized) so 200 000 rows cost one screenful of widgets; columns (name/size/mtime/type), sortable via header click (sort runs in `engine` when the dir is read).
-- **Tree:** lazy — children are fetched from `DirCache` on expand (one worker read), collapsed nodes keep no children in memory beyond the expansion cache; arrow keys/typing navigate.
-- **Shortcut routing:** `fm-app` maps keys → command ids (`F5 → file.copy`, `F6 → file.move`, `F7 → file.mkdir`, `F8 → file.trash`, `Tab → pane.swap`, `Alt+Left/Right → nav.back/forward`); every map entry must exist in the registry or `brand-check`-style CI fails it.
-- **Dialogs:** conflict resolution, connect (SMB/SFTP), progress/jobs panel, error toasts — all `fm-ui` components driven by `Session`.
+- **Pane chrome (`fm-ui::pane`):** location bar with focus marker, focus ring (accent stroke on the focused pane), tree/listing split with a drag handle that writes `PaneState::tree_width`; a click inside the pane focuses it. Returns an "open" request; the shell dispatches `nav.open`.
+- **Listing (`fm-ui::listing`):** fixed row height + `ScrollArea::show_rows` (virtualized) so 200 000 rows cost one screenful of widgets; columns name/size/mtime/type with header-click sort (dispatched into the engine's per-pane view index, never a re-read); `..` row; click/ctrl/shift selection; keyboard (arrows/Home/End/Ctrl+A/Enter) on the focused pane; loading / empty / failed (+Ctrl+R hint) states.
+- **Tree (`fm-ui::tree`):** lazy — rows are flattened from `DirCache` for expanded nodes only (row cap 10 000); expand on click/Right, collapse Left, Enter opens; loading/error affordances inline; long names ellipsize with a full-path tooltip.
+- **Shell (`fm-app`):** recursive `render_pane_node` walks `PaneNode`; splits lay out two children with a drag handle writing `Layout::set_ratio` (clamped); the status bar shows the focused pane's location, item count, selection count and theme; `Session::poll()` runs once per frame and the startup read is submitted before the first paint.
+- **Shortcut routing:** `fm-app`'s catalogue maps keys → command ids (`Ctrl+Q` quit, `Ctrl+Shift+T` theme toggle, `Tab` pane.swap, `Backspace` nav.up, `Alt+Left/Right` nav.back/forward, `Ctrl+R` nav.refresh, `Ctrl+H` sort dirs-first); every entry must exist in the registry or the crate tests + `brand-check` fail it.
+- **Dialogs:** conflict resolution, connect (SMB/SFTP), progress/jobs panel, error toasts — later changes, all `fm-ui` components driven by `Session`.
 
 ### 9.1 Theming and dark mode
 
 Dark mode is a v1 feature, not a later polish pass: **every widget is built against semantic tokens from day one, so both themes are always renderable.**
 
-- **Tokens, not colours.** `fm-ui/src/theme.rs` defines one `Tokens` struct of *semantic* roles — `surface`, `surface_raised`, `text_primary`, `text_muted`, `accent`, `border`, `selection_bg`, `row_odd_bg/row_even_bg`, `drop_target_outline`, `danger`, `success` — plus non-colour metrics (spacing, radii, row height, font sizes). Widgets take `&Tokens`; a widget that asks egui for `Color32::GRAY` is a bug and fails review/CI grep.
+- **Tokens, not colours.** `fm-ui/src/theme.rs` defines one `Tokens` struct of *semantic* roles — `bg`, `panel`, `text`, `text_muted`, `accent`, `border`, `selection_bg/selection_text`, `hover_bg`, `error`, `warning`, `success` — plus non-colour metrics (row height, padding, corner radius, border width, font size). Widgets take `&Tokens`; a widget that asks egui for `Color32::GRAY` is a bug and fails CI grep.
 - **Two token sets.** `Tokens::dark()` and `Tokens::light()` are exhaustive siblings with the same field list, so adding a token forces both palettes to be defined (a compile-time guarantee — no `..Default::default()` escapes).
 - **Preference model.** `Session::prefs.theme: egui::ThemePreference` = `System` (default) | `Light` | `Dark`. At startup and on change, `fm-app` calls `ctx.set_theme(pref)`; `ctx.system_theme()` supplies the resolved theme when `System` is selected. egui's `Theme`/`ThemePreference` types are used directly rather than a home-grown enum, so system-following works for free on all three platforms.
 - **Commands** (so the switch is scriptable later): `view.theme.dark`, `view.theme.light`, `view.theme.system`, `view.theme.toggle` — registered in the engine like every other behaviour, menu path `View ▸ Theme`, shortcut `Ctrl+Shift+T` for toggle. They mutate `Prefs` only; the next frame re-renders.

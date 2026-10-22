@@ -1,19 +1,26 @@
 //! Command catalogue — the one list the registry is built from.
 
 use crate::app_cmds;
+use crate::nav_cmds;
+use crate::pane_cmds;
 use crate::registry::CommandSpec;
+use crate::sort_cmds;
 use crate::theme_cmds;
 
 /// Every seed command. New modules append here; the registry fails on duplicates.
 pub fn specs() -> Vec<CommandSpec> {
-    vec![
+    let mut specs = vec![
         app_cmds::quit(),
         app_cmds::about(),
         theme_cmds::dark(),
         theme_cmds::light(),
         theme_cmds::system(),
         theme_cmds::toggle(),
-    ]
+    ];
+    specs.extend(pane_cmds::specs());
+    specs.extend(nav_cmds::specs());
+    specs.extend(sort_cmds::specs());
+    specs
 }
 
 #[cfg(test)]

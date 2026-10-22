@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 fm-brand.workspace = true
 fm-vfs.workspace = true
+fm-fs-local.workspace = true
 fm-layout.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -23,4 +24,5 @@ thiserror.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-tempfile = "3"
+tempfile.workspace = true
+fm-testkit.workspace = true

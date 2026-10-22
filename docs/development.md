@@ -41,9 +41,25 @@ See `AGENTS.md` §2. `docs/architecture.md` explains why each crate exists and h
 ## Adding tests
 
 - Backend behaviour → `crates/fs-*/tests/` against `tempfile` tempdirs.
-- Anything with side effects on a tree → `fm-testkit`'s in-memory `Vfs` (fast, no disk).
+- Anything with side effects on a tree → `fm-testkit`'s in-memory `Vfs` (fast, no disk), including `hostile_tree()` for adversarial fixtures.
 - Commands → fuzzed inside `crates/engine/src/commands.rs`: every command × empty/wrong-typed/oversized/deep params → `Ok`/`Err`, never panic.
-- UI → `egui_kittest` snapshots under `crates/ui/tests/` (land with change 2).
+- UI widgets → headless `egui::Context::run_ui` renders in `crates/ui/src/*` unit tests, plus hostile end-to-end renders in `crates/ui/tests/hostile.rs`.
+- UI snapshots → `egui_kittest` image snapshots in `crates/ui/tests/snapshots.rs`, committed under `crates/ui/tests/snapshots/`.
+
+## Updating UI snapshots
+
+Snapshots need a GPU (or CPU) adapter for `wgpu`; on machines without one the
+snapshot tests **skip themselves** (they print a note and pass) so headless CI
+stays green. To (re)generate or verify:
+
+```sh
+cargo test -p fm-ui --test snapshots                      # verify against committed PNGs
+UPDATE_SNAPSHOTS=1 cargo test -p fm-ui --test snapshots   # rewrite the committed PNGs
+```
+
+Commit the updated PNGs together with the change that altered the pixels.
+Snapshot fixtures use a fixed mtime and synthesized error messages so the
+images are machine-independent.
 
 ## Running the real window (manual smoke)
 
@@ -57,11 +73,14 @@ cargo run -p fm-app   # or the installed binary name from fm_brand::EXECUTABLE
 Manual checklist:
 
 1. Window opens with the product name from `fm-brand` in the title bar.
-2. Menu bar shows File / View / Help; `Ctrl+Q` quits, `Ctrl+Shift+T` toggles dark ↔ light.
+2. Menu bar shows File / Panes / View / Help; `Ctrl+Q` quits, `Ctrl+Shift+T` toggles dark ↔ light.
 3. View → Theme → System follows the OS setting (toggle the OS theme and watch the window).
-4. Help → About opens a dialog with name, version and organisation; closing it does not quit.
-5. Status bar shows the current theme and the product name.
-6. Quit; `prefs.toml` appears in the config directory (see below) with mode `0600`.
+4. One pane shows a tree (left) and a virtualized listing (right); the status bar shows the focused pane's location, item count and theme.
+5. Panes → Split Horizontally/Vertically creates a second pane; click focuses a pane (accent ring), `Tab` swaps with the previous pane, `Panes → Close` removes it.
+6. Click a sort header to re-sort in place; `Ctrl+H` toggles directories-first.
+7. `Backspace` goes up, `Alt+Left`/`Alt+Right` walk history, `Ctrl+R` refreshes; double-click or `Enter` opens a directory.
+8. Help → About opens a dialog with name, version and organisation; closing it does not quit.
+9. Quit; `prefs.toml` appears in the config directory (see below) with mode `0600`.
 
 ## Config files
 

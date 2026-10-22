@@ -12,4 +12,12 @@ workspace = true
 
 [dependencies]
 fm-engine.workspace = true
-egui.workspace = true
+fm-layout.workspace = true
+fm-vfs.workspace = true
+egui = { workspace = true, features = ["default_fonts"] }
+
+[dev-dependencies]
+egui_kittest.workspace = true
+fm-testkit.workspace = true
+fm-fs-local.workspace = true
+tempfile.workspace = true

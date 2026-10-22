@@ -73,6 +73,16 @@ impl MemFs {
 
     /// Create (or overwrite) a file with `data`, creating parent directories.
     pub fn put_file(&self, uri: &VfsUri, data: &[u8]) -> Result<(), FmError> {
+        self.put_file_at(uri, data, SystemTime::now())
+    }
+
+    /// Like [`Self::put_file`] but with an explicit mtime (snapshot determinism).
+    pub fn put_file_at(
+        &self,
+        uri: &VfsUri,
+        data: &[u8],
+        modified: SystemTime,
+    ) -> Result<(), FmError> {
         let parent = uri
             .parent()
             .ok_or(FmError::Unsupported("MemFs: cannot put the root"))?;
@@ -86,7 +96,7 @@ impl MemFs {
             key,
             Node::File {
                 data: data.to_vec(),
-                modified: SystemTime::now(),
+                modified,
             },
         );
         Ok(())
@@ -131,6 +141,49 @@ impl MemFs {
         let uri = VfsUri::parse(path)?;
         self.get_file(&uri)
     }
+}
+
+/// Build a hostile in-memory tree under `root` (capability `security`):
+/// `count` numbered files, a max-length (4 KiB) name, unicode-heavy names,
+/// spaces/quotes, and deep nesting. Control-character and non-UTF-8 names are
+/// rejected by `VfsUri` on purpose — those are covered by the `fs-local`
+/// integration suite against a real directory.
+pub fn hostile_tree(root: &str, count: usize) -> MemFs {
+    #[allow(clippy::expect_used)]
+    fn build(root: &str, count: usize) -> MemFs {
+        let fs = MemFs::new();
+        fs.mkdirs_str(root).expect("root");
+        for i in 0..count {
+            let name = format!("{root}/file-{i:06}.bin");
+            fs.put_str(&name, b"x").expect("file");
+        }
+        let long = "L".repeat(4096);
+        fs.put_str(&format!("{root}/{long}"), b"long")
+            .expect("long name");
+        for (i, name) in [
+            "cjk-日本語-文件.txt",
+            "emoji-🦀-🔥.txt",
+            "spaces and dots ... fine.txt",
+            "quote-'\"-percent%20.txt",
+            "mixedCase.DOCX",
+            "UPPER.txt",
+        ]
+        .iter()
+        .enumerate()
+        {
+            fs.put_str(&format!("{root}/{name}"), &[i as u8])
+                .expect("name");
+        }
+        let mut deep = root.to_string();
+        for level in 0..12 {
+            deep = format!("{deep}/lvl{level}");
+            fs.mkdirs_str(&deep).expect("deep");
+        }
+        fs.put_str(&format!("{deep}/leaf.txt"), b"leaf")
+            .expect("leaf");
+        fs
+    }
+    build(root, count)
 }
 
 fn child_prefix(uri: &VfsUri) -> String {

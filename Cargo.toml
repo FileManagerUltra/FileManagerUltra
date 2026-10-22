@@ -33,7 +33,7 @@ eframe = { version = "0.37", default-features = false, features = [
     "system_fonts",
 ] }
 egui = "0.37"
-egui_kittest = "0.37"
+egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }
 
 # external — core
 thiserror = "2"
@@ -43,12 +43,14 @@ crossbeam-channel = "0.5"
 toml = "0.8"
 directories = "5"
 log = "0.4"
+sysinfo = "0.39"
 
 # external — xtask tooling
 regex = "1"
 
 # external — dev only
 proptest = "1"
+tempfile = "3"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

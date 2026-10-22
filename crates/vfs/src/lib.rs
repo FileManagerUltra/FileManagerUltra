@@ -20,3 +20,7 @@ pub use vfs::{SpaceInfo, Vfs, WriteOpts};
 /// exceeds these is rejected up front instead of being allocated.
 pub const MAX_PATH_BYTES: usize = 8192;
 pub const MAX_COMPONENT_BYTES: usize = 4096;
+
+/// Maximum entries a single `read_dir` may return (capability `security`).
+/// Over the cap the read fails with an actionable error — never a silent truncate.
+pub const MAX_DIR_ENTRIES: usize = 200_000;

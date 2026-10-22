@@ -12,3 +12,7 @@ workspace = true
 
 [dependencies]
 fm-vfs.workspace = true
+sysinfo.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

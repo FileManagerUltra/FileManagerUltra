@@ -1,205 +1,46 @@
 //! Pane layout model: a recursive tree of splits and leaves, plus per-pane view state.
 //! Pure data with structural invariants — no I/O, no egui.
 
+use std::collections::BTreeMap;
+
 use fm_vfs::{FmError, VfsUri};
+
+mod node;
+mod state;
+
+pub use node::{Axis, MAX_RATIO, MIN_RATIO, PaneNode};
+pub use state::{Focus, History, ListingState, PaneState, SortDir, SortKey, SortSpec, TreeState};
 
 /// Stable id of a pane (leaf). Never reused within a layout.
 pub type PaneId = u64;
 
-/// Split direction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum Axis {
-    Horizontal,
-    Vertical,
-}
-
-/// The pane tree: leaves are panes, nodes are two-way splits.
-#[derive(Clone, Debug, PartialEq)]
-pub enum PaneNode {
-    Leaf(PaneId),
-    Split {
-        axis: Axis,
-        /// Fraction of the space given to `a`, clamped to `MIN_RATIO..=MAX_RATIO`.
-        ratio: f32,
-        a: Box<PaneNode>,
-        b: Box<PaneNode>,
-    },
-}
-
-const MIN_RATIO: f32 = 0.05;
-const MAX_RATIO: f32 = 0.95;
-
-fn clamp_ratio(ratio: f32) -> f32 {
-    // NaN and infinities clamp to the safe band.
-    if !ratio.is_finite() {
-        return 0.5;
-    }
-    ratio.clamp(MIN_RATIO, MAX_RATIO)
-}
-
-impl PaneNode {
-    /// All leaf ids, in painting order.
-    pub fn panes(&self) -> Vec<PaneId> {
-        let mut out = Vec::new();
-        self.collect_into(&mut out);
-        out
-    }
-
-    fn collect_into(&self, out: &mut Vec<PaneId>) {
-        match self {
-            Self::Leaf(id) => out.push(*id),
-            Self::Split { a, b, .. } => {
-                a.collect_into(out);
-                b.collect_into(out);
-            }
-        }
-    }
-
-    pub fn contains(&self, id: PaneId) -> bool {
-        match self {
-            Self::Leaf(me) => *me == id,
-            Self::Split { a, b, .. } => a.contains(id) || b.contains(id),
-        }
-    }
-
-    fn split_leaf(&mut self, target: PaneId, axis: Axis, ratio: f32, new_id: PaneId) -> bool {
-        match self {
-            Self::Leaf(id) if *id == target => {
-                *self = Self::Split {
-                    axis,
-                    ratio: clamp_ratio(ratio),
-                    a: Box::new(Self::Leaf(target)),
-                    b: Box::new(Self::Leaf(new_id)),
-                };
-                true
-            }
-            Self::Leaf(_) => false,
-            Self::Split { a, b, .. } => {
-                a.split_leaf(target, axis, ratio, new_id)
-                    || b.split_leaf(target, axis, ratio, new_id)
-            }
-        }
-    }
-
-    /// Replace the leaf `target` with its sibling; returns false if absent.
-    fn close_leaf(&mut self, target: PaneId) -> bool {
-        match self {
-            Self::Leaf(_) => false,
-            Self::Split { a, b, .. } => match (&**a, &**b) {
-                (Self::Leaf(x), _) if *x == target => {
-                    *self = (**b).clone();
-                    true
-                }
-                (_, Self::Leaf(x)) if *x == target => {
-                    *self = (**a).clone();
-                    true
-                }
-                _ => a.close_leaf(target) || b.close_leaf(target),
-            },
-        }
-    }
-
-    fn swap_leaves(&mut self, x: PaneId, y: PaneId) -> bool {
-        match self {
-            Self::Leaf(id) if *id == x => {
-                *id = y;
-                true
-            }
-            Self::Leaf(id) if *id == y => {
-                *id = x;
-                true
-            }
-            Self::Leaf(_) => false,
-            Self::Split { a, b, .. } => {
-                // Both sides must run: x and y usually live in different subtrees.
-                let found_a = a.swap_leaves(x, y);
-                let found_b = b.swap_leaves(x, y);
-                found_a || found_b
-            }
-        }
-    }
-}
-
-/// View state of one pane: where it points, its history and the current selection.
-#[derive(Clone, Debug, PartialEq)]
-pub struct PaneState {
-    pub location: VfsUri,
-    pub history: Vec<VfsUri>,
-    /// Index into `history` of the current entry.
-    pub history_index: usize,
-    pub selected: Option<VfsUri>,
-}
-
-impl PaneState {
-    pub fn new(location: VfsUri) -> Self {
-        Self {
-            history: vec![location.clone()],
-            history_index: 0,
-            location,
-            selected: None,
-        }
-    }
-
-    /// Navigate: truncate any forward history, push the new location.
-    pub fn navigate(&mut self, to: VfsUri) {
-        self.history.truncate(self.history_index + 1);
-        self.history.push(to.clone());
-        self.history_index = self.history.len() - 1;
-        self.location = to;
-        self.selected = None;
-    }
-
-    pub fn can_go_back(&self) -> bool {
-        self.history_index > 0
-    }
-
-    pub fn can_go_forward(&self) -> bool {
-        self.history_index + 1 < self.history.len()
-    }
-
-    pub fn go_back(&mut self) -> bool {
-        if !self.can_go_back() {
-            return false;
-        }
-        self.history_index -= 1;
-        self.location = self.history[self.history_index].clone();
-        self.selected = None;
-        true
-    }
-
-    pub fn go_forward(&mut self) -> bool {
-        if !self.can_go_forward() {
-            return false;
-        }
-        self.history_index += 1;
-        self.location = self.history[self.history_index].clone();
-        self.selected = None;
-        true
-    }
-}
-
-/// The full pane tree plus per-pane state.
+/// The full pane tree plus per-pane state and focus bookkeeping.
 #[derive(Clone, Debug)]
 pub struct Layout {
     pub root: PaneNode,
-    pub states: std::collections::BTreeMap<PaneId, PaneState>,
+    pub states: BTreeMap<PaneId, PaneState>,
+    pub focus: Focus,
     next_id: PaneId,
 }
 
 impl Layout {
     /// A single pane at `location`.
     pub fn single(location: VfsUri) -> Self {
-        let mut states = std::collections::BTreeMap::new();
+        let mut states = BTreeMap::new();
         states.insert(1, PaneState::new(location));
         Self {
             root: PaneNode::Leaf(1),
             states,
+            focus: Focus {
+                focused: 1,
+                previous: None,
+            },
             next_id: 2,
         }
     }
 
-    /// Split the pane `target`, returning the new pane's id. Invariants: ids are
-    /// never reused, ratios are clamped, the target keeps its state.
+    /// Split the pane `target`, returning the new pane's id. The new pane
+    /// inherits a copy of the target's state and becomes focused.
     pub fn split(&mut self, target: PaneId, axis: Axis, ratio: f32) -> Result<PaneId, FmError> {
         if !self.root.contains(target) {
             return Err(FmError::NotFound(format!("pane {target}")));
@@ -213,6 +54,7 @@ impl Layout {
         self.next_id += 1;
         self.states.insert(new_id, state);
         self.root.split_leaf(target, axis, ratio, new_id);
+        self.focus_new(new_id);
         Ok(new_id)
     }
 
@@ -224,12 +66,23 @@ impl Layout {
         if !self.root.contains(target) {
             return Err(FmError::NotFound(format!("pane {target}")));
         }
+        // Focus a surviving pane before the id disappears; never leave a
+        // dangling previous-focus pointing at the closed id.
+        let survivor = self.panes().into_iter().find(|p| *p != target);
         self.root.close_leaf(target);
         self.states.remove(&target);
+        if let Some(s) = survivor {
+            if self.focus.focused == target {
+                self.focus.focused = s;
+            }
+            if self.focus.previous == Some(target) {
+                self.focus.previous = Some(s);
+            }
+        }
         Ok(())
     }
 
-    /// Swap the positions of two panes (ids follow the content).
+    /// Swap the positions of two panes (ids — and therefore their state — follow).
     pub fn swap(&mut self, x: PaneId, y: PaneId) -> Result<(), FmError> {
         if x == y {
             return Ok(());
@@ -239,6 +92,11 @@ impl Layout {
         }
         self.root.swap_leaves(x, y);
         Ok(())
+    }
+
+    /// Update a split's ratio via its handle (the left/top leaf id). No I/O.
+    pub fn set_ratio(&mut self, handle: PaneId, ratio: f32) -> bool {
+        self.root.set_ratio(handle, ratio)
     }
 
     /// Leaf ids in painting order.
@@ -252,6 +110,58 @@ impl Layout {
 
     pub fn state_mut(&mut self, id: PaneId) -> Option<&mut PaneState> {
         self.states.get_mut(&id)
+    }
+
+    /// Move focus to `id` (stashing the old one as previous). Errors if unknown.
+    pub fn focus_pane(&mut self, id: PaneId) -> Result<(), FmError> {
+        if !self.states.contains_key(&id) {
+            return Err(FmError::NotFound(format!("pane {id}")));
+        }
+        if self.focus.focused != id {
+            self.focus.previous = Some(self.focus.focused);
+            self.focus.focused = id;
+        }
+        Ok(())
+    }
+
+    pub fn focused(&self) -> PaneId {
+        self.focus.focused
+    }
+
+    /// Focus the next leaf in painting order, wrapping.
+    pub fn focus_next(&mut self) {
+        let panes = self.panes();
+        if panes.is_empty() {
+            return;
+        }
+        let pos = panes
+            .iter()
+            .position(|p| *p == self.focus.focused)
+            .unwrap_or(0);
+        let next = panes[(pos + 1) % panes.len()];
+        // focus_next cycles without stashing "previous" as the swap partner —
+        // Tab-swap uses `swap_focused_with_previous`, not this.
+        self.focus.focused = next;
+    }
+
+    /// Commander-style Tab: swap the focused pane with the previously focused
+    /// one; focus lands on the swap partner (the pane that was focused before).
+    pub fn swap_focused_with_previous(&mut self) -> Result<(), FmError> {
+        let prev = self
+            .focus
+            .previous
+            .ok_or(FmError::Unsupported("no previous pane to swap with"))?;
+        let cur = self.focus.focused;
+        self.swap(cur, prev)?;
+        // After the exchange, follow the pane that used to be `prev`.
+        self.focus.focused = prev;
+        self.focus.previous = Some(cur);
+        Ok(())
+    }
+
+    fn focus_new(&mut self, id: PaneId) {
+        self.focus.previous = Some(self.focus.focused);
+        self.focus.focused = id;
     }
 }
 
@@ -268,6 +178,7 @@ mod tests {
         let l = layout();
         assert_eq!(l.panes(), vec![1]);
         assert!(l.state(1).is_some());
+        assert_eq!(l.focused(), 1);
     }
 
     #[test]
@@ -285,6 +196,7 @@ mod tests {
         } else {
             panic!("expected split");
         }
+        assert_eq!(l.focused(), c, "new pane is focused");
     }
 
     #[test]
@@ -319,6 +231,7 @@ mod tests {
         l.close(b).expect("close");
         assert_eq!(l.panes(), vec![1]);
         assert!(l.state(b).is_none());
+        assert_eq!(l.focused(), 1, "focus moves to the survivor");
         let err = l.close(1).expect_err("close last");
         assert!(err.to_string().contains("last pane"));
     }
@@ -351,6 +264,77 @@ mod tests {
     fn split_unknown_pane_errors() {
         let mut l = layout();
         assert!(l.split(42, Axis::Vertical, 0.5).is_err());
+    }
+
+    #[test]
+    fn split_preserves_sibling_state_and_moves_it() {
+        let mut l = layout();
+        {
+            let s = l.state_mut(1).expect("state");
+            s.tree
+                .expand(VfsUri::parse("/home/alice/docs").expect("uri"));
+            s.listing.sort.header_click(SortKey::Size);
+            s.listing.select_only(Some("file.txt"), 3);
+        }
+        let b = l.split(1, Axis::Vertical, 0.5).expect("split");
+        // The original pane keeps its view state.
+        let s1 = l.state(1).expect("state");
+        assert!(
+            s1.tree
+                .is_expanded(&VfsUri::parse("/home/alice/docs").expect("uri"))
+        );
+        assert_eq!(s1.listing.sort.key, SortKey::Size);
+        assert!(s1.listing.is_selected("file.txt"));
+        assert_eq!(s1.listing.focused_row, 3);
+        // The new pane inherits a copy.
+        let sb = l.state(b).expect("state");
+        assert_eq!(sb.listing.sort.key, SortKey::Size);
+    }
+
+    #[test]
+    fn focus_tracking_and_next_cycles() {
+        let mut l = layout();
+        let b = l.split(1, Axis::Vertical, 0.5).expect("split");
+        assert_eq!(l.focused(), b);
+        let c = l.split(1, Axis::Horizontal, 0.5).expect("split");
+        assert_eq!(l.focused(), c);
+        l.focus_next();
+        assert_eq!(l.focused(), b, "next leaf in painting order");
+        l.focus_next();
+        assert_eq!(l.focused(), 1, "wraps to the first leaf");
+        l.focus_pane(b).expect("focus");
+        assert_eq!(l.focused(), b);
+        l.focus_pane(99).expect_err("unknown");
+    }
+
+    #[test]
+    fn tab_swaps_two_most_recent_panes() {
+        let mut l = layout();
+        let b = l.split(1, Axis::Vertical, 0.5).expect("split");
+        // focused b (new), previous 1
+        l.swap_focused_with_previous().expect("tab");
+        assert_eq!(l.focused(), 1, "focus lands on the swap partner");
+        assert_eq!(l.panes(), vec![b, 1], "positions exchanged");
+        // state followed the ids
+        assert_eq!(l.focus.previous, Some(b));
+        l.swap_focused_with_previous().expect("tab back");
+        assert_eq!(l.focused(), b);
+        assert_eq!(l.panes(), vec![1, b]);
+        // no previous on a fresh single pane
+        let mut solo = layout();
+        solo.swap_focused_with_previous().expect_err("no previous");
+    }
+
+    #[test]
+    fn set_ratio_through_layout() {
+        let mut l = layout();
+        l.split(1, Axis::Horizontal, 0.5).expect("split");
+        assert!(l.set_ratio(1, 0.7));
+        if let PaneNode::Split { ratio, .. } = &l.root {
+            assert!((ratio - 0.7).abs() < f32::EPSILON);
+        } else {
+            panic!("expected split");
+        }
     }
 
     #[test]

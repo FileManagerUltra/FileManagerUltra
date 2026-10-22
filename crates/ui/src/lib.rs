@@ -1,7 +1,10 @@
-//! The egui widget layer: design tokens ([`theme`]), and — from change 2 on — the file
-//! tree, virtualized listing, pane chrome and dialogs. Widgets take tokens; no widget
-//! ever hard-codes a colour.
+//! The egui widget layer: design tokens ([`theme`]), the file tree
+//! ([`tree`]), virtualized listing ([`listing`]) and pane chrome ([`pane`]).
+//! Widgets take tokens; no widget ever hard-codes a colour.
 
+pub mod listing;
+pub mod pane;
 pub mod theme;
+pub mod tree;
 
 pub use theme::{Tokens, apply_to};
