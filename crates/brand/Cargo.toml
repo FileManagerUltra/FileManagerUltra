@@ -1,0 +1,11 @@
+[package]
+name = "fm-brand"
+description = "Product identity — the single source for the product name and ids"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true

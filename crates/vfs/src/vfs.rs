@@ -1,0 +1,69 @@
+//! The [`Vfs`] trait — the only door to a filesystem.
+//!
+//! Every method is **blocking** by contract (the `fm-engine` job lanes own the
+//! threads; the UI thread never calls these directly). Implementations must be
+//! `Send + Sync` so a `Vfs` can be shared across lanes.
+
+use std::io::{Read, Write};
+
+use crate::entry::Entry;
+use crate::error::FmError;
+use crate::uri::VfsUri;
+
+/// Options for [`Vfs::open_write`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WriteOpts {
+    /// Create the file if missing.
+    pub create: bool,
+    /// Truncate to zero length first.
+    pub truncate: bool,
+    /// Append instead of overwriting.
+    pub append: bool,
+}
+
+impl Default for WriteOpts {
+    fn default() -> Self {
+        Self {
+            create: true,
+            truncate: true,
+            append: false,
+        }
+    }
+}
+
+/// Free space report for a volume.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpaceInfo {
+    pub total: u64,
+    pub available: u64,
+}
+
+/// One backend (local disk, SMB, SFTP, memory). No I/O happens outside an impl.
+pub trait Vfs: Send + Sync {
+    /// Which scheme this backend serves (exactly one).
+    fn scheme(&self) -> crate::uri::Scheme;
+
+    /// Children of a directory, unsorted; backends may report them in any order.
+    fn read_dir(&self, uri: &VfsUri) -> Result<Vec<Entry>, FmError>;
+
+    /// Metadata for one path.
+    fn stat(&self, uri: &VfsUri) -> Result<Entry, FmError>;
+
+    /// Open for reading (whole file for v1; streaming lands with copy pipelines).
+    fn open_read(&self, uri: &VfsUri) -> Result<Box<dyn Read + Send>, FmError>;
+
+    /// Open for writing. `flush` commits; dropping without flush is best-effort.
+    fn open_write(&self, uri: &VfsUri, opts: WriteOpts) -> Result<Box<dyn Write + Send>, FmError>;
+
+    fn create_dir(&self, uri: &VfsUri) -> Result<(), FmError>;
+
+    fn remove(&self, uri: &VfsUri) -> Result<(), FmError>;
+
+    fn rename(&self, from: &VfsUri, to: &VfsUri) -> Result<(), FmError>;
+
+    /// Are both paths on the same volume? Drives move/copy decisions.
+    fn same_device(&self, a: &VfsUri, b: &VfsUri) -> bool;
+
+    /// Disk usage of a volume, if the backend can tell.
+    fn space(&self, uri: &VfsUri) -> Result<Option<SpaceInfo>, FmError>;
+}

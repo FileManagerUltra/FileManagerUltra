@@ -1,0 +1,2 @@
+# Stale product identities watched by `cargo xtask brand-check`.
+# One token per line; `cargo xtask rename` appends the old name and slug here.

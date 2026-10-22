@@ -1,0 +1,7 @@
+# Non-test code must never panic (AGENTS.md golden rule 1); tests keep the escape hatch.
+# (clippy has no test-hatch keys for the todo!/unreachable! lints — don't use them in tests.)
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = true
+allow-indexing-slicing-in-tests = true

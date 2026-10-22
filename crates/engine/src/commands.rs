@@ -1,0 +1,125 @@
+//! Command catalogue — the one list the registry is built from.
+
+use crate::app_cmds;
+use crate::registry::CommandSpec;
+use crate::theme_cmds;
+
+/// Every seed command. New modules append here; the registry fails on duplicates.
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        app_cmds::quit(),
+        app_cmds::about(),
+        theme_cmds::dark(),
+        theme_cmds::light(),
+        theme_cmds::system(),
+        theme_cmds::toggle(),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::{Params, Registry};
+    use crate::session::Session;
+    use fm_vfs::FmError;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn seed_catalogue_is_well_formed() {
+        let specs = specs();
+        assert!(specs.len() >= 6, "seed catalogue shrank");
+        for spec in &specs {
+            assert!(!spec.id.is_empty(), "empty id");
+            assert!(!spec.label.is_empty(), "empty label for {}", spec.id);
+            assert!(!spec.menu.is_empty(), "no menu path for {}", spec.id);
+            assert!(!spec.params.is_empty(), "no params doc for {}", spec.id);
+        }
+        // Required by the command-registry spec.
+        for required in [
+            "app.quit",
+            "app.about",
+            "view.theme.dark",
+            "view.theme.light",
+            "view.theme.system",
+            "view.theme.toggle",
+        ] {
+            assert!(
+                specs.iter().any(|s| s.id == required),
+                "missing seed command {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn ids_are_unique() {
+        Registry::from_specs(specs()).expect("no duplicate ids");
+    }
+
+    #[test]
+    fn every_command_survives_hostile_params() {
+        // Payloads: empty, wrong-typed, oversized, absurdly deep.
+        let huge = "a".repeat(crate::session::MAX_PARAMS_BYTES + 1);
+        let mut deep = Params::Null;
+        for _ in 0..40 {
+            deep = Params::Array(vec![deep]);
+        }
+        let mut wrong_typed = serde_json::Map::new();
+        wrong_typed.insert("theme".to_string(), Params::Bool(true));
+        wrong_typed.insert("n".to_string(), Params::from(-1));
+        wrong_typed.insert("s".to_string(), Params::String("x".repeat(100)));
+        let payloads = [
+            Params::Null,
+            Params::Object(serde_json::Map::new()),
+            Params::Array(vec![]),
+            Params::String(huge),
+            deep,
+            Params::Object(wrong_typed),
+        ];
+
+        for spec in specs() {
+            for (i, payload) in payloads.iter().enumerate() {
+                let mut session = Session::new().expect("session");
+                let result = catch_unwind(AssertUnwindSafe(|| session.dispatch(spec.id, payload)));
+                let outcome = result.unwrap_or_else(|_| {
+                    panic!("dispatch({}) panicked on payload #{i}", spec.id);
+                });
+                // Ok or Err are both fine; panics were caught above.
+                match outcome {
+                    Ok(()) | Err(_) => {}
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn commands_never_panic_on_garbage_params_even_without_caps() {
+        // Call run() directly (bypassing dispatch's caps) to prove each command
+        // itself is defensive, as the spec requires.
+        let garbage = [
+            Params::Null,
+            Params::Bool(true),
+            Params::from(999),
+            Params::String("password=hunter2".to_string()),
+            Params::Array(vec![Params::Null, Params::Bool(false)]),
+        ];
+        for spec in specs() {
+            for payload in &garbage {
+                let mut session = Session::new().expect("session");
+                let result = catch_unwind(AssertUnwindSafe(|| (spec.run)(&mut session, payload)));
+                assert!(
+                    result.is_ok(),
+                    "run({}) panicked on garbage params",
+                    spec.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn run_errors_do_not_leak_credentials() {
+        // Even a hypothetical error string built from params must be redacted on display.
+        let params = Params::String("bob:s3cret@nas".to_string());
+        let err = FmError::backend("smb", format!("bad input: {params}"));
+        assert!(!err.to_string().contains("s3cret"), "{err}");
+    }
+}

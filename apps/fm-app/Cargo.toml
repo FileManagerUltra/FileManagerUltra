@@ -1,0 +1,25 @@
+[package]
+name = "fm-app"
+description = "The desktop application shell (eframe/glow)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "filemanagerultra"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+fm-brand.workspace = true
+fm-engine.workspace = true
+fm-ui.workspace = true
+eframe.workspace = true
+egui.workspace = true
+
+[dev-dependencies]
+fm-testkit.workspace = true

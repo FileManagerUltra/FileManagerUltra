@@ -1,0 +1,15 @@
+[package]
+name = "fm-layout"
+description = "Pane tree: recursive splits, per-pane location/history/selection state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+fm-vfs.workspace = true
+serde.workspace = true

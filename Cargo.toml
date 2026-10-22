@@ -1,0 +1,63 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*", "xtask"]
+default-members = ["crates/*", "apps/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+
+[workspace.dependencies]
+# internal (path dependencies, added per crate)
+fm-brand = { path = "crates/brand" }
+fm-vfs = { path = "crates/vfs" }
+fm-fs-local = { path = "crates/fs-local" }
+fm-fs-smb = { path = "crates/fs-smb" }
+fm-fs-sftp = { path = "crates/fs-sftp" }
+fm-testkit = { path = "crates/testkit" }
+fm-ops = { path = "crates/ops" }
+fm-layout = { path = "crates/layout" }
+fm-engine = { path = "crates/engine" }
+fm-ui = { path = "crates/ui" }
+
+# external — UI: eframe with the glow renderer (design D6: no wgpu in a file manager)
+eframe = { version = "0.37", default-features = false, features = [
+    "glow",
+    "wayland",
+    "x11",
+    "default_fonts",
+    "clipboard",
+    "links",
+    "system_fonts",
+] }
+egui = "0.37"
+egui_kittest = "0.37"
+
+# external — core
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+crossbeam-channel = "0.5"
+toml = "0.8"
+directories = "5"
+log = "0.4"
+
+# external — xtask tooling
+regex = "1"
+
+# external — dev only
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
+dbg_macro = "warn"

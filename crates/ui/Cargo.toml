@@ -1,0 +1,15 @@
+[package]
+name = "fm-ui"
+description = "egui widgets and design tokens (theme): tree, listing, dialogs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+fm-engine.workspace = true
+egui.workspace = true
