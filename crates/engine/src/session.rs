@@ -4,11 +4,14 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use fm_layout::{Layout, PaneId, SortSpec};
+use fm_ops::UndoStack;
 use fm_vfs::{Entry, FmError, VfsUri};
 
 use crate::backends::{VfsRegistry, lane_for};
 use crate::commands;
 use crate::dircache::{DirCache, DirState, ReadOutcome};
+use crate::dnd_cmds::DeviceCache;
+use crate::fileops::FileOps;
 use crate::jobs::{JobEvent, JobId, JobQueue};
 use crate::prefs::Prefs;
 use crate::registry::{Params, Registry};
@@ -45,6 +48,11 @@ pub struct Session {
     pub dirs: DirCache,
     /// Scheme → backend; local disk is always registered.
     pub backends: VfsRegistry,
+    /// Running and recently finished file jobs (capability `job-progress`).
+    pub fileops: FileOps,
+    /// Inverse records of finished jobs, newest last (capability `trash-and-undo`).
+    pub undo: UndoStack,
+    pub(crate) devices: DeviceCache,
     /// Staged read results, written by workers, drained by [`Session::poll`].
     inbox: Arc<Mutex<HashMap<VfsUri, ReadOutcome>>>,
     /// In-flight read jobs: uri → job id (dedup) and job id → uri (drain).
@@ -65,6 +73,9 @@ impl Default for Session {
             about_open: false,
             dirs: DirCache::new(),
             backends: VfsRegistry::with_local(),
+            fileops: FileOps::default(),
+            undo: UndoStack::new(),
+            devices: DeviceCache::default(),
             inbox: Arc::new(Mutex::new(HashMap::new())),
             reads: HashMap::new(),
             inflight: HashMap::new(),
@@ -155,10 +166,15 @@ impl Session {
         let events = self.jobs.poll();
         let mut changed = !events.is_empty();
         for ev in &events {
+            if ev.is_terminal() && self.finish_op(ev) {
+                continue;
+            }
             let job = match ev {
                 JobEvent::Done(id) | JobEvent::Cancelled(id) => *id,
                 JobEvent::Failed { id, .. } => *id,
-                JobEvent::Started(_) | JobEvent::Progress { .. } => continue,
+                JobEvent::Started(_) | JobEvent::Progress { .. } | JobEvent::Conflict(_) => {
+                    continue;
+                }
             };
             let Some(uri) = self.reads.remove(&job) else {
                 continue;
@@ -178,6 +194,7 @@ impl Session {
                 changed = true;
             }
         }
+        changed |= self.sync_ops();
         changed
     }
 
@@ -330,6 +347,11 @@ mod tests {
         assert!(session.running);
     }
 
+    /// A params doc whose every field is marked `name?:` accepts empty params.
+    fn all_optional(doc: &str) -> bool {
+        doc.split(',').all(|field| field.contains("?:"))
+    }
+
     #[test]
     fn empty_params_are_accepted_for_seed_commands() {
         let mut session = Session::new().expect("session");
@@ -337,7 +359,7 @@ mod tests {
             let needs_params = session
                 .registry
                 .get(id)
-                .is_some_and(|spec| spec.params != "none");
+                .is_some_and(|spec| spec.params != "none" && !all_optional(spec.params));
             let result = session.dispatch(id, &Params::Null);
             if needs_params {
                 // Commands with required params must fail gracefully, not panic.

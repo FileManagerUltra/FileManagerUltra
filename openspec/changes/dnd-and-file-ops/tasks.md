@@ -23,12 +23,12 @@
 
 ## 4. Engine jobs and commands (`fm-engine`)
 
-- [ ] 4.1 Extend `JobKind`/`JobEvent` (Progress, Conflict, Finished, Failed) and a per-job handle (cancel flag, decision channel); jobs table exposed via `Session`
-- [ ] 4.2 `file_cmds.rs`: `file.copy`, `file.move`, `file.mkdir`, `file.delete`, `file.delete_permanent`, `file.rename`, `edit.undo` with enabled predicates and other-pane destination rule
-- [ ] 4.3 `job_cmds.rs`: `job.cancel`, `job.resolve_conflict`; parked-job cancel/drop-channel tests
-- [ ] 4.4 `dnd_cmds.rs`: pure `resolve_drop()` (modifier table, same-device, guards) + `dnd.drop` command; table-driven tests of the §8 matrix
-- [ ] 4.5 Completion invalidates `DirCache` for touched directories; test: second pane re-reads once
-- [ ] 4.6 Register ids in `commands.rs`; extend the fuzz suite (empty/unknown/wrong-typed/oversized params → `Err`, never panic); poll-never-blocks test with a slow backend
+- [x] 4.1 Extend `JobKind`/`JobEvent` (Progress, Conflict, Finished, Failed) and a per-job handle (cancel flag, decision channel); jobs table exposed via `Session`
+- [x] 4.2 `file_cmds.rs`: `file.copy`, `file.move`, `file.mkdir`, `file.delete`, `file.delete_permanent`, `file.rename`, `edit.undo` with enabled predicates and other-pane destination rule
+- [x] 4.3 `job_cmds.rs`: `job.cancel`, `job.resolve_conflict`; parked-job cancel/drop-channel tests
+- [x] 4.4 `dnd_cmds.rs`: pure `resolve_drop()` (modifier table, same-device, guards) + `dnd.drop` command; table-driven tests of the §8 matrix
+- [x] 4.5 Completion invalidates `DirCache` for touched directories; test: second pane re-reads once
+- [x] 4.6 Register ids in `commands.rs`; extend the fuzz suite (empty/unknown/wrong-typed/oversized params → `Err`, never panic); poll-never-blocks test with a slow backend
 
 ## 5. UI (`fm-ui`)
 

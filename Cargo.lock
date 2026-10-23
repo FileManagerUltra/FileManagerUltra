@@ -979,6 +979,7 @@ dependencies = [
  "fm-brand",
  "fm-fs-local",
  "fm-layout",
+ "fm-ops",
  "fm-testkit",
  "fm-vfs",
  "proptest",

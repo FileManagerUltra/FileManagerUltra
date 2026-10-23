@@ -71,6 +71,14 @@ impl UndoStack {
                     pairs: report.moved.clone(),
                 });
             }
+            OpKind::Rename if !report.moved.is_empty() => {
+                for (from, to) in &report.moved {
+                    self.push(UndoRecord::Renamed {
+                        from: from.clone(),
+                        to: to.clone(),
+                    });
+                }
+            }
             OpKind::Delete if !report.trashed.is_empty() => {
                 self.push(UndoRecord::Trashed {
                     originals: report.trashed.clone(),

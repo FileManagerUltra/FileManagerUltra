@@ -1,0 +1,363 @@
+//! File jobs through `Session`: commands in, polled events out, never blocking the caller.
+#![allow(clippy::expect_used)]
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use serde_json::json;
+
+use fm_engine::{DirState, FileOps, JobId, OpState, Params, Session};
+use fm_testkit::{FaultFs, MemFs};
+use fm_vfs::{FmError, VfsUri};
+
+fn uri(s: &str) -> VfsUri {
+    VfsUri::parse(s).expect("uri")
+}
+
+fn session_on(fs: Arc<dyn fm_vfs::Vfs>) -> Session {
+    let mut s = Session::new().expect("session");
+    s.backends.register(fs);
+    s
+}
+
+fn poll_until(s: &mut Session, what: &str, mut done: impl FnMut(&mut Session) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        s.poll();
+        if done(s) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn only_job(ops: &FileOps) -> JobId {
+    ops.jobs().last().expect("a job").id
+}
+
+fn finish(s: &mut Session, id: JobId) -> OpState {
+    poll_until(s, "job to finish", |s| {
+        s.fileops.get(id).is_some_and(|j| !j.state.is_running())
+    });
+    s.fileops.get(id).expect("job").state.clone()
+}
+
+fn dispatch(s: &mut Session, id: &str, params: Params) -> Result<(), FmError> {
+    s.dispatch(id, &params)
+}
+
+#[test]
+fn copy_runs_off_thread_records_undo_and_refreshes_the_destination() {
+    let fs = MemFs::new();
+    fs.put_str("/src/a.txt", b"hello").expect("put");
+    fs.mkdirs_str("/dst").expect("dst");
+    let mut s = session_on(Arc::new(fs.clone()));
+    s.ensure_read(uri("/dst")).expect("read");
+    poll_until(&mut s, "dst listing", |s| {
+        s.dirs.state(&uri("/dst")).is_ready()
+    });
+    assert!(s.dirs.entries(&uri("/dst")).is_some_and(|e| e.is_empty()));
+
+    dispatch(
+        &mut s,
+        "file.copy",
+        json!({"sources": ["/src/a.txt"], "dest": "/dst"}),
+    )
+    .expect("dispatch");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert_eq!(fs.get_str("/dst/a.txt").expect("copied"), b"hello");
+    assert_eq!(s.undo.len(), 1);
+
+    poll_until(&mut s, "dst refresh", |s| {
+        s.dirs
+            .entries(&uri("/dst"))
+            .is_some_and(|e| e.iter().any(|x| x.name == "a.txt"))
+    });
+}
+
+#[test]
+fn a_conflict_parks_the_job_until_resolved() {
+    let fs = MemFs::new();
+    fs.put_str("/src/a.txt", b"new").expect("put");
+    fs.put_str("/dst/a.txt", b"old").expect("put");
+    let mut s = session_on(Arc::new(fs.clone()));
+    dispatch(
+        &mut s,
+        "file.copy",
+        json!({"sources": ["/src/a.txt"], "dest": "/dst"}),
+    )
+    .expect("dispatch");
+    let id = only_job(&s.fileops);
+    poll_until(&mut s, "conflict", |s| {
+        s.fileops.pending_conflict().is_some()
+    });
+    assert!(s.command_enabled("job.resolve_conflict"));
+    assert_eq!(fs.get_str("/dst/a.txt").expect("old"), b"old");
+
+    dispatch(
+        &mut s,
+        "job.resolve_conflict",
+        json!({"job": id, "choice": "overwrite"}),
+    )
+    .expect("resolve");
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert_eq!(fs.get_str("/dst/a.txt").expect("new"), b"new");
+    // Answering twice is an error, not a hang.
+    assert!(
+        dispatch(
+            &mut s,
+            "job.resolve_conflict",
+            json!({"job": id, "choice": "skip"})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn cancelling_a_parked_job_frees_the_worker() {
+    let fs = MemFs::new();
+    fs.put_str("/src/a.txt", b"new").expect("put");
+    fs.put_str("/dst/a.txt", b"old").expect("put");
+    let mut s = session_on(Arc::new(fs.clone()));
+    dispatch(
+        &mut s,
+        "file.copy",
+        json!({"sources": ["/src/a.txt"], "dest": "/dst"}),
+    )
+    .expect("dispatch");
+    let id = only_job(&s.fileops);
+    poll_until(&mut s, "conflict", |s| {
+        s.fileops.pending_conflict().is_some()
+    });
+    dispatch(&mut s, "job.cancel", json!({"job": id})).expect("cancel");
+    assert_eq!(finish(&mut s, id), OpState::Cancelled);
+    assert_eq!(fs.get_str("/dst/a.txt").expect("untouched"), b"old");
+    assert!(
+        dispatch(&mut s, "job.cancel", json!({"job": 9999})).is_err(),
+        "unknown job"
+    );
+}
+
+#[test]
+fn poll_never_blocks_and_progress_is_monotonic() {
+    let mem = MemFs::new();
+    mem.put_str("/src/big.bin", &[7u8; 256]).expect("put");
+    mem.mkdirs_str("/dst").expect("dst");
+    let fs = FaultFs::new(mem);
+    {
+        let mut faults = fs.faults();
+        faults.read_chunk = Some(8);
+        faults.read_hook = Some(Arc::new(|| std::thread::sleep(Duration::from_millis(8))));
+    }
+    let mut s = session_on(Arc::new(fs.clone()));
+    dispatch(
+        &mut s,
+        "file.copy",
+        json!({"sources": ["/src/big.bin"], "dest": "/dst"}),
+    )
+    .expect("dispatch");
+    let id = only_job(&s.fileops);
+
+    let mut last = 0u64;
+    let mut slowest = Duration::ZERO;
+    let mut saw_running = false;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let t = Instant::now();
+        s.poll();
+        slowest = slowest.max(t.elapsed());
+        let job = s.fileops.get(id).expect("job");
+        assert!(job.progress.bytes.done >= last, "progress went backwards");
+        last = job.progress.bytes.done;
+        if job.state.is_running() {
+            saw_running = true;
+        } else {
+            break;
+        }
+        assert!(Instant::now() < deadline, "copy never finished");
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    assert!(saw_running, "job finished before the first poll");
+    assert!(
+        slowest < Duration::from_millis(100),
+        "poll blocked: {slowest:?}"
+    );
+    assert_eq!(last, 256);
+    assert_eq!(fs.inner().get_str("/dst/big.bin").expect("dst").len(), 256);
+}
+
+#[test]
+fn rename_validates_synchronously_and_undo_restores_the_name() {
+    let fs = MemFs::new();
+    fs.put_str("/d/a.txt", b"x").expect("put");
+    let mut s = session_on(Arc::new(fs.clone()));
+
+    let err = dispatch(
+        &mut s,
+        "file.rename",
+        json!({"uri": "/d/a.txt", "name": "x/y"}),
+    )
+    .expect_err("slash");
+    assert!(matches!(err, FmError::InvalidParams(_)));
+    assert!(
+        s.fileops.jobs().is_empty(),
+        "bad params must not start a job"
+    );
+
+    dispatch(
+        &mut s,
+        "file.rename",
+        json!({"uri": "/d/a.txt", "name": "b.txt"}),
+    )
+    .expect("rename");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert!(fs.exists(&uri("/d/b.txt")));
+
+    assert!(s.command_enabled("edit.undo"));
+    dispatch(&mut s, "edit.undo", Params::Null).expect("undo");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert!(fs.exists(&uri("/d/a.txt")));
+    assert!(!fs.exists(&uri("/d/b.txt")));
+    assert!(!s.command_enabled("edit.undo"), "the record was consumed");
+}
+
+#[test]
+fn a_stale_undo_fails_actionably_and_is_dropped() {
+    let fs = MemFs::new();
+    fs.put_str("/d/a.txt", b"x").expect("put");
+    let mut s = session_on(Arc::new(fs.clone()));
+    dispatch(
+        &mut s,
+        "file.rename",
+        json!({"uri": "/d/a.txt", "name": "b.txt"}),
+    )
+    .expect("rename");
+    let id = only_job(&s.fileops);
+    finish(&mut s, id);
+    fs.put_str("/d/a.txt", b"occupied").expect("occupy");
+
+    dispatch(&mut s, "edit.undo", Params::Null).expect("undo");
+    let id = only_job(&s.fileops);
+    assert!(matches!(finish(&mut s, id), OpState::Failed(_)));
+    assert_eq!(fs.get_str("/d/b.txt").expect("kept"), b"x");
+    assert!(s.undo.is_empty());
+}
+
+#[test]
+fn mkdir_and_permanent_delete() {
+    let fs = MemFs::new();
+    fs.mkdirs_str("/d").expect("d");
+    let mut s = session_on(Arc::new(fs.clone()));
+    dispatch(&mut s, "file.mkdir", json!({"parent": "/d", "name": "new"})).expect("mkdir");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert!(fs.exists(&uri("/d/new")));
+    assert_eq!(s.undo.len(), 1);
+
+    fs.put_str("/d/gone/inner.txt", b"x").expect("put");
+    let unconfirmed = dispatch(
+        &mut s,
+        "file.delete_permanent",
+        json!({"sources": ["/d/gone"]}),
+    );
+    assert!(unconfirmed.is_err());
+    assert!(fs.exists(&uri("/d/gone/inner.txt")), "nothing removed");
+
+    let before = s.undo.len();
+    dispatch(
+        &mut s,
+        "file.delete_permanent",
+        json!({"sources": ["/d/gone"], "confirm": true}),
+    )
+    .expect("delete");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert!(!fs.exists(&uri("/d/gone")));
+    assert_eq!(s.undo.len(), before, "permanent delete is not undoable");
+}
+
+#[test]
+fn drop_resolves_in_the_engine() {
+    let fs = MemFs::new();
+    fs.put_str("/src/a.txt", b"a").expect("put");
+    fs.put_str("/src/b.txt", b"b").expect("put");
+    fs.mkdirs_str("/dst").expect("dst");
+    let mut s = session_on(Arc::new(fs.clone()));
+
+    // Shift forces a move.
+    dispatch(
+        &mut s,
+        "dnd.drop",
+        json!({"sources": ["/src/a.txt"], "dest": "/dst", "shift": true}),
+    )
+    .expect("drop");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert!(fs.exists(&uri("/dst/a.txt")) && !fs.exists(&uri("/src/a.txt")));
+
+    // Ctrl+Shift and dropping onto the source folder are rejected without a job.
+    let jobs = s.fileops.jobs().len();
+    assert!(
+        dispatch(
+            &mut s,
+            "dnd.drop",
+            json!({"sources": ["/src/b.txt"], "dest": "/dst", "ctrl": true, "shift": true})
+        )
+        .is_err()
+    );
+    assert!(
+        dispatch(
+            &mut s,
+            "dnd.drop",
+            json!({"sources": ["/src/b.txt"], "dest": "/src"})
+        )
+        .is_err()
+    );
+    assert_eq!(s.fileops.jobs().len(), jobs);
+
+    // External drop: the hostile path is reported, the valid one still imports.
+    let err = dispatch(
+        &mut s,
+        "dnd.drop",
+        json!({"origin": "external", "dest": "/dst", "sources": ["/src/b.txt", "not\u{0}a path"]}),
+    )
+    .expect_err("one rejected");
+    assert!(matches!(err, FmError::InvalidParams(_)));
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert_eq!(fs.get_str("/dst/b.txt").expect("imported"), b"b");
+    assert!(fs.exists(&uri("/src/b.txt")), "external drops copy");
+}
+
+#[test]
+fn copy_with_nothing_selected_is_a_noop_and_disabled() {
+    let mut s = Session::new().expect("session");
+    assert!(!s.command_enabled("file.copy"));
+    dispatch(&mut s, "file.copy", Params::Null).expect("no-op");
+    assert!(s.fileops.jobs().is_empty());
+}
+
+#[test]
+fn finished_jobs_can_be_dismissed_but_running_ones_stay() {
+    let fs = MemFs::new();
+    fs.mkdirs_str("/d").expect("d");
+    let mut s = session_on(Arc::new(fs));
+    dispatch(&mut s, "file.mkdir", json!({"parent": "/d", "name": "x"})).expect("mkdir");
+    let id = only_job(&s.fileops);
+    finish(&mut s, id);
+    dispatch(&mut s, "job.dismiss", json!({"job": id})).expect("dismiss");
+    assert!(s.fileops.jobs().is_empty());
+    assert!(dispatch(&mut s, "job.dismiss", json!({"job": id})).is_err());
+}
+
+#[test]
+fn fresh_session_has_no_jobs_or_undo() {
+    let s = Session::new().expect("session");
+    assert!(s.fileops.jobs().is_empty());
+    assert!(s.undo.is_empty());
+    assert!(matches!(s.dirs.state(&uri("/nope")), DirState::Absent));
+}

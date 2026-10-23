@@ -27,9 +27,18 @@ pub enum JobLane {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobEvent {
     Started(JobId),
-    Progress { id: JobId, done: u64, total: u64 },
+    Progress {
+        id: JobId,
+        done: u64,
+        total: u64,
+    },
+    /// A parked file job needs a decision; the conflict itself sits in the job table.
+    Conflict(JobId),
     Done(JobId),
-    Failed { id: JobId, message: String },
+    Failed {
+        id: JobId,
+        message: String,
+    },
     Cancelled(JobId),
 }
 
@@ -37,7 +46,7 @@ impl JobEvent {
     /// The job this event belongs to.
     pub fn job_id(&self) -> JobId {
         match self {
-            Self::Started(id) | Self::Done(id) | Self::Cancelled(id) => *id,
+            Self::Started(id) | Self::Conflict(id) | Self::Done(id) | Self::Cancelled(id) => *id,
             Self::Progress { id, .. } | Self::Failed { id, .. } => *id,
         }
     }
@@ -66,6 +75,16 @@ impl JobCtx {
     /// Long-running work must poll this between units of work.
     pub fn is_cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// Shared cancel flag, for pipelines that take their own handle.
+    pub fn cancel_shared(&self) -> Arc<AtomicBool> {
+        self.cancel.clone()
+    }
+
+    /// Wake the UI poll: this job is parked waiting for a decision.
+    pub fn notify_conflict(&self) {
+        let _ = self.events.send(JobEvent::Conflict(self.id));
     }
 
     /// Report progress; the UI poll picks these up.

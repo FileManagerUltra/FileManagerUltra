@@ -104,6 +104,11 @@ impl CancelFlag {
         Self::default()
     }
 
+    /// Share an existing flag (the engine's job handle owns the other end).
+    pub fn from_shared(flag: Arc<AtomicBool>) -> Self {
+        Self(flag)
+    }
+
     pub fn cancel(&self) {
         self.0.store(true, Ordering::SeqCst);
     }

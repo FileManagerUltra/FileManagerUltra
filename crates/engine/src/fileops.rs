@@ -1,0 +1,508 @@
+//! File-operation jobs: the bridge between `fm-ops` pipelines and the job lanes.
+//!
+//! A request is submitted on the lane of its destination (source for delete/rename/mkdir).
+//! The worker publishes progress and parked conflicts into a per-job shared slot; the
+//! UI-side [`Session::poll`] copies them into the job table without ever blocking, and on
+//! completion records the undo entry and invalidates every touched directory.
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
+
+use fm_ops::{
+    Backends, CancelFlag, Choice, Conflict, ConflictPolicy, Decision, OpCtx, OpKind, OpReport,
+    Progress, UndoRecord,
+};
+use fm_vfs::{FmError, Vfs, VfsUri};
+
+use crate::backends::{VfsRegistry, lane_for};
+use crate::dircache::DirState;
+use crate::jobs::{JobCtx, JobEvent, JobId};
+use crate::session::Session;
+
+/// Cap on the sources of one job (hostile or accidental selections).
+pub const MAX_SOURCES: usize = 10_000;
+/// Finished jobs kept in the table before the oldest are dropped.
+const MAX_FINISHED: usize = 50;
+/// Failed items kept per summary.
+const MAX_FAILURES: usize = 100;
+/// Progress events are throttled so a fast copy cannot flood the channel.
+const PROGRESS_EVERY: Duration = Duration::from_millis(30);
+/// How often a parked worker re-checks its cancel flag.
+const PARK_TICK: Duration = Duration::from_millis(50);
+
+impl Backends for VfsRegistry {
+    fn vfs(&self, uri: &VfsUri) -> Result<Arc<dyn Vfs>, FmError> {
+        self.require(uri)
+    }
+}
+
+/// A mutating operation to run as a job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpRequest {
+    Copy {
+        sources: Vec<VfsUri>,
+        dest: VfsUri,
+        policy: ConflictPolicy,
+    },
+    Move {
+        sources: Vec<VfsUri>,
+        dest: VfsUri,
+        policy: ConflictPolicy,
+    },
+    Trash {
+        sources: Vec<VfsUri>,
+    },
+    DeletePermanent {
+        sources: Vec<VfsUri>,
+    },
+    Mkdir {
+        parent: VfsUri,
+        name: String,
+    },
+    Rename {
+        uri: VfsUri,
+        name: String,
+    },
+    Undo(UndoRecord),
+}
+
+fn items(n: usize) -> String {
+    if n == 1 {
+        "1 item".to_string()
+    } else {
+        format!("{n} items")
+    }
+}
+
+fn leaf(uri: &VfsUri) -> String {
+    uri.file_name().unwrap_or("/").to_string()
+}
+
+impl OpRequest {
+    /// The kind recorded on the undo stack; `None` for undo itself.
+    pub fn kind(&self) -> Option<OpKind> {
+        Some(match self {
+            Self::Copy { .. } => OpKind::Copy,
+            Self::Move { .. } => OpKind::Move,
+            Self::Trash { .. } | Self::DeletePermanent { .. } => OpKind::Delete,
+            Self::Mkdir { .. } => OpKind::Mkdir,
+            Self::Rename { .. } => OpKind::Rename,
+            Self::Undo(_) => return None,
+        })
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::Copy { sources, dest, .. } => {
+                format!("Copy {} to {}", items(sources.len()), leaf(dest))
+            }
+            Self::Move { sources, dest, .. } => {
+                format!("Move {} to {}", items(sources.len()), leaf(dest))
+            }
+            Self::Trash { sources } => format!("Trash {}", items(sources.len())),
+            Self::DeletePermanent { sources } => format!("Delete {}", items(sources.len())),
+            Self::Mkdir { name, .. } => format!("Create folder {name}"),
+            Self::Rename { uri, name } => format!("Rename {} to {name}", leaf(uri)),
+            Self::Undo(_) => "Undo".to_string(),
+        }
+    }
+
+    fn lane_uri(&self) -> Option<VfsUri> {
+        match self {
+            Self::Copy { dest, .. } | Self::Move { dest, .. } => Some(dest.clone()),
+            Self::Trash { sources } | Self::DeletePermanent { sources } => sources.first().cloned(),
+            Self::Mkdir { parent, .. } => Some(parent.clone()),
+            Self::Rename { uri, .. } => Some(uri.clone()),
+            Self::Undo(record) => undo_uris(record).into_iter().next(),
+        }
+    }
+
+    fn uris(&self) -> Vec<VfsUri> {
+        match self {
+            Self::Copy { sources, dest, .. } | Self::Move { sources, dest, .. } => {
+                let mut all = sources.clone();
+                all.push(dest.clone());
+                all
+            }
+            Self::Trash { sources } | Self::DeletePermanent { sources } => sources.clone(),
+            Self::Mkdir { parent, .. } => vec![parent.clone()],
+            Self::Rename { uri, .. } => vec![uri.clone()],
+            Self::Undo(record) => undo_uris(record),
+        }
+    }
+
+    /// Directories whose listing changes when this job completes.
+    pub fn touched_dirs(&self) -> Vec<VfsUri> {
+        let mut dirs: Vec<VfsUri> = Vec::new();
+        let mut add = |uri: Option<VfsUri>| {
+            if let Some(uri) = uri
+                && !dirs.contains(&uri)
+            {
+                dirs.push(uri);
+            }
+        };
+        match self {
+            Self::Copy { dest, .. } => add(Some(dest.clone())),
+            Self::Move { sources, dest, .. } => {
+                add(Some(dest.clone()));
+                sources.iter().for_each(|s| add(s.parent()));
+            }
+            Self::Trash { sources } | Self::DeletePermanent { sources } => {
+                sources.iter().for_each(|s| add(s.parent()));
+            }
+            Self::Mkdir { parent, .. } => add(Some(parent.clone())),
+            Self::Rename { uri, .. } => add(uri.parent()),
+            Self::Undo(record) => undo_uris(record).iter().for_each(|u| add(u.parent())),
+        }
+        dirs
+    }
+}
+
+fn undo_uris(record: &UndoRecord) -> Vec<VfsUri> {
+    match record {
+        UndoRecord::Trashed { originals } => originals.clone(),
+        UndoRecord::Moved { pairs } => pairs
+            .iter()
+            .flat_map(|(a, b)| [a.clone(), b.clone()])
+            .collect(),
+        UndoRecord::Renamed { from, to } => vec![from.clone(), to.clone()],
+        UndoRecord::Created { uris } => uris.clone(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpState {
+    Running,
+    Finished,
+    Cancelled,
+    Failed(String),
+}
+
+impl OpState {
+    pub fn is_running(&self) -> bool {
+        matches!(self, Self::Running)
+    }
+}
+
+/// What a finished job did, with per-item errors for the jobs panel.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpSummary {
+    pub done: u64,
+    pub skipped: u64,
+    pub failed_count: usize,
+    /// `(item, error)`, capped at [`MAX_FAILURES`].
+    pub failed: Vec<(String, String)>,
+}
+
+impl From<&OpReport> for OpSummary {
+    fn from(report: &OpReport) -> Self {
+        Self {
+            done: report.done,
+            skipped: report.skipped,
+            failed_count: report.failed.len(),
+            failed: report
+                .failed
+                .iter()
+                .take(MAX_FAILURES)
+                .map(|(uri, err)| (uri.to_string(), err.to_string()))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct Shared {
+    progress: Progress,
+    conflict: Option<Conflict>,
+    report: Option<OpReport>,
+}
+
+fn lock(shared: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
+    shared.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// One row of the jobs table.
+#[derive(Debug)]
+pub struct OpJob {
+    pub id: JobId,
+    pub label: String,
+    pub state: OpState,
+    pub progress: Progress,
+    /// Set while the worker is parked waiting for `job.resolve_conflict`.
+    pub conflict: Option<Conflict>,
+    pub summary: Option<OpSummary>,
+    kind: Option<OpKind>,
+    touched: Vec<VfsUri>,
+    shared: Arc<Mutex<Shared>>,
+    resolver: Sender<Decision>,
+}
+
+/// The jobs table (insertion order).
+#[derive(Debug, Default)]
+pub struct FileOps {
+    jobs: Vec<OpJob>,
+}
+
+impl FileOps {
+    pub fn jobs(&self) -> &[OpJob] {
+        &self.jobs
+    }
+
+    pub fn get(&self, id: JobId) -> Option<&OpJob> {
+        self.jobs.iter().find(|j| j.id == id)
+    }
+
+    fn get_mut(&mut self, id: JobId) -> Option<&mut OpJob> {
+        self.jobs.iter_mut().find(|j| j.id == id)
+    }
+
+    pub fn running(&self) -> usize {
+        self.jobs.iter().filter(|j| j.state.is_running()).count()
+    }
+
+    /// The first job waiting on a conflict decision, if any.
+    pub fn pending_conflict(&self) -> Option<&OpJob> {
+        self.jobs
+            .iter()
+            .find(|j| j.state.is_running() && j.conflict.is_some())
+    }
+
+    /// Remove a finished job (dismissing its report). Running jobs stay.
+    pub fn dismiss(&mut self, id: JobId) -> bool {
+        let before = self.jobs.len();
+        self.jobs.retain(|j| j.id != id || j.state.is_running());
+        self.jobs.len() != before
+    }
+
+    fn trim(&mut self) {
+        let mut finished = self.jobs.iter().filter(|j| !j.state.is_running()).count();
+        while finished > MAX_FINISHED {
+            let Some(pos) = self.jobs.iter().position(|j| !j.state.is_running()) else {
+                break;
+            };
+            self.jobs.remove(pos);
+            finished -= 1;
+        }
+    }
+}
+
+fn run(
+    request: &OpRequest,
+    backends: &VfsRegistry,
+    ctx: &JobCtx,
+    shared: &Mutex<Shared>,
+    decisions: &Receiver<Decision>,
+) -> Result<(), FmError> {
+    let cancel = CancelFlag::from_shared(ctx.cancel_shared());
+    let mut last_sent: Option<Instant> = None;
+    let mut on_progress = |p: &Progress| {
+        lock(shared).progress = p.clone();
+        let finished = p.items.total > 0 && p.items.done >= p.items.total;
+        let due = last_sent.is_none_or(|t| t.elapsed() >= PROGRESS_EVERY);
+        if finished || due {
+            last_sent = Some(Instant::now());
+            ctx.report(p.items.done, p.items.total);
+        }
+    };
+    let park_cancel = cancel.clone();
+    let mut on_conflict = |conflict: &Conflict| {
+        lock(shared).conflict = Some(conflict.clone());
+        ctx.notify_conflict();
+        let decision = loop {
+            if park_cancel.is_cancelled() {
+                break Decision {
+                    choice: Choice::Cancel,
+                    apply_to_all: false,
+                };
+            }
+            match decisions.recv_timeout(PARK_TICK) {
+                Ok(decision) => break decision,
+                Err(RecvTimeoutError::Timeout) => {}
+                // The job table dropped us: nobody can answer, so cancel.
+                Err(RecvTimeoutError::Disconnected) => {
+                    break Decision {
+                        choice: Choice::Cancel,
+                        apply_to_all: false,
+                    };
+                }
+            }
+        };
+        lock(shared).conflict = None;
+        decision
+    };
+    let policy = match request {
+        OpRequest::Copy { policy, .. } | OpRequest::Move { policy, .. } => *policy,
+        _ => ConflictPolicy::Ask,
+    };
+    let mut octx = OpCtx::new(policy, &mut on_progress, &mut on_conflict).with_cancel(cancel);
+
+    let report = match request {
+        OpRequest::Copy { sources, dest, .. } => fm_ops::copy(backends, sources, dest, &mut octx)?,
+        OpRequest::Move { sources, dest, .. } => fm_ops::move_(backends, sources, dest, &mut octx)?,
+        OpRequest::Trash { sources } => fm_ops::trash_items(sources, &mut octx),
+        OpRequest::DeletePermanent { sources } => {
+            fm_ops::delete_permanent(backends, sources, &mut octx)?
+        }
+        OpRequest::Mkdir { parent, name } => {
+            let created = fm_ops::mkdir(backends, parent, name)?;
+            OpReport {
+                done: 1,
+                created: vec![created],
+                ..OpReport::default()
+            }
+        }
+        OpRequest::Rename { uri, name } => {
+            let to = fm_ops::rename(backends, uri, name)?;
+            OpReport {
+                done: 1,
+                moved: vec![(uri.clone(), to)],
+                ..OpReport::default()
+            }
+        }
+        OpRequest::Undo(record) => {
+            fm_ops::undo::apply(backends, record)?;
+            OpReport {
+                done: 1,
+                ..OpReport::default()
+            }
+        }
+    };
+    let cancelled = report.cancelled;
+    lock(shared).report = Some(report);
+    if cancelled {
+        Err(FmError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+impl Session {
+    /// Validate and enqueue a mutating job. Returns immediately; the work runs on the
+    /// lane of the destination (or source) and reports through [`Session::poll`].
+    pub fn submit_op(&mut self, request: OpRequest) -> Result<JobId, FmError> {
+        let uris = request.uris();
+        if uris.len() > MAX_SOURCES + 1 {
+            return Err(FmError::InvalidParams(format!(
+                "too many items (limit {MAX_SOURCES})"
+            )));
+        }
+        let lane_uri = request
+            .lane_uri()
+            .ok_or_else(|| FmError::InvalidParams("nothing to do".to_string()))?;
+        let lane = lane_for(lane_uri.scheme());
+        for uri in &uris {
+            self.backends.require(uri)?;
+        }
+        let backends = self.backends.clone();
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let (resolver, decisions) = unbounded::<Decision>();
+        let label = request.label();
+        let kind = request.kind();
+        let touched = request.touched_dirs();
+        let worker_shared = shared.clone();
+        let id = self.jobs.submit(lane, move |ctx| {
+            run(&request, &backends, ctx, &worker_shared, &decisions)
+        });
+        self.fileops.jobs.push(OpJob {
+            id,
+            label,
+            state: OpState::Running,
+            progress: Progress::default(),
+            conflict: None,
+            summary: None,
+            kind,
+            touched,
+            shared,
+            resolver,
+        });
+        Ok(id)
+    }
+
+    /// Request cooperative cancellation of a file job (also frees a parked worker).
+    pub fn cancel_op(&mut self, id: JobId) -> Result<(), FmError> {
+        if self.fileops.get(id).is_none() {
+            return Err(FmError::NotFound(format!("job {id}")));
+        }
+        self.jobs.cancel(id);
+        Ok(())
+    }
+
+    /// Answer the conflict a parked job is waiting on.
+    pub fn resolve_conflict(&mut self, id: JobId, decision: Decision) -> Result<(), FmError> {
+        let job = self
+            .fileops
+            .get_mut(id)
+            .ok_or_else(|| FmError::NotFound(format!("job {id}")))?;
+        if !job.state.is_running() || job.conflict.is_none() {
+            return Err(FmError::InvalidParams(format!(
+                "job {id} is not waiting for a decision"
+            )));
+        }
+        job.resolver
+            .send(decision)
+            .map_err(|_| FmError::Cancelled)?;
+        job.conflict = None;
+        Ok(())
+    }
+
+    /// Copy the latest worker-side progress and conflicts into the job table.
+    /// Returns `true` when anything observable changed.
+    pub(crate) fn sync_ops(&mut self) -> bool {
+        let mut changed = false;
+        for job in self
+            .fileops
+            .jobs
+            .iter_mut()
+            .filter(|j| j.state.is_running())
+        {
+            let guard = lock(&job.shared);
+            if guard.progress != job.progress {
+                job.progress = guard.progress.clone();
+                changed = true;
+            }
+            if guard.conflict != job.conflict {
+                job.conflict = guard.conflict.clone();
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Handle a terminal event of a file job: record the summary and the undo entry,
+    /// then invalidate the touched directories so their panes re-read once.
+    /// Returns `false` when `ev` does not belong to a file job.
+    pub(crate) fn finish_op(&mut self, ev: &JobEvent) -> bool {
+        let id = ev.job_id();
+        let Some(job) = self.fileops.get_mut(id) else {
+            return false;
+        };
+        let state = match ev {
+            JobEvent::Done(_) => OpState::Finished,
+            JobEvent::Cancelled(_) => OpState::Cancelled,
+            JobEvent::Failed { message, .. } => OpState::Failed(message.clone()),
+            _ => return true,
+        };
+        let (report, progress) = {
+            let mut guard = lock(&job.shared);
+            (guard.report.take(), guard.progress.clone())
+        };
+        job.progress = progress;
+        job.state = state;
+        job.conflict = None;
+        job.summary = report.as_ref().map(OpSummary::from);
+        let kind = job.kind;
+        let touched = std::mem::take(&mut job.touched);
+        if let (Some(kind), Some(report)) = (kind, report.as_ref()) {
+            self.undo.push_report(kind, report);
+        }
+        for dir in touched {
+            if !matches!(self.dirs.state(&dir), DirState::Absent) {
+                let _ = self.refresh_read(dir);
+            }
+        }
+        self.fileops.trim();
+        true
+    }
+}
