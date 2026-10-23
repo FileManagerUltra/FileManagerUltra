@@ -19,6 +19,7 @@ fm-brand.workspace = true
 fm-engine.workspace = true
 fm-layout.workspace = true
 fm-ui.workspace = true
+serde_json.workspace = true
 fm-vfs.workspace = true
 eframe.workspace = true
 egui.workspace = true

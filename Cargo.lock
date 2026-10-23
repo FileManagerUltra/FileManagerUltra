@@ -963,6 +963,7 @@ dependencies = [
  "fm-testkit",
  "fm-ui",
  "fm-vfs",
+ "serde_json",
  "winit",
 ]
 

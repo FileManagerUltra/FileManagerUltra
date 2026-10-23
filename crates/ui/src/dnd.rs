@@ -49,6 +49,33 @@ pub fn register_zone(ctx: &Context, rect: Rect, dest: VfsUri, priority: u8) {
     });
 }
 
+#[derive(Clone, Default)]
+struct PaneRects(Vec<(PaneId, Rect)>);
+
+/// Remember where a pane was drawn this frame, so OS file drops can find the pane under the
+/// pointer.
+pub fn note_pane(ctx: &Context, pane: PaneId, rect: Rect) {
+    ctx.data_mut(|d| {
+        let rects = &mut d
+            .get_temp_mut_or_default::<PaneRects>(Id::NULL.with("fm-pane-rects"))
+            .0;
+        rects.retain(|(p, _)| *p != pane);
+        rects.push((pane, rect));
+    });
+}
+
+/// The pane drawn under `pos` last frame.
+pub fn pane_at(ctx: &Context, pos: Pos2) -> Option<PaneId> {
+    ctx.data(|d| {
+        d.get_temp::<PaneRects>(Id::NULL.with("fm-pane-rects"))
+            .and_then(|r| {
+                r.0.iter()
+                    .find(|(_, rect)| rect.contains(pos))
+                    .map(|(p, _)| *p)
+            })
+    })
+}
+
 fn take_zones(ctx: &Context) -> Vec<Zone> {
     ctx.data_mut(|d| std::mem::take(&mut d.get_temp_mut_or_default::<Zones>(zones_id()).0))
 }

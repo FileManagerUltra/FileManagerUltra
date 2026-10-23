@@ -29,6 +29,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         egui::Stroke::new(tokens.border_width, tokens.border)
     };
     let mut open = None;
+    crate::dnd::note_pane(ui.ctx(), pane, area);
     crate::dnd::register_zone(
         ui.ctx(),
         area,

@@ -7,6 +7,7 @@
 use eframe::egui;
 
 use fm_engine::{Params, Session, ThemePreference};
+use fm_ui::dialogs::{Dialogs, dialog_for};
 
 pub const QUIT: &str = "app.quit";
 pub const ABOUT: &str = "app.about";
@@ -28,6 +29,13 @@ pub const SORT_SIZE: &str = "view.sort.size";
 pub const SORT_MTIME: &str = "view.sort.mtime";
 pub const SORT_TYPE: &str = "view.sort.type";
 pub const SORT_DIRS_FIRST: &str = "view.sort.dirs_first";
+pub const FILE_COPY: &str = "file.copy";
+pub const FILE_MOVE: &str = "file.move";
+pub const FILE_MKDIR: &str = "file.mkdir";
+pub const FILE_RENAME: &str = "file.rename";
+pub const FILE_DELETE: &str = "file.delete";
+pub const FILE_DELETE_PERMANENT: &str = "file.delete_permanent";
+pub const EDIT_UNDO: &str = "edit.undo";
 
 /// Every command id referenced by the menus or the shortcut table.
 /// (Used by the tests and by `cargo xtask brand-check`'s registry cross-check.)
@@ -54,6 +62,13 @@ pub fn all_ids() -> &'static [&'static str] {
         SORT_MTIME,
         SORT_TYPE,
         SORT_DIRS_FIRST,
+        FILE_COPY,
+        FILE_MOVE,
+        FILE_MKDIR,
+        FILE_RENAME,
+        FILE_DELETE,
+        FILE_DELETE_PERMANENT,
+        EDIT_UNDO,
     ]
 }
 
@@ -94,17 +109,50 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
             SORT_DIRS_FIRST,
             egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::H),
         ),
+        (
+            FILE_COPY,
+            egui::KeyboardShortcut::new(Modifiers::NONE, Key::F5),
+        ),
+        (
+            FILE_MOVE,
+            egui::KeyboardShortcut::new(Modifiers::NONE, Key::F6),
+        ),
+        (
+            FILE_MKDIR,
+            egui::KeyboardShortcut::new(Modifiers::NONE, Key::F7),
+        ),
+        (
+            FILE_RENAME,
+            egui::KeyboardShortcut::new(Modifiers::NONE, Key::F2),
+        ),
+        (
+            FILE_DELETE,
+            egui::KeyboardShortcut::new(Modifiers::NONE, Key::F8),
+        ),
+        (
+            FILE_DELETE_PERMANENT,
+            egui::KeyboardShortcut::new(Modifiers::SHIFT, Key::Delete),
+        ),
+        (
+            EDIT_UNDO,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::Z),
+        ),
     ]
 }
 
-/// Dispatch helper: run a command; a failure must never crash the frame.
-fn dispatch(session: &mut Session, id: &str) {
+/// Run a command; ids that need input first open their dialog instead. A failure becomes the
+/// visible notice and never crashes the frame.
+fn dispatch(session: &mut Session, dialogs: &mut Dialogs, id: &str) {
+    if let Some(dialog) = dialog_for(id, session) {
+        dialogs.request(dialog);
+        return;
+    }
     if let Err(err) = session.dispatch(id, &Params::Null) {
-        eprintln!("command {id} failed: {err}");
+        session.notice = Some(err.to_string());
     }
 }
 
-fn item(ui: &mut egui::Ui, session: &mut Session, id: &str) {
+fn item(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs, id: &str) {
     let Some(spec) = session.registry.get(id) else {
         return;
     };
@@ -116,12 +164,18 @@ fn item(ui: &mut egui::Ui, session: &mut Session, id: &str) {
         button = button.shortcut_text(shortcut);
     }
     if ui.add_enabled(enabled, button).clicked() {
-        dispatch(session, id);
+        dispatch(session, dialogs, id);
         ui.close();
     }
 }
 
-fn theme_radio(ui: &mut egui::Ui, session: &mut Session, id: &str, expected: ThemePreference) {
+fn theme_radio(
+    ui: &mut egui::Ui,
+    session: &mut Session,
+    dialogs: &mut Dialogs,
+    id: &str,
+    expected: ThemePreference,
+) {
     let selected = session.prefs.theme == expected;
     let label = match expected {
         ThemePreference::System => "System",
@@ -129,44 +183,55 @@ fn theme_radio(ui: &mut egui::Ui, session: &mut Session, id: &str, expected: The
         ThemePreference::Light => "Light",
     };
     if ui.selectable_label(selected, label).clicked() {
-        dispatch(session, id);
+        dispatch(session, dialogs, id);
     }
 }
 
 /// The top menu bar (File / Panes / View / Help).
-pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session) {
+pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs) {
     egui::menu::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
-            item(ui, session, QUIT);
+            item(ui, session, dialogs, FILE_COPY);
+            item(ui, session, dialogs, FILE_MOVE);
+            item(ui, session, dialogs, FILE_MKDIR);
+            item(ui, session, dialogs, FILE_RENAME);
+            ui.separator();
+            item(ui, session, dialogs, FILE_DELETE);
+            item(ui, session, dialogs, FILE_DELETE_PERMANENT);
+            ui.separator();
+            item(ui, session, dialogs, QUIT);
+        });
+        ui.menu_button("Edit", |ui| {
+            item(ui, session, dialogs, EDIT_UNDO);
         });
         ui.menu_button("Panes", |ui| {
-            item(ui, session, PANE_SPLIT_H);
-            item(ui, session, PANE_SPLIT_V);
+            item(ui, session, dialogs, PANE_SPLIT_H);
+            item(ui, session, dialogs, PANE_SPLIT_V);
             ui.separator();
-            item(ui, session, PANE_SWAP);
-            item(ui, session, PANE_FOCUS_NEXT);
+            item(ui, session, dialogs, PANE_SWAP);
+            item(ui, session, dialogs, PANE_FOCUS_NEXT);
             ui.separator();
-            item(ui, session, PANE_CLOSE);
+            item(ui, session, dialogs, PANE_CLOSE);
         });
         ui.menu_button("View", |ui| {
             ui.menu_button("Theme", |ui| {
-                theme_radio(ui, session, THEME_SYSTEM, ThemePreference::System);
-                theme_radio(ui, session, THEME_DARK, ThemePreference::Dark);
-                theme_radio(ui, session, THEME_LIGHT, ThemePreference::Light);
+                theme_radio(ui, session, dialogs, THEME_SYSTEM, ThemePreference::System);
+                theme_radio(ui, session, dialogs, THEME_DARK, ThemePreference::Dark);
+                theme_radio(ui, session, dialogs, THEME_LIGHT, ThemePreference::Light);
                 ui.separator();
-                item(ui, session, THEME_TOGGLE);
+                item(ui, session, dialogs, THEME_TOGGLE);
             });
             ui.menu_button("Sort", |ui| {
-                item(ui, session, SORT_NAME);
-                item(ui, session, SORT_SIZE);
-                item(ui, session, SORT_MTIME);
-                item(ui, session, SORT_TYPE);
+                item(ui, session, dialogs, SORT_NAME);
+                item(ui, session, dialogs, SORT_SIZE);
+                item(ui, session, dialogs, SORT_MTIME);
+                item(ui, session, dialogs, SORT_TYPE);
                 ui.separator();
-                item(ui, session, SORT_DIRS_FIRST);
+                item(ui, session, dialogs, SORT_DIRS_FIRST);
             });
         });
         ui.menu_button("Help", |ui| {
-            item(ui, session, ABOUT);
+            item(ui, session, dialogs, ABOUT);
         });
     });
 }
@@ -177,12 +242,21 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session) {
 /// egui's focus-traversal key, and its `focus_direction` is committed at
 /// `begin_pass`. Consuming the shortcut here (and cancelling the direction for
 /// `pane.swap`) keeps `Tab` swapping panes instead of tabbing through widgets.
-pub fn consume_shortcuts(ctx: &egui::Context, session: &mut Session) -> Vec<&'static str> {
+pub fn consume_shortcuts(
+    ctx: &egui::Context,
+    session: &mut Session,
+    dialogs: &mut Dialogs,
+) -> Vec<&'static str> {
     let mut fired = Vec::new();
+    // File shortcuts must not fire while a dialog or a text field owns the keyboard.
+    let typing = dialogs.is_open() || ctx.egui_wants_keyboard_input();
     for (id, shortcut) in shortcuts() {
+        if typing && (id.starts_with("file.") || id == EDIT_UNDO) {
+            continue;
+        }
         let consumed = ctx.input_mut(|input| input.consume_shortcut(&shortcut));
         if consumed {
-            dispatch(session, id);
+            dispatch(session, dialogs, id);
             fired.push(id);
             if id == PANE_SWAP {
                 // Cancel the focus move egui already staged for this `Tab`.
@@ -245,6 +319,13 @@ mod tests {
             Key::T => "T",
             Key::H => "H",
             Key::R => "R",
+            Key::Z => "Z",
+            Key::F2 => "F2",
+            Key::F5 => "F5",
+            Key::F6 => "F6",
+            Key::F7 => "F7",
+            Key::F8 => "F8",
+            Key::Delete => "Delete",
             Key::Tab => "Tab",
             Key::Backspace => "Backspace",
             Key::ArrowLeft => "Left",
@@ -258,22 +339,22 @@ mod tests {
         let mut session = Session::new().expect("session");
         session.dispatch(THEME_DARK, &Params::Null).expect("dark");
         assert_eq!(session.prefs.theme, ThemePreference::Dark);
-        dispatch(&mut session, THEME_TOGGLE);
+        dispatch(&mut session, &mut Dialogs::default(), THEME_TOGGLE);
         assert_eq!(session.prefs.theme, ThemePreference::Light);
-        dispatch(&mut session, ABOUT);
+        dispatch(&mut session, &mut Dialogs::default(), ABOUT);
         assert!(session.about_open);
-        dispatch(&mut session, QUIT);
+        dispatch(&mut session, &mut Dialogs::default(), QUIT);
         assert!(!session.running);
     }
 
     #[test]
     fn pane_commands_dispatch_through_the_session() {
         let mut session = Session::new().expect("session");
-        dispatch(&mut session, PANE_SPLIT_H);
+        dispatch(&mut session, &mut Dialogs::default(), PANE_SPLIT_H);
         assert_eq!(session.layout.panes().len(), 2);
-        dispatch(&mut session, PANE_FOCUS_NEXT);
-        dispatch(&mut session, PANE_SWAP);
-        dispatch(&mut session, PANE_CLOSE);
+        dispatch(&mut session, &mut Dialogs::default(), PANE_FOCUS_NEXT);
+        dispatch(&mut session, &mut Dialogs::default(), PANE_SWAP);
+        dispatch(&mut session, &mut Dialogs::default(), PANE_CLOSE);
         assert_eq!(session.layout.panes().len(), 1);
     }
 
@@ -312,7 +393,7 @@ mod tests {
                         .frame(egui::Frame::NONE)
                         .show(ctx, |ui| {
                             egui::Frame::NONE.show(ui, |ui| {
-                                item(ui, &mut session, id);
+                                item(ui, &mut session, &mut Dialogs::default(), id);
                             });
                         });
                 },

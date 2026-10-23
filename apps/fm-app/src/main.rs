@@ -22,6 +22,7 @@ struct App {
     applied: (ThemePreference, bool),
     /// Set once the native window title has been explicitly sent (see `ui`).
     title_sent: bool,
+    dialogs: fm_ui::dialogs::Dialogs,
 }
 
 impl App {
@@ -155,13 +156,42 @@ fn render_pane_node(
     }
 }
 
+/// Files dropped from the OS onto the window are copied into the pane under the pointer
+/// (the focused pane when the pointer position is unknown). Paths are untrusted: the engine
+/// rejects bad ones individually and reports the count.
+fn import_os_drops(ctx: &egui::Context, session: &mut Session) {
+    let paths: Vec<String> = ctx.input(|i| {
+        i.raw
+            .dropped_files
+            .iter()
+            .map(|f| f.path())
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect()
+    });
+    if paths.is_empty() {
+        return;
+    }
+    let pane = ctx
+        .input(|i| i.pointer.latest_pos())
+        .and_then(|pos| fm_ui::dnd::pane_at(ctx, pos))
+        .unwrap_or_else(|| session.layout.focused());
+    let Some(dest) = session.layout.state(pane).map(|p| p.location.to_string()) else {
+        return;
+    };
+    session.dispatch_or_notice(
+        "dnd.drop",
+        &serde_json::json!({"sources": paths, "dest": dest, "origin": "external"}),
+    );
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         // Shortcuts run before any widget renders: `Tab` drives egui's focus
         // traversal, which is committed at `begin_pass`; `consume_shortcuts`
         // cancels it before the menu/tree/listing can act on it.
-        menu::consume_shortcuts(&ctx, &mut self.session);
+        menu::consume_shortcuts(&ctx, &mut self.session, &mut self.dialogs);
+        import_os_drops(&ctx, &mut self.session);
         self.sync_theme(&ctx);
         let _ = self.session.poll();
 
@@ -174,7 +204,7 @@ impl eframe::App for App {
         }
 
         egui::Panel::top("menu_bar").show(ui, |ui| {
-            menu::menu_bar(ui, &mut self.session);
+            menu::menu_bar(ui, &mut self.session, &mut self.dialogs);
         });
 
         let tokens = theme::Tokens::resolve(self.session.prefs.theme, self.applied.1);
@@ -197,6 +227,15 @@ impl eframe::App for App {
                 (count, selected)
             };
             ui.horizontal(|ui| {
+                if let Some(notice) = self.session.notice.clone() {
+                    let text = egui::RichText::new(notice)
+                        .color(tokens.error)
+                        .font(tokens.font());
+                    if ui.add(egui::Button::new(text).frame(false)).clicked() {
+                        self.session.notice = None;
+                    }
+                }
+                fm_ui::jobs::indicator(ui, &self.session, &tokens);
                 ui.label(tokens.muted(location));
                 ui.label(tokens.muted(format!("{count} items")));
                 if selected > 0 {
@@ -224,6 +263,9 @@ impl eframe::App for App {
                     open_uri(&mut self.session, &uri);
                 }
             });
+
+        self.dialogs.show(&ctx, &mut self.session, &tokens);
+        fm_ui::jobs::show(&ctx, &mut self.session, &tokens);
 
         if self.session.about_open {
             let mut open = self.session.about_open;
@@ -283,6 +325,7 @@ fn main() -> eframe::Result {
             .with_title(fm_brand::APP_NAME)
             .with_app_id(fm_brand::APP_ID)
             .with_inner_size(egui::vec2(1024.0, 700.0))
+            .with_drag_and_drop(true)
             .with_min_inner_size(egui::vec2(640.0, 400.0)),
         ..Default::default()
     };
@@ -301,6 +344,7 @@ fn main() -> eframe::Result {
                 config_dir,
                 applied: (theme_pref, dark),
                 title_sent: false,
+                dialogs: fm_ui::dialogs::Dialogs::default(),
             }))
         }),
     )
