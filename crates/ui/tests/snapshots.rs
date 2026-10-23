@@ -304,3 +304,24 @@ fn dialogs_dark_light() {
         }
     }
 }
+
+#[test]
+fn preferences_dialog_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = fixture_session();
+        session.preferences_open = true;
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            fm_ui::preferences::show(ui.ctx(), &mut session, &tokens);
+        });
+        harness.set_size(egui::vec2(560.0, 300.0));
+        harness.run();
+        harness.snapshot(format!("dialog_preferences_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}

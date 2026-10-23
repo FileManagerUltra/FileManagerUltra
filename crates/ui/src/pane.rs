@@ -24,11 +24,14 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let tree_width = state.tree_width;
 
     let stroke = if focused {
-        egui::Stroke::new(tokens.border_width.max(1.5), tokens.accent)
+        egui::Stroke::new(tokens.border_width.max(2.5), tokens.accent)
     } else {
         egui::Stroke::new(tokens.border_width, tokens.border)
     };
     let mut open = None;
+    if focused && !state.tree.active {
+        crate::locationbar::type_to_go(ui.ctx(), s, pane);
+    }
     crate::dnd::note_pane(ui.ctx(), pane, area);
     crate::dnd::register_zone(
         ui.ctx(),
@@ -41,16 +44,19 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         .stroke(stroke)
         .inner_margin(egui::Margin::same(tokens.padding as i8))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if focused {
-                    ui.label(
-                        egui::RichText::new("*")
-                            .color(tokens.accent)
-                            .font(tokens.font()),
-                    );
-                }
-                ui.label(tokens.muted(location.path_str()));
-            });
+            // The active pane gets a solid accent header bar; inactive ones stay muted.
+            if crate::locationbar::is_editing(s, pane) {
+                crate::locationbar::show_editor(ui, s, pane, tokens);
+            } else {
+                let header = egui::Frame::NONE
+                    .fill(if focused { tokens.accent } else { tokens.panel })
+                    .corner_radius(tokens.corner_radius)
+                    .inner_margin(egui::Margin::symmetric(tokens.padding as i8, 2));
+                header.show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    crate::locationbar::show_label(ui, s, pane, tokens, focused);
+                });
+            }
             ui.separator();
 
             let height = ui.available_height();

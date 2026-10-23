@@ -153,6 +153,10 @@ impl<V: Vfs> Vfs for FaultFs<V> {
         self.inner.create_dir(uri)
     }
 
+    fn create_symlink(&self, target: &str, link: &VfsUri) -> Result<(), FmError> {
+        self.inner.create_symlink(target, link)
+    }
+
     fn remove(&self, uri: &VfsUri) -> Result<(), FmError> {
         self.inner.remove(uri)
     }

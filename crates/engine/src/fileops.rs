@@ -61,6 +61,10 @@ pub enum OpRequest {
         parent: VfsUri,
         name: String,
     },
+    NewFile {
+        parent: VfsUri,
+        name: String,
+    },
     Rename {
         uri: VfsUri,
         name: String,
@@ -88,6 +92,7 @@ impl OpRequest {
             Self::Move { .. } => OpKind::Move,
             Self::Trash { .. } | Self::DeletePermanent { .. } => OpKind::Delete,
             Self::Mkdir { .. } => OpKind::Mkdir,
+            Self::NewFile { .. } => OpKind::NewFile,
             Self::Rename { .. } => OpKind::Rename,
             Self::Undo(_) => return None,
         })
@@ -104,6 +109,7 @@ impl OpRequest {
             Self::Trash { sources } => format!("Trash {}", items(sources.len())),
             Self::DeletePermanent { sources } => format!("Delete {}", items(sources.len())),
             Self::Mkdir { name, .. } => format!("Create folder {name}"),
+            Self::NewFile { name, .. } => format!("Create file {name}"),
             Self::Rename { uri, name } => format!("Rename {} to {name}", leaf(uri)),
             Self::Undo(_) => "Undo".to_string(),
         }
@@ -113,7 +119,7 @@ impl OpRequest {
         match self {
             Self::Copy { dest, .. } | Self::Move { dest, .. } => Some(dest.clone()),
             Self::Trash { sources } | Self::DeletePermanent { sources } => sources.first().cloned(),
-            Self::Mkdir { parent, .. } => Some(parent.clone()),
+            Self::Mkdir { parent, .. } | Self::NewFile { parent, .. } => Some(parent.clone()),
             Self::Rename { uri, .. } => Some(uri.clone()),
             Self::Undo(record) => undo_uris(record).into_iter().next(),
         }
@@ -127,7 +133,7 @@ impl OpRequest {
                 all
             }
             Self::Trash { sources } | Self::DeletePermanent { sources } => sources.clone(),
-            Self::Mkdir { parent, .. } => vec![parent.clone()],
+            Self::Mkdir { parent, .. } | Self::NewFile { parent, .. } => vec![parent.clone()],
             Self::Rename { uri, .. } => vec![uri.clone()],
             Self::Undo(record) => undo_uris(record),
         }
@@ -152,7 +158,7 @@ impl OpRequest {
             Self::Trash { sources } | Self::DeletePermanent { sources } => {
                 sources.iter().for_each(|s| add(s.parent()));
             }
-            Self::Mkdir { parent, .. } => add(Some(parent.clone())),
+            Self::Mkdir { parent, .. } | Self::NewFile { parent, .. } => add(Some(parent.clone())),
             Self::Rename { uri, .. } => add(uri.parent()),
             Self::Undo(record) => undo_uris(record).iter().for_each(|u| add(u.parent())),
         }
@@ -294,6 +300,7 @@ fn run(
     ctx: &JobCtx,
     shared: &Mutex<Shared>,
     decisions: &Receiver<Decision>,
+    retarget_links: bool,
 ) -> Result<(), FmError> {
     let cancel = CancelFlag::from_shared(ctx.cancel_shared());
     let mut last_sent: Option<Instant> = None;
@@ -336,7 +343,9 @@ fn run(
         OpRequest::Copy { policy, .. } | OpRequest::Move { policy, .. } => *policy,
         _ => ConflictPolicy::Ask,
     };
-    let mut octx = OpCtx::new(policy, &mut on_progress, &mut on_conflict).with_cancel(cancel);
+    let mut octx = OpCtx::new(policy, &mut on_progress, &mut on_conflict)
+        .with_cancel(cancel)
+        .with_retarget_links(retarget_links);
 
     let report = match request {
         OpRequest::Copy { sources, dest, .. } => fm_ops::copy(backends, sources, dest, &mut octx)?,
@@ -347,6 +356,14 @@ fn run(
         }
         OpRequest::Mkdir { parent, name } => {
             let created = fm_ops::mkdir(backends, parent, name)?;
+            OpReport {
+                done: 1,
+                created: vec![created],
+                ..OpReport::default()
+            }
+        }
+        OpRequest::NewFile { parent, name } => {
+            let created = fm_ops::create_file(backends, parent, name)?;
             OpReport {
                 done: 1,
                 created: vec![created],
@@ -402,8 +419,16 @@ impl Session {
         let kind = request.kind();
         let touched = request.touched_dirs();
         let worker_shared = shared.clone();
+        let retarget_links = self.prefs.retarget_links;
         let id = self.jobs.submit(lane, move |ctx| {
-            run(&request, &backends, ctx, &worker_shared, &decisions)
+            run(
+                &request,
+                &backends,
+                ctx,
+                &worker_shared,
+                &decisions,
+                retarget_links,
+            )
         });
         self.fileops.jobs.push(OpJob {
             id,

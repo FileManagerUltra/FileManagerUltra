@@ -16,6 +16,10 @@ pub enum Dialog {
         dir: VfsUri,
         name: String,
     },
+    NewFile {
+        dir: VfsUri,
+        name: String,
+    },
     Rename {
         dir: VfsUri,
         current: String,
@@ -46,6 +50,10 @@ pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
     let selection = file_cmds::focused_selection(s);
     match id {
         "file.mkdir" => Some(Dialog::Mkdir {
+            dir: pane.location.clone(),
+            name: String::new(),
+        }),
+        "file.newfile" => Some(Dialog::NewFile {
             dir: pane.location.clone(),
             name: String::new(),
         }),
@@ -104,6 +112,19 @@ impl Dialogs {
                 if (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         "file.mkdir",
+                        &json!({"name": name.as_str(), "parent": dir.to_string()}),
+                    );
+                    false
+                } else {
+                    !(cancel || esc)
+                }
+            }
+            Dialog::NewFile { dir, name } => {
+                let verdict = file_cmds::validate_new_name(s, dir, name, None);
+                let (go, cancel) = name_dialog(ctx, tokens, "New file", name, &verdict, focus);
+                if (go || enter) && verdict.is_ok() {
+                    s.dispatch_or_notice(
+                        "file.newfile",
                         &json!({"name": name.as_str(), "parent": dir.to_string()}),
                     );
                     false
@@ -173,7 +194,7 @@ impl Dialogs {
     }
 }
 
-fn frame(tokens: &Tokens) -> egui::Frame {
+pub(crate) fn frame(tokens: &Tokens) -> egui::Frame {
     egui::Frame::window(&egui::Style::default())
         .fill(tokens.panel)
         .stroke(egui::Stroke::new(tokens.border_width, tokens.border))
@@ -194,6 +215,7 @@ fn name_dialog(
     egui::Window::new(title)
         .id(Id::NULL.with("fm-name-dialog"))
         .collapsible(false)
+        .movable(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .frame(frame(tokens))
@@ -232,6 +254,7 @@ fn confirm_delete(ctx: &Context, tokens: &Tokens, count: usize) -> (bool, bool) 
     egui::Window::new("Delete permanently")
         .id(Id::NULL.with("fm-confirm-delete"))
         .collapsible(false)
+        .movable(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .frame(frame(tokens))
@@ -275,6 +298,7 @@ fn conflict_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     egui::Window::new("File exists")
         .id(Id::NULL.with("fm-conflict-dialog"))
         .collapsible(false)
+        .movable(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .frame(frame(tokens))

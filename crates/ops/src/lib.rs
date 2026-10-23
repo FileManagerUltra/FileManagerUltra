@@ -12,7 +12,9 @@ pub mod transfer;
 pub mod trash;
 pub mod undo;
 
-use fm_vfs::{FmError, VfsUri};
+use std::io::Write;
+
+use fm_vfs::{FmError, VfsUri, WriteOpts};
 
 pub use ctx::{
     Backends, CancelFlag, Choice, Conflict, ConflictSide, Decision, OpCtx, OpReport, Progress,
@@ -45,6 +47,7 @@ pub enum OpKind {
     Move,
     Delete,
     Mkdir,
+    NewFile,
     Rename,
 }
 
@@ -100,6 +103,30 @@ pub fn mkdir(backends: &dyn Backends, parent: &VfsUri, name: &str) -> Result<Vfs
         Err(e) => return Err(e),
     }
     vfs.create_dir(&target)?;
+    Ok(target)
+}
+
+/// Create an empty file `name` inside `parent` (like `touch`, but never touches an existing entry).
+pub fn create_file(
+    backends: &dyn Backends,
+    parent: &VfsUri,
+    name: &str,
+) -> Result<VfsUri, FmError> {
+    validate_name(name)?;
+    let target = parent.join(name)?;
+    let vfs = backends.vfs(&target)?;
+    match vfs.stat(&target) {
+        Ok(_) => return Err(FmError::AlreadyExists(target.to_string())),
+        Err(FmError::NotFound(_)) => {}
+        Err(e) => return Err(e),
+    }
+    let opts = WriteOpts {
+        create: true,
+        truncate: false,
+        append: false,
+    };
+    let mut writer = vfs.open_write(&target, opts)?;
+    writer.flush().map_err(FmError::from)?;
     Ok(target)
 }
 

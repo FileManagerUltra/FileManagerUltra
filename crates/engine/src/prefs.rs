@@ -23,7 +23,7 @@ pub enum ThemePreference {
 
 /// The complete preferences schema. **Closed**: only non-secret, UI-level settings
 /// may ever live here — the closed-schema test asserts the exact key set.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Prefs {
     #[serde(default)]
     pub theme: ThemePreference,
@@ -31,6 +31,25 @@ pub struct Prefs {
     pub window_maximized: bool,
     #[serde(default)]
     pub last_dir: Option<String>,
+    /// Copying a tree points absolute symlinks that lie inside it at the copy, not the
+    /// original.
+    #[serde(default = "default_true")]
+    pub retarget_links: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Self {
+            theme: ThemePreference::default(),
+            window_maximized: false,
+            last_dir: None,
+            retarget_links: true,
+        }
+    }
 }
 
 /// File name inside the config directory.
@@ -145,6 +164,7 @@ mod tests {
             theme: ThemePreference::Dark,
             window_maximized: true,
             last_dir: Some("/home/alice".to_string()),
+            retarget_links: false,
         };
         save(&dir, &prefs).expect("save");
         assert_eq!(load(&dir.join(PREFS_FILE)), prefs);
@@ -191,12 +211,16 @@ mod tests {
             theme: ThemePreference::Dark,
             window_maximized: false,
             last_dir: Some("/tmp".to_string()),
+            retarget_links: true,
         };
         let text = toml::to_string(&prefs).expect("serialize");
         let parsed: toml::Table = toml::from_str(&text).expect("parse");
         let mut keys: Vec<String> = parsed.keys().cloned().collect();
         keys.sort();
-        assert_eq!(keys, ["last_dir", "theme", "window_maximized"]);
+        assert_eq!(
+            keys,
+            ["last_dir", "retarget_links", "theme", "window_maximized"]
+        );
         // No secret-ish key can appear.
         for key in &keys {
             let lower = key.to_ascii_lowercase();

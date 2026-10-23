@@ -92,7 +92,7 @@ pub fn dirs_first() -> CommandSpec {
         id: "view.sort.dirs_first",
         label: "Directories First",
         menu: &["View", "Sort", "Directories First"],
-        shortcut: Some("Ctrl+H"),
+        shortcut: None,
         params: "none",
         enabled: |_s| true,
         run: |s, _p: &Params| {

@@ -3,18 +3,23 @@
 use crate::app_cmds;
 use crate::dnd_cmds;
 use crate::file_cmds;
+use crate::goto_cmds;
 use crate::job_cmds;
 use crate::nav_cmds;
 use crate::pane_cmds;
+use crate::prefs_cmds;
 use crate::registry::CommandSpec;
 use crate::sort_cmds;
 use crate::theme_cmds;
+use crate::view_cmds;
 
 /// Every seed command. New modules append here; the registry fails on duplicates.
 pub fn specs() -> Vec<CommandSpec> {
     let mut specs = vec![
         app_cmds::quit(),
         app_cmds::about(),
+        prefs_cmds::preferences(),
+        prefs_cmds::retarget_links(),
         theme_cmds::dark(),
         theme_cmds::light(),
         theme_cmds::system(),
@@ -22,7 +27,9 @@ pub fn specs() -> Vec<CommandSpec> {
     ];
     specs.extend(pane_cmds::specs());
     specs.extend(nav_cmds::specs());
+    specs.extend(goto_cmds::specs());
     specs.extend(sort_cmds::specs());
+    specs.extend(view_cmds::specs());
     specs.extend(file_cmds::specs());
     specs.extend(job_cmds::specs());
     specs.extend(dnd_cmds::specs());

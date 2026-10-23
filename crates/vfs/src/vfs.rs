@@ -59,6 +59,15 @@ pub trait Vfs: Send + Sync {
 
     fn remove(&self, uri: &VfsUri) -> Result<(), FmError>;
 
+    /// Create a symbolic link at `link` holding `target` verbatim (never resolved or
+    /// followed). Backends that cannot represent links keep this default.
+    fn create_symlink(&self, target: &str, link: &VfsUri) -> Result<(), FmError> {
+        let _ = (target, link);
+        Err(FmError::Unsupported(
+            "this backend cannot create symbolic links",
+        ))
+    }
+
     fn rename(&self, from: &VfsUri, to: &VfsUri) -> Result<(), FmError>;
 
     /// Are both paths on the same volume? Drives move/copy decisions.

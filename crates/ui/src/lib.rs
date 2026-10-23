@@ -6,7 +6,9 @@ pub mod dialogs;
 pub mod dnd;
 pub mod jobs;
 pub mod listing;
+pub mod locationbar;
 pub mod pane;
+pub mod preferences;
 pub mod theme;
 pub mod tree;
 

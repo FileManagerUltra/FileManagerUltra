@@ -9,6 +9,7 @@ use eframe::egui;
 use fm_engine::{Params, Session, ThemePreference};
 use fm_ui::dialogs::{Dialogs, dialog_for};
 
+pub const PREFERENCES: &str = "app.preferences";
 pub const QUIT: &str = "app.quit";
 pub const ABOUT: &str = "app.about";
 pub const THEME_DARK: &str = "view.theme.dark";
@@ -24,14 +25,18 @@ pub const NAV_UP: &str = "nav.up";
 pub const NAV_BACK: &str = "nav.back";
 pub const NAV_FORWARD: &str = "nav.forward";
 pub const NAV_REFRESH: &str = "nav.refresh";
+pub const NAV_GOTO: &str = "nav.goto";
 pub const SORT_NAME: &str = "view.sort.name";
 pub const SORT_SIZE: &str = "view.sort.size";
 pub const SORT_MTIME: &str = "view.sort.mtime";
 pub const SORT_TYPE: &str = "view.sort.type";
+pub const VIEW_HIDDEN: &str = "view.hidden.toggle";
+pub const VIEW_LINKS: &str = "view.links.toggle";
 pub const SORT_DIRS_FIRST: &str = "view.sort.dirs_first";
 pub const FILE_COPY: &str = "file.copy";
 pub const FILE_MOVE: &str = "file.move";
 pub const FILE_MKDIR: &str = "file.mkdir";
+pub const FILE_NEWFILE: &str = "file.newfile";
 pub const FILE_RENAME: &str = "file.rename";
 pub const FILE_DELETE: &str = "file.delete";
 pub const FILE_DELETE_PERMANENT: &str = "file.delete_permanent";
@@ -44,6 +49,7 @@ pub fn all_ids() -> &'static [&'static str] {
     &[
         QUIT,
         ABOUT,
+        PREFERENCES,
         THEME_DARK,
         THEME_LIGHT,
         THEME_SYSTEM,
@@ -57,14 +63,18 @@ pub fn all_ids() -> &'static [&'static str] {
         NAV_BACK,
         NAV_FORWARD,
         NAV_REFRESH,
+        NAV_GOTO,
         SORT_NAME,
         SORT_SIZE,
         SORT_MTIME,
         SORT_TYPE,
         SORT_DIRS_FIRST,
+        VIEW_HIDDEN,
+        VIEW_LINKS,
         FILE_COPY,
         FILE_MOVE,
         FILE_MKDIR,
+        FILE_NEWFILE,
         FILE_RENAME,
         FILE_DELETE,
         FILE_DELETE_PERMANENT,
@@ -77,6 +87,10 @@ pub fn all_ids() -> &'static [&'static str] {
 pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
     use egui::{Key, Modifiers};
     vec![
+        (
+            PREFERENCES,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma),
+        ),
         (
             QUIT,
             egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::Q),
@@ -106,8 +120,22 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
             egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::R),
         ),
         (
-            SORT_DIRS_FIRST,
-            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::H),
+            NAV_GOTO,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::L),
+        ),
+        (
+            VIEW_HIDDEN,
+            // Cmd+H hides the application on macOS; Finder's chord is Cmd+Shift+.
+            if cfg!(target_os = "macos") {
+                egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Period)
+            } else {
+                egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::H)
+            },
+        ),
+        // macOS keyboards have no Delete key: Cmd+Backspace is the trash chord.
+        (
+            FILE_DELETE,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::Backspace),
         ),
         (
             FILE_COPY,
@@ -120,6 +148,10 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
         (
             FILE_MKDIR,
             egui::KeyboardShortcut::new(Modifiers::NONE, Key::F7),
+        ),
+        (
+            FILE_NEWFILE,
+            egui::KeyboardShortcut::new(Modifiers::SHIFT, Key::F7),
         ),
         (
             FILE_RENAME,
@@ -169,6 +201,24 @@ fn item(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs, id: &st
     }
 }
 
+/// A menu entry rendered as a checkbox; clicking dispatches the toggle command.
+fn check_item(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs, id: &str, on: bool) {
+    let Some(spec) = session.registry.get(id) else {
+        return;
+    };
+    let label = spec.label.to_string();
+    let shortcut = spec.shortcut;
+    let mut checked = on;
+    let mut text = egui::RichText::new(label);
+    if let Some(sc) = shortcut {
+        text = egui::RichText::new(format!("{}    {sc}", text.text()));
+    }
+    if ui.checkbox(&mut checked, text).clicked() {
+        dispatch(session, dialogs, id);
+        ui.close();
+    }
+}
+
 fn theme_radio(
     ui: &mut egui::Ui,
     session: &mut Session,
@@ -194,15 +244,26 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, FILE_COPY);
             item(ui, session, dialogs, FILE_MOVE);
             item(ui, session, dialogs, FILE_MKDIR);
+            item(ui, session, dialogs, FILE_NEWFILE);
             item(ui, session, dialogs, FILE_RENAME);
             ui.separator();
             item(ui, session, dialogs, FILE_DELETE);
             item(ui, session, dialogs, FILE_DELETE_PERMANENT);
             ui.separator();
+            item(ui, session, dialogs, PREFERENCES);
+            ui.separator();
             item(ui, session, dialogs, QUIT);
         });
         ui.menu_button("Edit", |ui| {
             item(ui, session, dialogs, EDIT_UNDO);
+        });
+        ui.menu_button("Go", |ui| {
+            item(ui, session, dialogs, NAV_GOTO);
+            ui.separator();
+            item(ui, session, dialogs, NAV_UP);
+            item(ui, session, dialogs, NAV_BACK);
+            item(ui, session, dialogs, NAV_FORWARD);
+            item(ui, session, dialogs, NAV_REFRESH);
         });
         ui.menu_button("Panes", |ui| {
             item(ui, session, dialogs, PANE_SPLIT_H);
@@ -214,6 +275,9 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, PANE_CLOSE);
         });
         ui.menu_button("View", |ui| {
+            check_item(ui, session, dialogs, VIEW_HIDDEN, session.show_hidden);
+            check_item(ui, session, dialogs, VIEW_LINKS, session.show_link_targets);
+            ui.separator();
             ui.menu_button("Theme", |ui| {
                 theme_radio(ui, session, dialogs, THEME_SYSTEM, ThemePreference::System);
                 theme_radio(ui, session, dialogs, THEME_DARK, ThemePreference::Dark);
@@ -236,6 +300,10 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
     });
 }
 
+fn modifier_count(m: &egui::Modifiers) -> u8 {
+    u8::from(m.alt) + u8::from(m.shift) + u8::from(m.command) + u8::from(m.ctrl)
+}
+
 /// Apply keyboard shortcuts; returns the ids that fired.
 ///
 /// Call this at the top of the frame, before any widget renders: `Tab` is also
@@ -248,10 +316,13 @@ pub fn consume_shortcuts(
     dialogs: &mut Dialogs,
 ) -> Vec<&'static str> {
     let mut fired = Vec::new();
-    // File shortcuts must not fire while a dialog or a text field owns the keyboard.
-    let typing = dialogs.is_open() || ctx.egui_wants_keyboard_input();
-    for (id, shortcut) in shortcuts() {
-        if typing && (id.starts_with("file.") || id == EDIT_UNDO) {
+    // File and bare-key shortcuts (Backspace, Tab) must not fire while a dialog or text field owns the keyboard.
+    let typing = dialogs.is_open() || ctx.text_edit_focused();
+    // Most modifiers first, so Cmd+Backspace wins over plain Backspace.
+    let mut table = shortcuts();
+    table.sort_by_key(|(_, sc)| std::cmp::Reverse(modifier_count(&sc.modifiers)));
+    for (id, shortcut) in table {
+        if typing && (id.starts_with("file.") || id == EDIT_UNDO || shortcut.modifiers.is_none()) {
             continue;
         }
         let consumed = ctx.input_mut(|input| input.consume_shortcut(&shortcut));
@@ -289,7 +360,12 @@ mod tests {
             let spec = session.registry.get(id).expect("registered");
             let display = spec.shortcut.unwrap_or("(none)");
             let expected = format_shortcut(&shortcut);
-            assert_eq!(display, expected, "shortcut display mismatch for {id}");
+            let is_alias =
+                id == FILE_DELETE && (expected == "Delete" || expected == "Ctrl+Backspace");
+            assert!(
+                is_alias || display == expected,
+                "shortcut display mismatch for {id}"
+            );
         }
     }
 
@@ -316,9 +392,11 @@ mod tests {
         use egui::Key;
         match key {
             Key::Q => "Q",
+            Key::Comma => ",",
             Key::T => "T",
             Key::H => "H",
             Key::R => "R",
+            Key::L => "L",
             Key::Z => "Z",
             Key::F2 => "F2",
             Key::F5 => "F5",
@@ -326,12 +404,48 @@ mod tests {
             Key::F7 => "F7",
             Key::F8 => "F8",
             Key::Delete => "Delete",
+            Key::Period => ".",
             Key::Tab => "Tab",
             Key::Backspace => "Backspace",
             Key::ArrowLeft => "Left",
             Key::ArrowRight => "Right",
             _ => "?",
         }
+    }
+
+    fn press(ctx: &egui::Context, session: &mut Session, dialogs: &mut Dialogs, key: egui::Key) {
+        let mut input = egui::RawInput::default();
+        input.events.push(egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        let mut out = ctx.run_ui(input, |ui| {
+            consume_shortcuts(ui.ctx(), session, dialogs);
+        });
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn f7_opens_dialog_with_a_directory_selected() {
+        let mem = fm_testkit::MemFs::new();
+        mem.mkdirs_str("/h/docs").expect("mkdirs");
+        let mut session = Session::default();
+        session.backends.register(std::sync::Arc::new(mem));
+        let uri = fm_vfs::VfsUri::parse("/h").expect("uri");
+        session.layout.state_mut(1).expect("pane").location = uri;
+        session
+            .layout
+            .state_mut(1)
+            .expect("pane")
+            .listing
+            .select_only(Some("docs"), 0);
+        let ctx = egui::Context::default();
+        let mut dialogs = Dialogs::default();
+        press(&ctx, &mut session, &mut dialogs, egui::Key::F7);
+        assert!(dialogs.is_open());
     }
 
     #[test]

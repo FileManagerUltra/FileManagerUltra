@@ -49,7 +49,7 @@ Every operation SHALL plan first: walk the sources (bounded by `MAX_DIR_ENTRIES`
 - **THEN** the job fails with an actionable error before writing anything
 
 ### Requirement: Containment guards
-`ops` SHALL refuse to copy or move a directory into itself or any descendant, SHALL treat copying an item onto its own uri as a silent no-op, and SHALL never follow symlinks: because the `Vfs` trait cannot create links in v1, a symlink in the source is reported as a skipped item (`Unsupported`) and its target is never read.
+`ops` SHALL refuse to copy or move a directory into itself or any descendant, SHALL treat copying an item onto its own uri as a silent no-op, and SHALL never follow symlinks: a source symlink is recreated as a link (`Vfs::create_symlink`) and its target is never read. A backend that cannot create links reports the item as failed (`Unsupported`).
 
 #### Scenario: Into itself
 - **WHEN** `/a` is dropped onto `/a/b`
@@ -57,4 +57,22 @@ Every operation SHALL plan first: walk the sources (bounded by `MAX_DIR_ENTRIES`
 
 #### Scenario: Symlink escape
 - **WHEN** a source tree contains a symlink pointing outside it
-- **THEN** the link is reported as a failed/skipped item and its target is not read or copied
+- **THEN** the link is recreated as a link with the same target text and its target is not read or copied
+
+### Requirement: Link re-targeting preference
+When the `retarget_links` preference is on (default), copying a tree SHALL point **absolute** symlinks whose target lies inside the copied tree at the same place under the copy. Relative links, links to other places, dangling links and targets that would escape through `..` SHALL be copied verbatim. The rewrite is a lexical path-prefix swap (never resolves or follows), only between local volumes, and never yields a target containing `..`. With the preference off every link is copied verbatim. Same-device moves are a rename and keep links untouched.
+
+#### Scenario: Inside link follows the copy
+- **WHEN** `/src/p` containing `bin/x -> /src/p/lib/a` is copied to `/dst` with the preference on
+- **THEN** `/dst/p/bin/x` points at `/dst/p/lib/a`
+
+#### Scenario: Preference off
+- **WHEN** the same copy runs with the preference off
+- **THEN** `/dst/p/bin/x` still points at `/src/p/lib/a`
+
+### Requirement: Editable location bar
+Clicking a pane's path or running `nav.goto` (Ctrl+L) SHALL turn the path into a text editor with directory completion and a session history. Completion MUST be non-blocking (cached or queued reads only), Tab completes, Up/Down select, Enter navigates via `nav.open`, Esc or focus loss cancels. A failing path SHALL leave the editor open with an error notice.
+
+#### Scenario: Complete and go
+- **WHEN** the user presses Ctrl+L, types a prefix, presses Tab and Enter
+- **THEN** the pane opens the completed directory and it is added to the history

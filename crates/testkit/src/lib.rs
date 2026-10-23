@@ -19,6 +19,7 @@ use fm_vfs::{Entry, EntryKind, FmError, Scheme, SpaceInfo, Vfs, VfsUri, WriteOpt
 enum Node {
     Dir,
     File { data: Vec<u8>, modified: SystemTime },
+    Symlink { target: String },
 }
 
 #[derive(Debug, Default)]
@@ -66,7 +67,9 @@ impl MemFs {
             let key = u.to_string();
             match g.nodes.get(&key) {
                 Some(Node::Dir) => continue,
-                Some(Node::File { .. }) => return Err(FmError::NotADirectory(key)),
+                Some(Node::File { .. } | Node::Symlink { .. }) => {
+                    return Err(FmError::NotADirectory(key));
+                }
                 None => {
                     g.nodes.insert(key, Node::Dir);
                 }
@@ -106,12 +109,21 @@ impl MemFs {
         Ok(())
     }
 
+    /// Create a symlink node holding `target` verbatim (test fixture helper).
+    pub fn put_symlink(&self, uri: &VfsUri, target: &str) -> Result<(), FmError> {
+        let parent = uri
+            .parent()
+            .ok_or(FmError::Unsupported("MemFs: cannot put the root"))?;
+        self.mkdirs(&parent)?;
+        self.create_symlink(target, uri)
+    }
+
     /// Read a file's bytes.
     pub fn get_file(&self, uri: &VfsUri) -> Result<Vec<u8>, FmError> {
         let g = self.lock();
         match g.nodes.get(&uri.to_string()) {
             Some(Node::File { data, .. }) => Ok(data.clone()),
-            Some(Node::Dir) => Err(FmError::NotADirectory(uri.to_string())),
+            Some(Node::Dir | Node::Symlink { .. }) => Err(FmError::NotADirectory(uri.to_string())),
             None => Err(FmError::NotFound(uri.to_string())),
         }
     }
@@ -208,6 +220,12 @@ fn entry_of(uri: VfsUri, node: &Node) -> Entry {
             e.modified = Some(*modified);
             e
         }
+        Node::Symlink { target } => Entry::new(
+            uri,
+            EntryKind::Symlink {
+                target: target.clone(),
+            },
+        ),
     }
 }
 
@@ -263,7 +281,9 @@ impl Vfs for MemFs {
         let g = self.lock();
         match g.nodes.get(&uri.to_string()) {
             None => Err(FmError::NotFound(uri.to_string())),
-            Some(Node::File { .. }) => Err(FmError::NotADirectory(uri.to_string())),
+            Some(Node::File { .. } | Node::Symlink { .. }) => {
+                Err(FmError::NotADirectory(uri.to_string()))
+            }
             Some(Node::Dir) => {
                 let prefix = child_prefix(uri);
                 let mut out = Vec::new();
@@ -294,6 +314,9 @@ impl Vfs for MemFs {
         match g.nodes.get(&uri.to_string()) {
             Some(Node::File { data, .. }) => Ok(Box::new(std::io::Cursor::new(data.clone()))),
             Some(Node::Dir) => Err(FmError::NotADirectory(uri.to_string())),
+            Some(Node::Symlink { .. }) => {
+                Err(FmError::Unsupported("MemFs: symlinks are never followed"))
+            }
             None => Err(FmError::NotFound(uri.to_string())),
         }
     }
@@ -309,7 +332,9 @@ impl Vfs for MemFs {
             .ok_or(FmError::Unsupported("MemFs: cannot write the root"))?;
         match g.nodes.get(&parent.to_string()) {
             Some(Node::Dir) => {}
-            Some(Node::File { .. }) => return Err(FmError::NotADirectory(parent.to_string())),
+            Some(Node::File { .. } | Node::Symlink { .. }) => {
+                return Err(FmError::NotADirectory(parent.to_string()));
+            }
             None => return Err(FmError::NotFound(parent.to_string())),
         }
         let key = uri.to_string();
@@ -347,10 +372,35 @@ impl Vfs for MemFs {
             .ok_or(FmError::Unsupported("MemFs: root always exists"))?;
         match g.nodes.get(&parent.to_string()) {
             Some(Node::Dir) => {}
-            Some(Node::File { .. }) => return Err(FmError::NotADirectory(parent.to_string())),
+            Some(Node::File { .. } | Node::Symlink { .. }) => {
+                return Err(FmError::NotADirectory(parent.to_string()));
+            }
             None => return Err(FmError::NotFound(parent.to_string())),
         }
         g.nodes.insert(key, Node::Dir);
+        Ok(())
+    }
+
+    fn create_symlink(&self, target: &str, link: &VfsUri) -> Result<(), FmError> {
+        let mut g = self.lock();
+        let key = link.to_string();
+        if g.nodes.contains_key(&key) {
+            return Err(FmError::AlreadyExists(key));
+        }
+        let parent = link
+            .parent()
+            .ok_or(FmError::Unsupported("MemFs: cannot link the root"))?;
+        match g.nodes.get(&parent.to_string()) {
+            Some(Node::Dir) => {}
+            Some(_) => return Err(FmError::NotADirectory(parent.to_string())),
+            None => return Err(FmError::NotFound(parent.to_string())),
+        }
+        g.nodes.insert(
+            key,
+            Node::Symlink {
+                target: target.to_string(),
+            },
+        );
         Ok(())
     }
 
@@ -362,7 +412,7 @@ impl Vfs for MemFs {
         let key = uri.to_string();
         match g.nodes.get(&key) {
             None => return Err(FmError::NotFound(key)),
-            Some(Node::File { .. }) => {}
+            Some(Node::File { .. } | Node::Symlink { .. }) => {}
             Some(Node::Dir) => {
                 let prefix = child_prefix(uri);
                 if g.nodes.keys().any(|k| k.starts_with(&prefix)) {
@@ -392,7 +442,9 @@ impl Vfs for MemFs {
             .ok_or_else(|| FmError::NotADirectory(to_key.clone()))?;
         match g.nodes.get(&to_parent.to_string()) {
             Some(Node::Dir) => {}
-            Some(Node::File { .. }) => return Err(FmError::NotADirectory(to_parent.to_string())),
+            Some(Node::File { .. } | Node::Symlink { .. }) => {
+                return Err(FmError::NotADirectory(to_parent.to_string()));
+            }
             None => return Err(FmError::NotFound(to_parent.to_string())),
         }
         let from_prefix = child_prefix(from);

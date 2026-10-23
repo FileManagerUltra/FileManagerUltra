@@ -270,3 +270,63 @@ fn read_write_roundtrip_through_the_trait_objects() {
     r.read_to_end(&mut all).expect("read all");
     assert_eq!(all, b"0123456789");
 }
+
+#[cfg(unix)]
+#[test]
+#[allow(clippy::expect_used)]
+fn create_symlink_stores_the_target_verbatim_and_never_follows_it() {
+    let tmp = tempdir();
+    let root = tmp.path();
+    fs::write(root.join("real.txt"), b"data").expect("write");
+    let fs_ = LocalFs::new();
+
+    let link = uri(&root.join("link"));
+    fs_.create_symlink("real.txt", &link).expect("create");
+    fs_.create_symlink("/does/not/exist", &uri(&root.join("dangling")))
+        .expect("dangling");
+    assert_eq!(
+        fs::read_link(root.join("link")).expect("read_link"),
+        std::path::Path::new("real.txt")
+    );
+    assert!(matches!(
+        fs_.stat(&link).expect("stat").kind,
+        EntryKind::Symlink { ref target } if target == "real.txt"
+    ));
+    assert!(matches!(
+        fs_.create_symlink("x", &link),
+        Err(FmError::AlreadyExists(_))
+    ));
+    fs_.remove(&link).expect("remove link");
+    assert!(
+        root.join("real.txt").exists(),
+        "removing a link keeps its target"
+    );
+}
+
+#[test]
+#[allow(clippy::expect_used)]
+fn links_to_directories_are_flagged_openable() {
+    let tmp = tempdir();
+    let root = tmp.path();
+    fs::create_dir(root.join("realdir")).expect("mkdir");
+    fs::write(root.join("file.txt"), b"x").expect("write");
+    let fs_ = LocalFs::new();
+    // Skip silently where the OS refuses links (Windows without the privilege).
+    if fs_
+        .create_symlink("realdir", &uri(&root.join("dlink")))
+        .is_err()
+        || fs_
+            .create_symlink("file.txt", &uri(&root.join("flink")))
+            .is_err()
+        || fs_
+            .create_symlink("nowhere", &uri(&root.join("broken")))
+            .is_err()
+    {
+        return;
+    }
+    let by_name = |n: &str| fs_.stat(&uri(&root.join(n))).expect("stat");
+    assert!(by_name("dlink").link_to_dir && by_name("dlink").is_dir_like());
+    assert!(!by_name("flink").link_to_dir);
+    assert!(!by_name("broken").link_to_dir);
+    assert!(!by_name("realdir").link_to_dir && by_name("realdir").is_dir_like());
+}

@@ -48,3 +48,11 @@
 - [x] 7.1 Security tests from the delta: traversal names, cancelled write leaves nothing, no silent trash downgrade, redacted errors
 - [x] 7.2 `docs/architecture.md` §7/§8 synced to the landed shape; `docs/development.md` manual DnD/ops smoke checklist; roadmap status
 - [ ] 7.3 Whole `cargo xtask ci` green; manual smoke on a real window (user); `log/devlog.md` entry with numbers; commit + `/opsx-archive` on user go-ahead
+
+## 8. Follow-ups (post-group 7)
+
+- [x] 8.1 `New File` (`file.newfile`, Shift+F7): empty file via `Vfs::open_write`, never overwrites; undoable
+- [x] 8.2 Symlinks: `Vfs::create_symlink` (local unix/windows, `MemFs`), copy recreates links, `retarget_links` preference + `prefs.links.retarget` command
+- [x] 8.3 Preferences dialog (`app.preferences`, Ctrl+, / Cmd+,): theme and link re-targeting; dark + light snapshot
+- [x] 8.4 Editable location bar (`nav.goto` Ctrl+L / click path, `nav.goto.commit`, `nav.goto.cancel`): directory completion from `DirCache` (non-blocking), session history (100), Tab completes, Up/Down select, Esc cancels; Go menu
+- [x] 8.5 Tree follows the pane (expand + focus + scroll), arrow-key navigation fixes (Right/Left/Enter), link-target toggle (`view.links.toggle`) and link icon, X11 forcing for OS drops on Wayland

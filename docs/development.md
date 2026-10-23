@@ -88,7 +88,7 @@ Yes works
 5. Panes → Split Horizontally/Vertically creates a second pane; click focuses a pane (accent ring), `Tab` swaps with the previous pane, `Panes → Close` removes it.
 Everything works except Tab, this tabs through menu items, then direcotries in tree, then items in the file pane
 
-6. Click a sort header to re-sort in place; `Ctrl+H` toggles directories-first.
+6. Click a sort header to re-sort in place; `Ctrl+H`, View → Show Hidden Files or the status-bar button toggles hidden files (hidden by default).
 Works, but size column is overflowed by date column, no clear column distinctions/boundaries.
 
 
@@ -108,6 +108,7 @@ Use a scratch directory with a few files, a subfolder and one name that exists i
 1. Drag a file from one pane onto a folder row in the other: accent outline + `Move 1 item` (same device) or `Copy 1 item`. Hold Ctrl → `Copy`, Shift → `Move`, Ctrl+Shift or dropping a folder onto itself → no-drop cursor. Escape cancels the drag.
 2. Select several files, drag one of them: the badge counts the whole selection. Drag a tree node onto the other pane's listing background.
 3. `F5` / `F6` copy / move to the other pane; with a single pane a destination dialog asks. Same-named file: the conflict dialog offers Overwrite / Keep both / Skip / Cancel + Apply to all; Escape cancels.
+4. `Shift+F7` new empty file (never overwrites); `Ctrl+,` opens Preferences (theme, re-target links on copy); copying a tree with absolute in-tree symlinks (e.g. `node_modules/.bin`) recreates them as links.
 4. `F7` new folder (invalid or duplicate name shows the error and disables OK); `F2` rename.
 5. `F8` moves to the OS trash, `Shift+Delete` asks for confirmation; `Ctrl+Z` undoes the last copy / move / rename / trash (macOS cannot restore from the trash — an error is shown).
 6. A large copy shows progress in the status bar and jobs panel; Cancel stops it and leaves no partial files. Failures list per item and can be dismissed.

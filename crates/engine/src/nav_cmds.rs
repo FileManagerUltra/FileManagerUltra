@@ -24,6 +24,15 @@ fn uri_param(params: &Params) -> Result<String, FmError> {
     ))
 }
 
+/// A navigation that did not start in the tree also expands the directory it lands on
+/// (tree clicks toggle that node themselves).
+fn expand_unless_tree_driven(pane: &mut fm_layout::PaneState) {
+    if !pane.tree.active && pane.location != pane.tree.root {
+        let loc = pane.location.clone();
+        pane.tree.expand(loc);
+    }
+}
+
 /// `nav.open` — navigate the focused pane to a uri.
 pub fn open() -> CommandSpec {
     CommandSpec {
@@ -46,7 +55,9 @@ pub fn open() -> CommandSpec {
                     .state_mut(focused)
                     .ok_or_else(|| FmError::NotFound("focused pane".to_string()))?;
                 pane.navigate(to.clone());
+                expand_unless_tree_driven(pane);
             }
+            s.note_visit(&to);
             s.ensure_read(to)?;
             Ok(())
         },
@@ -71,7 +82,9 @@ pub fn up() -> CommandSpec {
             let focused = s.layout.focused();
             if let Some(pane) = s.layout.state_mut(focused) {
                 pane.navigate(target.clone());
+                expand_unless_tree_driven(pane);
             }
+            s.note_visit(&target);
             s.ensure_read(target)?;
             Ok(())
         },
@@ -89,8 +102,13 @@ pub fn back() -> CommandSpec {
         enabled: |s| focused_pane(s).is_some_and(|p| p.can_go_back()),
         run: |s, _p: &Params| {
             let focused = s.layout.focused();
-            let moved = s.layout.state_mut(focused).is_some_and(|p| p.go_back());
+            let moved = s.layout.state_mut(focused).is_some_and(|p| {
+                let moved = p.go_back();
+                expand_unless_tree_driven(p);
+                moved
+            });
             if moved && let Some(loc) = s.layout.state(focused).map(|p| p.location.clone()) {
+                s.note_visit(&loc);
                 s.ensure_read(loc)?;
             }
             Ok(())
@@ -109,8 +127,13 @@ pub fn forward() -> CommandSpec {
         enabled: |s| focused_pane(s).is_some_and(|p| p.can_go_forward()),
         run: |s, _p: &Params| {
             let focused = s.layout.focused();
-            let moved = s.layout.state_mut(focused).is_some_and(|p| p.go_forward());
+            let moved = s.layout.state_mut(focused).is_some_and(|p| {
+                let moved = p.go_forward();
+                expand_unless_tree_driven(p);
+                moved
+            });
             if moved && let Some(loc) = s.layout.state(focused).map(|p| p.location.clone()) {
+                s.note_visit(&loc);
                 s.ensure_read(loc)?;
             }
             Ok(())
@@ -188,6 +211,16 @@ mod tests {
         wait_ready(&mut s, &docs);
         let (entries, _) = s.pane_view(1).expect("view");
         assert_eq!(entries.len(), 1, "a.txt");
+    }
+
+    #[test]
+    fn open_expands_and_focuses_the_directory_in_the_tree() {
+        let (mut s, _mem, home) = mem_session();
+        let docs = home.join("docs").expect("uri");
+        (open().run)(&mut s, &Params::String(docs.to_string())).expect("open");
+        let pane = s.layout.state(s.layout.focused()).expect("pane");
+        assert!(pane.tree.is_expanded(&docs));
+        assert_eq!(pane.tree.focused.as_ref(), Some(&docs));
     }
 
     #[test]

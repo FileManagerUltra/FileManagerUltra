@@ -16,7 +16,7 @@ This document is the source of truth for the crate map, layering, data model, co
 - File operations (copy/move/rename/mkdir/delete) as background jobs with progress and cancel.
 - Delete goes to the platform trash, with undo.
 - Live directory updates via filesystem notifications.
-- Commander-style shortcuts (F5 copy, F6 move, F7 mkdir, F8 delete, Tab = swap panes).
+- Commander-style shortcuts (F5 copy, F6 move, F7 mkdir, F8 delete, Shift+F7 new file, Ctrl+, preferences, Ctrl+L edit path, Tab = swap panes; symlinks are recreated, never followed, with optional re-targeting).
 
 **Non-goals (v1)**
 
@@ -291,7 +291,7 @@ Guards enforced by `ops` regardless of UI: never drop a directory into itself or
 - **Listing (`fm-ui::listing`):** fixed row height + `ScrollArea::show_rows` (virtualized) so 200 000 rows cost one screenful of widgets; columns name/size/mtime/type with header-click sort (dispatched into the engine's per-pane view index, never a re-read); `..` row; click/ctrl/shift selection; keyboard (arrows/Home/End/Ctrl+A/Enter) on the focused pane; loading / empty / failed (+Ctrl+R hint) states.
 - **Tree (`fm-ui::tree`):** lazy — rows are flattened from `DirCache` for expanded nodes only (row cap 10 000); expand on click/Right, collapse Left, Enter opens; loading/error affordances inline; long names ellipsize with a full-path tooltip.
 - **Shell (`fm-app`):** recursive `render_pane_node` walks `PaneNode`; splits lay out two children with a drag handle writing `Layout::set_ratio` (clamped); the status bar shows the focused pane's location, item count, selection count and theme; `Session::poll()` runs once per frame and the startup read is submitted before the first paint.
-- **Shortcut routing:** `fm-app`'s catalogue maps keys → command ids (`Ctrl+Q` quit, `Ctrl+Shift+T` theme toggle, `Tab` pane.swap, `Backspace` nav.up, `Alt+Left/Right` nav.back/forward, `Ctrl+R` nav.refresh, `Ctrl+H` sort dirs-first); every entry must exist in the registry or the crate tests + `brand-check` fail it.
+- **Shortcut routing:** `fm-app`'s catalogue maps keys → command ids (`Ctrl+Q` quit, `Ctrl+Shift+T` theme toggle, `Tab` pane.swap, `Backspace` nav.up, `Alt+Left/Right` nav.back/forward, `Ctrl+R` nav.refresh, `Ctrl+H` view.hidden.toggle (dot-files hidden by default, session-wide)); every entry must exist in the registry or the crate tests + `brand-check` fail it.
 - **Dialogs:** conflict resolution, connect (SMB/SFTP), progress/jobs panel, error toasts — later changes, all `fm-ui` components driven by `Session`.
 
 ### 9.1 Theming and dark mode

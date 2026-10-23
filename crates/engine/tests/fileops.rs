@@ -1,5 +1,5 @@
 //! File jobs through `Session`: commands in, polled events out, never blocking the caller.
-#![allow(clippy::expect_used)]
+#![allow(clippy::expect_used, clippy::panic)]
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -245,6 +245,81 @@ fn a_stale_undo_fails_actionably_and_is_dropped() {
     assert!(matches!(finish(&mut s, id), OpState::Failed(_)));
     assert_eq!(fs.get_str("/d/b.txt").expect("kept"), b"x");
     assert!(s.undo.is_empty());
+}
+
+#[test]
+fn newfile_creates_empty_file_and_undo_removes_it() {
+    let fs = MemFs::new();
+    fs.mkdirs_str("/d").expect("d");
+    let mut s = session_on(Arc::new(fs.clone()));
+    dispatch(
+        &mut s,
+        "file.newfile",
+        json!({"parent": "/d", "name": "n.txt"}),
+    )
+    .expect("newfile");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert_eq!(fs.get_str("/d/n.txt").expect("file"), b"");
+    assert_eq!(s.undo.len(), 1);
+    assert!(dispatch(&mut s, "file.newfile", json!({"parent": "/d"})).is_err());
+    assert!(
+        dispatch(
+            &mut s,
+            "file.newfile",
+            json!({"parent": "/d", "name": "../x"})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn tree_directory_is_the_target_until_the_listing_is_used() {
+    let fs = MemFs::new();
+    fs.mkdirs_str("/d/sub").expect("sub");
+    let mut s = session_on(Arc::new(fs.clone()));
+    {
+        let pane = s.layout.state_mut(1).expect("pane");
+        pane.location = uri("/d");
+        pane.tree.focused = Some(uri("/d/sub"));
+        pane.tree.active = true;
+    }
+    assert!(s.command_enabled("file.delete"));
+    assert_eq!(
+        fm_engine::file_cmds::focused_selection(&s),
+        vec![uri("/d/sub")]
+    );
+    s.layout.state_mut(1).expect("pane").tree.active = false;
+    assert!(!s.command_enabled("file.delete"));
+    let pane = s.layout.state_mut(1).expect("pane");
+    pane.tree.focused = Some(uri("/"));
+    pane.tree.active = true;
+    assert!(!s.command_enabled("file.delete"), "roots are never targets");
+}
+
+#[test]
+fn copy_retargets_inside_links_only_when_the_preference_is_on() {
+    for (retarget, expected) in [(true, "/dst/p/lib/a"), (false, "/src/p/lib/a")] {
+        let fs = MemFs::new();
+        fs.put_str("/src/p/lib/a", b"x").expect("put");
+        fs.put_symlink(&uri("/src/p/link"), "/src/p/lib/a")
+            .expect("link");
+        fs.mkdirs_str("/dst").expect("dst");
+        let mut s = session_on(Arc::new(fs.clone()));
+        dispatch(&mut s, "prefs.links.retarget", json!({"value": retarget})).expect("pref");
+        dispatch(
+            &mut s,
+            "file.copy",
+            json!({"sources": ["/src/p"], "dest": "/dst"}),
+        )
+        .expect("copy");
+        let id = only_job(&s.fileops);
+        assert_eq!(finish(&mut s, id), OpState::Finished);
+        match fs.stat(&uri("/dst/p/link")).expect("stat").kind {
+            fm_vfs::EntryKind::Symlink { target } => assert_eq!(target, expected),
+            other => panic!("expected a link, got {other:?}"),
+        }
+    }
 }
 
 #[test]

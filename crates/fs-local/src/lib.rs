@@ -67,6 +67,33 @@ fn map_io(e: std::io::Error, path: &str) -> FmError {
     }
 }
 
+#[cfg(unix)]
+fn make_symlink(target: &str, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+/// Windows distinguishes directory and file links; creating either needs Developer Mode or
+/// the symlink privilege, which surfaces as a permission error.
+#[cfg(windows)]
+fn make_symlink(target: &str, link: &Path) -> std::io::Result<()> {
+    let resolved = link
+        .parent()
+        .map_or_else(|| PathBuf::from(target), |p| p.join(target));
+    if fs::metadata(&resolved).is_ok_and(|m| m.is_dir()) {
+        std::os::windows::fs::symlink_dir(target, link)
+    } else {
+        std::os::windows::fs::symlink_file(target, link)
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn make_symlink(_target: &str, _link: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "symbolic links are not supported on this platform",
+    ))
+}
+
 fn kind_of(meta: &fs::Metadata, path: &Path) -> EntryKind {
     let ft = meta.file_type();
     if ft.is_symlink() {
@@ -117,7 +144,31 @@ fn entry_for(parent_uri: &VfsUri, path: &Path, name: String) -> Option<Entry> {
         size,
         modified,
         permissions,
+        hidden: os_hidden(&link_meta),
+        link_to_dir: link_meta.file_type().is_symlink()
+            && follow.as_ref().is_some_and(|m| m.is_dir()),
     })
+}
+
+/// The platform's own hidden flag (dot-names are handled by the engine).
+fn os_hidden(meta: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        meta.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::macos::fs::MetadataExt;
+        const UF_HIDDEN: u32 = 0x8000;
+        meta.st_flags() & UF_HIDDEN != 0
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = meta;
+        false
+    }
 }
 
 impl Vfs for LocalFs {
@@ -165,6 +216,9 @@ impl Vfs for LocalFs {
                 None
             },
             modified: meta.modified().ok(),
+            hidden: os_hidden(&meta),
+            link_to_dir: meta.file_type().is_symlink()
+                && fs::metadata(&path).is_ok_and(|m| m.is_dir()),
             permissions: {
                 #[cfg(unix)]
                 {
@@ -204,6 +258,11 @@ impl Vfs for LocalFs {
         let path = self.path(uri)?;
         let display = uri.path_str();
         fs::create_dir(&path).map_err(|e| map_io(e, display))
+    }
+
+    fn create_symlink(&self, target: &str, link: &VfsUri) -> Result<(), FmError> {
+        let path = self.path(link)?;
+        make_symlink(target, &path).map_err(|e| map_io(e, link.path_str()))
     }
 
     fn remove(&self, uri: &VfsUri) -> Result<(), FmError> {

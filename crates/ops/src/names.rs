@@ -17,7 +17,23 @@ pub fn validate_name(name: &str) -> Result<(), FmError> {
     {
         return Err(FmError::InvalidParams(format!("invalid name: {name:?}")));
     }
+    if cfg!(windows) && !is_windows_safe(name) {
+        return Err(FmError::InvalidParams(format!("invalid name: {name:?}")));
+    }
     Ok(())
+}
+
+/// Names Windows cannot store: reserved characters, device names, trailing dot/space.
+pub fn is_windows_safe(name: &str) -> bool {
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if name.chars().any(|c| "<>:\"|?*".contains(c)) || name.ends_with('.') || name.ends_with(' ') {
+        return false;
+    }
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    !RESERVED.contains(&stem.as_str())
 }
 
 /// `a.txt` → `a (2).txt`; dotfiles and extension-less names get the suffix appended.
@@ -60,6 +76,15 @@ mod tests {
             );
         }
         assert!(validate_name("ok name.txt").is_ok());
+    }
+
+    #[test]
+    fn windows_rules_are_checked_by_the_helper() {
+        for bad in ["a:b", "a?", "CON", "nul.txt", "x.", "x ", "a|b"] {
+            assert!(!is_windows_safe(bad), "{bad:?}");
+        }
+        assert!(is_windows_safe("console.txt"));
+        assert!(is_windows_safe("ok name.txt"));
     }
 
     #[test]

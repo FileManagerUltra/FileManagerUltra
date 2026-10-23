@@ -184,6 +184,25 @@ fn import_os_drops(ctx: &egui::Context, session: &mut Session) {
     );
 }
 
+/// winit's Wayland backend cannot receive file drops from other apps, so on Linux we use
+/// XWayland (XDND) when an X display exists. `FM_WAYLAND=1` opts back into native Wayland.
+#[cfg(target_os = "linux")]
+fn prefer_x11() -> Option<eframe::EventLoopBuilderHook> {
+    use winit::platform::x11::EventLoopBuilderExtX11;
+    let has_x = std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty());
+    if !has_x || std::env::var_os("FM_WAYLAND").is_some() {
+        return None;
+    }
+    Some(Box::new(|builder| {
+        builder.with_x11();
+    }))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn prefer_x11() -> Option<eframe::EventLoopBuilderHook> {
+    None
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -194,6 +213,10 @@ impl eframe::App for App {
         import_os_drops(&ctx, &mut self.session);
         self.sync_theme(&ctx);
         let _ = self.session.poll();
+        // egui only repaints on input; keep frames flowing while jobs run.
+        if self.session.is_busy() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(33));
+        }
 
         // The title is set on the native window at creation, but some
         // compositors only show it after an explicit `set_title`. Send it once
@@ -242,6 +265,19 @@ impl eframe::App for App {
                     ui.label(tokens.muted(format!("{selected} selected")));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = if self.session.show_hidden {
+                        "Hidden: shown (Ctrl+H)"
+                    } else {
+                        "Hidden: off (Ctrl+H)"
+                    };
+                    if ui
+                        .add(egui::Button::new(tokens.muted(label)).frame(false))
+                        .on_hover_text("Show or hide hidden files")
+                        .clicked()
+                    {
+                        self.session
+                            .dispatch_or_notice("view.hidden.toggle", &fm_engine::Params::Null);
+                    }
                     ui.label(tokens.muted(fm_brand::APP_NAME));
                     ui.label(tokens.muted(format!(
                         "Theme: {}",
@@ -266,11 +302,13 @@ impl eframe::App for App {
 
         self.dialogs.show(&ctx, &mut self.session, &tokens);
         fm_ui::jobs::show(&ctx, &mut self.session, &tokens);
+        fm_ui::preferences::show(&ctx, &mut self.session, &tokens);
 
         if self.session.about_open {
             let mut open = self.session.about_open;
             egui::Window::new("About")
                 .collapsible(false)
+                .movable(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .open(&mut open)
@@ -327,6 +365,7 @@ fn main() -> eframe::Result {
             .with_inner_size(egui::vec2(1024.0, 700.0))
             .with_drag_and_drop(true)
             .with_min_inner_size(egui::vec2(640.0, 400.0)),
+        event_loop_builder: prefer_x11(),
         ..Default::default()
     };
 

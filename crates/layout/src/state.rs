@@ -121,6 +121,15 @@ pub struct TreeState {
     /// for a few frames (egui drops focus when a widget stops rendering).
     #[serde(default)]
     pub focused: Option<VfsUri>,
+    /// The tree (not the listing) is the active area: file commands act on `focused`.
+    #[serde(default)]
+    pub active: bool,
+    /// The tree should scroll the current location into view once its row exists.
+    #[serde(default)]
+    pub reveal: bool,
+    /// The focused node was moved by the keyboard off-screen: scroll it into view.
+    #[serde(default)]
+    pub scroll_focus: bool,
     pub scroll: f32,
 }
 
@@ -133,6 +142,9 @@ impl TreeState {
             root,
             expanded,
             focused: None,
+            active: false,
+            reveal: false,
+            scroll_focus: false,
             scroll: 0.0,
         }
     }
@@ -372,6 +384,31 @@ impl PaneState {
         self.listing.clear_selection();
         self.listing.focused_row = 0;
         self.listing.scroll = 0.0;
+        self.reveal_location();
+    }
+
+    /// Make the tree follow `location`: expand its ancestors (never the node itself, so a
+    /// tree click can still collapse it), focus it and ask for it to be scrolled into view.
+    /// Locations outside the tree's root are ignored.
+    pub fn reveal_location(&mut self) {
+        let mut chain = Vec::new();
+        let mut cur = self.location.parent();
+        while let Some(p) = cur {
+            chain.push(p.clone());
+            if p == self.tree.root {
+                for uri in chain {
+                    self.tree.expand(uri);
+                }
+                self.tree.focused = Some(self.location.clone());
+                self.tree.reveal = !self.tree.active;
+                return;
+            }
+            cur = p.parent();
+        }
+        if self.location == self.tree.root {
+            self.tree.focused = Some(self.location.clone());
+            self.tree.reveal = !self.tree.active;
+        }
     }
 
     pub fn can_go_back(&self) -> bool {
@@ -389,6 +426,7 @@ impl PaneState {
                 self.location = loc;
                 self.listing.clear_selection();
                 self.listing.focused_row = 0;
+                self.reveal_location();
                 true
             }
             None => false,
@@ -402,6 +440,7 @@ impl PaneState {
                 self.location = loc;
                 self.listing.clear_selection();
                 self.listing.focused_row = 0;
+                self.reveal_location();
                 true
             }
             None => false,
@@ -440,6 +479,8 @@ mod tests {
             size,
             modified: None,
             permissions: None,
+            hidden: false,
+            link_to_dir: false,
         }
     }
 
@@ -698,6 +739,26 @@ mod tests {
         let once: Vec<Entry> = dups.clone();
         spec.sort(&mut dups);
         assert_eq!(dups, once);
+    }
+
+    #[test]
+    fn navigating_makes_the_tree_follow() {
+        let mut p = PaneState::new(uri("/"));
+        p.navigate(uri("/a/b/c"));
+        assert!(p.tree.is_expanded(&uri("/a")) && p.tree.is_expanded(&uri("/a/b")));
+        assert!(
+            !p.tree.is_expanded(&uri("/a/b/c")),
+            "the node itself is left alone"
+        );
+        assert_eq!(p.tree.focused.as_ref(), Some(&uri("/a/b/c")));
+        assert!(p.tree.reveal);
+        p.tree.reveal = false;
+        p.tree.active = true;
+        p.navigate(uri("/a/b/d"));
+        assert!(
+            !p.tree.reveal,
+            "tree-driven navigation does not re-scroll the tree"
+        );
     }
 
     #[test]

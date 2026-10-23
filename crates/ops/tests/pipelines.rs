@@ -293,6 +293,27 @@ fn copying_onto_itself_is_a_silent_noop() {
 }
 
 #[test]
+fn create_file_makes_empty_file_and_never_overwrites() {
+    let fs = sample();
+    let b = SingleBackend(Arc::new(fs.clone()));
+    for bad in ["", "..", "a/b", "x\0y"] {
+        assert!(matches!(
+            fm_ops::create_file(&b, &uri("/dst"), bad),
+            Err(FmError::InvalidParams(_))
+        ));
+    }
+    let made = fm_ops::create_file(&b, &uri("/dst"), "new.txt").expect("create");
+    assert_eq!(made, uri("/dst/new.txt"));
+    assert_eq!(fs.get_str("/dst/new.txt").expect("get"), b"");
+    fs.put_str("/dst/keep.txt", b"data").expect("put");
+    assert!(matches!(
+        fm_ops::create_file(&b, &uri("/dst"), "keep.txt"),
+        Err(FmError::AlreadyExists(_))
+    ));
+    assert_eq!(fs.get_str("/dst/keep.txt").expect("get"), b"data");
+}
+
+#[test]
 fn mkdir_and_rename_validate_names() {
     let fs = sample();
     let b = SingleBackend(Arc::new(fs.clone()));

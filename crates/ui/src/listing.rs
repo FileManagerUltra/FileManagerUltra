@@ -100,6 +100,21 @@ struct Columns {
     ty: egui::Rect,
 }
 
+/// Space before every name reserved for the row icon (link arrow).
+const ICON_GUTTER: f32 = 16.0;
+
+/// A small bent arrow drawn with strokes, so it never depends on font glyphs.
+fn paint_link_icon(painter: &egui::Painter, origin: egui::Pos2, color: egui::Color32) {
+    let stroke = egui::Stroke::new(1.0, color.gamma_multiply(0.6));
+    let (x0, y0) = (origin.x + 1.0, origin.y);
+    let corner = egui::pos2(x0 + 1.0, y0 - 2.5);
+    let tip = egui::pos2(x0 + 8.0, y0 - 2.5);
+    painter.line_segment([egui::pos2(x0 + 1.0, y0 + 3.0), corner], stroke);
+    painter.line_segment([corner, tip], stroke);
+    painter.line_segment([tip, egui::pos2(x0 + 5.5, y0 - 5.0)], stroke);
+    painter.line_segment([tip, egui::pos2(x0 + 5.5, y0)], stroke);
+}
+
 /// Lay out the columns for `rect`, picking the widest layout that fits beside a
 /// usable Name column; dropped columns get zero width (and are not drawn).
 fn columns(rect: egui::Rect) -> Columns {
@@ -226,7 +241,8 @@ fn ready_rows(
     // applied on the same frame without fighting the wheel).
     let mut scroll_to: Option<f32> = None;
     let mut open_key = false;
-    if pane_focused {
+    let tree_active = s.layout.state(pane).is_some_and(|p| p.tree.active);
+    if pane_focused && !tree_active && !ui.ctx().text_edit_focused() {
         let outcomes: Vec<KeyOutcome> = ui.input(|i| {
             i.events
                 .iter()
@@ -245,7 +261,12 @@ fn ready_rows(
             && let Some(state) = s.layout.state_mut(pane)
         {
             let listing = &mut state.listing;
+            let mut moved = false;
             for outcome in outcomes {
+                moved |= matches!(
+                    outcome,
+                    KeyOutcome::Move(..) | KeyOutcome::Absolute(..) | KeyOutcome::SelectAll
+                );
                 match outcome {
                     KeyOutcome::None => {}
                     KeyOutcome::Move(delta, extend) => listing.move_focus(&names, delta, extend),
@@ -261,15 +282,18 @@ fn ready_rows(
                     KeyOutcome::Open => open_key = true,
                 }
             }
-            let row = listing.focused_row.min(names.len().saturating_sub(1));
-            scroll_to = Some(row as f32 * tokens.row_height);
+            // Keys that do not move focus (bare Shift/Ctrl, letters) must not re-scroll.
+            if moved {
+                let row = listing.focused_row.min(names.len().saturating_sub(1));
+                scroll_to = Some(row as f32 * tokens.row_height);
+            }
         }
     }
     if open_key {
         let focus = s.layout.state(pane).map(|p| p.listing.focused_row);
         let name = focus.and_then(|row| names.get(row).cloned());
         if let Some(name) = name
-            && let Some(entry) = entries.iter().find(|e| e.name == name && e.is_dir())
+            && let Some(entry) = entries.iter().find(|e| e.name == name && e.is_dir_like())
         {
             open = Some(entry.uri.clone());
         }
@@ -371,6 +395,7 @@ fn entry_row_ui(
         let modifiers = ui.input(|i| i.modifiers);
         let names = display_names(s, pane);
         if let Some(state) = s.layout.state_mut(pane) {
+            state.tree.active = false;
             if modifiers.shift {
                 state.listing.extend_to(&names, row);
             } else if modifiers.command {
@@ -380,7 +405,7 @@ fn entry_row_ui(
             }
         }
     }
-    let open = if response.double_clicked() && entry.is_dir() {
+    let open = if response.double_clicked() && entry.is_dir_like() {
         Some(entry.uri.clone())
     } else {
         None
@@ -396,20 +421,42 @@ fn entry_row_ui(
     if let Some(bg) = bg {
         ui.painter().rect_filled(rect, 0.0, bg);
     }
+    // Norton-style cues: directories get the accent colour and a trailing slash, links the
+    // muted colour and an `@`; plain files keep the primary text colour.
     let text_color = if selected {
         tokens.selection_text
+    } else if entry.is_dir_like() {
+        tokens.accent
+    } else if entry.is_symlink() {
+        tokens.text_muted
     } else {
         tokens.text
+    };
+    let display_name = if let EntryKind::Symlink { target } = &entry.kind {
+        let slash = if entry.link_to_dir { "/" } else { "" };
+        if s.show_link_targets {
+            format!("{}{slash} -> {target}", entry.name)
+        } else {
+            format!("{}{slash}", entry.name)
+        }
+    } else if entry.is_dir() {
+        format!("{}/", entry.name)
+    } else {
+        entry.name.clone()
     };
     let cols = columns(rect);
     if cols.name.width() >= 1.0 {
         let name = ellipsize_name(
-            &entry.name,
-            cols.name.width() - 2.0 * tokens.padding,
+            &display_name,
+            cols.name.width() - 2.0 * tokens.padding - ICON_GUTTER,
             tokens,
         );
+        if entry.is_symlink() {
+            let origin = cols.name.left_center() + egui::vec2(tokens.padding, 0.0);
+            paint_link_icon(ui.painter(), origin, text_color);
+        }
         ui.painter().text(
-            cols.name.left_center() + egui::vec2(tokens.padding, 0.0),
+            cols.name.left_center() + egui::vec2(tokens.padding + ICON_GUTTER, 0.0),
             egui::Align2::LEFT_CENTER,
             name,
             tokens.font(),
@@ -417,7 +464,11 @@ fn entry_row_ui(
         );
     }
     if cols.size.width() >= 1.0 {
-        let size = entry.size.map(human_size).unwrap_or_default();
+        let size = if entry.is_dir_like() {
+            "<DIR>".to_string()
+        } else {
+            entry.size.map(human_size).unwrap_or_default()
+        };
         ui.painter().text(
             cols.size.right_center() - egui::vec2(tokens.padding, 0.0),
             egui::Align2::RIGHT_CENTER,

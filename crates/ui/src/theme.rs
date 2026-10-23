@@ -118,7 +118,7 @@ impl Tokens {
 
     /// Base font, sized from tokens.
     pub fn font(&self) -> FontId {
-        FontId::proportional(self.font_size)
+        FontId::monospace(self.font_size)
     }
 
     /// Muted text helper for status bars and hints.
@@ -166,6 +166,9 @@ pub fn apply_to(ctx: &Context, tokens: &Tokens) {
     let padding = tokens.padding;
     ctx.style_mut_of(theme, |style| {
         style.spacing.item_spacing = Vec2::new(padding, padding);
+        for font in style.text_styles.values_mut() {
+            font.family = egui::FontFamily::Monospace;
+        }
         style.spacing.button_padding = Vec2::new(padding, padding * 0.6);
     });
 }

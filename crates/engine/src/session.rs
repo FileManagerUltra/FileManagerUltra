@@ -27,6 +27,7 @@ pub const MAX_PARAMS_DEPTH: u32 = 32;
 pub struct ViewIndex {
     pub revision: u64,
     pub sort: SortSpec,
+    pub hidden: bool,
     /// Indices into the cached entry slice.
     pub order: Arc<[u32]>,
 }
@@ -44,8 +45,18 @@ pub struct Session {
     pub running: bool,
     /// Last command failure the user should see (status bar); the UI clears it.
     pub notice: Option<String>,
+    /// Dot-files are hidden by default; `view.hidden.toggle` flips this for every pane.
+    pub show_hidden: bool,
+    /// Show `-> target` after symlink names; `view.links.toggle` flips it.
+    pub show_link_targets: bool,
+    /// The pane location being edited (`nav.goto`), with its suggestions.
+    pub path_edit: Option<crate::goto_cmds::PathEdit>,
+    /// Visited locations this session, most recent first (feeds path suggestions).
+    pub path_history: Vec<String>,
     /// `app.about` raises this flag; the UI shows the dialog and clears it.
     pub about_open: bool,
+    /// Set by `app.preferences`; the UI renders the dialog and clears it.
+    pub preferences_open: bool,
     /// Shared directory listings (capability `directory-cache`).
     pub dirs: DirCache,
     /// Scheme → backend; local disk is always registered.
@@ -73,7 +84,12 @@ impl Default for Session {
             layout: Layout::single(VfsUri::root_file()),
             running: true,
             notice: None,
+            show_hidden: false,
+            show_link_targets: true,
+            path_edit: None,
+            path_history: Vec::new(),
             about_open: false,
+            preferences_open: false,
             dirs: DirCache::new(),
             backends: VfsRegistry::with_local(),
             fileops: FileOps::default(),
@@ -174,6 +190,11 @@ impl Session {
         self.submit_read(uri)
     }
 
+    /// Whether background work is in flight, so the app must keep polling without user input.
+    pub fn is_busy(&self) -> bool {
+        !self.inflight.is_empty() || self.fileops.jobs().iter().any(|j| j.state.is_running())
+    }
+
     /// Drain job events; apply staged directory reads into the cache, prune
     /// vanished selections and rebuild affected view indexes. Returns `true`
     /// when anything observable changed (the UI should repaint).
@@ -241,6 +262,7 @@ impl Session {
             let state = self.layout.state(pane)?;
             (state.location.clone(), state.listing.sort.clone())
         };
+        let show_hidden = self.show_hidden;
         let (revision, entries) = match self.dirs.state(&loc) {
             DirState::Ready { revision, entries } => (revision, entries),
             _ => return None,
@@ -248,10 +270,13 @@ impl Session {
         if let Some(ix) = self.indexes.get(&pane)
             && ix.revision == revision
             && ix.sort == sort
+            && ix.hidden == show_hidden
         {
             return Some(ix.clone());
         }
-        let mut order: Vec<u32> = (0..entries.len() as u32).collect();
+        let mut order: Vec<u32> = (0..entries.len() as u32)
+            .filter(|i| show_hidden || entries.get(*i as usize).is_some_and(|e| !is_hidden(e)))
+            .collect();
         order.sort_by(|a, b| {
             let ea = entries.get(*a as usize);
             let eb = entries.get(*b as usize);
@@ -265,6 +290,7 @@ impl Session {
         let ix = ViewIndex {
             revision,
             sort,
+            hidden: show_hidden,
             order: order.into(),
         };
         self.indexes.insert(pane, ix.clone());
@@ -283,6 +309,11 @@ impl Session {
     pub fn invalidate_view(&mut self, pane: PaneId) {
         self.indexes.remove(&pane);
     }
+}
+
+/// Hidden on any platform: a leading dot, or the backend reported the OS hidden flag.
+pub fn is_hidden(entry: &fm_vfs::Entry) -> bool {
+    entry.hidden || entry.name.starts_with('.')
 }
 
 /// Validate an untrusted parameter payload against the caps. Total over any input:
@@ -599,6 +630,36 @@ mod tests {
         let listing = &s.layout.state(1).expect("pane").listing;
         assert!(!listing.is_selected("a.txt"), "vanished name pruned");
         assert!(listing.is_selected("b.txt"), "survivor kept");
+    }
+
+    #[test]
+    fn hidden_entries_are_filtered_until_toggled() {
+        let (mut s, mem, uri) = mem_session();
+        mem.put_str("/d/.secret", b"x").ok();
+        mem.put_str(&format!("{}/.secret", uri.path_str()), b"x")
+            .ok();
+        s.submit_read(uri.clone()).expect("submit");
+        wait_ready(&mut s, &uri);
+        let count = |s: &mut Session| s.view_index(1).expect("ix").order.len();
+        let hidden_off = count(&mut s);
+        s.show_hidden = true;
+        assert!(count(&mut s) >= hidden_off);
+        let (entries, ix) = s.pane_view(1).expect("view");
+        let names: Vec<&str> = ix
+            .order
+            .iter()
+            .filter_map(|i| entries.get(*i as usize))
+            .map(|e| e.name.as_str())
+            .collect();
+        assert!(names.contains(&".secret"));
+        s.show_hidden = false;
+        let (entries, ix) = s.pane_view(1).expect("view");
+        assert!(
+            !ix.order
+                .iter()
+                .filter_map(|i| entries.get(*i as usize))
+                .any(|e| e.name == ".secret")
+        );
     }
 
     #[test]

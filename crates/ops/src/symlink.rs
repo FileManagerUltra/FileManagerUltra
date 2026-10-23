@@ -48,6 +48,65 @@ impl SymlinkPolicy {
     }
 }
 
+/// Lexically normalise an absolute path into `(prefix, segments)`; the prefix is `""` for a
+/// rooted Unix path or `"C:"` for a drive path. `None` for relative paths and for `..` that
+/// would climb above the root. Pure — nothing is resolved on disk.
+fn absolute_segments(path: &str) -> Option<(String, Vec<String>)> {
+    let unified = path.replace('\\', "/");
+    let mut parts = unified.split('/');
+    let first = parts.next()?;
+    let prefix = if first.is_empty() {
+        String::new()
+    } else if first.len() == 2
+        && first.ends_with(':')
+        && first
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+    {
+        first.to_string()
+    } else {
+        return None;
+    };
+    let mut segments: Vec<String> = Vec::new();
+    for part in parts {
+        match part {
+            "" | "." => {}
+            ".." => {
+                segments.pop()?;
+            }
+            other => segments.push(other.to_string()),
+        }
+    }
+    Some((prefix, segments))
+}
+
+/// Where a copied symlink should point. An **absolute** `target` that lies inside `src_root`
+/// (the copied tree) is moved to the same place under `dst_root`; relative targets, targets
+/// outside the tree and anything unparsable return `None` (copy the link verbatim). The
+/// result can never contain `..`, so it stays inside `dst_root`. Pure path logic.
+pub fn retarget(target: &str, src_root: &str, dst_root: &str) -> Option<String> {
+    let (tp, ts) = absolute_segments(target)?;
+    let (sp, ss) = absolute_segments(src_root)?;
+    let (dp, ds) = absolute_segments(dst_root)?;
+    if tp != sp || !ts.starts_with(&ss) {
+        return None;
+    }
+    let mut out = dp;
+    let rebuilt: Vec<&str> = ds
+        .iter()
+        .chain(ts.iter().skip(ss.len()))
+        .map(String::as_str)
+        .collect();
+    out.push('/');
+    out.push_str(&rebuilt.join("/"));
+    Some(if target.contains('\\') {
+        out.replace('/', "\\")
+    } else {
+        out
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,6 +132,53 @@ mod tests {
         let p = SymlinkPolicy::DerefWithinRoot;
         assert!(p.allows_deref("/", "/etc/passwd"));
         assert!(!p.allows_deref("/", "relative/target"));
+    }
+
+    #[test]
+    fn retarget_moves_inside_links_to_the_new_root() {
+        assert_eq!(
+            retarget("/src/proj/lib/a.js", "/src/proj", "/dst/proj2").as_deref(),
+            Some("/dst/proj2/lib/a.js")
+        );
+        assert_eq!(
+            retarget("/src/proj", "/src/proj", "/dst/p").as_deref(),
+            Some("/dst/p")
+        );
+        assert_eq!(
+            retarget("/src/proj/x/../lib", "/src/proj", "/dst/p").as_deref(),
+            Some("/dst/p/lib")
+        );
+        assert_eq!(retarget("/x/y", "/", "/dst").as_deref(), Some("/dst/x/y"));
+    }
+
+    #[test]
+    fn retarget_leaves_other_links_alone() {
+        // relative, outside, sibling-prefix, escaping via `..`, broken input
+        assert_eq!(retarget("../lib/a.js", "/src/proj", "/dst"), None);
+        assert_eq!(retarget("/etc/passwd", "/src/proj", "/dst"), None);
+        assert_eq!(retarget("/src/proj2/a", "/src/proj", "/dst"), None);
+        assert_eq!(retarget("/src/proj/../etc", "/src/proj", "/dst"), None);
+        assert_eq!(retarget("/../..", "/src/proj", "/dst"), None);
+        assert_eq!(retarget("", "/src/proj", "/dst"), None);
+        assert_eq!(retarget("/src/proj/a", "rel", "/dst"), None);
+        assert_eq!(retarget("/src/proj/a", "/src/proj", "rel"), None);
+    }
+
+    #[test]
+    fn retarget_handles_windows_paths() {
+        assert_eq!(
+            retarget("D:\\src\\proj\\a.txt", "C:/src/proj", "D:/out/proj"),
+            None,
+            "a target on another drive is outside the copied tree"
+        );
+        assert_eq!(
+            retarget("C:\\src\\proj\\a.txt", "C:/src/proj", "D:/out/proj").as_deref(),
+            Some("D:\\out\\proj\\a.txt")
+        );
+        assert_eq!(
+            retarget("C:\\src\\proj\\a.txt", "C:/src/proj", "C:/out/p").as_deref(),
+            Some("C:\\out\\p\\a.txt")
+        );
     }
 
     #[test]

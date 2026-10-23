@@ -95,6 +95,16 @@ pub fn focused_selection(s: &Session) -> Vec<VfsUri> {
     let Some(pane) = s.layout.state(s.layout.focused()) else {
         return Vec::new();
     };
+    // A directory clicked in the tree is the target until the listing is used again.
+    if pane.tree.active
+        && let Some(dir) = pane.tree.focused.as_ref()
+    {
+        return if dir.parent().is_some() {
+            vec![dir.clone()]
+        } else {
+            Vec::new()
+        };
+    }
     pane.listing
         .selection()
         .filter_map(|name| pane.location.join(name).ok())
@@ -204,6 +214,31 @@ pub fn mkdir() -> CommandSpec {
     }
 }
 
+/// `file.newfile` — create an empty file in the focused pane (or `parent`), like `touch`.
+pub fn new_file() -> CommandSpec {
+    CommandSpec {
+        id: "file.newfile",
+        label: "New File",
+        menu: &["File", "New File"],
+        shortcut: Some("Shift+F7"),
+        params: "name: string, parent?: uri",
+        enabled: |s| s.layout.state(s.layout.focused()).is_some(),
+        run: |s, params| {
+            let map = object(params)?;
+            let name = required_name(map)?;
+            let parent = match map.and_then(|m| m.get("parent")) {
+                Some(value) => parse_uri(value)?,
+                None => s
+                    .layout
+                    .state(s.layout.focused())
+                    .map(|p| p.location.clone())
+                    .ok_or_else(|| FmError::NotFound("focused pane".to_string()))?,
+            };
+            s.submit_op(OpRequest::NewFile { parent, name }).map(|_| ())
+        },
+    }
+}
+
 /// `file.rename` — rename the single selected item (or `uri`).
 pub fn rename() -> CommandSpec {
     CommandSpec {
@@ -309,6 +344,7 @@ pub fn specs() -> Vec<CommandSpec> {
         copy(),
         move_(),
         mkdir(),
+        new_file(),
         rename(),
         delete(),
         delete_permanent(),

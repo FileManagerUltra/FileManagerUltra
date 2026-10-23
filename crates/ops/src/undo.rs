@@ -61,7 +61,7 @@ impl UndoStack {
     /// jobs that did nothing push nothing.
     pub fn push_report(&mut self, kind: OpKind, report: &OpReport) {
         match kind {
-            OpKind::Copy | OpKind::Mkdir if !report.created.is_empty() => {
+            OpKind::Copy | OpKind::Mkdir | OpKind::NewFile if !report.created.is_empty() => {
                 self.push(UndoRecord::Created {
                     uris: report.created.clone(),
                 });

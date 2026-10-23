@@ -167,6 +167,8 @@ mod tests {
             size: Some(1),
             modified: None,
             permissions: None,
+            hidden: false,
+            link_to_dir: false,
         }
     }
 

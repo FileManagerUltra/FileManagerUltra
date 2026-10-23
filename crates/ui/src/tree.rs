@@ -82,6 +82,7 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
         let mut dirs: Vec<(String, VfsUri)> = entries
             .iter()
             .filter(|e| e.kind == EntryKind::Dir)
+            .filter(|e| s.show_hidden || !fm_engine::is_hidden(e))
             .map(|e| (e.name.clone(), e.uri.clone()))
             .collect();
         dirs.sort_by_key(|(name, _)| name.to_lowercase());
@@ -104,11 +105,20 @@ fn handle_key(row: &Row, key: Key) -> KeyOutcome {
         Key::ArrowRight if row.is_dir && (!row.expanded || row.state == RowState::Failed) => {
             KeyOutcome::Expand(row.uri.clone())
         }
-        Key::ArrowLeft if row.is_dir && row.expanded => KeyOutcome::Collapse(row.uri.clone()),
-        Key::ArrowLeft if row.depth > 0 => match row.uri.parent() {
-            Some(parent) => KeyOutcome::Collapse(parent),
-            None => KeyOutcome::None,
-        },
+        // Collapse the node (when open) and move the cursor to its parent.
+        Key::ArrowLeft => {
+            let collapse = (row.is_dir && row.expanded).then(|| row.uri.clone());
+            let focus = if row.depth > 0 {
+                row.uri.parent()
+            } else {
+                None
+            };
+            if collapse.is_none() && focus.is_none() {
+                KeyOutcome::None
+            } else {
+                KeyOutcome::Left { collapse, focus }
+            }
+        }
         Key::Enter if row.is_dir => KeyOutcome::Open(row.uri.clone()),
         _ => KeyOutcome::None,
     }
@@ -131,14 +141,17 @@ fn expand_node(s: &mut Session, pane: PaneId, uri: &VfsUri) {
 enum KeyOutcome {
     None,
     Expand(VfsUri),
-    Collapse(VfsUri),
+    Left {
+        collapse: Option<VfsUri>,
+        focus: Option<VfsUri>,
+    },
     Open(VfsUri),
 }
 
 /// Render the tree for one pane. Returns the uri to open (`nav.open`), if the
 /// user activated an entry.
 pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Option<VfsUri> {
-    let (root, location, mut remembered, saved_scroll, stale) = {
+    let (root, location, mut remembered, saved_scroll, stale, reveal) = {
         let state = s.layout.state(pane)?;
         // A refresh or watcher invalidation drops cached entries without
         // touching `expanded`. Re-submit reads for those nodes, or the
@@ -157,6 +170,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
             state.tree.focused.clone(),
             state.tree.scroll,
             stale,
+            state.tree.reveal,
         )
     };
     for uri in stale {
@@ -175,7 +189,11 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let mut expand: Vec<VfsUri> = Vec::new();
     let mut collapse: Vec<VfsUri> = Vec::new();
     let mut open_key: Option<VfsUri> = None;
+    let mut move_focus_to: Option<VfsUri> = None;
 
+    let mut revealed = false;
+    let mut scroll_focus_done = false;
+    let scroll_focus = s.layout.state(pane).is_some_and(|p| p.tree.scroll_focus);
     let max_chars = ((ui.available_width() / (tokens.font_size * 0.55)).max(8.0)) as usize;
     let output = egui::ScrollArea::vertical()
         .id_salt(format!("fm-tree-{pane}"))
@@ -187,11 +205,6 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 let indent = row.depth as f32 * (tokens.font_size + tokens.padding);
                 ui.horizontal(|ui| {
                     ui.add_space(indent);
-                    let arrow = match (row.is_dir, row.expanded) {
-                        (true, true) => "v",
-                        (true, false) => ">",
-                        (false, _) => " ",
-                    };
                     let label = match row.state {
                         RowState::Ready => {
                             ellipsize(&row.name, max_chars.saturating_sub(row.depth))
@@ -200,9 +213,16 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                         RowState::Failed => format!("{} !", ellipsize(&row.name, max_chars)),
                     };
                     let response = ui.add(
-                        egui::Button::selectable(selected, format!("{arrow} {label}"))
+                        egui::Button::selectable(selected, format!("   {label}"))
                             .sense(egui::Sense::click_and_drag()),
                     );
+                    if reveal && selected {
+                        response.scroll_to_me(Some(egui::Align::Center));
+                        revealed = true;
+                    }
+                    if row.is_dir {
+                        paint_chevron(ui, response.rect, row.expanded, selected, tokens);
+                    }
                     if response.drag_started() {
                         response.dnd_set_drag_payload(crate::dnd::DragPayload {
                             sources: vec![row.uri.clone()],
@@ -217,14 +237,23 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             crate::dnd::ZONE_ROW,
                         );
                     }
-                    let clicked = response.clicked();
+                    // egui turns Enter on a focused button into a click; Enter must only open.
+                    let enter = response.has_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    let clicked = response.clicked() && !enter;
                     if clicked {
                         response.request_focus();
+                    }
+                    if clicked && let Some(state) = s.layout.state_mut(pane) {
+                        state.tree.active = true;
                     }
                     if clicked || response.has_focus() {
                         // Focus moved to this node — remember it (pane state is
                         // what survives the rows disappearing during a reload).
                         if remembered.as_ref() != Some(&row.uri) {
+                            if !clicked {
+                                // Keyboard moved focus here: keep the row on screen.
+                                response.scroll_to_me(None);
+                            }
                             remembered = Some(row.uri.clone());
                             if let Some(state) = s.layout.state_mut(pane) {
                                 state.tree.focused = remembered.clone();
@@ -233,9 +262,24 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     } else if egui_focused.is_none() && remembered.as_ref() == Some(&row.uri) {
                         // Focus was dropped while this row was gone: take it back.
                         response.request_focus();
+                        if scroll_focus {
+                            response.scroll_to_me(None);
+                            scroll_focus_done = true;
+                        }
                     }
                     response.clone().on_hover_text(row.uri.path_str());
                     if response.has_focus() {
+                        // Left/Right belong to expand/collapse; without the lock egui moves
+                        // widget focus sideways (into the listing) before we see the key.
+                        ui.memory_mut(|m| {
+                            m.set_focus_lock_filter(
+                                response.id,
+                                egui::EventFilter {
+                                    horizontal_arrows: true,
+                                    ..Default::default()
+                                },
+                            );
+                        });
                         ui.input(|i| {
                             for key in [Key::ArrowRight, Key::ArrowLeft, Key::Enter] {
                                 if !i.key_pressed(key) {
@@ -244,13 +288,25 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                                 match handle_key(row, key) {
                                     KeyOutcome::None => {}
                                     KeyOutcome::Expand(uri) => expand.push(uri),
-                                    KeyOutcome::Collapse(uri) => collapse.push(uri),
+                                    KeyOutcome::Left { collapse: c, focus } => {
+                                        collapse.extend(c);
+                                        if focus.is_some() {
+                                            move_focus_to = focus;
+                                        }
+                                    }
                                     KeyOutcome::Open(uri) => open_key = Some(uri),
                                 }
                             }
                         });
                     }
+                    if move_focus_to.is_some() && response.has_focus() {
+                        // Dropping egui focus makes the "focus was dropped" branch hand it to
+                        // `tree.focused` (the parent) on the next frame.
+                        ui.memory_mut(|m| m.surrender_focus(response.id));
+                    }
                     if clicked && row.is_dir {
+                        // Selecting a folder shows it in the listing.
+                        open = Some(row.uri.clone());
                         if row.expanded {
                             collapse.push(row.uri.clone());
                         } else {
@@ -273,15 +329,65 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         state.tree.scroll = output.state.clamped_offset().y;
     }
 
+    if (revealed || rows.iter().all(|r| r.state == RowState::Ready))
+        && let Some(state) = s.layout.state_mut(pane)
+    {
+        state.tree.reveal = false;
+    }
+    if scroll_focus_done && let Some(state) = s.layout.state_mut(pane) {
+        state.tree.scroll_focus = false;
+    }
+    if let Some(parent) = move_focus_to
+        && let Some(state) = s.layout.state_mut(pane)
+    {
+        state.tree.focused = Some(parent);
+        state.tree.scroll_focus = true;
+    }
     for uri in expand {
         expand_node(s, pane, &uri);
     }
     for uri in &collapse {
         if let Some(state) = s.layout.state_mut(pane) {
             state.tree.collapse(uri);
+            // The focused row is about to vanish with its parent: keep focus on the parent
+            // so Right can expand it again.
+            if state
+                .tree
+                .focused
+                .as_ref()
+                .is_some_and(|f| uri.is_ancestor_of(f))
+            {
+                state.tree.focused = Some(uri.clone());
+            }
         }
     }
     open.or(open_key)
+}
+
+/// Disclosure triangle (right when collapsed, down when expanded) painted at the row's left.
+fn paint_chevron(ui: &Ui, rect: egui::Rect, expanded: bool, selected: bool, tokens: &Tokens) {
+    let size = tokens.font_size * 0.35;
+    let c = egui::pos2(rect.left() + tokens.padding + size, rect.center().y);
+    let pts = if expanded {
+        vec![
+            c + egui::vec2(-size, -size * 0.5),
+            c + egui::vec2(size, -size * 0.5),
+            c + egui::vec2(0.0, size * 0.7),
+        ]
+    } else {
+        vec![
+            c + egui::vec2(-size * 0.5, -size),
+            c + egui::vec2(-size * 0.5, size),
+            c + egui::vec2(size * 0.7, 0.0),
+        ]
+    };
+    let color = if selected {
+        tokens.selection_text
+    } else {
+        tokens.text_muted
+    };
+    ui.painter()
+        .add(egui::Shape::convex_polygon(pts, color, egui::Stroke::NONE));
 }
 
 /// Truncate to `max_chars` with a horizontal ellipsis (full name is a tooltip).
@@ -399,10 +505,13 @@ mod tests {
         collapsed.expanded = true;
         assert_eq!(
             handle_key(&collapsed, Key::ArrowLeft),
-            KeyOutcome::Collapse(uri.clone())
+            KeyOutcome::Left {
+                collapse: Some(uri.clone()),
+                focus: uri.parent()
+            }
         );
         assert_eq!(handle_key(&row, Key::Enter), KeyOutcome::Open(uri));
-        // Left on a collapsed child collapses its parent.
+        // Left on a collapsed child only moves the cursor to its parent.
         let child = Row {
             uri: VfsUri::parse("/home/alice/docs/a.txt").expect("uri"),
             name: "a.txt".to_string(),
@@ -413,7 +522,10 @@ mod tests {
         };
         assert_eq!(
             handle_key(&child, Key::ArrowLeft),
-            KeyOutcome::Collapse(VfsUri::parse("/home/alice/docs").expect("uri"))
+            KeyOutcome::Left {
+                collapse: None,
+                focus: VfsUri::parse("/home/alice/docs").ok()
+            }
         );
     }
 
@@ -574,5 +686,194 @@ mod tests {
             ctx.memory(|m| m.focused()).is_some(),
             "tree keyboard focus is restored"
         );
+    }
+
+    /// `Right` expands a node; it must not hand egui focus to a widget beside the tree.
+    #[test]
+    fn right_arrow_keeps_focus_in_the_tree() {
+        let mut s = Session::default();
+        let mem = MemFs::new();
+        mem.mkdirs_str("/home/alice/a").expect("mkdirs");
+        mem.mkdirs_str("/home/alice/b").expect("mkdirs");
+        s.backends.register(Arc::new(mem));
+        let home = VfsUri::parse("/home/alice").expect("uri");
+        {
+            let pane = s.layout.state_mut(1).expect("pane");
+            pane.tree = fm_layout::TreeState::new(home.clone());
+            pane.location = home.clone();
+        }
+        s.submit_read(home.clone()).expect("submit");
+        wait_ready(&mut s, &home);
+
+        let ctx = egui::Context::default();
+        let tokens = Tokens::dark();
+        let beside = egui::Id::NULL.with("beside-the-tree");
+        let frame = |ctx: &egui::Context, s: &mut Session, keys: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    events: keys,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.horizontal_top(|ui| {
+                            ui.allocate_ui(egui::vec2(200.0, 500.0), |ui| {
+                                let _ = show(ui, s, 1, &tokens);
+                            });
+                            let rect = ui.allocate_space(egui::vec2(100.0, 20.0)).1;
+                            ui.interact(rect, beside, egui::Sense::focusable_noninteractive());
+                        });
+                    });
+                },
+            );
+            out.textures_delta.clear();
+        };
+        frame(&ctx, &mut s, vec![]);
+        let a = home.join("a").expect("join");
+        s.layout.state_mut(1).expect("pane").tree.focused = Some(a);
+        frame(&ctx, &mut s, vec![]);
+        frame(&ctx, &mut s, vec![]);
+        assert!(ctx.memory(|m| m.focused()).is_some());
+        for _ in 0..2 {
+            frame(
+                &ctx,
+                &mut s,
+                vec![egui::Event::Key {
+                    key: egui::Key::ArrowRight,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+        }
+        assert_ne!(ctx.memory(|m| m.focused()), Some(beside));
+    }
+
+    #[test]
+    fn left_collapses_and_moves_the_cursor_to_the_parent() {
+        let mut s = Session::default();
+        let mem = MemFs::new();
+        mem.mkdirs_str("/home/alice/a/x").expect("mkdirs");
+        mem.mkdirs_str("/home/alice/b").expect("mkdirs");
+        s.backends.register(Arc::new(mem));
+        let home = VfsUri::parse("/home/alice").expect("uri");
+        let a = home.join("a").expect("join");
+        {
+            let pane = s.layout.state_mut(1).expect("pane");
+            pane.tree = fm_layout::TreeState::new(home.clone());
+            pane.location = home.clone();
+            pane.tree.focused = Some(a.clone());
+            pane.tree.expand(a.clone());
+        }
+        s.submit_read(home.clone()).expect("submit");
+        wait_ready(&mut s, &home);
+        s.submit_read(a.clone()).expect("submit");
+        wait_ready(&mut s, &a);
+        let ctx = egui::Context::default();
+        let key = |k| {
+            vec![egui::Event::Key {
+                key: k,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }]
+        };
+        let tokens = Tokens::dark();
+        let frame = |s: &mut Session, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let _ = show(ui, s, 1, &tokens);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+        };
+        for _ in 0..3 {
+            frame(&mut s, vec![]);
+        }
+        frame(&mut s, key(egui::Key::ArrowLeft));
+        for _ in 0..3 {
+            frame(&mut s, vec![]);
+        }
+        let pane = s.layout.state(1).expect("pane");
+        assert!(!pane.tree.is_expanded(&a), "collapsed");
+        assert_eq!(pane.tree.focused.as_ref(), Some(&home), "cursor on parent");
+    }
+
+    #[test]
+    fn left_on_a_leaf_moves_the_cursor_to_its_parent_without_collapsing_it() {
+        let mut s = Session::default();
+        let mem = MemFs::new();
+        mem.mkdirs_str("/home/alice/a/x").expect("mkdirs");
+        s.backends.register(Arc::new(mem));
+        let home = VfsUri::parse("/home/alice").expect("uri");
+        let a = home.join("a").expect("join");
+        let x = a.join("x").expect("join");
+        {
+            let pane = s.layout.state_mut(1).expect("pane");
+            pane.tree = fm_layout::TreeState::new(home.clone());
+            pane.location = home.clone();
+            pane.tree.focused = Some(x.clone());
+            pane.tree.expand(a.clone());
+        }
+        for u in [&home, &a] {
+            s.submit_read(u.clone()).expect("submit");
+            wait_ready(&mut s, u);
+        }
+        let ctx = egui::Context::default();
+        let tokens = Tokens::dark();
+        let frame = |s: &mut Session, k: Option<egui::Key>| {
+            let events = k
+                .map(|key| egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                })
+                .into_iter()
+                .collect();
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let _ = show(ui, s, 1, &tokens);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+        };
+        for _ in 0..3 {
+            frame(&mut s, None);
+        }
+        frame(&mut s, Some(egui::Key::ArrowLeft));
+        for _ in 0..3 {
+            frame(&mut s, None);
+        }
+        let pane = s.layout.state(1).expect("pane");
+        assert!(pane.tree.is_expanded(&a), "parent stays open");
+        assert_eq!(pane.tree.focused.as_ref(), Some(&a));
     }
 }

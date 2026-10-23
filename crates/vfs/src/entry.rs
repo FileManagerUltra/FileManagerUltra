@@ -29,6 +29,12 @@ pub struct Entry {
     pub modified: Option<SystemTime>,
     /// Unix permission bits (mode & 0o7777). `None` on Windows / unknown.
     pub permissions: Option<u32>,
+    /// Platform hidden flag (Windows `HIDDEN` attribute, macOS `UF_HIDDEN`). Dot-names are
+    /// hidden regardless; see the engine's `is_hidden`.
+    pub hidden: bool,
+    /// A symlink whose target resolves to a directory (always false for other kinds).
+    #[serde(default)]
+    pub link_to_dir: bool,
 }
 
 impl Entry {
@@ -41,6 +47,8 @@ impl Entry {
             size: None,
             modified: None,
             permissions: None,
+            hidden: false,
+            link_to_dir: false,
         }
     }
 
@@ -54,6 +62,11 @@ impl Entry {
 
     pub fn is_symlink(&self) -> bool {
         matches!(self.kind, EntryKind::Symlink { .. })
+    }
+
+    /// A directory, or a symlink that resolves to one: something the user can open.
+    pub fn is_dir_like(&self) -> bool {
+        self.is_dir() || (self.is_symlink() && self.link_to_dir)
     }
 }
 

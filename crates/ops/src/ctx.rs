@@ -124,6 +124,8 @@ pub struct OpCtx<'a> {
     pub policy: ConflictPolicy,
     pub on_progress: &'a mut dyn FnMut(&Progress),
     pub on_conflict: &'a mut dyn FnMut(&Conflict) -> Decision,
+    /// Point copied absolute symlinks that lie inside the copied tree at the copy.
+    pub retarget_links: bool,
 }
 
 impl<'a> OpCtx<'a> {
@@ -137,7 +139,13 @@ impl<'a> OpCtx<'a> {
             policy,
             on_progress,
             on_conflict,
+            retarget_links: true,
         }
+    }
+
+    pub fn with_retarget_links(mut self, retarget: bool) -> Self {
+        self.retarget_links = retarget;
+        self
     }
 
     pub fn with_cancel(mut self, cancel: CancelFlag) -> Self {

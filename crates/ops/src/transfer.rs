@@ -5,12 +5,13 @@
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use fm_vfs::{Entry, FmError, Vfs, VfsUri, WriteOpts};
+use fm_vfs::{Entry, EntryKind, FmError, Scheme, Vfs, VfsUri, WriteOpts};
 
 use crate::ConflictPolicy;
 use crate::ctx::{Backends, Choice, Conflict, ConflictSide, OpCtx, OpReport, Progress};
 use crate::names::keep_both_name;
 use crate::plan::{Plan, PlanItem, PlanKind, Top};
+use crate::symlink::retarget;
 
 const BUF_BYTES: usize = 64 * 1024;
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -43,6 +44,8 @@ struct Runner<'a, 'b> {
     progress: Progress,
     sticky: Option<Choice>,
     direct_write: bool,
+    /// `(source root, destination root)` of the top-level item being transferred.
+    roots: Option<(String, String)>,
 }
 
 impl<'a, 'b> Runner<'a, 'b> {
@@ -58,6 +61,7 @@ impl<'a, 'b> Runner<'a, 'b> {
             progress,
             sticky: None,
             direct_write: false,
+            roots: None,
         }
     }
 
@@ -117,6 +121,10 @@ impl<'a, 'b> Runner<'a, 'b> {
         let Some(items) = self.plan.items.get(top.start..top.end) else {
             return;
         };
+        self.roots = Some((
+            top.src.path_str().to_string(),
+            top.dst.path_str().to_string(),
+        ));
         let mut failed_dirs: Vec<&VfsUri> = Vec::new();
         let mut done_idx: Vec<usize> = Vec::new();
         let mut clean = true;
@@ -173,9 +181,7 @@ impl<'a, 'b> Runner<'a, 'b> {
         match item.kind {
             PlanKind::Dir => self.ensure_dir(item),
             PlanKind::File => self.copy_file(item),
-            PlanKind::Symlink => Outcome::Failed(FmError::Unsupported(
-                "symlinks are skipped (the backend trait cannot create links); never followed",
-            )),
+            PlanKind::Symlink => self.copy_symlink(item),
         }
     }
 
@@ -192,6 +198,67 @@ impl<'a, 'b> Runner<'a, 'b> {
                     created: Some(item.dst.clone()),
                 },
                 Err(e) => Outcome::Failed(e),
+            },
+            Err(e) => Outcome::Failed(e),
+        }
+    }
+
+    /// Recreate a source symlink as a link (never followed). The target text is copied
+    /// verbatim unless retargeting is on and it points inside the copied tree.
+    fn copy_symlink(&mut self, item: &PlanItem) -> Outcome {
+        let (src_vfs, dst_vfs) = match (self.backends.vfs(&item.src), self.backends.vfs(&item.dst))
+        {
+            (Ok(s), Ok(d)) => (s, d),
+            (Err(e), _) | (_, Err(e)) => return Outcome::Failed(e),
+        };
+        let src_entry = match src_vfs.stat(&item.src) {
+            Ok(e) => e,
+            Err(e) => return Outcome::Failed(e),
+        };
+        let EntryKind::Symlink { target } = &src_entry.kind else {
+            return Outcome::Failed(FmError::InvalidParams(
+                "source is no longer a symbolic link".to_string(),
+            ));
+        };
+        let mut target = target.clone();
+        let both_local = item.src.scheme() == Scheme::File && item.dst.scheme() == Scheme::File;
+        if self.ctx.retarget_links
+            && both_local
+            && let Some((from, to)) = &self.roots
+            && let Some(moved) = retarget(&target, from, to)
+        {
+            target = moved;
+        }
+        let mut dst = item.dst.clone();
+        let mut overwrite = false;
+        match dst_vfs.stat(&dst) {
+            Ok(existing) => match self.decide(item, &existing, &src_entry) {
+                Choice::Skip => return Outcome::Skipped,
+                Choice::Cancel => return Outcome::Cancelled,
+                Choice::Overwrite if existing.is_dir() => {
+                    return Outcome::Failed(FmError::AlreadyExists(dst.to_string()));
+                }
+                Choice::Overwrite => overwrite = true,
+                Choice::KeepBoth => {
+                    let Some(parent) = dst.parent() else {
+                        return Outcome::Failed(FmError::NotADirectory(dst.to_string()));
+                    };
+                    let name = dst.file_name().unwrap_or_default().to_string();
+                    dst = match keep_both_name(&*dst_vfs, &parent, &name) {
+                        Ok(d) => d,
+                        Err(e) => return Outcome::Failed(e),
+                    };
+                }
+            },
+            Err(FmError::NotFound(_)) => {}
+            Err(e) => return Outcome::Failed(e),
+        }
+        if overwrite && let Err(e) = dst_vfs.remove(&dst) {
+            return Outcome::Failed(e);
+        }
+        match dst_vfs.create_symlink(&target, &dst) {
+            Ok(()) => Outcome::Done {
+                created: (!overwrite).then_some(dst),
             },
             Err(e) => Outcome::Failed(e),
         }
