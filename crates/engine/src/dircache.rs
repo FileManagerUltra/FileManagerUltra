@@ -122,6 +122,18 @@ impl DirCache {
         Some(revision)
     }
 
+    /// Record a read that failed before it reached a job (e.g. no backend for
+    /// the scheme), so views show the error affordance instead of a spinner.
+    /// Never overwrites an in-flight or fresh slot — those belong to the job.
+    pub fn set_failed(&mut self, uri: &VfsUri, message: String) {
+        if !matches!(self.slots.get(uri), None | Some(Slot::Failed { .. })) {
+            return;
+        }
+        let revision = self.take_revision();
+        self.slots
+            .insert(uri.clone(), Slot::Failed { revision, message });
+    }
+
     /// Drop the slot (watcher invalidation / hard refresh).
     pub fn invalidate(&mut self, uri: &VfsUri) {
         self.slots.remove(uri);

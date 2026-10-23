@@ -22,6 +22,8 @@ fm-ui.workspace = true
 fm-vfs.workspace = true
 eframe.workspace = true
 egui.workspace = true
+# Feature-only dependency: enables winit's Wayland title bar (see root Cargo.toml).
+winit.workspace = true
 
 [dev-dependencies]
 fm-testkit.workspace = true

@@ -268,4 +268,56 @@ mod tests {
             "location must not move without a backend"
         );
     }
+
+    /// A refresh is a reload, not a jump: the pane keeps its selection, its
+    /// focused row, its scroll offset and the tree's expanded/focused/scroll
+    /// state; only the cached entries are replaced.
+    #[test]
+    fn refresh_preserves_selection_focus_and_tree_state() {
+        let (mut s, _mem, home) = mem_session();
+        wait_ready(&mut s, &home);
+        let docs = home.join("docs").expect("join");
+        {
+            let pane = s.layout.state_mut(1).expect("pane");
+            pane.listing.select_only(Some("docs"), 1);
+            pane.listing.scroll = 42.0;
+            pane.tree.expand(docs.clone());
+            pane.tree.focused = Some(docs.clone());
+            pane.tree.scroll = 7.0;
+        }
+        (refresh().run)(&mut s, &Params::Null).expect("refresh");
+        wait_ready(&mut s, &home);
+        let pane = s.layout.state(1).expect("pane");
+        assert!(pane.listing.is_selected("docs"), "selection survives");
+        assert_eq!(pane.listing.focused_row, 1, "focused row survives");
+        assert_eq!(pane.listing.scroll, 42.0, "scroll survives");
+        assert!(pane.tree.is_expanded(&docs), "expansion survives");
+        assert_eq!(
+            pane.tree.focused.as_ref(),
+            Some(&docs),
+            "tree focus survives"
+        );
+        assert_eq!(pane.tree.scroll, 7.0, "tree scroll survives");
+        assert_eq!(pane.location, home, "the location itself must not move");
+    }
+
+    /// Re-opening the current directory keeps the pane's place and does not
+    /// push a duplicate history entry.
+    #[test]
+    fn reopening_the_current_directory_keeps_the_panes_place() {
+        let (mut s, _mem, home) = mem_session();
+        wait_ready(&mut s, &home);
+        {
+            let pane = s.layout.state_mut(1).expect("pane");
+            pane.listing.select_only(Some("docs"), 1);
+            pane.listing.scroll = 42.0;
+        }
+        (open().run)(&mut s, &Params::String(home.to_string())).expect("reopen");
+        let pane = s.layout.state(1).expect("pane");
+        assert_eq!(pane.location, home);
+        assert!(pane.listing.is_selected("docs"));
+        assert_eq!(pane.listing.focused_row, 1);
+        assert_eq!(pane.listing.scroll, 42.0);
+        assert!(!pane.can_go_back(), "no duplicate history entry");
+    }
 }

@@ -32,3 +32,14 @@ Tree labels SHALL derive from cached entries without interpreting them as markup
 #### Scenario: A 4 KiB filename
 - **WHEN** a cached directory contains a name of 4 KiB (the parser cap)
 - **THEN** the tree renders an ellipsized label without layout blowup or panic, and the full name is recoverable from the row's tooltip/data
+
+### Requirement: A refresh keeps the tree's place
+Refreshing SHALL preserve the tree's expanded nodes, remembered focused node and scroll offset. An expanded node whose cache entry is missing SHALL be re-read (showing its loading state until the read lands, and the error affordance if it fails) rather than rendering as permanently empty; keyboard focus SHALL return to the remembered node once its row is back.
+
+#### Scenario: Expanded subtree, focus and scroll survive a refresh
+- **WHEN** the tree has expanded nodes, a remembered focused node and a non-zero scroll offset, and `nav.refresh` invalidates the cache
+- **THEN** after the re-reads complete the same nodes are expanded, the same scroll offset is restored and keyboard focus returns to the remembered node
+
+#### Scenario: The loading frames do not write back a collapsed offset
+- **WHEN** the tree collapses to its loading root while the pane's directory re-reads
+- **THEN** the stored scroll offset is left untouched (the clamped display offset of the gap is never persisted)

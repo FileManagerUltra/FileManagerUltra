@@ -18,28 +18,29 @@ use fm_vfs::VfsUri;
 struct App {
     session: Session,
     config_dir: Option<PathBuf>,
-    /// `(pref, system_dark)` currently applied to egui; re-applied when either changes.
+    /// `(pref, dark)` currently applied to egui; re-applied when either changes.
     applied: (ThemePreference, bool),
+    /// Set once the native window title has been explicitly sent (see `ui`).
+    title_sent: bool,
 }
 
 impl App {
     /// Re-apply tokens whenever the resolved palette (preference × OS theme) changes.
     fn sync_theme(&mut self, ctx: &egui::Context) {
-        let system_dark = system_is_dark(ctx);
-        let current = (self.session.prefs.theme, system_dark);
-        if current == self.applied {
+        let pref = self.session.prefs.theme;
+        // Tell egui the preference, then read back the theme *egui* resolved
+        // (`System` → OS theme, falling back to egui's `fallback_theme` when the
+        // platform doesn't report one). Our tokens must track egui's own
+        // resolution, or the panels (styled by egui visuals) and the pane bodies
+        // (painted from tokens) drift apart.
+        set_egui_theme_preference(ctx, pref);
+        let dark = ctx.theme() == egui::Theme::Dark;
+        if (pref, dark) == self.applied {
             return;
         }
-        self.applied = current;
-        set_egui_theme_preference(ctx, current.0);
-        theme::apply_to(ctx, &theme::Tokens::resolve(current.0, current.1));
+        self.applied = (pref, dark);
+        theme::apply_to(ctx, &theme::Tokens::resolve(pref, dark));
     }
-}
-
-/// The OS-reported dark preference, when the platform provides one.
-fn system_is_dark(ctx: &egui::Context) -> bool {
-    ctx.input(|input| input.raw.system_theme)
-        .is_some_and(|theme| theme == egui::Theme::Dark)
 }
 
 fn set_egui_theme_preference(ctx: &egui::Context, pref: ThemePreference) {
@@ -72,7 +73,10 @@ fn render_pane_node(
             let mut open = None;
             match axis {
                 Axis::Horizontal => {
-                    ui.horizontal(|ui| {
+                    // `ui.horizontal` only starts one interact-size tall; the
+                    // row must be told to take the full available height or
+                    // both panes collapse to a strip.
+                    ui.horizontal_top(|ui| {
                         let total = ui.available_width();
                         let handle_w = 6.0;
                         let a_w = ((total - handle_w) * ratio).clamp(80.0, total - handle_w - 80.0);
@@ -154,8 +158,20 @@ fn render_pane_node(
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Shortcuts run before any widget renders: `Tab` drives egui's focus
+        // traversal, which is committed at `begin_pass`; `consume_shortcuts`
+        // cancels it before the menu/tree/listing can act on it.
+        menu::consume_shortcuts(&ctx, &mut self.session);
         self.sync_theme(&ctx);
         let _ = self.session.poll();
+
+        // The title is set on the native window at creation, but some
+        // compositors only show it after an explicit `set_title`. Send it once
+        // after the first frame so the title bar is never empty.
+        if !self.title_sent {
+            self.title_sent = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(fm_brand::APP_NAME.to_string()));
+        }
 
         egui::Panel::top("menu_bar").show(ui, |ui| {
             menu::menu_bar(ui, &mut self.session);
@@ -214,6 +230,7 @@ impl eframe::App for App {
             egui::Window::new("About")
                 .collapsible(false)
                 .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .open(&mut open)
                 .show(ui, |ui| {
                     ui.heading(fm_brand::APP_NAME);
@@ -222,8 +239,6 @@ impl eframe::App for App {
                 });
             self.session.about_open = open;
         }
-
-        menu::consume_shortcuts(&ctx, &mut self.session);
 
         if !self.session.running {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -277,16 +292,15 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             // Seed the theme before the first frame; `sync_theme` keeps it current.
-            let system_dark = system_is_dark(&cc.egui_ctx);
-            set_egui_theme_preference(&cc.egui_ctx, session.prefs.theme);
-            theme::apply_to(
-                &cc.egui_ctx,
-                &theme::Tokens::resolve(session.prefs.theme, system_dark),
-            );
+            let theme_pref = session.prefs.theme;
+            set_egui_theme_preference(&cc.egui_ctx, theme_pref);
+            let dark = cc.egui_ctx.theme() == egui::Theme::Dark;
+            theme::apply_to(&cc.egui_ctx, &theme::Tokens::resolve(theme_pref, dark));
             Ok(Box::new(App {
                 session,
                 config_dir,
-                applied: (ThemePreference::System, system_dark),
+                applied: (theme_pref, dark),
+                title_sent: false,
             }))
         }),
     )
@@ -323,6 +337,86 @@ mod tests {
         let mut session = Session::new().expect("session");
         session.dispatch(menu::QUIT, &Params::Null).expect("quit");
         assert!(!session.running);
+    }
+
+    /// Render the pane tree headlessly and return the solid fill rects that
+    /// cover the central area (pane bodies + drag handles).
+    fn render_split_fills(cmd: &str) -> (egui::Rect, Vec<egui::Rect>) {
+        let mut session = Session::new().expect("session");
+        session.dispatch(cmd, &Params::Null).expect("split");
+        let tokens = theme::Tokens::resolve(ThemePreference::Dark, true);
+        let ctx = egui::Context::default();
+        let mut central = egui::Rect::NOTHING;
+        let mut fills = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE)
+                    .show(ctx, |ui| {
+                        central = ui.max_rect();
+                        let root = session.layout.root.clone();
+                        let _ = render_pane_node(ui, &mut session, &root, &tokens);
+                    });
+            },
+        );
+        output.textures_delta.clear();
+        for shape in &output.shapes {
+            if let egui::epaint::Shape::Rect(r) = &shape.shape
+                && r.fill.a() > 0
+            {
+                fills.push(r.rect);
+            }
+        }
+        (central, fills)
+    }
+
+    /// Each pane body must span (nearly) the full cross-axis of the central
+    /// area — both for horizontal (left|right) and vertical (top/bottom)
+    /// splits. Guards the `horizontal_top` fix: plain `ui.horizontal` gives
+    /// the row only `interact_size.y` of height, leaving most of the window
+    /// empty.
+    #[test]
+    fn split_panes_fill_the_central_area() {
+        for cmd in ["pane.split.horizontal", "pane.split.vertical"] {
+            let (central, fills) = render_split_fills(cmd);
+            // A pane body is one of the few large fills: tree/listing rows, the
+            // sort header and the 6px drag handles are all far smaller, so size
+            // is what distinguishes them from an actual pane.
+            let pane_bodies: Vec<egui::Rect> = fills
+                .iter()
+                .copied()
+                .filter(|r| {
+                    r.width() >= central.width() * 0.1 && r.height() >= central.height() * 0.1
+                })
+                .collect();
+            assert!(
+                pane_bodies.len() >= 2,
+                "{cmd}: expected two pane bodies, got {}",
+                pane_bodies.len()
+            );
+            for body in &pane_bodies {
+                if cmd.ends_with("horizontal") {
+                    assert!(
+                        body.height() >= central.height() * 0.9,
+                        "{cmd}: pane body {body:?} does not fill central height {}",
+                        central.height()
+                    );
+                } else {
+                    assert!(
+                        body.width() >= central.width() * 0.9,
+                        "{cmd}: pane body {body:?} does not fill central width {}",
+                        central.width()
+                    );
+                }
+            }
+        }
     }
 
     /// Opens a real window; ignored in CI. Manual checklist lives in

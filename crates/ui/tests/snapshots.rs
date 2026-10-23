@@ -166,9 +166,19 @@ fn two_pane_split_dark() {
     };
     let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
         theme::apply_to(ui.ctx(), &tokens);
-        ui.horizontal(|ui| {
+        // Mirror the app's split renderer: `ui.horizontal` alone gives the row
+        // only `interact_size.y` of height, so each cell must be told to take
+        // the full available height or the panes collapse into a strip.
+        ui.horizontal_top(|ui| {
+            let cell_w = ((ui.available_width() - 6.0) / 2.0).max(0.0);
             for id in [1, 2] {
-                let _ = pane::show(ui, &mut session, id, &tokens);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(cell_w, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        let _ = pane::show(ui, &mut session, id, &tokens);
+                    },
+                );
             }
         });
     });

@@ -73,40 +73,131 @@ pub fn show(
     open
 }
 
+/// Fixed widths for the right-hand columns (px); the Name column takes the rest.
+const COL_TYPE: f32 = 72.0;
+const COL_MTIME: f32 = 140.0;
+const COL_SIZE: f32 = 90.0;
+/// Minimum Name-column width before the detail columns collapse entirely.
+const MIN_NAME: f32 = 80.0;
+/// Detail-column widths per layout, ordered by how much room they need:
+/// `(size, mtime, type)` — a zero width drops the column. Narrow panes degrade
+/// by dropping Type first, then Size, so columns never overlap.
+const LAYOUTS: [[f32; 3]; 5] = [
+    [COL_SIZE, COL_MTIME, COL_TYPE],
+    [COL_SIZE, COL_MTIME, 0.0],
+    [0.0, COL_MTIME, 0.0],
+    [COL_SIZE, 0.0, 0.0],
+    [0.0, 0.0, 0.0],
+];
+
+/// Per-column rects for one full-width listing row. Shared by the header and
+/// the entry rows so clicks, labels and separators all agree on where each
+/// column starts and ends.
+struct Columns {
+    name: egui::Rect,
+    size: egui::Rect,
+    mtime: egui::Rect,
+    ty: egui::Rect,
+}
+
+/// Lay out the columns for `rect`, picking the widest layout that fits beside a
+/// usable Name column; dropped columns get zero width (and are not drawn).
+fn columns(rect: egui::Rect) -> Columns {
+    let [size_w, mtime_w, type_w] = *LAYOUTS
+        .iter()
+        .find(|[s, m, t]| rect.width() >= MIN_NAME + s + m + t)
+        .unwrap_or(&[0.0, 0.0, 0.0]);
+    let split = rect.right() - (size_w + mtime_w + type_w);
+    let mut right = rect.right();
+    let mut take = |width: f32| {
+        let col = egui::Rect::from_min_max(
+            egui::pos2(right - width, rect.top()),
+            egui::pos2(right, rect.bottom()),
+        );
+        right -= width;
+        col
+    };
+    let ty = take(type_w);
+    let mtime = take(mtime_w);
+    let size = take(size_w);
+    Columns {
+        name: egui::Rect::from_min_max(rect.min, egui::pos2(split, rect.bottom())),
+        size,
+        mtime,
+        ty,
+    }
+}
+
+/// Vertical hairlines between columns (skipped when the detail columns have
+/// collapsed, or when a boundary falls on the row edge).
+fn column_separators(painter: &egui::Painter, cols: &Columns, rect: egui::Rect, tokens: &Tokens) {
+    for x in [cols.size.left(), cols.mtime.left(), cols.ty.left()] {
+        if x > rect.left() + 1.0 && x < rect.right() - 1.0 {
+            painter.line_segment(
+                [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                egui::Stroke::new(tokens.border_width, tokens.border),
+            );
+        }
+    }
+}
+
 fn header(ui: &mut Ui, sort: &SortSpec, tokens: &Tokens) -> Option<SortKey> {
-    let mut clicked = None;
-    egui::Frame::NONE
-        .fill(tokens.panel)
-        .inner_margin(egui::Margin::symmetric(
-            tokens.padding as i8,
-            (tokens.padding * 0.5) as i8,
-        ))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for (key, label) in [
-                    (SortKey::Name, "Name"),
-                    (SortKey::Size, "Size"),
-                    (SortKey::Mtime, "Modified"),
-                    (SortKey::Type, "Type"),
-                ] {
-                    let arrow = if sort.key == key {
-                        match sort.dir {
-                            SortDir::Asc => " ^",
-                            SortDir::Desc => " v",
-                        }
-                    } else {
-                        ""
-                    };
-                    if ui
-                        .selectable_label(sort.key == key, format!("{label}{arrow}"))
-                        .clicked()
-                    {
-                        clicked = Some(key);
-                    }
-                }
-            });
-        });
-    clicked
+    // Paint fixed-width columns into one full-width row. An auto-sizing
+    // `ui.horizontal` of labels would exceed the pane's allocated width and
+    // expand the whole split past the window.
+    let available = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(available, tokens.row_height),
+        egui::Sense::click(),
+    );
+    ui.painter().rect_filled(rect, 0.0, tokens.panel);
+    let cols = columns(rect);
+
+    let cells = [
+        (SortKey::Name, cols.name, "Name"),
+        (SortKey::Size, cols.size, "Size"),
+        (SortKey::Mtime, cols.mtime, "Modified"),
+        (SortKey::Type, cols.ty, "Type"),
+    ];
+    for &(key, cell, label) in &cells {
+        if cell.width() < 1.0 {
+            continue;
+        }
+        let arrow = if sort.key == key {
+            match sort.dir {
+                SortDir::Asc => " ^",
+                SortDir::Desc => " v",
+            }
+        } else {
+            ""
+        };
+        let text = format!("{label}{arrow}");
+        let (align, pos) = if key == SortKey::Name {
+            (
+                egui::Align2::LEFT_CENTER,
+                egui::pos2(cell.left() + tokens.padding, cell.center().y),
+            )
+        } else {
+            (
+                egui::Align2::RIGHT_CENTER,
+                egui::pos2(cell.right() - tokens.padding, cell.center().y),
+            )
+        };
+        ui.painter()
+            .text(pos, align, text, tokens.font(), tokens.text_muted);
+    }
+    column_separators(ui.painter(), &cols, rect, tokens);
+
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        for &(key, cell, _) in &cells {
+            if cell.width() >= 1.0 && cell.contains(pos) {
+                return Some(key);
+            }
+        }
+    }
+    None
 }
 
 fn ready_rows(
@@ -185,14 +276,22 @@ fn ready_rows(
     }
 
     let row_height = tokens.row_height;
+    let saved_scroll = s
+        .layout
+        .state(pane)
+        .map(|p| p.listing.scroll)
+        .unwrap_or(0.0);
     let builder = egui::ScrollArea::vertical()
         .id_salt(format!("fm-list-{pane}"))
         .auto_shrink([false, false]);
+    // The pane state's offset is the source of truth: no ScrollArea is
+    // rendered while a refresh shows "Loading…", so the stored position must
+    // not depend on egui's state surviving that gap on its own.
     let builder = match scroll_to {
         Some(offset) => builder.vertical_scroll_offset(offset),
-        None => builder,
+        None => builder.vertical_scroll_offset(saved_scroll),
     };
-    builder.show_rows(ui, row_height, total, |ui, row_range| {
+    let output = builder.show_rows(ui, row_height, total, |ui, row_range| {
         for row in row_range {
             if has_parent && row == 0 {
                 parent_row(ui, tokens, parent, &mut open);
@@ -211,6 +310,9 @@ fn ready_rows(
             }
         }
     });
+    if let Some(state) = s.layout.state_mut(pane) {
+        state.listing.scroll = output.state.clamped_offset().y;
+    }
     open
 }
 
@@ -289,32 +391,52 @@ fn entry_row_ui(
     } else {
         tokens.text
     };
-    let name = ellipsize_name(&entry.name, rect.width(), tokens);
-    let type_label = type_label(&entry.kind);
-    let size = entry.size.map(human_size).unwrap_or_default();
-    let mtime = entry.modified.map(format_mtime).unwrap_or_default();
-    ui.painter().text(
-        rect.left_center() + egui::vec2(tokens.padding, 0.0),
-        egui::Align2::LEFT_CENTER,
-        name,
-        tokens.font(),
-        text_color,
-    );
-    let detail = format!("{type_label} · {mtime}");
-    ui.painter().text(
-        rect.right_center() + egui::vec2(-tokens.padding, 0.0),
-        egui::Align2::RIGHT_CENTER,
-        detail,
-        tokens.font(),
-        tokens.text_muted,
-    );
-    ui.painter().text(
-        rect.right_center() + egui::vec2(-tokens.padding - 100.0, 0.0),
-        egui::Align2::RIGHT_CENTER,
-        size,
-        tokens.font(),
-        tokens.text_muted,
-    );
+    let cols = columns(rect);
+    if cols.name.width() >= 1.0 {
+        let name = ellipsize_name(
+            &entry.name,
+            cols.name.width() - 2.0 * tokens.padding,
+            tokens,
+        );
+        ui.painter().text(
+            cols.name.left_center() + egui::vec2(tokens.padding, 0.0),
+            egui::Align2::LEFT_CENTER,
+            name,
+            tokens.font(),
+            text_color,
+        );
+    }
+    if cols.size.width() >= 1.0 {
+        let size = entry.size.map(human_size).unwrap_or_default();
+        ui.painter().text(
+            cols.size.right_center() - egui::vec2(tokens.padding, 0.0),
+            egui::Align2::RIGHT_CENTER,
+            size,
+            tokens.font(),
+            tokens.text_muted,
+        );
+    }
+    if cols.mtime.width() >= 1.0 {
+        let mtime = entry.modified.map(format_mtime).unwrap_or_default();
+        ui.painter().text(
+            cols.mtime.right_center() - egui::vec2(tokens.padding, 0.0),
+            egui::Align2::RIGHT_CENTER,
+            mtime,
+            tokens.font(),
+            tokens.text_muted,
+        );
+    }
+    if cols.ty.width() >= 1.0 {
+        let label = type_label(&entry.kind);
+        ui.painter().text(
+            cols.ty.right_center() - egui::vec2(tokens.padding, 0.0),
+            egui::Align2::RIGHT_CENTER,
+            label,
+            tokens.font(),
+            tokens.text_muted,
+        );
+    }
+    column_separators(ui.painter(), &cols, rect, tokens);
     response.clone().on_hover_text(entry.uri.path_str());
     open
 }
@@ -412,16 +534,20 @@ mod tests {
         let uri = VfsUri::parse("/d").expect("uri");
         s.layout.state_mut(1).expect("pane").location = uri.clone();
         s.submit_read(uri.clone()).expect("submit");
+        wait_ready(&mut s, &uri);
+        (s, uri)
+    }
+
+    fn wait_ready(s: &mut Session, uri: &VfsUri) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             s.poll();
-            if s.dirs.state(&uri).is_ready() {
+            if s.dirs.state(uri).is_ready() {
                 break;
             }
             assert!(Instant::now() < deadline, "read never ready");
             std::thread::sleep(Duration::from_millis(5));
         }
-        (s, uri)
     }
 
     /// Headless render: must not panic in either palette.
@@ -521,5 +647,84 @@ mod tests {
                 let _ = show(ui, &mut fresh, 1, &tokens, false);
             });
         }
+    }
+
+    /// Session with `n` files in `/d`, so the listing is taller than a frame.
+    #[allow(clippy::expect_used)]
+    fn many_session(n: usize) -> (Session, VfsUri) {
+        let mut s = Session::default();
+        let mem = MemFs::new();
+        mem.mkdirs_str("/d").expect("mkdirs");
+        for i in 0..n {
+            mem.put_str(&format!("/d/f{i:03}.txt"), b"x").expect("put");
+        }
+        s.backends.register(Arc::new(mem));
+        let uri = VfsUri::parse("/d").expect("uri");
+        s.layout.state_mut(1).expect("pane").location = uri.clone();
+        s.submit_read(uri.clone()).expect("submit");
+        wait_ready(&mut s, &uri);
+        (s, uri)
+    }
+
+    /// One headless listing frame on a fixed viewport (scroll offsets only
+    /// clamp against a real screen rect).
+    fn run_listing_frame(ctx: &egui::Context, s: &mut Session, tokens: &Tokens) {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE)
+                    .show(ctx, |ui| {
+                        let _ = show(ui, s, 1, tokens, true);
+                    });
+            },
+        );
+        output.textures_delta.clear();
+    }
+
+    /// Regression for "a reload must not change my position": the listing's
+    /// scroll offset is owned by the pane state and must round-trip through
+    /// frames and survive the loading gap of a refresh.
+    #[test]
+    fn listing_scroll_round_trips_and_survives_a_refresh() {
+        let (mut s, uri) = many_session(100);
+        let tokens = Tokens::dark();
+        let ctx = egui::Context::default();
+        run_listing_frame(&ctx, &mut s, &tokens);
+
+        s.layout.state_mut(1).expect("pane").listing.scroll = 300.0;
+        run_listing_frame(&ctx, &mut s, &tokens);
+        let parked = s.layout.state(1).expect("pane").listing.scroll;
+        assert!(
+            (parked - 300.0).abs() < 1.0,
+            "parked offset round-trips: {parked}"
+        );
+
+        // Refresh: the "Loading…" frames must not touch the offset …
+        s.refresh_read(uri.clone()).expect("refresh");
+        for _ in 0..3 {
+            s.poll();
+            run_listing_frame(&ctx, &mut s, &tokens);
+        }
+        assert_eq!(
+            s.layout.state(1).expect("pane").listing.scroll,
+            300.0,
+            "loading frames must not clobber the offset"
+        );
+
+        // … and the rows come back at the same place.
+        wait_ready(&mut s, &uri);
+        run_listing_frame(&ctx, &mut s, &tokens);
+        let restored = s.layout.state(1).expect("pane").listing.scroll;
+        assert!(
+            (restored - 300.0).abs() < 1.0,
+            "scroll restored: {restored}"
+        );
     }
 }

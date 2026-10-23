@@ -116,6 +116,11 @@ pub struct TreeState {
     pub root: VfsUri,
     /// Expanded nodes, always including `root`.
     expanded: BTreeSet<VfsUri>,
+    /// The node holding keyboard focus. Tracked here rather than only in
+    /// egui so focus survives the rows of a refreshing directory vanishing
+    /// for a few frames (egui drops focus when a widget stops rendering).
+    #[serde(default)]
+    pub focused: Option<VfsUri>,
     pub scroll: f32,
 }
 
@@ -127,6 +132,7 @@ impl TreeState {
         Self {
             root,
             expanded,
+            focused: None,
             scroll: 0.0,
         }
     }
@@ -353,7 +359,14 @@ impl PaneState {
 
     /// Commit a navigation: history push, selection reset. The caller
     /// (engine) is responsible for submitting the directory read.
+    ///
+    /// Re-opening the location the pane is already on is a no-op: it must not
+    /// push a duplicate history entry nor wipe the user's selection, focus
+    /// and scroll (re-opening the current directory is a reload, not a jump).
     pub fn navigate(&mut self, to: VfsUri) {
+        if to == self.location {
+            return;
+        }
         self.history.push(to.clone());
         self.location = to;
         self.listing.clear_selection();
@@ -685,5 +698,32 @@ mod tests {
         let once: Vec<Entry> = dups.clone();
         spec.sort(&mut dups);
         assert_eq!(dups, once);
+    }
+
+    #[test]
+    fn navigate_to_the_current_location_keeps_the_panes_place() {
+        let mut p = PaneState::new(uri("/work"));
+        p.listing.select_only(Some("b.txt"), 3);
+        p.listing.scroll = 120.0;
+        p.tree.expand(uri("/work/sub"));
+        p.tree.focused = Some(uri("/work/sub"));
+        p.tree.scroll = 60.0;
+
+        // Re-opening where the pane already is is a reload, not a jump:
+        // nothing is cleared and no duplicate history entry appears.
+        p.navigate(uri("/work"));
+        assert!(p.listing.is_selected("b.txt"));
+        assert_eq!(p.listing.focused_row, 3);
+        assert_eq!(p.listing.scroll, 120.0);
+        assert_eq!(p.tree.scroll, 60.0);
+        assert_eq!(p.tree.focused.as_ref(), Some(&uri("/work/sub")));
+        assert!(!p.can_go_back(), "no duplicate history entry");
+
+        // A real jump still resets selection, focus and scroll.
+        p.navigate(uri("/elsewhere"));
+        assert_eq!(p.listing.selected_count(), 0);
+        assert_eq!(p.listing.focused_row, 0);
+        assert_eq!(p.listing.scroll, 0.0);
+        assert!(p.can_go_back());
     }
 }

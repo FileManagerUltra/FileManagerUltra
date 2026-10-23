@@ -16,6 +16,12 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 
 Out of scope until after these five: archives, previews, tabs, full-text search, plugins, CLI/MCP automation (the command registry lands in change 1 so nothing has to be re-wired later).
 
+## Ideas for future changes
+
+Captured so they are not lost; each becomes an OpenSpec proposal (`/opsx-propose`) when picked up.
+
+- **Preferences menu + pane-layout restore policy** (extends change 5's session persistence): a Preferences menu item holding app settings from `prefs.toml`, with *Restore previous pane layout* as `yes` / `no` / `ask`. On `ask`, a popup poses the question at startup before the saved layout is applied, and the popup repeats the same yes/no/ask control so the setting can be changed right there (the answer persists the preference). Stays a command (`prefs.*` id) and a `Prefs` field, so the security rules (no secrets, owner-only file) hold unchanged.
+
 ## Working agreement
 
 - Nothing is "done" until `cargo test`, `cargo clippy -D warnings`, `cargo xtask layers`, `cargo xtask brand-check` and `cargo fmt --check` are green, tests are added, and `log/devlog.md` has an entry.

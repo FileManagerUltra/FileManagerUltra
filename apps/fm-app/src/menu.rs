@@ -110,7 +110,12 @@ fn item(ui: &mut egui::Ui, session: &mut Session, id: &str) {
     };
     let label = spec.label.to_string();
     let enabled = (spec.enabled)(session);
-    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+    let mut button = egui::Button::new(label);
+    if let Some(shortcut) = spec.shortcut {
+        // Right-aligned, weak-styled after the label (egui menu convention).
+        button = button.shortcut_text(shortcut);
+    }
+    if ui.add_enabled(enabled, button).clicked() {
         dispatch(session, id);
         ui.close();
     }
@@ -167,6 +172,11 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session) {
 }
 
 /// Apply keyboard shortcuts; returns the ids that fired.
+///
+/// Call this at the top of the frame, before any widget renders: `Tab` is also
+/// egui's focus-traversal key, and its `focus_direction` is committed at
+/// `begin_pass`. Consuming the shortcut here (and cancelling the direction for
+/// `pane.swap`) keeps `Tab` swapping panes instead of tabbing through widgets.
 pub fn consume_shortcuts(ctx: &egui::Context, session: &mut Session) -> Vec<&'static str> {
     let mut fired = Vec::new();
     for (id, shortcut) in shortcuts() {
@@ -174,6 +184,10 @@ pub fn consume_shortcuts(ctx: &egui::Context, session: &mut Session) -> Vec<&'st
         if consumed {
             dispatch(session, id);
             fired.push(id);
+            if id == PANE_SWAP {
+                // Cancel the focus move egui already staged for this `Tab`.
+                ctx.memory_mut(|mem| mem.move_focus(egui::FocusDirection::None));
+            }
         }
     }
     fired
@@ -261,5 +275,68 @@ mod tests {
         dispatch(&mut session, PANE_SWAP);
         dispatch(&mut session, PANE_CLOSE);
         assert_eq!(session.layout.panes().len(), 1);
+    }
+
+    fn collect_shapes(shapes: &[egui::epaint::ClippedShape], out: &mut Vec<String>) {
+        fn walk(shapes: &[egui::Shape], out: &mut Vec<String>) {
+            for shape in shapes {
+                match shape {
+                    egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+                    egui::Shape::Vec(inner) => walk(inner, out),
+                    _ => {}
+                }
+            }
+        }
+        for clipped in shapes {
+            walk(std::slice::from_ref(&clipped.shape), out);
+        }
+    }
+
+    /// A command with a keyboard binding paints that binding after its label
+    /// in the menu row (`Button::shortcut_text` in `item`).
+    #[test]
+    fn menu_items_show_their_shortcut_after_the_label() {
+        let mut session = Session::new().expect("session");
+        let ctx = egui::Context::default();
+        for (id, _) in shortcuts() {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE)
+                        .show(ctx, |ui| {
+                            egui::Frame::NONE.show(ui, |ui| {
+                                item(ui, &mut session, id);
+                            });
+                        });
+                },
+            );
+            output.textures_delta.clear();
+            let mut texts = Vec::new();
+            collect_shapes(&output.shapes, &mut texts);
+            let painted = texts.join(" ");
+            let spec = session.registry.get(id).expect("registered");
+            let label = spec.label;
+            let shortcut = spec
+                .shortcut
+                .unwrap_or_else(|| panic!("{id}: binding without a display string"));
+            let label_at = painted
+                .find(label)
+                .unwrap_or_else(|| panic!("{id}: label {label:?} not painted: {painted:?}"));
+            let shortcut_at = painted
+                .find(shortcut)
+                .unwrap_or_else(|| panic!("{id}: shortcut {shortcut:?} not painted: {painted:?}"));
+            assert!(
+                shortcut_at >= label_at + label.len(),
+                "{id}: shortcut {shortcut:?} must be painted after {label:?} \
+                 (painted: {painted:?})"
+            );
+        }
     }
 }

@@ -60,3 +60,11 @@
 - [ ] 9.2 Manual smoke on a real directory (`cargo run -p fm-app`, browse `/usr`, split, sort, select, back/forward) recorded in the devlog
 - [x] 9.3 Docs sync: `docs/architecture.md` §6/§7/§9 updated to the landed shape; roadmap marks change 2 done on archive
 - [ ] 9.4 `log/devlog.md` entry with numbers (tests, rows virtualized, fixture sizes); user asked to commit + archive
+
+## 10. Follow-up fixes (user smoke + reload report)
+
+- [x] 10.1 Window title renders on Wayland CSD (smithay fallback frame no-op): `winit` `wayland-csd-adwaita` feature + workspace dep
+- [x] 10.2 Tree nesting: pre-order DFS `collect_rows`, `expand_node` wiring, Right-retry after a failed expand
+- [x] 10.3 Reload never moves the pane: same-uri `nav.open` is a no-op; `TreeState.focused`; tree/listing scroll offsets owned by the pane state and never written during loading frames; keyboard focus restored after refresh — with engine/layout/ui regression tests
+- [x] 10.4 Menu items show their keyboard shortcut after the label (`Button::shortcut_text`), guarded by a paint-order test
+- [x] 10.5 Spec deltas: refresh-preservation requirements for file-listing and file-tree, same-uri/refresh scenarios for navigation

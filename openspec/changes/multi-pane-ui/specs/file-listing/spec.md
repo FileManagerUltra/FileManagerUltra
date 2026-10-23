@@ -50,3 +50,14 @@ A pane whose cache has no revision yet SHALL show a loading state; a directory w
 #### Scenario: Loading then content
 - **WHEN** a pane is navigated to a slow directory
 - **THEN** a loading indicator shows until the read completes and the rows appear without a layout jump in chrome
+
+### Requirement: A refresh never moves the pane
+`nav.refresh` SHALL reload the cached entries in place: across the loading gap the pane's focused row, selection and scroll offset SHALL be preserved, so a reload does not change where the user is looking.
+
+#### Scenario: Focus and scroll survive the reload
+- **WHEN** the listing is scrolled partway down with a focused row and `nav.refresh` re-reads the directory with the same names present
+- **THEN** the selection and focused row are unchanged and the listing returns to the same scroll offset once the rows reappear
+
+#### Scenario: The loading frames do not write back a collapsed offset
+- **WHEN** the directory is re-reading and the pane renders its loading state
+- **THEN** the pane's stored scroll offset is not overwritten by the collapsed content height

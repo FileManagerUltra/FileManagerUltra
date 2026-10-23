@@ -11,6 +11,14 @@ Opening a directory, going to the parent, back, forward and refreshing SHALL eac
 - **WHEN** `nav.open` receives a uri that does not parse
 - **THEN** it returns `Err(InvalidParams)` and the pane is unchanged
 
+#### Scenario: Re-opening the current directory is a reload, not a jump
+- **WHEN** `nav.open` receives the uri the pane is already at
+- **THEN** the pane keeps its history, selection, focus and scroll unchanged and no duplicate history entry is pushed
+
+#### Scenario: Refresh keeps the pane in place
+- **WHEN** `nav.refresh` runs in a pane with history, selection and scroll state
+- **THEN** the location and history are unchanged and only the cached entries are re-read
+
 ### Requirement: Each pane keeps back/forward history
 History SHALL be per pane: forward commits push onto the back stack and clear the forward stack; `nav.back`/`nav.forward` move through it without re-reading when the target is already cached.
 
