@@ -258,7 +258,7 @@ pub fn goto() -> CommandSpec {
         menu: &["Go", "Go to Path…"],
         shortcut: Some("Ctrl+L"),
         params: "{\"text\"?: string} seeds the editor instead of the current path",
-        enabled: |s| s.layout.state(s.layout.focused()).is_some(),
+        enabled: |s| s.focused_is_files(),
         run: |s, p: &Params| {
             let pane = s.layout.focused();
             let seed = match p {

@@ -99,6 +99,7 @@ impl Dialogs {
     /// Render the open dialog and the conflict prompt. Call once per frame.
     pub fn show(&mut self, ctx: &Context, s: &mut Session, tokens: &Tokens) {
         conflict_dialog(ctx, s, tokens);
+        kind_switch_dialog(ctx, s, tokens);
         let Some(mut dialog) = self.open.take() else {
             return;
         };
@@ -280,6 +281,54 @@ fn confirm_delete(ctx: &Context, tokens: &Tokens, count: usize) -> (bool, bool) 
             });
         });
     (go, cancel)
+}
+
+/// Asks before a pane type switch ends a terminal that is running a command.
+fn kind_switch_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    let Some((pane, kind)) = s.pending_kind else {
+        return;
+    };
+    let esc = ctx.input(|i| i.key_pressed(Key::Escape));
+    let (mut go, mut cancel) = (false, esc);
+    egui::Window::new("End running process?")
+        .id(Id::NULL.with("fm-confirm-kind-switch"))
+        .collapsible(false)
+        .movable(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .frame(frame(tokens))
+        .show(ctx, |ui| {
+            ui.label(
+                RichText::new("This terminal is running a command.")
+                    .color(tokens.text)
+                    .font(tokens.font()),
+            );
+            ui.label(
+                RichText::new(format!(
+                    "Switching to {} ends the terminal and everything running in it.",
+                    kind.label()
+                ))
+                .color(tokens.error)
+                .font(tokens.font()),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("End and switch").clicked() {
+                    go = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    if go {
+        s.dispatch_or_notice(
+            "pane.kind.set",
+            &json!({"kind": kind.as_str(), "pane": pane, "confirm": true}),
+        );
+        s.pending_kind = None;
+    } else if cancel {
+        s.pending_kind = None;
+    }
 }
 
 fn conflict_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {

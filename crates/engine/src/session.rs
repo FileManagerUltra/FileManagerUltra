@@ -53,6 +53,14 @@ pub struct Session {
     pub path_edit: Option<crate::goto_cmds::PathEdit>,
     /// Visited locations this session, most recent first (feeds path suggestions).
     pub path_history: Vec<String>,
+    /// One shell per Terminal pane (capability `terminal-pane`).
+    pub terminals: HashMap<PaneId, fm_term::TermSession>,
+    /// Current terminal text selection; cleared on scroll/resize.
+    pub terminal_selection: Option<crate::term_cmds::TermSelection>,
+    /// Text a command wants on the system clipboard; the app shell drains it.
+    pub clipboard_out: Option<String>,
+    /// A pane-type switch waiting for the user to confirm ending a running terminal job.
+    pub pending_kind: Option<(PaneId, fm_layout::PaneKind)>,
     /// `app.about` raises this flag; the UI shows the dialog and clears it.
     pub about_open: bool,
     /// Set by `app.preferences`; the UI renders the dialog and clears it.
@@ -88,6 +96,10 @@ impl Default for Session {
             show_link_targets: true,
             path_edit: None,
             path_history: Vec::new(),
+            terminals: HashMap::new(),
+            terminal_selection: None,
+            clipboard_out: None,
+            pending_kind: None,
             about_open: false,
             preferences_open: false,
             dirs: DirCache::new(),
@@ -200,7 +212,8 @@ impl Session {
     /// when anything observable changed (the UI should repaint).
     pub fn poll(&mut self) -> bool {
         let events = self.jobs.poll();
-        let mut changed = !events.is_empty();
+        let (term_changed, _) = self.pump_terminals();
+        let mut changed = !events.is_empty() || term_changed;
         for ev in &events {
             if ev.is_terminal() && self.finish_op(ev) {
                 continue;

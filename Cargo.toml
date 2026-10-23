@@ -19,6 +19,7 @@ fm-fs-sftp = { path = "crates/fs-sftp" }
 fm-testkit = { path = "crates/testkit" }
 fm-ops = { path = "crates/ops" }
 fm-layout = { path = "crates/layout" }
+fm-term = { path = "crates/term" }
 fm-engine = { path = "crates/engine" }
 fm-ui = { path = "crates/ui" }
 
@@ -51,6 +52,8 @@ directories = "5"
 log = "0.4"
 sysinfo = "0.39"
 trash = "5"
+portable-pty = "0.9"
+vt100 = "0.18"
 
 # external — xtask tooling
 regex = "1"

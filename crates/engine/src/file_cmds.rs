@@ -92,7 +92,11 @@ pub fn validate_new_name(
 
 /// Uris of the focused pane's selected rows.
 pub fn focused_selection(s: &Session) -> Vec<VfsUri> {
-    let Some(pane) = s.layout.state(s.layout.focused()) else {
+    let Some(pane) = s
+        .layout
+        .state(s.layout.focused())
+        .filter(|p| p.kind == fm_layout::PaneKind::Files)
+    else {
         return Vec::new();
     };
     // A directory clicked in the tree is the target until the listing is used again.
@@ -111,6 +115,12 @@ pub fn focused_selection(s: &Session) -> Vec<VfsUri> {
         .collect()
 }
 
+fn is_files(s: &Session, pane: fm_layout::PaneId) -> bool {
+    s.layout
+        .state(pane)
+        .is_some_and(|p| p.kind == fm_layout::PaneKind::Files)
+}
+
 /// Directory of the most-recently-focused other pane (the copy/move destination).
 pub fn other_pane_dir(s: &Session) -> Option<VfsUri> {
     let focused = s.layout.focused();
@@ -118,8 +128,13 @@ pub fn other_pane_dir(s: &Session) -> Option<VfsUri> {
         .layout
         .focus
         .previous
-        .filter(|p| *p != focused && s.layout.state(*p).is_some())
-        .or_else(|| s.layout.panes().into_iter().find(|p| *p != focused))?;
+        .filter(|p| *p != focused && is_files(s, *p))
+        .or_else(|| {
+            s.layout
+                .panes()
+                .into_iter()
+                .find(|p| *p != focused && is_files(s, *p))
+        })?;
     s.layout.state(other).map(|st| st.location.clone())
 }
 
@@ -197,7 +212,7 @@ pub fn mkdir() -> CommandSpec {
         menu: &["File", "New Folder"],
         shortcut: Some("F7"),
         params: "name: string, parent?: uri",
-        enabled: |s| s.layout.state(s.layout.focused()).is_some(),
+        enabled: |s| s.focused_is_files(),
         run: |s, params| {
             let map = object(params)?;
             let name = required_name(map)?;
@@ -222,7 +237,7 @@ pub fn new_file() -> CommandSpec {
         menu: &["File", "New File"],
         shortcut: Some("Shift+F7"),
         params: "name: string, parent?: uri",
-        enabled: |s| s.layout.state(s.layout.focused()).is_some(),
+        enabled: |s| s.focused_is_files(),
         run: |s, params| {
             let map = object(params)?;
             let name = required_name(map)?;

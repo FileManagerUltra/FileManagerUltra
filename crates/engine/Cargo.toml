@@ -16,6 +16,7 @@ fm-vfs.workspace = true
 fm-fs-local.workspace = true
 fm-layout.workspace = true
 fm-ops.workspace = true
+fm-term.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 crossbeam-channel.workspace = true

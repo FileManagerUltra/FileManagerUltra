@@ -346,26 +346,95 @@ impl History {
     }
 }
 
+/// What a pane shows. Only `Files` state lives in [`PaneState`]; other kinds keep their
+/// runtime state in the engine and merely tag the pane here.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum PaneKind {
+    #[default]
+    Files,
+    Terminal,
+    Sftp,
+    Network,
+}
+
+impl PaneKind {
+    pub const ALL: [PaneKind; 4] = [Self::Files, Self::Terminal, Self::Sftp, Self::Network];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Files => "files",
+            Self::Terminal => "terminal",
+            Self::Sftp => "sftp",
+            Self::Network => "network",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Files => "Files",
+            Self::Terminal => "Terminal",
+            Self::Sftp => "SFTP",
+            Self::Network => "Network",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+}
+
 /// Everything one pane remembers about its view.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaneState {
+    /// Which body the pane shows; the Files fields below are kept while it is not `Files`.
+    pub kind: PaneKind,
     pub location: VfsUri,
     pub tree: TreeState,
     pub listing: ListingState,
     pub history: History,
     /// Width of the tree column in px (drag-resized, persisted per pane).
     pub tree_width: f32,
+    /// Widths of the Size, Modified and Type columns in px (drag-resized in the header).
+    pub col_widths: [f32; 3],
 }
+
+/// Default tree width in px.
+pub const DEFAULT_TREE_WIDTH: f32 = 220.0;
+/// Default Size / Modified / Type column widths, and the band a drag may use.
+pub const DEFAULT_COL_WIDTHS: [f32; 3] = [90.0, 140.0, 72.0];
+pub const MIN_COL_WIDTH: f32 = 40.0;
+pub const MAX_COL_WIDTH: f32 = 400.0;
 
 impl PaneState {
     /// A pane rooted at `location`: the tree starts expanded at the same uri.
     pub fn new(location: VfsUri) -> Self {
         Self {
+            kind: PaneKind::Files,
             tree: TreeState::new(location.clone()),
             history: History::new(location.clone()),
             location,
             listing: ListingState::default(),
-            tree_width: 220.0,
+            tree_width: DEFAULT_TREE_WIDTH,
+            col_widths: DEFAULT_COL_WIDTHS,
+        }
+    }
+
+    /// Resize detail column `ix` (0 Size, 1 Modified, 2 Type); non-finite widths and
+    /// unknown columns are ignored, the rest is clamped.
+    pub fn set_col_width(&mut self, ix: usize, width: f32) {
+        if let Some(w) = self.col_widths.get_mut(ix)
+            && width.is_finite()
+        {
+            *w = width.clamp(MIN_COL_WIDTH, MAX_COL_WIDTH);
+        }
+    }
+
+    /// Restore column `ix` to its default width.
+    pub fn reset_col_width(&mut self, ix: usize) {
+        if let (Some(w), Some(d)) = (self.col_widths.get_mut(ix), DEFAULT_COL_WIDTHS.get(ix)) {
+            *w = *d;
         }
     }
 
@@ -466,6 +535,21 @@ pub struct Focus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn column_widths_clamp_reject_garbage_and_reset() {
+        let mut p = PaneState::new(VfsUri::parse("/d").expect("uri"));
+        p.set_col_width(1, 10_000.0);
+        assert_eq!(p.col_widths[1], MAX_COL_WIDTH);
+        p.set_col_width(1, 1.0);
+        assert_eq!(p.col_widths[1], MIN_COL_WIDTH);
+        p.set_col_width(0, f32::NAN);
+        p.set_col_width(9, 100.0);
+        assert_eq!(p.col_widths[0], DEFAULT_COL_WIDTHS[0]);
+        p.reset_col_width(1);
+        assert_eq!(p.col_widths, DEFAULT_COL_WIDTHS);
+        p.reset_col_width(9);
+    }
 
     fn uri(p: &str) -> VfsUri {
         VfsUri::parse(p).expect("static uri")

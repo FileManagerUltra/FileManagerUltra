@@ -7,6 +7,7 @@
 use eframe::egui;
 
 use fm_engine::{Params, Session, ThemePreference};
+use fm_layout::PaneKind;
 use fm_ui::dialogs::{Dialogs, dialog_for};
 
 pub const PREFERENCES: &str = "app.preferences";
@@ -20,6 +21,18 @@ pub const PANE_SPLIT_H: &str = "pane.split.horizontal";
 pub const PANE_SPLIT_V: &str = "pane.split.vertical";
 pub const PANE_CLOSE: &str = "pane.close";
 pub const PANE_SWAP: &str = "pane.swap";
+pub const PANE_EQUALIZE: &str = "pane.equalize";
+pub const PANE_ZOOM: &str = "pane.zoom";
+pub const PANE_ROTATE: &str = "pane.rotate";
+pub const PANE_RESIZE_LEFT: &str = "pane.resize.left";
+pub const PANE_RESIZE_RIGHT: &str = "pane.resize.right";
+pub const PANE_RESIZE_UP: &str = "pane.resize.up";
+pub const PANE_RESIZE_DOWN: &str = "pane.resize.down";
+pub const TERM_COPY: &str = "term.copy";
+pub const TERM_PASTE: &str = "term.paste";
+pub const TERM_CD_HERE: &str = "term.cd_here";
+pub const TERM_CLEAR: &str = "term.clear_scrollback";
+pub const TERM_RESTART: &str = "term.restart";
 pub const PANE_FOCUS_NEXT: &str = "pane.focus.next";
 pub const NAV_UP: &str = "nav.up";
 pub const NAV_BACK: &str = "nav.back";
@@ -58,7 +71,19 @@ pub fn all_ids() -> &'static [&'static str] {
         PANE_SPLIT_V,
         PANE_CLOSE,
         PANE_SWAP,
+        PANE_EQUALIZE,
+        PANE_ZOOM,
+        PANE_ROTATE,
+        PANE_RESIZE_LEFT,
+        PANE_RESIZE_RIGHT,
+        PANE_RESIZE_UP,
+        PANE_RESIZE_DOWN,
         PANE_FOCUS_NEXT,
+        TERM_COPY,
+        TERM_PASTE,
+        TERM_CD_HERE,
+        TERM_CLEAR,
+        TERM_RESTART,
         NAV_UP,
         NAV_BACK,
         NAV_FORWARD,
@@ -102,6 +127,50 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
         (
             PANE_SWAP,
             egui::KeyboardShortcut::new(Modifiers::NONE, Key::Tab),
+        ),
+        (
+            PANE_EQUALIZE,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::B),
+        ),
+        (
+            PANE_ZOOM,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::X),
+        ),
+        (
+            PANE_ROTATE,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::R),
+        ),
+        (
+            PANE_RESIZE_LEFT,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::ArrowLeft),
+        ),
+        (
+            PANE_RESIZE_RIGHT,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::ArrowRight),
+        ),
+        (
+            PANE_RESIZE_UP,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::ArrowUp),
+        ),
+        (
+            PANE_RESIZE_DOWN,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::ArrowDown),
+        ),
+        (
+            PANE_SPLIT_H,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::E),
+        ),
+        (
+            PANE_SPLIT_V,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::O),
+        ),
+        (
+            TERM_COPY,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::C),
+        ),
+        (
+            TERM_PASTE,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::V),
         ),
         (
             NAV_UP,
@@ -272,7 +341,25 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, PANE_SWAP);
             item(ui, session, dialogs, PANE_FOCUS_NEXT);
             ui.separator();
+            item(ui, session, dialogs, PANE_ZOOM);
+            item(ui, session, dialogs, PANE_EQUALIZE);
+            item(ui, session, dialogs, PANE_ROTATE);
+            ui.menu_button("Resize", |ui| {
+                item(ui, session, dialogs, PANE_RESIZE_LEFT);
+                item(ui, session, dialogs, PANE_RESIZE_RIGHT);
+                item(ui, session, dialogs, PANE_RESIZE_UP);
+                item(ui, session, dialogs, PANE_RESIZE_DOWN);
+            });
+            ui.separator();
             item(ui, session, dialogs, PANE_CLOSE);
+        });
+        ui.menu_button("Terminal", |ui| {
+            item(ui, session, dialogs, TERM_COPY);
+            item(ui, session, dialogs, TERM_PASTE);
+            ui.separator();
+            item(ui, session, dialogs, TERM_CD_HERE);
+            item(ui, session, dialogs, TERM_CLEAR);
+            item(ui, session, dialogs, TERM_RESTART);
         });
         ui.menu_button("View", |ui| {
             check_item(ui, session, dialogs, VIEW_HIDDEN, session.show_hidden);
@@ -307,6 +394,11 @@ fn modifier_count(m: &egui::Modifiers) -> u8 {
 /// Apply keyboard shortcuts; returns the ids that fired.
 ///
 /// Call this at the top of the frame, before any widget renders: `Tab` is also
+fn terminal_shortcut(shortcut: &egui::KeyboardShortcut) -> bool {
+    let m = shortcut.modifiers;
+    m.mac_cmd || (m.shift && m.command)
+}
+
 /// egui's focus-traversal key, and its `focus_direction` is committed at
 /// `begin_pass`. Consuming the shortcut here (and cancelling the direction for
 /// `pane.swap`) keeps `Tab` swapping panes instead of tabbing through widgets.
@@ -321,7 +413,16 @@ pub fn consume_shortcuts(
     // Most modifiers first, so Cmd+Backspace wins over plain Backspace.
     let mut table = shortcuts();
     table.sort_by_key(|(_, sc)| std::cmp::Reverse(modifier_count(&sc.modifiers)));
+    // A focused terminal owns the keyboard: Ctrl+<key>, Backspace, Tab, F-keys and friends
+    // belong to the shell. Only Cmd/Ctrl+Shift chords (and macOS Cmd) stay app shortcuts.
+    let terminal = !dialogs.is_open() && session.focused_kind() == Some(PaneKind::Terminal);
     for (id, shortcut) in table {
+        if terminal && !terminal_shortcut(&shortcut) {
+            continue;
+        }
+        if typing && (id.starts_with("term.") || id.starts_with("pane.resize.")) {
+            continue;
+        }
         if typing && (id.starts_with("file.") || id == EDIT_UNDO || shortcut.modifiers.is_none()) {
             continue;
         }
@@ -333,6 +434,16 @@ pub fn consume_shortcuts(
                 // Cancel the focus move egui already staged for this `Tab`.
                 ctx.memory_mut(|mem| mem.move_focus(egui::FocusDirection::None));
             }
+        }
+    }
+    if terminal {
+        let swap = egui::KeyboardShortcut::new(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::Tab,
+        );
+        if ctx.input_mut(|input| input.consume_shortcut(&swap)) {
+            dispatch(session, dialogs, PANE_SWAP);
+            fired.push(PANE_SWAP);
         }
     }
     fired
@@ -392,6 +503,8 @@ mod tests {
         use egui::Key;
         match key {
             Key::Q => "Q",
+            Key::C => "C",
+            Key::V => "V",
             Key::Comma => ",",
             Key::T => "T",
             Key::H => "H",
@@ -409,6 +522,12 @@ mod tests {
             Key::Backspace => "Backspace",
             Key::ArrowLeft => "Left",
             Key::ArrowRight => "Right",
+            Key::ArrowUp => "Up",
+            Key::ArrowDown => "Down",
+            Key::E => "E",
+            Key::B => "B",
+            Key::O => "O",
+            Key::X => "X",
             _ => "?",
         }
     }
@@ -426,6 +545,101 @@ mod tests {
             consume_shortcuts(ui.ctx(), session, dialogs);
         });
         out.textures_delta.clear();
+    }
+
+    fn chord(
+        ctx: &egui::Context,
+        session: &mut Session,
+        key: egui::Key,
+        modifiers: egui::Modifiers,
+    ) -> Vec<&'static str> {
+        let mut input = egui::RawInput::default();
+        input.events.push(egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        });
+        let mut fired = Vec::new();
+        let mut dialogs = Dialogs::default();
+        let mut out = ctx.run_ui(input, |ui| {
+            fired = consume_shortcuts(ui.ctx(), session, &mut dialogs);
+        });
+        out.textures_delta.clear();
+        fired
+    }
+
+    #[test]
+    fn a_focused_terminal_keeps_plain_and_ctrl_keys_for_the_shell() {
+        use egui::{Key, Modifiers};
+        let mut session = Session::new().expect("session");
+        let pane = session.layout.focused();
+        session.layout.state_mut(pane).expect("pane").kind = PaneKind::Terminal;
+        let ctx = egui::Context::default();
+        let ctrl = Modifiers {
+            ctrl: true,
+            command: true,
+            ..Modifiers::NONE
+        };
+        let ctrl_shift = Modifiers {
+            shift: true,
+            ..ctrl
+        };
+        for (key, m) in [
+            (Key::Backspace, Modifiers::NONE),
+            (Key::Tab, Modifiers::NONE),
+            (Key::F5, Modifiers::NONE),
+            (Key::L, ctrl),
+            (Key::C, ctrl),
+            (Key::D, ctrl),
+            (Key::R, ctrl),
+        ] {
+            assert!(
+                chord(&ctx, &mut session, key, m).is_empty(),
+                "{key:?} {m:?}"
+            );
+        }
+        let paste = chord(&ctx, &mut session, Key::V, ctrl_shift);
+        assert_eq!(paste, vec![TERM_PASTE]);
+        let swap = chord(&ctx, &mut session, Key::Tab, ctrl_shift);
+        assert_eq!(swap, vec![PANE_SWAP]);
+    }
+
+    #[test]
+    fn arrangement_chords_work_with_a_terminal_focused() {
+        use egui::{Key, Modifiers};
+        let ctx = egui::Context::default();
+        let mut session = Session::new().expect("session");
+        session
+            .dispatch("pane.split.horizontal", &serde_json::Value::Null)
+            .expect("split");
+        session
+            .dispatch("pane.kind.set", &serde_json::json!({"kind": "terminal"}))
+            .expect("kind");
+        let cs = Modifiers::COMMAND | Modifiers::SHIFT;
+        for (key, id) in [
+            (Key::B, PANE_EQUALIZE),
+            (Key::E, PANE_SPLIT_H),
+            (Key::O, PANE_SPLIT_V),
+            (Key::X, PANE_ZOOM),
+            (Key::R, PANE_ROTATE),
+            (Key::ArrowLeft, PANE_RESIZE_LEFT),
+            (Key::ArrowDown, PANE_RESIZE_DOWN),
+        ] {
+            assert_eq!(chord(&ctx, &mut session, key, cs), vec![id], "{id}");
+        }
+    }
+
+    #[test]
+    fn files_panes_keep_their_shortcuts() {
+        use egui::{Key, Modifiers};
+        let mut session = Session::new().expect("session");
+        let ctx = egui::Context::default();
+        assert_eq!(
+            chord(&ctx, &mut session, Key::Backspace, Modifiers::NONE),
+            vec![NAV_UP]
+        );
     }
 
     #[test]

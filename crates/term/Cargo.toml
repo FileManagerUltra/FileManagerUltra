@@ -1,0 +1,20 @@
+[package]
+name = "fm-term"
+description = "Pty-backed terminal sessions: shell process, VT parser, cell grid (no UI, no filesystem)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+fm-vfs.workspace = true
+portable-pty.workspace = true
+vt100.workspace = true
+crossbeam-channel.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -8,8 +8,11 @@ use fm_vfs::{FmError, VfsUri};
 mod node;
 mod state;
 
-pub use node::{Axis, MAX_RATIO, MIN_RATIO, PaneNode};
-pub use state::{Focus, History, ListingState, PaneState, SortDir, SortKey, SortSpec, TreeState};
+pub use node::{Axis, Edge, MAX_RATIO, MIN_RATIO, PaneNode};
+pub use state::{
+    DEFAULT_COL_WIDTHS, DEFAULT_TREE_WIDTH, Focus, History, ListingState, MAX_COL_WIDTH,
+    MIN_COL_WIDTH, PaneKind, PaneState, SortDir, SortKey, SortSpec, TreeState,
+};
 
 /// Stable id of a pane (leaf). Never reused within a layout.
 pub type PaneId = u64;
@@ -20,6 +23,8 @@ pub struct Layout {
     pub root: PaneNode,
     pub states: BTreeMap<PaneId, PaneState>,
     pub focus: Focus,
+    /// When set, only this pane is shown (the others keep their state).
+    pub zoomed: Option<PaneId>,
     next_id: PaneId,
 }
 
@@ -35,6 +40,7 @@ impl Layout {
                 focused: 1,
                 previous: None,
             },
+            zoomed: None,
             next_id: 2,
         }
     }
@@ -55,6 +61,7 @@ impl Layout {
         self.states.insert(new_id, state);
         self.root.split_leaf(target, axis, ratio, new_id);
         self.focus_new(new_id);
+        self.fix_zoom();
         Ok(new_id)
     }
 
@@ -79,6 +86,7 @@ impl Layout {
                 self.focus.previous = Some(s);
             }
         }
+        self.fix_zoom();
         Ok(())
     }
 
@@ -92,6 +100,63 @@ impl Layout {
         }
         self.root.swap_leaves(x, y);
         Ok(())
+    }
+
+    /// Re-insert `pane` beside `target` on `edge`; state and focus travel with the pane.
+    /// Validates before touching the tree, so a failed move changes nothing.
+    pub fn move_pane(&mut self, pane: PaneId, target: PaneId, edge: Edge) -> Result<(), FmError> {
+        if pane == target {
+            return Err(FmError::InvalidParams(
+                "cannot move a pane onto itself".to_string(),
+            ));
+        }
+        if !self.root.contains(pane) || !self.root.contains(target) {
+            return Err(FmError::NotFound("move: unknown pane".to_string()));
+        }
+        if !self.root.close_leaf(pane) || !self.root.insert_beside(target, pane, edge) {
+            return Err(FmError::Unsupported("pane could not be moved"));
+        }
+        self.focus_pane(pane)?;
+        self.zoomed = None;
+        Ok(())
+    }
+
+    /// Equal space for panes along every split's axis.
+    pub fn equalize(&mut self) {
+        self.root.equalize();
+    }
+
+    /// The equalised ratio of one split (by handle), for a double-click reset.
+    pub fn equal_ratio(&self, handle: PaneId) -> Option<f32> {
+        self.root.equal_ratio(handle)
+    }
+
+    /// Flip the split holding `pane` between side-by-side and stacked. False when there is none.
+    pub fn rotate(&mut self, pane: PaneId) -> bool {
+        self.root.rotate_parent(pane)
+    }
+
+    /// Move the nearest divider around `pane` on `axis` by `delta` (positive = right/down).
+    pub fn resize(&mut self, pane: PaneId, axis: Axis, delta: f32) -> bool {
+        delta.is_finite() && self.root.nudge(pane, axis, delta)
+    }
+
+    /// Show only the focused pane, or restore the full layout.
+    pub fn toggle_zoom(&mut self) {
+        self.zoomed = match self.zoomed {
+            Some(_) => None,
+            None if self.panes().len() > 1 => Some(self.focus.focused),
+            None => None,
+        };
+    }
+
+    fn fix_zoom(&mut self) {
+        if self
+            .zoomed
+            .is_some_and(|z| z != self.focus.focused || !self.root.contains(z))
+        {
+            self.zoomed = None;
+        }
     }
 
     /// Update a split's ratio via its handle (the left/top leaf id). No I/O.
@@ -121,6 +186,7 @@ impl Layout {
             self.focus.previous = Some(self.focus.focused);
             self.focus.focused = id;
         }
+        self.fix_zoom();
         Ok(())
     }
 
@@ -142,6 +208,7 @@ impl Layout {
         // focus_next cycles without stashing "previous" as the swap partner —
         // Tab-swap uses `swap_focused_with_previous`, not this.
         self.focus.focused = next;
+        self.fix_zoom();
     }
 
     /// Commander-style Tab: swap the focused pane with the previously focused
@@ -156,6 +223,7 @@ impl Layout {
         // After the exchange, follow the pane that used to be `prev`.
         self.focus.focused = prev;
         self.focus.previous = Some(cur);
+        self.fix_zoom();
         Ok(())
     }
 
@@ -355,5 +423,197 @@ mod tests {
         s.go_back();
         s.navigate(home.clone());
         assert!(!s.can_go_forward());
+    }
+
+    fn three_in_a_row() -> (Layout, PaneId, PaneId, PaneId) {
+        let mut l = layout();
+        let b = l.split(1, Axis::Horizontal, 0.5).expect("split");
+        let c = l.split(b, Axis::Horizontal, 0.5).expect("split");
+        (l, 1, b, c)
+    }
+
+    fn invariants(l: &Layout) {
+        let mut leaves = l.panes();
+        leaves.sort_unstable();
+        let keys: Vec<PaneId> = l.states.keys().copied().collect();
+        assert_eq!(leaves, keys, "leaf set equals state set");
+        fn ratios(n: &PaneNode) {
+            if let PaneNode::Split { ratio, a, b, .. } = n {
+                assert!((MIN_RATIO..=MAX_RATIO).contains(ratio), "ratio {ratio}");
+                ratios(a);
+                ratios(b);
+            }
+        }
+        ratios(&l.root);
+        assert!(l.root.contains(l.focus.focused));
+        if let Some(p) = l.focus.previous {
+            assert!(l.states.contains_key(&p));
+        }
+        if let Some(z) = l.zoomed {
+            assert_eq!(z, l.focus.focused);
+        }
+    }
+
+    #[test]
+    fn move_to_an_edge_reinserts_and_keeps_state() {
+        let (mut l, a, b, c) = three_in_a_row();
+        l.state_mut(a).expect("state").listing.sort.key = SortKey::Size;
+        l.move_pane(a, c, Edge::Bottom).expect("move");
+        invariants(&l);
+        assert_eq!(l.panes(), vec![b, c, a]);
+        assert_eq!(l.state(a).expect("state").listing.sort.key, SortKey::Size);
+        assert_eq!(l.focused(), a);
+        let PaneNode::Split {
+            axis, b: second, ..
+        } = &l.root
+        else {
+            panic!("root must be a split");
+        };
+        assert_eq!(*axis, Axis::Horizontal);
+        assert!(matches!(
+            &**second,
+            PaneNode::Split {
+                axis: Axis::Vertical,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn move_left_and_top_take_the_first_slot() {
+        let (mut l, a, b, _c) = three_in_a_row();
+        l.move_pane(b, a, Edge::Top).expect("move");
+        invariants(&l);
+        assert_eq!(l.panes()[..2], [b, a]);
+    }
+
+    #[test]
+    fn invalid_moves_change_nothing() {
+        let (mut l, a, _b, _c) = three_in_a_row();
+        let before = l.root.clone();
+        assert!(l.move_pane(a, a, Edge::Left).is_err());
+        assert!(l.move_pane(a, 99, Edge::Left).is_err());
+        assert!(l.move_pane(99, a, Edge::Left).is_err());
+        assert_eq!(l.root, before);
+        let mut single = layout();
+        assert!(single.move_pane(1, 2, Edge::Left).is_err());
+    }
+
+    #[test]
+    fn equalize_weights_by_leaves_along_the_axis() {
+        let (mut l, a, _b, _c) = three_in_a_row();
+        l.set_ratio(a, 0.8);
+        l.equalize();
+        let PaneNode::Split { ratio, b, .. } = &l.root else {
+            panic!("split");
+        };
+        assert!((ratio - 1.0 / 3.0).abs() < 1e-5, "{ratio}");
+        let PaneNode::Split { ratio: inner, .. } = &**b else {
+            panic!("split");
+        };
+        assert!((inner - 0.5).abs() < 1e-5);
+        assert_eq!(l.equal_ratio(a), Some(*ratio));
+    }
+
+    #[test]
+    fn rotate_flips_the_parent_axis_only() {
+        let (mut l, _a, b, _c) = three_in_a_row();
+        assert!(l.rotate(b));
+        let PaneNode::Split { axis, b: inner, .. } = &l.root else {
+            panic!("split");
+        };
+        assert_eq!(*axis, Axis::Horizontal);
+        assert!(matches!(
+            &**inner,
+            PaneNode::Split {
+                axis: Axis::Vertical,
+                ..
+            }
+        ));
+        assert!(!layout().rotate(1));
+    }
+
+    #[test]
+    fn resize_moves_the_nearest_divider_on_that_axis() {
+        let (mut l, a, _b, c) = three_in_a_row();
+        assert!(l.resize(c, Axis::Horizontal, -0.1));
+        let PaneNode::Split { ratio, b, .. } = &l.root else {
+            panic!("split");
+        };
+        assert!((ratio - 0.5).abs() < 1e-5, "outer divider untouched");
+        assert!(matches!(&**b, PaneNode::Split { ratio: r, .. } if (r - 0.4).abs() < 1e-5));
+        // a has no vertical divider; NaN and clamping are safe
+        assert!(!l.resize(a, Axis::Vertical, 0.1));
+        assert!(!l.resize(a, Axis::Horizontal, f32::NAN));
+        assert!(l.resize(a, Axis::Horizontal, 10.0));
+        invariants(&l);
+    }
+
+    #[test]
+    fn zoom_toggles_and_ends_when_focus_leaves() {
+        let (mut l, a, b, _c) = three_in_a_row();
+        l.focus_pane(b).expect("focus");
+        l.toggle_zoom();
+        assert_eq!(l.zoomed, Some(b));
+        l.toggle_zoom();
+        assert_eq!(l.zoomed, None);
+        l.toggle_zoom();
+        l.focus_pane(a).expect("focus");
+        assert_eq!(l.zoomed, None);
+        l.toggle_zoom();
+        l.close(a).expect("close");
+        assert_eq!(l.zoomed, None);
+        assert!(layout().zoomed.is_none());
+        let mut one = layout();
+        one.toggle_zoom();
+        assert_eq!(one.zoomed, None, "nothing to zoom with a single pane");
+    }
+
+    #[test]
+    fn random_operations_keep_the_invariants() {
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let mut l = layout();
+        for _ in 0..3000 {
+            let panes = l.panes();
+            let p = panes[next(panes.len())];
+            let q = panes[next(panes.len())];
+            let axis = if next(2) == 0 {
+                Axis::Horizontal
+            } else {
+                Axis::Vertical
+            };
+            match next(9) {
+                0 if panes.len() < 8 => {
+                    let _ = l.split(p, axis, 0.5);
+                }
+                1 => {
+                    let _ = l.close(p);
+                }
+                2 => {
+                    let _ = l.swap(p, q);
+                }
+                3 => {
+                    let _ = l.move_pane(p, q, Edge::ALL[next(4)]);
+                }
+                4 => l.equalize(),
+                5 => {
+                    l.rotate(p);
+                }
+                6 => {
+                    l.resize(p, axis, (next(21) as f32 - 10.0) / 20.0);
+                }
+                7 => {
+                    let _ = l.focus_pane(q);
+                }
+                _ => l.toggle_zoom(),
+            }
+            invariants(&l);
+        }
     }
 }

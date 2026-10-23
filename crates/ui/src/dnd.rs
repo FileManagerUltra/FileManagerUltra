@@ -208,6 +208,33 @@ pub fn finish(ctx: &Context, s: &mut Session, pane_rect: Rect, tokens: &Tokens) 
     }
 }
 
+/// A terminal pane accepts dragged files by pasting their paths. Call once per frame for a
+/// Terminal pane instead of [`finish`]; it never decides anything beyond "paste these".
+pub fn finish_terminal(ctx: &Context, s: &mut Session, pane: PaneId, rect: Rect, tokens: &Tokens) {
+    let Some(payload) = DragAndDrop::payload::<DragPayload>(ctx) else {
+        return;
+    };
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        DragAndDrop::clear_payload(ctx);
+        return;
+    }
+    let Some(pos) = ctx.pointer_interact_pos().filter(|p| rect.contains(*p)) else {
+        return;
+    };
+    let count = payload.sources.len();
+    let text = if count == 1 {
+        "Paste path".to_string()
+    } else {
+        format!("Paste {count} paths")
+    };
+    paint_feedback(ctx, rect, pos, &text, tokens);
+    let released = ctx.input(|i| i.pointer.any_released());
+    if released && DragAndDrop::take_payload::<DragPayload>(ctx).is_some() {
+        let paths: Vec<String> = payload.sources.iter().map(|u| u.to_string()).collect();
+        s.dispatch_or_notice("term.drop_paths", &json!({"paths": paths, "pane": pane}));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

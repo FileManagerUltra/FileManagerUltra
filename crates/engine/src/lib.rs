@@ -6,6 +6,7 @@
 //! dispatches; it never performs work itself.
 
 pub mod app_cmds;
+pub mod arrange_cmds;
 pub mod backends;
 pub mod commands;
 pub mod dircache;
@@ -17,11 +18,13 @@ pub mod job_cmds;
 pub mod jobs;
 pub mod nav_cmds;
 pub mod pane_cmds;
+pub mod pane_kind_cmds;
 pub mod prefs;
 pub mod prefs_cmds;
 pub mod registry;
 pub mod session;
 pub mod sort_cmds;
+pub mod term_cmds;
 pub mod theme_cmds;
 pub mod view_cmds;
 

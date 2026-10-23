@@ -221,7 +221,9 @@ pub struct PaneState {
 }
 ```
 
-Splits are pure data: `Layout::split(pane, axis)` / `close(pane)` / `swap(a, b)` / `set_ratio(handle, r)` (handle = left/top leaf id), plus focus bookkeeping (`focus_pane`, `swap_focused_with_previous` for Tab, `focus_next`) — unit-tested for ratio clamping, single-pane degenerate cases and dangling-focus regressions. `PaneState::up_target()` returns `None` at the pane's tree root so `nav.up` is a no-op there.
+Splits are pure data: `Layout::split(pane, axis)` / `close(pane)` / `swap(a, b)` / `set_ratio(handle, r)` (handle = left/top leaf id), plus focus bookkeeping (`focus_pane`, `swap_focused_with_previous` for Tab, `focus_next`) — unit-tested for ratio clamping, single-pane degenerate cases and dangling-focus regressions. Arrangement (change `pane-arrange`): `Layout::move_pane(pane, target, edge)` detaches a leaf and re-inserts it beside the target (state and terminals are keyed by `PaneId`, so they travel along); `equalize` (weighted by leaf count), `rotate`, `resize(pane, axis, delta)` and `toggle_zoom` (`Layout.zoomed`, view state dropped by `fix_zoom` when focus changes or the pane closes). Engine commands live in `arrange_cmds.rs` (`pane.move/equalize/zoom/rotate/resize.*`). Dragging a pane header carries `fm_ui::arrange::PaneDrag` (separate from the file `DragPayload`); `slot_for` maps the pointer to an edge band or centre (swap) and the drop dispatches `pane.move`. Dividers (`fm-app`) highlight on hover and reset to the equal split on double-click.
+
+`PaneState::up_target()` returns `None` at the pane's tree root so `nav.up` is a no-op there.
 
 ---
 

@@ -6,7 +6,9 @@ use crate::registry::{CommandSpec, Params};
 use crate::session::Session;
 
 fn focused_pane(s: &Session) -> Option<&fm_layout::PaneState> {
-    s.layout.state(s.layout.focused())
+    s.layout
+        .state(s.layout.focused())
+        .filter(|p| p.kind == fm_layout::PaneKind::Files)
 }
 
 /// Pull a `uri` string out of the untrusted params (`"…"` or `{"uri": "…"}`).

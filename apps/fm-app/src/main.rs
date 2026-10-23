@@ -59,6 +59,50 @@ fn open_uri(session: &mut Session, uri: &VfsUri) {
     }
 }
 
+/// A split handle: resize cursor, accent on hover/drag, double-click resets to the equal split.
+#[allow(clippy::too_many_arguments)]
+fn divider(
+    ui: &mut egui::Ui,
+    session: &mut Session,
+    handle: Option<fm_layout::PaneId>,
+    axis: Axis,
+    ratio: f32,
+    size: egui::Vec2,
+    total: f32,
+    tokens: &theme::Tokens,
+) {
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+    let active = resp.hovered() || resp.dragged();
+    if active {
+        ui.ctx().set_cursor_icon(match axis {
+            Axis::Horizontal => egui::CursorIcon::ResizeHorizontal,
+            Axis::Vertical => egui::CursorIcon::ResizeVertical,
+        });
+    }
+    ui.painter().rect_filled(
+        rect,
+        0.0,
+        if active { tokens.accent } else { tokens.border },
+    );
+    let Some(handle) = handle else {
+        return;
+    };
+    if resp.double_clicked() {
+        if let Some(r) = session.layout.equal_ratio(handle) {
+            session.layout.set_ratio(handle, r);
+        }
+    } else if resp.dragged() {
+        let d = resp.drag_delta();
+        let delta = match axis {
+            Axis::Horizontal => d.x,
+            Axis::Vertical => d.y,
+        };
+        session
+            .layout
+            .set_ratio(handle, ratio + delta / total.max(1.0));
+    }
+}
+
 /// Render the pane tree recursively. `Split` nodes lay out two children along
 /// their axis with a drag handle that writes the ratio back into the layout.
 fn render_pane_node(
@@ -69,6 +113,10 @@ fn render_pane_node(
 ) -> Option<VfsUri> {
     match node {
         PaneNode::Leaf(id) => fm_ui::pane::show(ui, session, *id, tokens),
+        PaneNode::Split { .. } if session.layout.zoomed.is_some() => {
+            let zoomed = session.layout.zoomed?;
+            fm_ui::pane::show(ui, session, zoomed, tokens)
+        }
         PaneNode::Split { axis, ratio, a, b } => {
             let handle = a.panes().first().copied();
             let mut open = None;
@@ -90,18 +138,16 @@ fn render_pane_node(
                                 }
                             },
                         );
-                        let (rect, drag) = ui.allocate_exact_size(
+                        divider(
+                            ui,
+                            session,
+                            handle,
+                            *axis,
+                            *ratio,
                             egui::vec2(handle_w, ui.available_height()),
-                            egui::Sense::click_and_drag(),
+                            total,
+                            tokens,
                         );
-                        ui.painter().rect_filled(rect, 0.0, tokens.border);
-                        if drag.dragged()
-                            && let Some(handle) = handle
-                        {
-                            let dx = drag.drag_delta().x;
-                            let new_ratio = *ratio + dx / total.max(1.0);
-                            session.layout.set_ratio(handle, new_ratio);
-                        }
                         ui.allocate_ui_with_layout(
                             egui::vec2(ui.available_width(), ui.available_height()),
                             egui::Layout::top_down(egui::Align::Min),
@@ -127,18 +173,16 @@ fn render_pane_node(
                                 }
                             },
                         );
-                        let (rect, drag) = ui.allocate_exact_size(
+                        divider(
+                            ui,
+                            session,
+                            handle,
+                            *axis,
+                            *ratio,
                             egui::vec2(ui.available_width(), handle_w),
-                            egui::Sense::click_and_drag(),
+                            total,
+                            tokens,
                         );
-                        ui.painter().rect_filled(rect, 0.0, tokens.border);
-                        if drag.dragged()
-                            && let Some(handle) = handle
-                        {
-                            let dy = drag.drag_delta().y;
-                            let new_ratio = *ratio + dy / total.max(1.0);
-                            session.layout.set_ratio(handle, new_ratio);
-                        }
                         ui.allocate_ui_with_layout(
                             egui::vec2(ui.available_width(), ui.available_height()),
                             egui::Layout::top_down(egui::Align::Min),
@@ -175,6 +219,14 @@ fn import_os_drops(ctx: &egui::Context, session: &mut Session) {
         .input(|i| i.pointer.latest_pos())
         .and_then(|pos| fm_ui::dnd::pane_at(ctx, pos))
         .unwrap_or_else(|| session.layout.focused());
+    let _ = session.layout.focus_pane(pane);
+    if session.pane_kind(pane) == Some(fm_layout::PaneKind::Terminal) {
+        session.dispatch_or_notice(
+            "term.drop_paths",
+            &serde_json::json!({"paths": paths, "pane": pane}),
+        );
+        return;
+    }
     let Some(dest) = session.layout.state(pane).map(|p| p.location.to_string()) else {
         return;
     };
@@ -216,6 +268,13 @@ impl eframe::App for App {
         // egui only repaints on input; keep frames flowing while jobs run.
         if self.session.is_busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
+        }
+        // Shell output arrives without any input event; poll terminals at ~60 Hz while any exist.
+        if self.session.has_terminals() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
+        if let Some(text) = self.session.clipboard_out.take() {
+            ctx.copy_text(text);
         }
 
         // The title is set on the native window at creation, but some

@@ -2,6 +2,7 @@
 //! ([`tree`]), virtualized listing ([`listing`]) and pane chrome ([`pane`]).
 //! Widgets take tokens; no widget ever hard-codes a colour.
 
+pub mod arrange;
 pub mod dialogs;
 pub mod dnd;
 pub mod jobs;
@@ -9,6 +10,7 @@ pub mod listing;
 pub mod locationbar;
 pub mod pane;
 pub mod preferences;
+pub mod terminal;
 pub mod theme;
 pub mod tree;
 

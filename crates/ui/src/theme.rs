@@ -50,6 +50,13 @@ pub struct Tokens {
     pub border_width: f32,
     /// Base font size (px).
     pub font_size: f32,
+    /// Terminal default background / foreground / cursor / selection.
+    pub term_bg: Color32,
+    pub term_fg: Color32,
+    pub term_cursor: Color32,
+    pub term_selection: Color32,
+    /// The 16 ANSI colours (0-7 normal, 8-15 bright).
+    pub ansi: [Color32; 16],
 }
 
 impl Tokens {
@@ -74,6 +81,28 @@ impl Tokens {
             corner_radius: 6.0,
             border_width: 1.0,
             font_size: 14.0,
+            term_bg: Color32::from_rgb(0x0f, 0x11, 0x14),
+            term_fg: Color32::from_rgb(0xd7, 0xda, 0xde),
+            term_cursor: Color32::from_rgb(0x5c, 0xb2, 0xff),
+            term_selection: Color32::from_rgb(0x2b, 0x4a, 0x6e),
+            ansi: [
+                Color32::from_rgb(0x1d, 0x1f, 0x21),
+                Color32::from_rgb(0xcc, 0x66, 0x66),
+                Color32::from_rgb(0xb5, 0xbd, 0x68),
+                Color32::from_rgb(0xf0, 0xc6, 0x74),
+                Color32::from_rgb(0x81, 0xa2, 0xbe),
+                Color32::from_rgb(0xb2, 0x94, 0xbb),
+                Color32::from_rgb(0x8a, 0xbe, 0xb7),
+                Color32::from_rgb(0xc5, 0xc8, 0xc6),
+                Color32::from_rgb(0x66, 0x69, 0x6d),
+                Color32::from_rgb(0xff, 0x6b, 0x6b),
+                Color32::from_rgb(0xa5, 0xe0, 0x75),
+                Color32::from_rgb(0xff, 0xd8, 0x6b),
+                Color32::from_rgb(0x5c, 0xb2, 0xff),
+                Color32::from_rgb(0xd0, 0x9a, 0xe0),
+                Color32::from_rgb(0x6f, 0xe3, 0xd0),
+                Color32::from_rgb(0xff, 0xff, 0xff),
+            ],
         }
     }
 
@@ -98,6 +127,58 @@ impl Tokens {
             corner_radius: 6.0,
             border_width: 1.0,
             font_size: 14.0,
+            term_bg: Color32::from_rgb(0xff, 0xff, 0xff),
+            term_fg: Color32::from_rgb(0x1b, 0x1e, 0x23),
+            term_cursor: Color32::from_rgb(0x0b, 0x62, 0xd6),
+            term_selection: Color32::from_rgb(0xcf, 0xe4, 0xff),
+            ansi: [
+                Color32::from_rgb(0x24, 0x29, 0x2f),
+                Color32::from_rgb(0xc2, 0x2b, 0x2b),
+                Color32::from_rgb(0x1f, 0x7a, 0x33),
+                Color32::from_rgb(0x8a, 0x5c, 0x00),
+                Color32::from_rgb(0x0b, 0x62, 0xd6),
+                Color32::from_rgb(0x8a, 0x3f, 0xa8),
+                Color32::from_rgb(0x0a, 0x7d, 0x7d),
+                Color32::from_rgb(0x6e, 0x76, 0x81),
+                Color32::from_rgb(0x57, 0x60, 0x6a),
+                Color32::from_rgb(0xe0, 0x3a, 0x3a),
+                Color32::from_rgb(0x2e, 0x9a, 0x46),
+                Color32::from_rgb(0xb0, 0x7a, 0x00),
+                Color32::from_rgb(0x1f, 0x7a, 0xff),
+                Color32::from_rgb(0xa8, 0x5c, 0xc8),
+                Color32::from_rgb(0x12, 0x9c, 0x9c),
+                Color32::from_rgb(0x1b, 0x1e, 0x23),
+            ],
+        }
+    }
+
+    /// Terminal colour -> egui colour (`fg` picks the default for `Color::Default`).
+    pub fn term_color(&self, color: fm_term::Color, fg: bool) -> Color32 {
+        match color {
+            fm_term::Color::Default => {
+                if fg {
+                    self.term_fg
+                } else {
+                    self.term_bg
+                }
+            }
+            fm_term::Color::Rgb(r, g, b) => Color32::from_rgb(r, g, b),
+            fm_term::Color::Indexed(i) => match i {
+                0..=15 => self
+                    .ansi
+                    .get(usize::from(i))
+                    .copied()
+                    .unwrap_or(self.term_fg),
+                16..=231 => {
+                    let n = i - 16;
+                    let level = |v: u8| if v == 0 { 0 } else { 55 + v * 40 };
+                    Color32::from_rgb(level(n / 36), level(n / 6 % 6), level(n % 6))
+                }
+                232..=255 => {
+                    let v = 8 + (i - 232) * 10;
+                    Color32::from_rgb(v, v, v)
+                }
+            },
         }
     }
 
@@ -201,6 +282,11 @@ mod tests {
                 corner_radius,
                 border_width,
                 font_size,
+                term_bg,
+                term_fg,
+                term_cursor,
+                term_selection,
+                ansi,
             } = tokens;
             for (name, color) in [
                 ("bg", bg),
@@ -215,15 +301,45 @@ mod tests {
                 ("error", error),
                 ("warning", warning),
                 ("success", success),
+                ("term_bg", term_bg),
+                ("term_fg", term_fg),
+                ("term_cursor", term_cursor),
+                ("term_selection", term_selection),
             ] {
                 assert_ne!(color.a(), 0, "{name} must be opaque");
             }
             assert!(row_height > 0.0 && padding > 0.0 && font_size > 0.0);
             assert!(corner_radius >= 0.0 && border_width > 0.0);
             let _ = dark;
+            assert!(ansi.iter().all(|c| c.a() == 255));
+            assert_ne!(ansi[1], ansi[2], "ANSI colours must be distinct");
         }
         check(Tokens::dark());
         check(Tokens::light());
+    }
+
+    #[test]
+    fn terminal_colours_map_defaults_cube_and_greys() {
+        let t = Tokens::dark();
+        assert_eq!(t.term_color(fm_term::Color::Default, true), t.term_fg);
+        assert_eq!(t.term_color(fm_term::Color::Default, false), t.term_bg);
+        assert_eq!(t.term_color(fm_term::Color::Indexed(1), true), t.ansi[1]);
+        assert_eq!(
+            t.term_color(fm_term::Color::Indexed(16), true),
+            Color32::from_rgb(0, 0, 0)
+        );
+        assert_eq!(
+            t.term_color(fm_term::Color::Indexed(231), true),
+            Color32::from_rgb(255, 255, 255)
+        );
+        assert_eq!(
+            t.term_color(fm_term::Color::Indexed(232), true),
+            Color32::from_rgb(8, 8, 8)
+        );
+        assert_eq!(
+            t.term_color(fm_term::Color::Rgb(1, 2, 3), false),
+            Color32::from_rgb(1, 2, 3)
+        );
     }
 
     #[test]

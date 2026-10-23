@@ -16,6 +16,10 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 
 Out of scope until after these five: archives, previews, tabs, full-text search, plugins, CLI/MCP automation (the command registry lands in change 1 so nothing has to be re-wired later).
 
+## Current focus
+
+`pane-types` (terminal pane) and `pane-arrange` (drag/resize/zoom panes, Terminator-style) are implemented and awaiting real-window smoke tests before archiving.
+
 ## Ideas for future changes
 
 Captured so they are not lost; each becomes an OpenSpec proposal (`/opsx-propose`) when picked up.

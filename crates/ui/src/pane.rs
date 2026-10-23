@@ -3,7 +3,7 @@
 
 use egui::{Align, Layout, Sense, Ui};
 use fm_engine::Session;
-use fm_layout::PaneId;
+use fm_layout::{PaneId, PaneKind};
 use fm_vfs::VfsUri;
 
 use crate::{listing, theme::Tokens, tree};
@@ -22,6 +22,8 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let state = s.layout.state(pane)?;
     let location = state.location.clone();
     let tree_width = state.tree_width;
+    let kind = state.kind;
+    let tree_active = state.tree.active;
 
     let stroke = if focused {
         egui::Stroke::new(tokens.border_width.max(2.5), tokens.accent)
@@ -29,35 +31,67 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         egui::Stroke::new(tokens.border_width, tokens.border)
     };
     let mut open = None;
-    if focused && !state.tree.active {
+    if kind == PaneKind::Files && focused && !tree_active {
         crate::locationbar::type_to_go(ui.ctx(), s, pane);
     }
     crate::dnd::note_pane(ui.ctx(), pane, area);
-    crate::dnd::register_zone(
-        ui.ctx(),
-        area,
-        location.clone(),
-        crate::dnd::ZONE_BACKGROUND,
-    );
+    if kind == PaneKind::Files {
+        crate::dnd::register_zone(
+            ui.ctx(),
+            area,
+            location.clone(),
+            crate::dnd::ZONE_BACKGROUND,
+        );
+    }
     egui::Frame::NONE
         .fill(tokens.bg)
         .stroke(stroke)
         .inner_margin(egui::Margin::same(tokens.padding as i8))
         .show(ui, |ui| {
             // The active pane gets a solid accent header bar; inactive ones stay muted.
-            if crate::locationbar::is_editing(s, pane) {
+            let mut grip = None;
+            if kind == PaneKind::Files && crate::locationbar::is_editing(s, pane) {
                 crate::locationbar::show_editor(ui, s, pane, tokens);
             } else {
                 let header = egui::Frame::NONE
                     .fill(if focused { tokens.accent } else { tokens.panel })
                     .corner_radius(tokens.corner_radius)
                     .inner_margin(egui::Margin::symmetric(tokens.padding as i8, 2));
-                header.show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    crate::locationbar::show_label(ui, s, pane, tokens, focused);
+                // The scope registers its drag sense before the contents, so the kind menu
+                // and breadcrumb (added later) win hit-testing over the grip.
+                let scope = ui.scope_builder(egui::UiBuilder::new().sense(Sense::drag()), |ui| {
+                    header.show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+                        ui.allocate_ui_with_layout(
+                            row,
+                            Layout::right_to_left(Align::Center),
+                            |ui| {
+                                kind_menu(ui, s, pane, kind);
+                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                    if kind == PaneKind::Files {
+                                        crate::locationbar::show_label(
+                                            ui, s, pane, tokens, focused,
+                                        );
+                                    } else {
+                                        ui.label(kind.label());
+                                    }
+                                });
+                            },
+                        );
+                    })
                 });
+                grip = Some(scope.response);
             }
             ui.separator();
+            if let Some(g) = grip {
+                crate::arrange::source(ui.ctx(), &g, pane);
+            }
+
+            if kind == PaneKind::Terminal {
+                crate::terminal::show(ui, s, pane, tokens, focused);
+                return;
+            }
 
             let height = ui.available_height();
             let max_tree = (ui.available_width() - 160.0).clamp(MIN_TREE, MAX_TREE);
@@ -76,8 +110,20 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 );
                 let (handle_rect, handle) =
                     ui.allocate_exact_size(egui::vec2(handle_w, height), Sense::click_and_drag());
-                ui.painter().rect_filled(handle_rect, 0.0, tokens.border);
-                if handle.dragged()
+                let active = handle.hovered() || handle.dragged();
+                if active {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                }
+                ui.painter().rect_filled(
+                    handle_rect,
+                    0.0,
+                    if active { tokens.accent } else { tokens.border },
+                );
+                if handle.double_clicked()
+                    && let Some(state) = s.layout.state_mut(pane)
+                {
+                    state.tree_width = fm_layout::DEFAULT_TREE_WIDTH;
+                } else if handle.dragged()
                     && let Some(state) = s.layout.state_mut(pane)
                 {
                     state.tree_width =
@@ -98,8 +144,63 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     if pressed_inside {
         let _ = s.layout.focus_pane(pane);
     }
-    crate::dnd::finish(ui.ctx(), s, area, tokens);
+    let dragging = egui::DragAndDrop::has_payload_of_type::<crate::dnd::DragPayload>(ui.ctx());
+    if kind == PaneKind::Terminal {
+        crate::dnd::finish_terminal(ui.ctx(), s, pane, area, tokens);
+    } else {
+        crate::dnd::finish(ui.ctx(), s, area, tokens);
+    }
+    crate::arrange::finish(ui.ctx(), s, pane, area, tokens);
+    // A drop hands the keyboard to the pane it landed on.
+    let landed = ui.input(|i| {
+        i.pointer.any_released() && i.pointer.interact_pos().is_some_and(|p| area.contains(p))
+    });
+    if dragging
+        && landed
+        && !egui::DragAndDrop::has_payload_of_type::<crate::dnd::DragPayload>(ui.ctx())
+    {
+        let _ = s.layout.focus_pane(pane);
+    }
     open
+}
+
+/// Pane-type switcher; dispatches `pane.kind.set`. Unsupported kinds are greyed out.
+fn kind_menu(ui: &mut Ui, s: &mut Session, pane: PaneId, current: PaneKind) {
+    // Trailing spaces reserve room for the painted dropdown triangle (the bundled fonts lack ▾).
+    let button = ui.menu_button(format!("{}   ", current.label()), |ui| {
+        for kind in PaneKind::ALL {
+            let supported = matches!(kind, PaneKind::Files | PaneKind::Terminal);
+            let label = if supported {
+                kind.label().to_string()
+            } else {
+                format!("{} (soon)", kind.label())
+            };
+            let resp = ui.add_enabled(supported, egui::Button::selectable(kind == current, label));
+            if resp.clicked() {
+                s.dispatch_or_notice(
+                    "pane.kind.set",
+                    &serde_json::json!({ "kind": kind.as_str(), "pane": pane }),
+                );
+                ui.close();
+            }
+        }
+    });
+    let r = button.response.rect;
+    let color = ui.style().interact(&button.response).fg_stroke.color;
+    let size = r.height() * 0.14;
+    let c = egui::pos2(
+        r.right() - ui.spacing().button_padding.x - size,
+        r.center().y,
+    );
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![
+            c + egui::vec2(-size, -size * 0.5),
+            c + egui::vec2(size, -size * 0.5),
+            c + egui::vec2(0.0, size * 0.7),
+        ],
+        color,
+        egui::Stroke::NONE,
+    ));
 }
 
 #[cfg(test)]

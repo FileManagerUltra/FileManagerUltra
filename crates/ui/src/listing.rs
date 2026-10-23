@@ -49,12 +49,25 @@ pub fn show(
 
     let mut open: Option<VfsUri> = None;
     if let Some(state) = s.layout.state(pane) {
-        let clicked = header(ui, &state.listing.sort, tokens);
-        if let Some(key) = clicked
-            && let Some(state) = s.layout.state_mut(pane)
-        {
-            state.listing.sort.header_click(key);
-            s.invalidate_view(pane);
+        let action = header(ui, pane, &state.listing.sort, state.col_widths, tokens);
+        match action {
+            Some(HeaderAction::Sort(key)) => {
+                if let Some(state) = s.layout.state_mut(pane) {
+                    state.listing.sort.header_click(key);
+                    s.invalidate_view(pane);
+                }
+            }
+            Some(HeaderAction::Resize(ix, w)) => {
+                if let Some(state) = s.layout.state_mut(pane) {
+                    state.set_col_width(ix, w);
+                }
+            }
+            Some(HeaderAction::Reset(ix)) => {
+                if let Some(state) = s.layout.state_mut(pane) {
+                    state.reset_col_width(ix);
+                }
+            }
+            None => {}
         }
     }
 
@@ -73,22 +86,23 @@ pub fn show(
     open
 }
 
-/// Fixed widths for the right-hand columns (px); the Name column takes the rest.
-const COL_TYPE: f32 = 72.0;
-const COL_MTIME: f32 = 140.0;
-const COL_SIZE: f32 = 90.0;
 /// Minimum Name-column width before the detail columns collapse entirely.
 const MIN_NAME: f32 = 80.0;
+/// Grab width of a column border in the header.
+const GRIP_W: f32 = 6.0;
+
 /// Detail-column widths per layout, ordered by how much room they need:
 /// `(size, mtime, type)` — a zero width drops the column. Narrow panes degrade
 /// by dropping Type first, then Size, so columns never overlap.
-const LAYOUTS: [[f32; 3]; 5] = [
-    [COL_SIZE, COL_MTIME, COL_TYPE],
-    [COL_SIZE, COL_MTIME, 0.0],
-    [0.0, COL_MTIME, 0.0],
-    [COL_SIZE, 0.0, 0.0],
-    [0.0, 0.0, 0.0],
-];
+fn layouts([size, mtime, ty]: [f32; 3]) -> [[f32; 3]; 5] {
+    [
+        [size, mtime, ty],
+        [size, mtime, 0.0],
+        [0.0, mtime, 0.0],
+        [size, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+    ]
+}
 
 /// Per-column rects for one full-width listing row. Shared by the header and
 /// the entry rows so clicks, labels and separators all agree on where each
@@ -117,11 +131,11 @@ fn paint_link_icon(painter: &egui::Painter, origin: egui::Pos2, color: egui::Col
 
 /// Lay out the columns for `rect`, picking the widest layout that fits beside a
 /// usable Name column; dropped columns get zero width (and are not drawn).
-fn columns(rect: egui::Rect) -> Columns {
-    let [size_w, mtime_w, type_w] = *LAYOUTS
-        .iter()
+fn columns(rect: egui::Rect, widths: [f32; 3]) -> Columns {
+    let [size_w, mtime_w, type_w] = layouts(widths)
+        .into_iter()
         .find(|[s, m, t]| rect.width() >= MIN_NAME + s + m + t)
-        .unwrap_or(&[0.0, 0.0, 0.0]);
+        .unwrap_or([0.0, 0.0, 0.0]);
     let split = rect.right() - (size_w + mtime_w + type_w);
     let mut right = rect.right();
     let mut take = |width: f32| {
@@ -156,7 +170,43 @@ fn column_separators(painter: &egui::Painter, cols: &Columns, rect: egui::Rect, 
     }
 }
 
-fn header(ui: &mut Ui, sort: &SortSpec, tokens: &Tokens) -> Option<SortKey> {
+/// Sort direction triangle, same style as the tree's disclosure triangles
+/// (up = ascending, down = descending).
+fn paint_sort_arrow(ui: &Ui, c: egui::Pos2, size: f32, dir: SortDir, tokens: &Tokens) {
+    let pts = match dir {
+        SortDir::Asc => vec![
+            c + egui::vec2(-size, size * 0.5),
+            c + egui::vec2(size, size * 0.5),
+            c + egui::vec2(0.0, -size * 0.7),
+        ],
+        SortDir::Desc => vec![
+            c + egui::vec2(-size, -size * 0.5),
+            c + egui::vec2(size, -size * 0.5),
+            c + egui::vec2(0.0, size * 0.7),
+        ],
+    };
+    ui.painter().add(egui::Shape::convex_polygon(
+        pts,
+        tokens.text_muted,
+        egui::Stroke::NONE,
+    ));
+}
+
+/// What a header interaction asks for.
+enum HeaderAction {
+    Sort(SortKey),
+    /// Column index (0 Size, 1 Modified, 2 Type) and its new width.
+    Resize(usize, f32),
+    Reset(usize),
+}
+
+fn header(
+    ui: &mut Ui,
+    pane: PaneId,
+    sort: &SortSpec,
+    widths: [f32; 3],
+    tokens: &Tokens,
+) -> Option<HeaderAction> {
     // Paint fixed-width columns into one full-width row. An auto-sizing
     // `ui.horizontal` of labels would exceed the pane's allocated width and
     // expand the whole split past the window.
@@ -166,7 +216,7 @@ fn header(ui: &mut Ui, sort: &SortSpec, tokens: &Tokens) -> Option<SortKey> {
         egui::Sense::click(),
     );
     ui.painter().rect_filled(rect, 0.0, tokens.panel);
-    let cols = columns(rect);
+    let cols = columns(rect, widths);
 
     let cells = [
         (SortKey::Name, cols.name, "Name"),
@@ -178,37 +228,80 @@ fn header(ui: &mut Ui, sort: &SortSpec, tokens: &Tokens) -> Option<SortKey> {
         if cell.width() < 1.0 {
             continue;
         }
-        let arrow = if sort.key == key {
-            match sort.dir {
-                SortDir::Asc => " ^",
-                SortDir::Desc => " v",
-            }
+        let sorted = sort.key == key;
+        let size = tokens.font_size * 0.35;
+        let arrow_space = if sorted {
+            size * 2.0 + tokens.padding
         } else {
-            ""
+            0.0
         };
-        let text = format!("{label}{arrow}");
-        let (align, pos) = if key == SortKey::Name {
+        let galley =
+            ui.painter()
+                .layout_no_wrap(label.to_string(), tokens.font(), tokens.text_muted);
+        let y = cell.center().y;
+        let (text_pos, arrow_x) = if key == SortKey::Name {
+            let x = cell.left() + tokens.padding;
             (
-                egui::Align2::LEFT_CENTER,
-                egui::pos2(cell.left() + tokens.padding, cell.center().y),
+                egui::pos2(x, y),
+                x + galley.size().x + tokens.padding + size,
             )
         } else {
-            (
-                egui::Align2::RIGHT_CENTER,
-                egui::pos2(cell.right() - tokens.padding, cell.center().y),
-            )
+            let right = cell.right() - tokens.padding;
+            (egui::pos2(right - arrow_space, y), right - size)
+        };
+        let align = if key == SortKey::Name {
+            egui::Align2::LEFT_CENTER
+        } else {
+            egui::Align2::RIGHT_CENTER
         };
         ui.painter()
-            .text(pos, align, text, tokens.font(), tokens.text_muted);
+            .text(text_pos, align, label, tokens.font(), tokens.text_muted);
+        if sorted {
+            paint_sort_arrow(ui, egui::pos2(arrow_x, y), size, sort.dir, tokens);
+        }
     }
     column_separators(ui.painter(), &cols, rect, tokens);
+
+    // Registered after the row's click sense, so a border wins hit-testing over a sort click.
+    let mut action = None;
+    for (ix, cell) in [cols.size, cols.mtime, cols.ty].into_iter().enumerate() {
+        let x = cell.left();
+        if cell.width() < 1.0 || x <= rect.left() + 1.0 {
+            continue;
+        }
+        let grip = egui::Rect::from_center_size(
+            egui::pos2(x, rect.center().y),
+            egui::vec2(GRIP_W, rect.height()),
+        );
+        let resp = ui.interact(
+            grip,
+            egui::Id::NULL.with(("fm-col-grip", pane, ix)),
+            egui::Sense::click_and_drag(),
+        );
+        if resp.hovered() || resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            ui.painter().line_segment(
+                [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                egui::Stroke::new(tokens.border_width.max(2.0), tokens.accent),
+            );
+        }
+        if resp.double_clicked() {
+            action = Some(HeaderAction::Reset(ix));
+        } else if resp.dragged() {
+            // The columns are right-anchored: dragging a border right shrinks its column.
+            action = Some(HeaderAction::Resize(ix, cell.width() - resp.drag_delta().x));
+        }
+    }
+    if action.is_some() {
+        return action;
+    }
 
     if response.clicked()
         && let Some(pos) = response.interact_pointer_pos()
     {
         for &(key, cell, _) in &cells {
             if cell.width() >= 1.0 && cell.contains(pos) {
-                return Some(key);
+                return Some(HeaderAction::Sort(key));
             }
         }
     }
@@ -377,6 +470,7 @@ fn entry_row_ui(
     let state = s.layout.state(pane)?;
     let selected = state.listing.is_selected(&entry.name);
     let focused = state.listing.focused_row == row;
+    let widths = state.col_widths;
 
     let available = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
@@ -444,7 +538,7 @@ fn entry_row_ui(
     } else {
         entry.name.clone()
     };
-    let cols = columns(rect);
+    let cols = columns(rect, widths);
     if cols.name.width() >= 1.0 {
         let name = ellipsize_name(
             &display_name,
@@ -671,6 +765,23 @@ mod tests {
         // Shift+End extends from the anchor (row 1) → rows 1..=2.
         assert_eq!(listing.selected_count(), 2);
         assert!(listing.is_selected("c") && !listing.is_selected("a"));
+    }
+
+    #[test]
+    fn columns_follow_the_configured_widths_and_degrade_when_narrow() {
+        let rect = |w: f32| egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(w, 20.0));
+        let c = columns(rect(600.0), [100.0, 200.0, 50.0]);
+        assert_eq!(
+            (c.size.width(), c.mtime.width(), c.ty.width()),
+            (100.0, 200.0, 50.0)
+        );
+        assert_eq!(c.name.width(), 250.0);
+        let narrow = columns(rect(300.0), [100.0, 200.0, 50.0]);
+        assert_eq!(narrow.ty.width(), 0.0);
+        assert_eq!(narrow.size.width(), 0.0);
+        assert_eq!(narrow.mtime.width(), 200.0);
+        let tiny = columns(rect(100.0), [100.0, 200.0, 50.0]);
+        assert_eq!(tiny.name.width(), 100.0);
     }
 
     #[test]

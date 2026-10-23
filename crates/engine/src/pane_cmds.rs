@@ -12,7 +12,7 @@ pub fn split_horizontal() -> CommandSpec {
         id: "pane.split.horizontal",
         label: "Split Right",
         menu: &["Panes", "Split Right"],
-        shortcut: None,
+        shortcut: Some("Ctrl+Shift+E"),
         params: "none",
         enabled: |_s| true,
         run: |s, _p: &Params| split(s, Axis::Horizontal),
@@ -25,7 +25,7 @@ pub fn split_vertical() -> CommandSpec {
         id: "pane.split.vertical",
         label: "Split Down",
         menu: &["Panes", "Split Down"],
-        shortcut: None,
+        shortcut: Some("Ctrl+Shift+O"),
         params: "none",
         enabled: |_s| true,
         run: |s, _p: &Params| split(s, Axis::Vertical),
@@ -58,7 +58,9 @@ pub fn close() -> CommandSpec {
                 return Ok(()); // defensive no-op; the menu is greyed out
             }
             let focused = s.layout.focused();
-            s.layout.close(focused)
+            s.layout.close(focused)?;
+            s.drop_terminal(focused);
+            Ok(())
         },
     }
 }

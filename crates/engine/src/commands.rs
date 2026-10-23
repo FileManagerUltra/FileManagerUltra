@@ -1,15 +1,18 @@
 //! Command catalogue — the one list the registry is built from.
 
 use crate::app_cmds;
+use crate::arrange_cmds;
 use crate::dnd_cmds;
 use crate::file_cmds;
 use crate::goto_cmds;
 use crate::job_cmds;
 use crate::nav_cmds;
 use crate::pane_cmds;
+use crate::pane_kind_cmds;
 use crate::prefs_cmds;
 use crate::registry::CommandSpec;
 use crate::sort_cmds;
+use crate::term_cmds;
 use crate::theme_cmds;
 use crate::view_cmds;
 
@@ -26,6 +29,9 @@ pub fn specs() -> Vec<CommandSpec> {
         theme_cmds::toggle(),
     ];
     specs.extend(pane_cmds::specs());
+    specs.extend(arrange_cmds::specs());
+    specs.extend(pane_kind_cmds::specs());
+    specs.extend(term_cmds::specs());
     specs.extend(nav_cmds::specs());
     specs.extend(goto_cmds::specs());
     specs.extend(sort_cmds::specs());
