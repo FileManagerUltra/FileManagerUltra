@@ -32,19 +32,19 @@
 
 ## 5. UI (`fm-ui`)
 
-- [ ] 5.1 DnD: payload from listing rows and tree nodes, drop-target detection, hover outline + badge from `resolve_drop()`, `NoDrop` cursor
-- [ ] 5.2 Dialogs: conflict (4 choices + apply-to-all), confirm-permanent-delete, mkdir/rename input with live validation
-- [ ] 5.3 Jobs panel + status-bar indicator (progress bars, cancel, report with per-item errors, dismiss)
-- [ ] 5.4 Tokens only (no `Color32::` outside `theme.rs`); dark + light `egui_kittest` snapshots for each dialog, jobs panel, drop highlight/badge
+- [x] 5.1 DnD: payload from listing rows and tree nodes, drop-target detection, hover outline + badge from `resolve_drop()`, `NoDrop` cursor
+- [x] 5.2 Dialogs: conflict (4 choices + apply-to-all), confirm-permanent-delete, mkdir/rename input with live validation
+- [x] 5.3 Jobs panel + status-bar indicator (progress bars, cancel, report with per-item errors, dismiss)
+- [x] 5.4 Tokens only (no `Color32::` outside `theme.rs`); dark + light `egui_kittest` snapshots for each dialog, jobs panel, drop highlight/badge
 
 ## 6. App wiring (`apps/fm-app`)
 
-- [ ] 6.1 Shortcuts F2/F5/F6/F7/F8/Delete/Shift+Delete/Ctrl+Z and File/Edit menu entries with shortcut text; brand-check id cross-check stays green
-- [ ] 6.2 `with_drag_and_drop(true)`; external `dropped_files` → `dnd.drop` (external origin) into the hovered pane; hostile-path test
-- [ ] 6.3 Render dialogs/jobs panel each frame; dispatch only through `Session::dispatch`
+- [x] 6.1 Shortcuts F2/F5/F6/F7/F8/Delete/Shift+Delete/Ctrl+Z and File/Edit menu entries with shortcut text; brand-check id cross-check stays green
+- [x] 6.2 `with_drag_and_drop(true)`; external `dropped_files` → `dnd.drop` (external origin) into the hovered pane; hostile-path test
+- [x] 6.3 Render dialogs/jobs panel each frame; dispatch only through `Session::dispatch`
 
 ## 7. Security, docs, gate
 
-- [ ] 7.1 Security tests from the delta: traversal names, cancelled write leaves nothing, no silent trash downgrade, redacted errors
-- [ ] 7.2 `docs/architecture.md` §7/§8 synced to the landed shape; `docs/development.md` manual DnD/ops smoke checklist; roadmap status
+- [x] 7.1 Security tests from the delta: traversal names, cancelled write leaves nothing, no silent trash downgrade, redacted errors
+- [x] 7.2 `docs/architecture.md` §7/§8 synced to the landed shape; `docs/development.md` manual DnD/ops smoke checklist; roadmap status
 - [ ] 7.3 Whole `cargo xtask ci` green; manual smoke on a real window (user); `log/devlog.md` entry with numbers; commit + `/opsx-archive` on user go-ahead

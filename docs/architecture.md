@@ -240,9 +240,10 @@ UI thread (eframe)                 engine workers                backends
 - **Lanes, not a shared pool:** `local` (4 threads), `smb` (1 thread — matches pavao's global lock), `sftp` (2 threads). A hung share blocks only the `smb` lane.
 - **Channels:** `crossbeam-channel` for job submission/events. The UI drains job events once per frame (`Session::poll()`), applies them to `Session`, then repaints if anything changed. Workers never touch egui.
 - **Read lane in use today:** directory reads (`ensure_read/submit_read/refresh_read`) run on the scheme's lane; the worker calls `Vfs::read_dir` and *stages* a `ReadOutcome` (entries or error) into the session inbox — only `poll()` writes the `DirCache`. One in-flight read per uri (dedup), `refresh_read` invalidates then re-reads.
-- **Job model (ops pipeline, change 3+):** `JobId`, `JobKind` (Copy/Move/Delete/Mkdir/Rename/Connect), `Progress { done, total, current_uri }`, `cancel: Arc<AtomicBool>` (checked between chunks), `JobEvent::{Started, Progress, Done, Cancelled, Failed}`.
-- **Conflict policy** (change 3+) is resolved by a UI dialog *before* the job starts (batch of decisions: overwrite / keep-both / skip / cancel), never inside a worker.
-- **Undo/trash:** delete moves entries to the platform trash (`trash` crate) and records a journal entry (`trash://` ids + original uris) for Undo; `ops::restore` puts them back.
+- **File jobs (landed, change 3):** `engine::fileops` holds a jobs table (`OpJob { id, label, state, progress, conflict, summary }`). `Session::submit_op(OpRequest)` queues a copy/move/trash/delete/mkdir/rename/undo job on the source's lane; the worker throttles progress (30 ms) into shared state and `poll()` copies it into the table — the UI never waits. Cancel is an `Arc<AtomicBool>` checked between chunks.
+- **Conflicts** are resolved *during* the job: the worker parks on a decision channel and the UI shows the dialog from `FileOps::pending_conflict()`, answering with `job.resolve_conflict {job, choice, apply_to_all?}`. Cancel (or a dropped channel) resolves as Cancel, so a parked worker is never leaked.
+- **Undo/trash:** delete (F8) moves local entries to the platform trash and records an `UndoRecord` (created / moved / trashed / renamed); `edit.undo` replays it with an actionable error when stale. Remote URIs never fall back to a permanent delete; `file.delete_permanent` needs `confirm: true`. macOS cannot restore from trash (documented).
+- **UI contract:** dialogs and the jobs panel (`fm-ui::dialogs`, `fm-ui::jobs`) only dispatch command ids; dispatch failures surface as `Session::notice` in the status bar.
 
 ### Watching
 
@@ -252,14 +253,7 @@ UI thread (eframe)                 engine workers                backends
 
 ## 8. Drag & drop contract
 
-**Payload** (single type, set with `Response::dnd_set_drag_payload`, read with `dnd_release_payload`):
-
-```rust
-pub struct DragPayload {
-    pub sources: Arc<[VfsUri]>,      // the selection at drag start
-    pub origin: DragOrigin,          // Pane { id, dir } | External
-}
-```
+**Payload** (`fm_ui::dnd::DragPayload { sources: Vec<VfsUri>, origin: PaneId }`, set with `Response::dnd_set_drag_payload`): the whole selection when the dragged row is selected, otherwise just that row; tree nodes drag one uri. Rows, tree nodes, the `..` row and each pane register *drop zones* per frame; `dnd::finish` picks the most specific zone under the pointer, asks `Session::preview_drop` (engine `resolve_drop`) for the action, paints outline + badge, and on release dispatches `dnd.drop`. The UI never decides Copy vs Move.
 
 **Resolution at release** (modifiers read from `ctx.input(|i| i.modifiers)` on the release frame):
 
@@ -285,7 +279,7 @@ pub struct DragPayload {
 
 Guards enforced by `ops` regardless of UI: never drop a directory into itself or a descendant; never overwrite without an explicit conflict decision; never copy a file onto itself (same uri) — silently ignored.
 
-**External drops** (files from the OS): `ViewportBuilder::with_drag_and_drop(true)`, `ctx.input(|i| i.raw.dropped_files)`; the hovered pane at release becomes the destination; payloads are native paths → imported through `ops` (copy in v1; move when the source is an app that reports a move intent).
+**External drops** (files from the OS): `ViewportBuilder::with_drag_and_drop(true)`, `ctx.input(|i| i.raw.dropped_files)`; the pane under the pointer (`dnd::pane_at`, focused pane as fallback) becomes the destination and the paths go through `dnd.drop` with `origin: external` (always copy; bad paths are rejected individually and counted); payloads are native paths → imported through `ops` (copy in v1; move when the source is an app that reports a move intent).
 
 **Visual feedback:** hovered target gets an accent outline + badge (`Copy 12 items` / `Move 3 items`) with the resolved action from the modifier table; invalid targets use `CursorIcon::NoDrop`.
 

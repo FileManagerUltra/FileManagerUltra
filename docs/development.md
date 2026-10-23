@@ -101,6 +101,18 @@ Works, but it would be nice to have the dialog centered in the view window
 9. Quit; `prefs.toml` appears in the config directory (see below) with mode `0600`.
 Correct
 
+### File operations & drag and drop (change 3)
+
+Use a scratch directory with a few files, a subfolder and one name that exists in two places. Split into two panes.
+
+1. Drag a file from one pane onto a folder row in the other: accent outline + `Move 1 item` (same device) or `Copy 1 item`. Hold Ctrl → `Copy`, Shift → `Move`, Ctrl+Shift or dropping a folder onto itself → no-drop cursor. Escape cancels the drag.
+2. Select several files, drag one of them: the badge counts the whole selection. Drag a tree node onto the other pane's listing background.
+3. `F5` / `F6` copy / move to the other pane; with a single pane a destination dialog asks. Same-named file: the conflict dialog offers Overwrite / Keep both / Skip / Cancel + Apply to all; Escape cancels.
+4. `F7` new folder (invalid or duplicate name shows the error and disables OK); `F2` rename.
+5. `F8` moves to the OS trash, `Shift+Delete` asks for confirmation; `Ctrl+Z` undoes the last copy / move / rename / trash (macOS cannot restore from the trash — an error is shown).
+6. A large copy shows progress in the status bar and jobs panel; Cancel stops it and leaves no partial files. Failures list per item and can be dismissed.
+7. Drop files from the OS file manager onto a pane: they are copied into that pane's directory.
+
 
 ## Config files
 

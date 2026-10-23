@@ -8,7 +8,7 @@ use serde_json::json;
 
 use fm_engine::{DirState, FileOps, JobId, OpState, Params, Session};
 use fm_testkit::{FaultFs, MemFs};
-use fm_vfs::{FmError, VfsUri};
+use fm_vfs::{FmError, Vfs, VfsUri};
 
 fn uri(s: &str) -> VfsUri {
     VfsUri::parse(s).expect("uri")
@@ -360,4 +360,59 @@ fn fresh_session_has_no_jobs_or_undo() {
     assert!(s.fileops.jobs().is_empty());
     assert!(s.undo.is_empty());
     assert!(matches!(s.dirs.state(&uri("/nope")), DirState::Absent));
+}
+
+#[test]
+fn traversal_names_are_rejected_and_nothing_is_created() {
+    let fs = MemFs::new();
+    fs.mkdirs_str("/d/sub").expect("mkdirs");
+    fs.put_str("/d/f.txt", b"x").expect("put");
+    let mut s = session_on(Arc::new(fs.clone()));
+    for bad in ["../evil", "a/b", "..", ".", "", "a\\b", "nul\0"] {
+        let params = json!({"name": bad, "parent": "/d"});
+        assert!(
+            dispatch(&mut s, "file.mkdir", params).is_err(),
+            "mkdir {bad:?}"
+        );
+        let params = json!({"name": bad, "uri": "/d/f.txt"});
+        assert!(
+            dispatch(&mut s, "file.rename", params).is_err(),
+            "rename {bad:?}"
+        );
+    }
+    assert!(s.fileops.jobs().is_empty(), "no job may be started");
+    assert!(fs.stat(&uri("/evil")).is_err());
+    assert!(fs.stat(&uri("/d/f.txt")).is_ok());
+}
+
+#[test]
+fn credentials_never_surface_in_errors_or_job_reports() {
+    let mut s = session_on(Arc::new(MemFs::new()));
+    let src = "sftp://user:hunter2@example.invalid/a";
+    let dest = "sftp://user:hunter2@example.invalid/b";
+    let mut text = String::new();
+    for (id, params) in [
+        ("dnd.drop", json!({"sources": [src], "dest": dest})),
+        ("file.copy", json!({"sources": [src], "dest": dest})),
+        (
+            "file.delete_permanent",
+            json!({"sources": [src], "confirm": true}),
+        ),
+    ] {
+        if let Err(err) = dispatch(&mut s, id, params) {
+            text.push_str(&err.to_string());
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while s.fileops.running() > 0 && Instant::now() < deadline {
+        s.poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for job in s.fileops.jobs() {
+        text.push_str(&format!("{} {:?}", job.label, job.state));
+        for (item, err) in job.summary.iter().flat_map(|x| x.failed.iter()) {
+            text.push_str(&format!("{item} {err}"));
+        }
+    }
+    assert!(!text.contains("hunter2"), "credential leaked: {text}");
 }
