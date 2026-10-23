@@ -240,6 +240,16 @@ impl Vfs for LocalFs {
         Ok(Box::new(f))
     }
 
+    fn open_read_at(&self, uri: &VfsUri, offset: u64) -> Result<Box<dyn Read + Send>, FmError> {
+        use std::io::{Seek, SeekFrom};
+        let path = self.path(uri)?;
+        let display = uri.path_str();
+        let mut f = fs::File::open(&path).map_err(|e| map_io(e, display))?;
+        f.seek(SeekFrom::Start(offset))
+            .map_err(|e| map_io(e, display))?;
+        Ok(Box::new(f))
+    }
+
     fn open_write(&self, uri: &VfsUri, opts: WriteOpts) -> Result<Box<dyn Write + Send>, FmError> {
         let path = self.path(uri)?;
         let display = uri.path_str();

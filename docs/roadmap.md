@@ -18,7 +18,7 @@ Out of scope until after these five: archives, previews, tabs, full-text search,
 
 ## Current focus
 
-`pane-types` (terminal pane) and `pane-arrange` (drag/resize/zoom panes, Terminator-style) are implemented and awaiting real-window smoke tests before archiving.
+`pane-preview` (Preview pane + log viewer) is implemented (video: poster frame + metadata via ffmpeg subprocess, no playback yet), awaiting real-window smoke tests. `pane-types` (archived) and `pane-arrange` (drag/resize/zoom panes, Terminator-style) are implemented and awaiting real-window smoke tests before archiving.
 
 ## Ideas for future changes
 

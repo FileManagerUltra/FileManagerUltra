@@ -21,6 +21,7 @@ pub mod pane_cmds;
 pub mod pane_kind_cmds;
 pub mod prefs;
 pub mod prefs_cmds;
+pub mod preview_cmds;
 pub mod registry;
 pub mod session;
 pub mod sort_cmds;

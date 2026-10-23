@@ -11,7 +11,7 @@ mod state;
 pub use node::{Axis, Edge, MAX_RATIO, MIN_RATIO, PaneNode};
 pub use state::{
     DEFAULT_COL_WIDTHS, DEFAULT_TREE_WIDTH, Focus, History, ListingState, MAX_COL_WIDTH,
-    MIN_COL_WIDTH, PaneKind, PaneState, SortDir, SortKey, SortSpec, TreeState,
+    MIN_COL_WIDTH, PaneKind, PaneState, PreviewSource, SortDir, SortKey, SortSpec, TreeState,
 };
 
 /// Stable id of a pane (leaf). Never reused within a layout.
@@ -39,6 +39,7 @@ impl Layout {
             focus: Focus {
                 focused: 1,
                 previous: None,
+                last_files: Some(1),
             },
             zoomed: None,
             next_id: 2,
@@ -78,6 +79,14 @@ impl Layout {
         let survivor = self.panes().into_iter().find(|p| *p != target);
         self.root.close_leaf(target);
         self.states.remove(&target);
+        for st in self.states.values_mut() {
+            if st.preview_source == PreviewSource::Pane(target) {
+                st.preview_source = PreviewSource::Follow;
+            }
+        }
+        if self.focus.last_files == Some(target) {
+            self.focus.last_files = None;
+        }
         if let Some(s) = survivor {
             if self.focus.focused == target {
                 self.focus.focused = s;
@@ -148,6 +157,37 @@ impl Layout {
             None if self.panes().len() > 1 => Some(self.focus.focused),
             None => None,
         };
+    }
+
+    /// Remember the focused pane as the latest Files pane. Call once per frame/poll.
+    pub fn touch_files_focus(&mut self) {
+        let f = self.focus.focused;
+        if self
+            .states
+            .get(&f)
+            .is_some_and(|s| s.kind == PaneKind::Files)
+        {
+            self.focus.last_files = Some(f);
+        }
+    }
+
+    /// The Files pane a Preview pane shows, or `None` when the layout has no Files pane.
+    pub fn preview_target(&self, preview: PaneId) -> Option<PaneId> {
+        let is_files = |id: &PaneId| {
+            *id != preview
+                && self
+                    .states
+                    .get(id)
+                    .is_some_and(|s| s.kind == PaneKind::Files)
+        };
+        let pinned = match self.states.get(&preview).map(|s| s.preview_source) {
+            Some(PreviewSource::Pane(id)) => Some(id),
+            _ => None,
+        };
+        pinned
+            .filter(is_files)
+            .or_else(|| self.focus.last_files.filter(is_files))
+            .or_else(|| self.panes().into_iter().find(is_files))
     }
 
     fn fix_zoom(&mut self) {
@@ -615,5 +655,58 @@ mod tests {
             }
             invariants(&l);
         }
+    }
+
+    #[test]
+    fn preview_follows_the_last_focused_files_pane() {
+        let mut l = Layout::single(VfsUri::root_file());
+        let b = l.split(1, Axis::Horizontal, 0.5).expect("split");
+        let p = l.split(b, Axis::Horizontal, 0.5).expect("split");
+        l.state_mut(p).expect("state").kind = PaneKind::Preview;
+        l.touch_files_focus();
+        assert_eq!(
+            l.preview_target(p),
+            Some(1),
+            "touch happened on the preview itself"
+        );
+        l.focus_pane(b).expect("focus");
+        l.touch_files_focus();
+        l.focus_pane(p).expect("focus");
+        l.touch_files_focus();
+        assert_eq!(
+            l.preview_target(p),
+            Some(b),
+            "focusing the preview keeps the last Files pane"
+        );
+    }
+
+    #[test]
+    fn pinned_source_falls_back_when_closed_or_not_files() {
+        let mut l = Layout::single(VfsUri::root_file());
+        let b = l.split(1, Axis::Horizontal, 0.5).expect("split");
+        let p = l.split(b, Axis::Horizontal, 0.5).expect("split");
+        l.state_mut(p).expect("state").kind = PaneKind::Preview;
+        l.state_mut(p).expect("state").preview_source = PreviewSource::Pane(1);
+        assert_eq!(l.preview_target(p), Some(1));
+        l.state_mut(1).expect("state").kind = PaneKind::Terminal;
+        assert_eq!(
+            l.preview_target(p),
+            Some(b),
+            "a pinned non-Files pane is ignored"
+        );
+        l.state_mut(1).expect("state").kind = PaneKind::Files;
+        l.close(1).expect("close");
+        assert_eq!(
+            l.state(p).expect("state").preview_source,
+            PreviewSource::Follow
+        );
+        assert_eq!(l.preview_target(p), Some(b));
+    }
+
+    #[test]
+    fn preview_without_files_pane_has_no_target() {
+        let mut l = Layout::single(VfsUri::root_file());
+        l.state_mut(1).expect("state").kind = PaneKind::Preview;
+        assert_eq!(l.preview_target(1), None);
     }
 }

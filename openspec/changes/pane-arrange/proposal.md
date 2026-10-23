@@ -4,7 +4,7 @@ Panes can be split, closed and Tab-swapped, but the arrangement is otherwise fix
 
 ## What Changes
 
-- **Drag a pane to rearrange it**: dragging a pane's header shows five drop targets over the pane under the pointer — left, right, top, bottom (the dragged pane is re-inserted there as a new split) and centre (the two panes swap). Per-pane state, running terminals and focus travel with the pane.
+- **Drag a pane to rearrange it**: dragging a pane's border shows five drop targets over the pane under the pointer — left, right, top, bottom (the dragged pane is re-inserted there as a new split) and centre (the two panes swap). Per-pane state, running terminals and focus travel with the pane.
 - **Better resizing**: dividers highlight and show a resize cursor on hover, enforce a minimum pane size, and double-click resets that split to its natural proportion. Keyboard resize nudges the nearest divider in a direction.
 - **Layout commands**: `pane.move {pane, target, edge}`, `pane.equalize`, `pane.zoom` (toggle: show only the focused pane, the others keep running), `pane.rotate` (flip the focused pane's parent split between side-by-side and stacked), `pane.resize.left|right|up|down {amount?}`.
 - **Menu and shortcuts**: Panes ▸ Equalize, Zoom, Rotate, Resize ▸ ...; chords use `Ctrl+Shift+…` so they also work while a terminal pane is focused.

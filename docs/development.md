@@ -115,6 +115,15 @@ Use a scratch directory with a few files, a subfolder and one name that exists i
 7. Drop files from the OS file manager onto a pane: they are copied into that pane's directory.
 
 
+### Pane types & arrangement (changes `pane-types`, `pane-arrange`)
+
+1. Pane header, right side: the type button (Files / Terminal / Preview; Sftp and Network show "(soon)"). Switching a pane with a running foreground job asks "End running process?".
+2. Terminal: shell prompt in the pane's directory; `top`/`vim` redraw without mouse input; Backspace, Ctrl+C/D/L work; Ctrl+Shift+C/V copy/paste; drag a file from a Files pane (or the OS) onto it to paste its quoted path, and the terminal regains focus.
+3. `Ctrl+Shift+E` split right, `Ctrl+Shift+O` split down (new pane next to the active one); `Ctrl+Shift+Arrows` resize the nearest divider, `Ctrl+Shift+B` equalize, `Ctrl+Shift+R` rotate, `Ctrl+Shift+X` zoom toggle. All also work with a terminal focused.
+5. Preview: `Ctrl+Shift+P` opens a preview to the right of the active pane and toggles it closed. Arrow through text, JSON (Pretty button), Markdown, an image, a binary (hex) and a folder; the preview follows the cursor, or pin it with the source picker. A `*.log` switches to Log mode: level/search/time filters, Live tail (`Ctrl+Shift+F`) while another process appends, Mark (`Ctrl+Shift+M`) to drop a divider rule at the current end, folded stack traces, access-log columns. Video shows metadata and a poster frame when ffmpeg is installed (no playback yet).
+4. Drag a pane by its outer border (the edge highlights) onto another: the outer quarter of an edge inserts there, the middle swaps; Esc cancels. Terminals keep running through moves.
+5. Dividers highlight on hover; double-click resets to an equal split. In a Files pane drag the tree divider and the listing header borders (double-click resets).
+
 ## Config files
 
 Preferences live in the platform config directory for the brand slug

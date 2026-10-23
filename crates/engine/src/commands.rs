@@ -10,6 +10,7 @@ use crate::nav_cmds;
 use crate::pane_cmds;
 use crate::pane_kind_cmds;
 use crate::prefs_cmds;
+use crate::preview_cmds;
 use crate::registry::CommandSpec;
 use crate::sort_cmds;
 use crate::term_cmds;
@@ -31,6 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(pane_cmds::specs());
     specs.extend(arrange_cmds::specs());
     specs.extend(pane_kind_cmds::specs());
+    specs.extend(preview_cmds::specs());
     specs.extend(term_cmds::specs());
     specs.extend(nav_cmds::specs());
     specs.extend(goto_cmds::specs());

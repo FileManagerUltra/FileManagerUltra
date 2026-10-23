@@ -50,4 +50,4 @@ File commands (`file.*`, `nav.*`, drag & drop) SHALL be disabled when the focuse
 
 #### Scenario: Copy with a terminal focused
 - **WHEN** a Terminal pane is focused and `file.copy` is queried
-- **THEN** it is disabled
+- **THEN** it is disabled (running it anyway is a no-op)

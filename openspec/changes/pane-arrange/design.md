@@ -14,7 +14,7 @@
 
 **D5 — Keyboard resize** moves the nearest ancestor divider whose axis matches the direction by a step (default 5 %, clamped to `MIN_RATIO..=MAX_RATIO`); with no matching ancestor it is a no-op.
 
-**D6 — Drag payload.** A dedicated `PaneDrag(PaneId)` egui payload, distinct from file `DragPayload`, so file drop zones ignore it and pane drops ignore files. Source: the pane header (drag sense on the header frame; the breadcrumb and type menu keep their clicks). Target: `arrange::edge_for(rect, pos)` — outer 25 % band per side picks that edge, nearest edge when bands overlap, otherwise Centre. The overlay paints the half that the pane would occupy, with theme tokens only.
+**D6 — Drag payload.** A dedicated `PaneDrag(PaneId)` egui payload, distinct from file `DragPayload`, so file drop zones ignore it and pane drops ignore files. Source: the pane's outer border (four 5 px hit bands just inside the frame, clear of the content padding, so the header's breadcrumb and type menu keep their clicks). Target: `arrange::edge_for(rect, pos)` — outer 25 % band per side picks that edge, nearest edge when bands overlap, otherwise Centre. The overlay paints the half that the pane would occupy, with theme tokens only.
 
 **D7 — Divider widget** lives in `fm-app` next to the recursive renderer: hover colour from `tokens.accent`, `CursorIcon::ResizeHorizontal/Vertical`, double-click → `set_ratio(handle, equalized ratio)`. Minimum pane size 80×60 px as today, so a too-small window degrades instead of overlapping.
 
@@ -22,4 +22,4 @@
 
 - Tree surgery bugs lose panes → property test: any sequence of split/move/close/rotate/equalize keeps the leaf set equal to the key set of `states`, ratios in band, focus valid.
 - `zoomed` could point at a removed pane → every mutating `Layout` method calls `fix_zoom()`.
-- Egui drag over a terminal body: the terminal widget senses drags for selection, but a pane drag starts only from the header, so there is no conflict.
+- Egui drag over a terminal body: the terminal widget senses drags for selection, but a pane drag starts only from the border, so there is no conflict.

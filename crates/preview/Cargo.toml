@@ -1,0 +1,28 @@
+[package]
+name = "fm-preview"
+description = "Content sniffing and decoding of files into a plain preview model (no UI, no egui)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+fm-vfs.workspace = true
+regex.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+serde.workspace = true
+toml = { workspace = true, features = ["preserve_order"] }
+serde_yaml_ng = "0.10"
+quick-xml = "0.37"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+pulldown-cmark = { version = "0.12", default-features = false }
+
+[dev-dependencies]
+tempfile.workspace = true
+fm-testkit.workspace = true

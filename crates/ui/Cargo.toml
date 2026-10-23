@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 fm-engine.workspace = true
 fm-layout.workspace = true
+fm-preview.workspace = true
 fm-term.workspace = true
 fm-vfs.workspace = true
 serde_json.workspace = true

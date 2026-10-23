@@ -184,6 +184,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     // re-reads the directory. `remembered` is the pane-state copy of the
     // focused node, used to re-focus the row once it is back.
     let egui_focused = ui.ctx().memory(|m| m.focused());
+    let tree_active = s.layout.state(pane).is_some_and(|p| p.tree.active);
 
     let mut open: Option<VfsUri> = None;
     let mut expand: Vec<VfsUri> = Vec::new();
@@ -246,6 +247,12 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     if clicked && let Some(state) = s.layout.state_mut(pane) {
                         state.tree.active = true;
                     }
+                    if response.has_focus()
+                        && !tree_active
+                        && let Some(state) = s.layout.state_mut(pane)
+                    {
+                        state.tree.active = true;
+                    }
                     if clicked || response.has_focus() {
                         // Focus moved to this node — remember it (pane state is
                         // what survives the rows disappearing during a reload).
@@ -259,7 +266,10 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                                 state.tree.focused = remembered.clone();
                             }
                         }
-                    } else if egui_focused.is_none() && remembered.as_ref() == Some(&row.uri) {
+                    } else if tree_active
+                        && egui_focused.is_none()
+                        && remembered.as_ref() == Some(&row.uri)
+                    {
                         // Focus was dropped while this row was gone: take it back.
                         response.request_focus();
                         if scroll_focus {
@@ -651,6 +661,7 @@ mod tests {
             let pane = s.layout.state_mut(1).expect("pane");
             pane.tree.scroll = 240.0;
             pane.tree.focused = Some(focused.clone());
+            pane.tree.active = true;
         }
         run_tree_frame(&ctx, &mut s, 1);
         let parked = s.layout.state(1).expect("pane").tree.scroll;
@@ -734,7 +745,9 @@ mod tests {
         };
         frame(&ctx, &mut s, vec![]);
         let a = home.join("a").expect("join");
-        s.layout.state_mut(1).expect("pane").tree.focused = Some(a);
+        let pane = s.layout.state_mut(1).expect("pane");
+        pane.tree.focused = Some(a);
+        pane.tree.active = true;
         frame(&ctx, &mut s, vec![]);
         frame(&ctx, &mut s, vec![]);
         assert!(ctx.memory(|m| m.focused()).is_some());
@@ -768,6 +781,7 @@ mod tests {
             pane.tree = fm_layout::TreeState::new(home.clone());
             pane.location = home.clone();
             pane.tree.focused = Some(a.clone());
+            pane.tree.active = true;
             pane.tree.expand(a.clone());
         }
         s.submit_read(home.clone()).expect("submit");
@@ -829,6 +843,7 @@ mod tests {
             pane.tree = fm_layout::TreeState::new(home.clone());
             pane.location = home.clone();
             pane.tree.focused = Some(x.clone());
+            pane.tree.active = true;
             pane.tree.expand(a.clone());
         }
         for u in [&home, &a] {

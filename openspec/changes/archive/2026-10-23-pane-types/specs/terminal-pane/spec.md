@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Terminal session lifecycle
-A Terminal pane SHALL own one pty-backed shell session, started on first show in the pane's directory when that is a local path, otherwise in the user's home directory. The shell is the user's login shell (`$SHELL`, `%COMSPEC%` on Windows) with `TERM=xterm-256color`. Closing the pane or quitting SHALL terminate the child; no orphan process remains.
+A Terminal pane SHALL own one pty-backed shell session, started on first show in the pane's directory when that is a local path, otherwise in the user's home directory. The shell is the user's default shell (the platform default program: `$SHELL`, `%COMSPEC%` on Windows) with `TERM=xterm-256color`. Closing the pane or quitting SHALL terminate the child; no orphan process remains.
 
 #### Scenario: Start in pane directory
 - **WHEN** a Files pane at a local directory `/tmp/x` switches to Terminal

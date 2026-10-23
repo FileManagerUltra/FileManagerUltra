@@ -8,6 +8,8 @@ use fm_vfs::VfsUri;
 
 use crate::{listing, theme::Tokens, tree};
 
+/// Thickness (px) of the draggable band along each pane edge.
+const BORDER_GRIP: f32 = 5.0;
 const MIN_TREE: f32 = 120.0;
 const MAX_TREE: f32 = 420.0;
 
@@ -43,24 +45,20 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
             crate::dnd::ZONE_BACKGROUND,
         );
     }
-    egui::Frame::NONE
+    let frame = egui::Frame::NONE
         .fill(tokens.bg)
         .stroke(stroke)
         .inner_margin(egui::Margin::same(tokens.padding as i8))
         .show(ui, |ui| {
             // The active pane gets a solid accent header bar; inactive ones stay muted.
-            let mut grip = None;
             if kind == PaneKind::Files && crate::locationbar::is_editing(s, pane) {
                 crate::locationbar::show_editor(ui, s, pane, tokens);
             } else {
-                let header = egui::Frame::NONE
+                egui::Frame::NONE
                     .fill(if focused { tokens.accent } else { tokens.panel })
                     .corner_radius(tokens.corner_radius)
-                    .inner_margin(egui::Margin::symmetric(tokens.padding as i8, 2));
-                // The scope registers its drag sense before the contents, so the kind menu
-                // and breadcrumb (added later) win hit-testing over the grip.
-                let scope = ui.scope_builder(egui::UiBuilder::new().sense(Sense::drag()), |ui| {
-                    header.show(ui, |ui| {
+                    .inner_margin(egui::Margin::symmetric(tokens.padding as i8, 2))
+                    .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
                         ui.allocate_ui_with_layout(
@@ -79,17 +77,16 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                                 });
                             },
                         );
-                    })
-                });
-                grip = Some(scope.response);
+                    });
             }
             ui.separator();
-            if let Some(g) = grip {
-                crate::arrange::source(ui.ctx(), &g, pane);
-            }
 
             if kind == PaneKind::Terminal {
                 crate::terminal::show(ui, s, pane, tokens, focused);
+                return;
+            }
+            if kind == PaneKind::Preview {
+                crate::preview::show(ui, s, pane, tokens);
                 return;
             }
 
@@ -140,6 +137,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 );
             });
         });
+    border_grip(ui, tokens, pane, frame.response.rect);
 
     if pressed_inside {
         let _ = s.layout.focus_pane(pane);
@@ -169,7 +167,10 @@ fn kind_menu(ui: &mut Ui, s: &mut Session, pane: PaneId, current: PaneKind) {
     // Trailing spaces reserve room for the painted dropdown triangle (the bundled fonts lack ▾).
     let button = ui.menu_button(format!("{}   ", current.label()), |ui| {
         for kind in PaneKind::ALL {
-            let supported = matches!(kind, PaneKind::Files | PaneKind::Terminal);
+            let supported = matches!(
+                kind,
+                PaneKind::Files | PaneKind::Terminal | PaneKind::Preview
+            );
             let label = if supported {
                 kind.label().to_string()
             } else {
@@ -201,6 +202,33 @@ fn kind_menu(ui: &mut Ui, s: &mut Session, pane: PaneId, current: PaneKind) {
         color,
         egui::Stroke::NONE,
     ));
+}
+
+/// The pane's outer border drags the pane: four thin hit bands just inside its frame,
+/// clear of the padding that holds the content.
+fn border_grip(ui: &mut Ui, tokens: &Tokens, pane: PaneId, rect: egui::Rect) {
+    let t = BORDER_GRIP;
+    let bands = [
+        egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.top() + t)),
+        egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - t), rect.max),
+        egui::Rect::from_min_max(rect.min, egui::pos2(rect.left() + t, rect.bottom())),
+        egui::Rect::from_min_max(egui::pos2(rect.right() - t, rect.top()), rect.max),
+    ];
+    let mut active = false;
+    for (i, band) in bands.into_iter().enumerate() {
+        let id = egui::Id::NULL.with(("pane-border", pane, i));
+        let resp = ui.interact(band, id, Sense::drag());
+        active |= resp.hovered() || resp.dragged();
+        crate::arrange::source(ui.ctx(), &resp, pane);
+    }
+    if active {
+        ui.painter().rect_stroke(
+            rect,
+            tokens.corner_radius,
+            egui::Stroke::new(tokens.border_width.max(2.5), tokens.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -261,5 +289,117 @@ mod tests {
             });
         });
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn arrows_in_the_listing_do_not_move_the_tree_cursor() {
+        let tokens = Tokens::dark();
+        let mut s = ready_session();
+        let d = VfsUri::parse("/d").expect("uri");
+        if let Some(p) = s.layout.state_mut(1) {
+            p.tree.focused = Some(d.clone());
+            p.tree.active = false;
+        }
+        let ctx = egui::Context::default();
+        let frame = |s: &mut Session, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let _ = show(ui, s, 1, &tokens);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+        };
+        frame(&mut s, vec![]);
+        frame(&mut s, vec![]);
+        assert!(
+            ctx.memory(|m| m.focused()).is_none(),
+            "the tree grabbed focus"
+        );
+        let down = egui::Event::Key {
+            key: egui::Key::ArrowDown,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&mut s, vec![down]);
+        let p = s.layout.state(1).expect("pane");
+        assert_eq!(p.tree.focused.as_ref(), Some(&d));
+        assert!(p.listing.focused_row > 0, "the listing cursor moved");
+    }
+
+    #[test]
+    fn up_from_the_first_row_reaches_the_parent_row_and_enter_opens_it() {
+        let tokens = Tokens::dark();
+        let mut s = ready_session();
+        let ctx = egui::Context::default();
+        let key = |k| egui::Event::Key {
+            key: k,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let frame = |s: &mut Session, events: Vec<egui::Event>| {
+            let mut opened = None;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        opened = show(ui, s, 1, &tokens);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+            opened
+        };
+        frame(&mut s, vec![]);
+        assert!(frame(&mut s, vec![key(egui::Key::ArrowUp)]).is_none());
+        assert!(s.layout.state(1).is_some_and(|p| p.listing.on_parent));
+        let opened = frame(&mut s, vec![key(egui::Key::Enter)]);
+        assert_eq!(opened, VfsUri::parse("/d").expect("uri").parent());
+    }
+
+    #[test]
+    fn an_empty_directory_starts_with_the_cursor_on_the_parent_row() {
+        let tokens = Tokens::dark();
+        let mut s = Session::default();
+        let mem = MemFs::new();
+        mem.mkdirs_str("/e").expect("mkdirs");
+        s.backends.register(Arc::new(mem));
+        let uri = VfsUri::parse("/e").expect("uri");
+        s.layout.state_mut(1).expect("pane").location = uri.clone();
+        s.submit_read(uri.clone()).expect("submit");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !s.dirs.state(&uri).is_ready() {
+            s.poll();
+            assert!(Instant::now() < deadline, "read never ready");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let _ = show(ui, &mut s, 1, &tokens);
+            });
+        });
+        out.textures_delta.clear();
+        assert!(s.layout.state(1).is_some_and(|p| p.listing.on_parent));
     }
 }

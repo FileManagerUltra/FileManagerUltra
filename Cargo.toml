@@ -20,6 +20,7 @@ fm-testkit = { path = "crates/testkit" }
 fm-ops = { path = "crates/ops" }
 fm-layout = { path = "crates/layout" }
 fm-term = { path = "crates/term" }
+fm-preview = { path = "crates/preview" }
 fm-engine = { path = "crates/engine" }
 fm-ui = { path = "crates/ui" }
 
@@ -73,3 +74,7 @@ unimplemented = "deny"
 todo = "deny"
 unreachable = "deny"
 dbg_macro = "warn"
+
+# Image/text decoding is unusably slow unoptimised; keep dev builds usable on large files.
+[profile.dev.package."*"]
+opt-level = 3

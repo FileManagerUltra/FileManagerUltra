@@ -152,6 +152,45 @@ impl Tokens {
         }
     }
 
+    /// Syntax class -> colour, drawn from the semantic palette.
+    pub fn syntax(&self, class: fm_preview::Class) -> Color32 {
+        use fm_preview::Class as C;
+        match class {
+            C::Plain | C::Punct => self.text,
+            C::Comment => self.text_muted,
+            C::String => self.ansi[2],
+            C::Number | C::Constant => self.ansi[3],
+            C::Keyword => self.ansi[5],
+            C::Function => self.ansi[4],
+            C::Type => self.ansi[6],
+            C::Key => self.accent,
+            C::Tag => self.ansi[1],
+        }
+    }
+
+    /// Log level -> colour.
+    pub fn level(&self, level: Option<fm_preview::log::Level>) -> Color32 {
+        use fm_preview::log::Level as L;
+        match level {
+            None => self.text,
+            Some(L::Debug) => self.text_muted,
+            Some(L::Info | L::Notice) => self.text,
+            Some(L::Warning) => self.warning,
+            Some(L::Error | L::Critical) => self.error,
+        }
+    }
+
+    /// HTTP status class -> colour.
+    pub fn status(&self, status: u16) -> Color32 {
+        match status {
+            500.. => self.error,
+            400..=499 => self.warning,
+            300..=399 => self.accent,
+            200..=299 => self.success,
+            _ => self.text_muted,
+        }
+    }
+
     /// Terminal colour -> egui colour (`fg` picks the default for `Color::Default`).
     pub fn term_color(&self, color: fm_term::Color, fg: bool) -> Color32 {
         match color {

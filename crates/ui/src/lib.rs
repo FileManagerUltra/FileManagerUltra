@@ -10,6 +10,7 @@ pub mod listing;
 pub mod locationbar;
 pub mod pane;
 pub mod preferences;
+pub mod preview;
 pub mod terminal;
 pub mod theme;
 pub mod tree;

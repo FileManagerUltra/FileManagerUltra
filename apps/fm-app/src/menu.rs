@@ -32,6 +32,13 @@ pub const TERM_COPY: &str = "term.copy";
 pub const TERM_PASTE: &str = "term.paste";
 pub const TERM_CD_HERE: &str = "term.cd_here";
 pub const TERM_CLEAR: &str = "term.clear_scrollback";
+pub const VIEW_PREVIEW: &str = "view.preview.toggle";
+pub const PREVIEW_PRETTY: &str = "preview.toggle_pretty";
+pub const PREVIEW_WRAP: &str = "preview.toggle_wrap";
+pub const LOG_FOLLOW: &str = "preview.log.follow";
+pub const LOG_COLUMNS: &str = "preview.log.columns";
+pub const LOG_MARK: &str = "preview.log.mark";
+pub const LOG_EARLIER: &str = "preview.log.earlier";
 pub const TERM_RESTART: &str = "term.restart";
 pub const PANE_FOCUS_NEXT: &str = "pane.focus.next";
 pub const NAV_UP: &str = "nav.up";
@@ -84,6 +91,13 @@ pub fn all_ids() -> &'static [&'static str] {
         TERM_CD_HERE,
         TERM_CLEAR,
         TERM_RESTART,
+        VIEW_PREVIEW,
+        PREVIEW_PRETTY,
+        PREVIEW_WRAP,
+        LOG_FOLLOW,
+        LOG_COLUMNS,
+        LOG_MARK,
+        LOG_EARLIER,
         NAV_UP,
         NAV_BACK,
         NAV_FORWARD,
@@ -131,6 +145,18 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
         (
             PANE_EQUALIZE,
             egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::B),
+        ),
+        (
+            VIEW_PREVIEW,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::P),
+        ),
+        (
+            LOG_FOLLOW,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::F),
+        ),
+        (
+            LOG_MARK,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::M),
         ),
         (
             PANE_ZOOM,
@@ -365,6 +391,17 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             check_item(ui, session, dialogs, VIEW_HIDDEN, session.show_hidden);
             check_item(ui, session, dialogs, VIEW_LINKS, session.show_link_targets);
             ui.separator();
+            item(ui, session, dialogs, VIEW_PREVIEW);
+            ui.menu_button("Preview", |ui| {
+                item(ui, session, dialogs, PREVIEW_PRETTY);
+                item(ui, session, dialogs, PREVIEW_WRAP);
+                ui.separator();
+                item(ui, session, dialogs, LOG_FOLLOW);
+                item(ui, session, dialogs, LOG_COLUMNS);
+                item(ui, session, dialogs, LOG_MARK);
+                item(ui, session, dialogs, LOG_EARLIER);
+            });
+            ui.separator();
             ui.menu_button("Theme", |ui| {
                 theme_radio(ui, session, dialogs, THEME_SYSTEM, ThemePreference::System);
                 theme_radio(ui, session, dialogs, THEME_DARK, ThemePreference::Dark);
@@ -526,6 +563,9 @@ mod tests {
             Key::ArrowDown => "Down",
             Key::E => "E",
             Key::B => "B",
+            Key::P => "P",
+            Key::F => "F",
+            Key::M => "M",
             Key::O => "O",
             Key::X => "X",
             _ => "?",

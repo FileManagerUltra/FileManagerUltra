@@ -182,6 +182,8 @@ pub struct ListingState {
     /// Selected entry **names** (stable across re-reads of the same directory).
     selection: BTreeSet<String>,
     pub focused_row: usize,
+    /// The cursor is on the `..` row (it is not an entry, so it has no `focused_row`).
+    pub on_parent: bool,
     pub scroll: f32,
 }
 
@@ -191,6 +193,7 @@ impl Default for ListingState {
             sort: SortSpec::default(),
             selection: BTreeSet::new(),
             focused_row: 0,
+            on_parent: false,
             scroll: 0.0,
         }
     }
@@ -212,6 +215,7 @@ impl ListingState {
     /// Clear the selection and select `name` (if any), focusing its row.
     pub fn select_only(&mut self, name: Option<&str>, row: usize) {
         self.selection.clear();
+        self.on_parent = false;
         if let Some(name) = name {
             self.selection.insert(name.to_string());
         }
@@ -220,6 +224,7 @@ impl ListingState {
 
     /// Ctrl-style: toggle `name`, move focus to its row.
     pub fn toggle(&mut self, name: &str, row: usize) {
+        self.on_parent = false;
         if !self.selection.remove(name) {
             self.selection.insert(name.to_string());
         }
@@ -230,6 +235,7 @@ impl ListingState {
     /// (inclusive) in the given display order, replacing the selection.
     pub fn extend_to(&mut self, order: &[String], row: usize) {
         self.selection.clear();
+        self.on_parent = false;
         if order.is_empty() {
             self.focused_row = 0;
             return;
@@ -245,6 +251,7 @@ impl ListingState {
 
     /// Select every name in `order` (Ctrl+A).
     pub fn select_all(&mut self, order: &[String]) {
+        self.on_parent = false;
         self.selection = order.iter().cloned().collect();
     }
 
@@ -255,6 +262,39 @@ impl ListingState {
 
     pub fn clear_selection(&mut self) {
         self.selection.clear();
+        self.on_parent = false;
+    }
+
+    /// Put the cursor on the `..` row (nothing selected).
+    pub fn focus_parent(&mut self) {
+        self.selection.clear();
+        self.on_parent = true;
+    }
+
+    /// `move_focus` for a listing that shows a `..` row above the entries: Up from the first
+    /// entry (or Home) lands on `..`, Down from `..` returns to the first entry.
+    pub fn move_focus_with_parent(
+        &mut self,
+        order: &[String],
+        delta: isize,
+        extend: bool,
+        has_parent: bool,
+    ) {
+        if self.on_parent {
+            if delta > 0 && !order.is_empty() {
+                self.select_only(order.first().map(String::as_str), 0);
+            }
+            return;
+        }
+        if has_parent
+            && delta < 0
+            && !extend
+            && self.focused_row.min(order.len().saturating_sub(1)) == 0
+        {
+            self.focus_parent();
+            return;
+        }
+        self.move_focus(order, delta, extend);
     }
 
     /// Move the focused row; with `extend` keep growing the range selection,
@@ -355,17 +395,25 @@ pub enum PaneKind {
     #[default]
     Files,
     Terminal,
+    Preview,
     Sftp,
     Network,
 }
 
 impl PaneKind {
-    pub const ALL: [PaneKind; 4] = [Self::Files, Self::Terminal, Self::Sftp, Self::Network];
+    pub const ALL: [PaneKind; 5] = [
+        Self::Files,
+        Self::Terminal,
+        Self::Preview,
+        Self::Sftp,
+        Self::Network,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Files => "files",
             Self::Terminal => "terminal",
+            Self::Preview => "preview",
             Self::Sftp => "sftp",
             Self::Network => "network",
         }
@@ -375,6 +423,7 @@ impl PaneKind {
         match self {
             Self::Files => "Files",
             Self::Terminal => "Terminal",
+            Self::Preview => "Preview",
             Self::Sftp => "SFTP",
             Self::Network => "Network",
         }
@@ -383,6 +432,16 @@ impl PaneKind {
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|k| k.as_str() == s)
     }
+}
+
+/// Which Files pane a Preview pane shows the selection of.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PreviewSource {
+    /// The most recently focused Files pane.
+    #[default]
+    Follow,
+    /// A pinned Files pane (falls back to `Follow` when it closes).
+    Pane(PaneId),
 }
 
 /// Everything one pane remembers about its view.
@@ -398,6 +457,8 @@ pub struct PaneState {
     pub tree_width: f32,
     /// Widths of the Size, Modified and Type columns in px (drag-resized in the header).
     pub col_widths: [f32; 3],
+    /// Preview panes: which Files pane to show.
+    pub preview_source: PreviewSource,
 }
 
 /// Default tree width in px.
@@ -418,6 +479,7 @@ impl PaneState {
             listing: ListingState::default(),
             tree_width: DEFAULT_TREE_WIDTH,
             col_widths: DEFAULT_COL_WIDTHS,
+            preview_source: PreviewSource::Follow,
         }
     }
 
@@ -530,6 +592,8 @@ impl PaneState {
 pub struct Focus {
     pub focused: PaneId,
     pub previous: Option<PaneId>,
+    /// The most recently focused Files pane (what a following Preview shows).
+    pub last_files: Option<PaneId>,
 }
 
 #[cfg(test)]
@@ -669,6 +733,30 @@ mod tests {
         l.move_focus(&order, 1, false);
         assert_eq!(l.selected_count(), 1);
         assert!(l.is_selected("b"));
+    }
+
+    #[test]
+    fn the_parent_row_is_reachable_with_up_and_leaves_with_down() {
+        let order: Vec<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+        let mut l = ListingState::default();
+        l.select_only(Some("a"), 0);
+        l.move_focus_with_parent(&order, -1, false, true);
+        assert!(l.on_parent);
+        assert_eq!(l.selected_count(), 0);
+        l.move_focus_with_parent(&order, -1, false, true);
+        assert!(l.on_parent);
+        l.move_focus_with_parent(&order, 1, false, true);
+        assert!(!l.on_parent);
+        assert!(l.is_selected("a"));
+        // no parent (filesystem root): Up stays on the first entry
+        l.move_focus_with_parent(&order, -1, false, false);
+        assert!(!l.on_parent);
+        assert_eq!(l.focused_row, 0);
+        // an empty directory can still reach `..`
+        let mut e = ListingState::default();
+        e.move_focus_with_parent(&[], -1, false, true);
+        assert!(e.on_parent);
+        e.move_focus_with_parent(&[], 1, false, true);
     }
 
     #[test]

@@ -14,7 +14,9 @@ fn parse(params: &Params) -> Result<(PaneKind, Option<PaneId>, bool), FmError> {
         .and_then(Params::as_str)
         .and_then(PaneKind::parse)
         .ok_or_else(|| {
-            FmError::InvalidParams("kind must be files, terminal, sftp or network".to_string())
+            FmError::InvalidParams(
+                "kind must be files, terminal, preview, sftp or network".to_string(),
+            )
         })?;
     let pane = match map.get("pane") {
         None | Some(Params::Null) => None,
@@ -60,7 +62,7 @@ pub fn set_kind() -> CommandSpec {
                 s.drop_terminal(pane);
             }
             match kind {
-                PaneKind::Files => {}
+                PaneKind::Files | PaneKind::Preview => {}
                 PaneKind::Terminal => s.ensure_terminal(pane)?,
                 PaneKind::Sftp | PaneKind::Network => {
                     return Err(FmError::Unsupported(

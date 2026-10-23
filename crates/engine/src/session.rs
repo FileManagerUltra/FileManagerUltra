@@ -57,6 +57,8 @@ pub struct Session {
     pub terminals: HashMap<PaneId, fm_term::TermSession>,
     /// Current terminal text selection; cleared on scroll/resize.
     pub terminal_selection: Option<crate::term_cmds::TermSelection>,
+    /// Preview pane contents and their background jobs (capability `preview-pane`).
+    pub previews: crate::preview_cmds::PreviewHub,
     /// Text a command wants on the system clipboard; the app shell drains it.
     pub clipboard_out: Option<String>,
     /// A pane-type switch waiting for the user to confirm ending a running terminal job.
@@ -98,6 +100,7 @@ impl Default for Session {
             path_history: Vec::new(),
             terminals: HashMap::new(),
             terminal_selection: None,
+            previews: Default::default(),
             clipboard_out: None,
             pending_kind: None,
             about_open: false,
@@ -204,7 +207,9 @@ impl Session {
 
     /// Whether background work is in flight, so the app must keep polling without user input.
     pub fn is_busy(&self) -> bool {
-        !self.inflight.is_empty() || self.fileops.jobs().iter().any(|j| j.state.is_running())
+        !self.inflight.is_empty()
+            || self.previews.is_busy()
+            || self.fileops.jobs().iter().any(|j| j.state.is_running())
     }
 
     /// Drain job events; apply staged directory reads into the cache, prune
@@ -214,6 +219,7 @@ impl Session {
         let events = self.jobs.poll();
         let (term_changed, _) = self.pump_terminals();
         let mut changed = !events.is_empty() || term_changed;
+        changed |= self.refresh_previews();
         for ev in &events {
             if ev.is_terminal() && self.finish_op(ev) {
                 continue;
@@ -318,6 +324,11 @@ impl Session {
         Some((entries, ix))
     }
 
+    /// Whether the pane's directory listing has arrived.
+    pub fn pane_view_ready(&mut self, pane: PaneId) -> bool {
+        self.view_index(pane).is_some()
+    }
+
     /// Drop a pane's cached sort index (called when the sort spec changes).
     pub fn invalidate_view(&mut self, pane: PaneId) {
         self.indexes.remove(&pane);
@@ -419,7 +430,14 @@ mod tests {
                 .registry
                 .get(id)
                 .is_some_and(|spec| spec.params != "none" && !all_optional(spec.params));
+            let enabled = session
+                .registry
+                .get(id)
+                .is_some_and(|spec| (spec.enabled)(&session));
             let result = session.dispatch(id, &Params::Null);
+            if !enabled && result.is_err() {
+                continue;
+            }
             if needs_params {
                 // Commands with required params must fail gracefully, not panic.
                 assert!(result.is_err(), "dispatch({id}) should reject Null params");

@@ -52,6 +52,14 @@ pub trait Vfs: Send + Sync {
     /// Open for reading (whole file for v1; streaming lands with copy pipelines).
     fn open_read(&self, uri: &VfsUri) -> Result<Box<dyn Read + Send>, FmError>;
 
+    /// Open for reading starting at byte `offset`. The default skips by reading;
+    /// backends that can seek override it so tail/range reads of huge files are cheap.
+    fn open_read_at(&self, uri: &VfsUri, offset: u64) -> Result<Box<dyn Read + Send>, FmError> {
+        let mut r = self.open_read(uri)?;
+        std::io::copy(&mut (&mut r).take(offset), &mut std::io::sink())?;
+        Ok(r)
+    }
+
     /// Open for writing. `flush` commits; dropping without flush is best-effort.
     fn open_write(&self, uri: &VfsUri, opts: WriteOpts) -> Result<Box<dyn Write + Send>, FmError>;
 

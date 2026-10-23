@@ -330,6 +330,14 @@ fn ready_rows(
         .filter_map(|i| entries.get(*i as usize).map(|e| e.name.clone()))
         .collect();
 
+    // An empty directory has nothing else to put the cursor on.
+    if names.is_empty()
+        && has_parent
+        && let Some(state) = s.layout.state_mut(pane)
+    {
+        state.listing.on_parent = true;
+    }
+
     // Keyboard once per frame, before painting (so the scroll offset can be
     // applied on the same frame without fighting the wheel).
     let mut scroll_to: Option<f32> = None;
@@ -362,14 +370,20 @@ fn ready_rows(
                 );
                 match outcome {
                     KeyOutcome::None => {}
-                    KeyOutcome::Move(delta, extend) => listing.move_focus(&names, delta, extend),
+                    KeyOutcome::Move(delta, extend) => {
+                        listing.move_focus_with_parent(&names, delta, extend, has_parent);
+                    }
                     KeyOutcome::Absolute(idx, extend) => {
                         let idx = if idx == usize::MAX {
                             names.len().saturating_sub(1)
                         } else {
                             idx
                         };
-                        listing.focus_absolute(&names, idx, extend);
+                        if idx == 0 && !extend && has_parent {
+                            listing.focus_parent();
+                        } else {
+                            listing.focus_absolute(&names, idx, extend);
+                        }
                     }
                     KeyOutcome::SelectAll => listing.select_all(&names),
                     KeyOutcome::Open => open_key = true,
@@ -377,12 +391,19 @@ fn ready_rows(
             }
             // Keys that do not move focus (bare Shift/Ctrl, letters) must not re-scroll.
             if moved {
-                let row = listing.focused_row.min(names.len().saturating_sub(1));
+                let row = if listing.on_parent {
+                    0
+                } else {
+                    listing.focused_row.min(names.len().saturating_sub(1))
+                };
                 scroll_to = Some(row as f32 * tokens.row_height);
             }
         }
     }
-    if open_key {
+    let on_parent = s.layout.state(pane).is_some_and(|p| p.listing.on_parent);
+    if open_key && on_parent {
+        open = parent.cloned();
+    } else if open_key {
         let focus = s.layout.state(pane).map(|p| p.listing.focused_row);
         let name = focus.and_then(|row| names.get(row).cloned());
         if let Some(name) = name
@@ -411,7 +432,7 @@ fn ready_rows(
     let output = builder.show_rows(ui, row_height, total, |ui, row_range| {
         for row in row_range {
             if has_parent && row == 0 {
-                parent_row(ui, tokens, parent, &mut open);
+                parent_row(ui, tokens, parent, on_parent && pane_focused, &mut open);
                 continue;
             }
             let entry_row = if has_parent { row - 1 } else { row };
@@ -433,7 +454,13 @@ fn ready_rows(
     open
 }
 
-fn parent_row(ui: &mut Ui, tokens: &Tokens, parent: Option<&VfsUri>, open: &mut Option<VfsUri>) {
+fn parent_row(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    parent: Option<&VfsUri>,
+    focused: bool,
+    open: &mut Option<VfsUri>,
+) {
     let available = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(available, tokens.row_height),
@@ -446,7 +473,9 @@ fn parent_row(ui: &mut Ui, tokens: &Tokens, parent: Option<&VfsUri>, open: &mut 
     if activated && let Some(parent) = parent {
         *open = Some((*parent).clone());
     }
-    if response.hovered() {
+    if focused {
+        ui.painter().rect_filled(rect, 0.0, tokens.selection_bg);
+    } else if response.hovered() {
         ui.painter().rect_filled(rect, 0.0, tokens.hover_bg);
     }
     ui.painter().text(
@@ -454,7 +483,11 @@ fn parent_row(ui: &mut Ui, tokens: &Tokens, parent: Option<&VfsUri>, open: &mut 
         egui::Align2::LEFT_CENTER,
         "..",
         tokens.font(),
-        tokens.text,
+        if focused {
+            tokens.selection_text
+        } else {
+            tokens.text
+        },
     );
 }
 
@@ -469,7 +502,7 @@ fn entry_row_ui(
 ) -> Option<VfsUri> {
     let state = s.layout.state(pane)?;
     let selected = state.listing.is_selected(&entry.name);
-    let focused = state.listing.focused_row == row;
+    let focused = state.listing.focused_row == row && !state.listing.on_parent;
     let widths = state.col_widths;
 
     let available = ui.available_width();
@@ -488,6 +521,13 @@ fn entry_row_ui(
     if response.clicked() {
         let modifiers = ui.input(|i| i.modifiers);
         let names = display_names(s, pane);
+        // A tree row left holding egui focus would turn the arrows into widget-focus moves
+        // (moving the tree cursor) instead of listing moves.
+        ui.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
         if let Some(state) = s.layout.state_mut(pane) {
             state.tree.active = false;
             if modifiers.shift {

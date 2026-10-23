@@ -12,7 +12,7 @@
 ## 3. UI
 
 - [x] 3.1 `fm-ui::arrange`: `PaneDrag` payload, `slot_for`, overlay painting (theme tokens), drop dispatch
-- [x] 3.2 Header drag source in `pane.rs`; target overlay on every pane kind
+- [x] 3.2 Border drag source in `pane.rs`; target overlay on every pane kind
 - [x] 3.3 Divider widget in `fm-app`: hover colour/cursor, double-click reset, min size
 - [x] 3.4 Renderer honours zoom
 - [ ] 3.5 Tests: `slot_for` table, headless render of overlay (dark + light)
