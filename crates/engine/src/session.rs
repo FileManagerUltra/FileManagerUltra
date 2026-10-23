@@ -42,6 +42,8 @@ pub struct Session {
     pub layout: Layout,
     /// `app.quit` flips this; the eframe loop stops on it.
     pub running: bool,
+    /// Last command failure the user should see (status bar); the UI clears it.
+    pub notice: Option<String>,
     /// `app.about` raises this flag; the UI shows the dialog and clears it.
     pub about_open: bool,
     /// Shared directory listings (capability `directory-cache`).
@@ -70,6 +72,7 @@ impl Default for Session {
             jobs: JobQueue::new(),
             layout: Layout::single(VfsUri::root_file()),
             running: true,
+            notice: None,
             about_open: false,
             dirs: DirCache::new(),
             backends: VfsRegistry::with_local(),
@@ -103,6 +106,18 @@ impl Session {
             .ok_or_else(|| FmError::UnknownCommand(id.to_string()))?
             .run;
         run(self, params)
+    }
+
+    /// Dispatch on behalf of the UI: a failure becomes the visible [`Session::notice`]
+    /// instead of vanishing. Returns whether the command succeeded.
+    pub fn dispatch_or_notice(&mut self, id: &str, params: &Params) -> bool {
+        match self.dispatch(id, params) {
+            Ok(()) => true,
+            Err(err) => {
+                self.notice = Some(err.to_string());
+                false
+            }
+        }
     }
 
     /// `enabled` predicate for a command id (`false` when unknown).

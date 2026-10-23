@@ -29,6 +29,12 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         egui::Stroke::new(tokens.border_width, tokens.border)
     };
     let mut open = None;
+    crate::dnd::register_zone(
+        ui.ctx(),
+        area,
+        location.clone(),
+        crate::dnd::ZONE_BACKGROUND,
+    );
     egui::Frame::NONE
         .fill(tokens.bg)
         .stroke(stroke)
@@ -85,6 +91,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     if pressed_inside {
         let _ = s.layout.focus_pane(pane);
     }
+    crate::dnd::finish(ui.ctx(), s, area, tokens);
     open
 }
 

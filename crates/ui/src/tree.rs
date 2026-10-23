@@ -199,7 +199,24 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                         RowState::Loading => format!("{} …", ellipsize(&row.name, max_chars)),
                         RowState::Failed => format!("{} !", ellipsize(&row.name, max_chars)),
                     };
-                    let response = ui.selectable_label(selected, format!("{arrow} {label}"));
+                    let response = ui.add(
+                        egui::Button::selectable(selected, format!("{arrow} {label}"))
+                            .sense(egui::Sense::click_and_drag()),
+                    );
+                    if response.drag_started() {
+                        response.dnd_set_drag_payload(crate::dnd::DragPayload {
+                            sources: vec![row.uri.clone()],
+                            origin: pane,
+                        });
+                    }
+                    if row.is_dir {
+                        crate::dnd::register_zone(
+                            ui.ctx(),
+                            response.rect,
+                            row.uri.clone(),
+                            crate::dnd::ZONE_ROW,
+                        );
+                    }
                     let clicked = response.clicked();
                     if clicked {
                         response.request_focus();

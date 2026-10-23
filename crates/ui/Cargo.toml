@@ -14,6 +14,7 @@ workspace = true
 fm-engine.workspace = true
 fm-layout.workspace = true
 fm-vfs.workspace = true
+serde_json.workspace = true
 egui = { workspace = true, features = ["default_fonts"] }
 
 [dev-dependencies]

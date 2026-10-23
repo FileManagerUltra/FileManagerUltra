@@ -68,6 +68,28 @@ fn required_name(map: Option<&Obj>) -> Result<String, FmError> {
     Ok(name.to_string())
 }
 
+/// Live validation for the mkdir/rename dialogs: a legal name that does not already exist
+/// in `dir` (per the cached listing; `current` is the item being renamed). Pure — no I/O.
+pub fn validate_new_name(
+    s: &Session,
+    dir: &VfsUri,
+    name: &str,
+    current: Option<&str>,
+) -> Result<(), String> {
+    validate_name(name).map_err(|_| "Not a valid name".to_string())?;
+    if current == Some(name) {
+        return Ok(());
+    }
+    let exists = s
+        .dirs
+        .entries(dir)
+        .is_some_and(|entries| entries.iter().any(|e| e.name == name));
+    if exists {
+        return Err("Already exists".to_string());
+    }
+    Ok(())
+}
+
 /// Uris of the focused pane's selected rows.
 pub fn focused_selection(s: &Session) -> Vec<VfsUri> {
     let Some(pane) = s.layout.state(s.layout.focused()) else {

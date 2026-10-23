@@ -247,3 +247,60 @@ fn widgets_are_reachable() {
     });
     output.textures_delta.clear();
 }
+
+#[test]
+fn dialogs_dark_light() {
+    use fm_ui::dialogs::{Dialog, Dialogs};
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    let dir = VfsUri::parse("/home/alice").expect("uri");
+    let cases = [
+        (
+            "mkdir_invalid",
+            Dialog::Mkdir {
+                dir: dir.clone(),
+                name: "docs".to_string(),
+            },
+        ),
+        (
+            "rename",
+            Dialog::Rename {
+                dir: dir.clone(),
+                current: "notes.txt".to_string(),
+                name: "notes.md".to_string(),
+            },
+        ),
+        (
+            "confirm_delete",
+            Dialog::ConfirmDelete {
+                sources: vec![dir.join("notes.txt").expect("uri")],
+            },
+        ),
+        (
+            "destination",
+            Dialog::Destination {
+                command: "file.copy",
+                sources: vec![dir.join("notes.txt").expect("uri")],
+                dest: "/home/alice/docs".to_string(),
+            },
+        ),
+    ];
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for (case, dialog) in &cases {
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let mut session = fixture_session();
+            let mut dialogs = Dialogs::default();
+            dialogs.request(dialog.clone());
+            let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                dialogs.show(ui.ctx(), &mut session, &tokens);
+            });
+            harness.set_size(egui::vec2(480.0, 240.0));
+            harness.run();
+            harness.snapshot(format!("dialog_{case}_{theme}"));
+            results.extend_harness(&mut harness);
+        }
+    }
+}

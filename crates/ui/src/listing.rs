@@ -322,6 +322,9 @@ fn parent_row(ui: &mut Ui, tokens: &Tokens, parent: Option<&VfsUri>, open: &mut 
         egui::vec2(available, tokens.row_height),
         egui::Sense::click(),
     );
+    if let Some(parent) = parent {
+        crate::dnd::register_zone(ui.ctx(), rect, parent.clone(), crate::dnd::ZONE_ROW);
+    }
     let activated = response.clicked() || response.double_clicked();
     if activated && let Some(parent) = parent {
         *open = Some((*parent).clone());
@@ -354,8 +357,15 @@ fn entry_row_ui(
     let available = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(available, tokens.row_height),
-        egui::Sense::click(),
+        egui::Sense::click_and_drag(),
     );
+    if response.drag_started() {
+        let payload = crate::dnd::payload_for(s, pane, &entry.name, &entry.uri);
+        response.dnd_set_drag_payload(payload);
+    }
+    if entry.is_dir() {
+        crate::dnd::register_zone(ui.ctx(), rect, entry.uri.clone(), crate::dnd::ZONE_ROW);
+    }
 
     if response.clicked() {
         let modifiers = ui.input(|i| i.modifiers);
@@ -486,7 +496,7 @@ pub(crate) fn type_label(kind: &EntryKind) -> &'static str {
     }
 }
 
-fn format_mtime(t: SystemTime) -> String {
+pub(crate) fn format_mtime(t: SystemTime) -> String {
     match t.duration_since(SystemTime::UNIX_EPOCH) {
         Ok(d) => {
             let (y, mo, day, h, mi) = civil_from_unix(d.as_secs() as i64);

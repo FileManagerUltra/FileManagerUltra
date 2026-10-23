@@ -1050,6 +1050,7 @@ dependencies = [
  "fm-layout",
  "fm-testkit",
  "fm-vfs",
+ "serde_json",
  "tempfile",
 ]
 
