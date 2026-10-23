@@ -12,3 +12,9 @@ workspace = true
 
 [dependencies]
 fm-vfs.workspace = true
+trash.workspace = true
+
+[dev-dependencies]
+fm-testkit.workspace = true
+fm-fs-local.workspace = true
+tempfile.workspace = true

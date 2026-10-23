@@ -37,6 +37,7 @@ See `AGENTS.md` §2. `docs/architecture.md` explains why each crate exists and h
 - **Wayland**: window-wide file drops from other applications depend on winit's Wayland support and may be unavailable; in-app pane-to-pane drag & drop is unaffected, and pasting paths from the clipboard always works. See `docs/architecture.md` §11.
 - **Windows**: network shares are reached through native UNC paths (`WNetAddConnection2`), so no libsmbclient build is needed there.
 - **macOS**: local roots are `/` and `/Volumes`; SMB uses the same pavao path as Linux.
+- **Trash**: only local paths can be trashed (SMB/SFTP report `Unsupported`; permanent delete is always an explicit command). Undoing a trash restores via `trash::os_limited`, available on Linux and Windows; on macOS the `trash` crate cannot restore, so undo-delete is unavailable there (undo of rename/move/create still works).
 
 ## Adding tests
 
@@ -73,14 +74,33 @@ cargo run -p fm-app   # or the installed binary name from fm_brand::EXECUTABLE
 Manual checklist:
 
 1. Window opens with the product name from `fm-brand` in the title bar.
+No, titlebar is empty
+
 2. Menu bar shows File / Panes / View / Help; `Ctrl+Q` quits, `Ctrl+Shift+T` toggles dark ↔ light.
+Yes, works as expected
+
 3. View → Theme → System follows the OS setting (toggle the OS theme and watch the window).
+No, system does behave different to dark or light, but my system is set to dark and I would expect dark. I only see the menubar and the status bar go dark.
+
 4. One pane shows a tree (left) and a virtualized listing (right); the status bar shows the focused pane's location, item count and theme.
+Yes works
+
 5. Panes → Split Horizontally/Vertically creates a second pane; click focuses a pane (accent ring), `Tab` swaps with the previous pane, `Panes → Close` removes it.
+Everything works except Tab, this tabs through menu items, then direcotries in tree, then items in the file pane
+
 6. Click a sort header to re-sort in place; `Ctrl+H` toggles directories-first.
+Works, but size column is overflowed by date column, no clear column distinctions/boundaries.
+
+
 7. `Backspace` goes up, `Alt+Left`/`Alt+Right` walk history, `Ctrl+R` refreshes; double-click or `Enter` opens a directory.
+Works
+
 8. Help → About opens a dialog with name, version and organisation; closing it does not quit.
+Works, but it would be nice to have the dialog centered in the view window
+
 9. Quit; `prefs.toml` appears in the config directory (see below) with mode `0600`.
+Correct
+
 
 ## Config files
 

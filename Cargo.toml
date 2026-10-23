@@ -34,6 +34,12 @@ eframe = { version = "0.37", default-features = false, features = [
 ] }
 egui = "0.37"
 egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }
+# eframe/egui-winit both build winit with `default-features = false`, which drops
+# `wayland-csd-adwaita`. Without it Wayland windows get winit's fallback CSD frame,
+# whose `set_title` is a no-op (smithay-client-toolkit's fallback frame) — the title
+# bar renders blank even though the title is set. The adwaita frame renders it
+# (embedded Cantarell) and follows the desktop light/dark preference.
+winit = { version = "0.30", features = ["wayland-csd-adwaita"] }
 
 # external — core
 thiserror = "2"
@@ -44,6 +50,7 @@ toml = "0.8"
 directories = "5"
 log = "0.4"
 sysinfo = "0.39"
+trash = "5"
 
 # external — xtask tooling
 regex = "1"

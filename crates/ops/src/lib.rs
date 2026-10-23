@@ -1,13 +1,28 @@
 //! File operation pipelines: copy, move, delete, mkdir, rename — with conflict policy,
 //! progress reporting, cancellation, trash integration and the symlink-escape rules from
-//! the `security` capability. Behaviour lands in change 3; the types and the symlink
-//! contract are fixed now.
+//! the `security` capability. Everything is synchronous and runtime-free: the engine's
+//! job worker supplies cancellation, progress and conflict callbacks through [`OpCtx`].
 
+pub mod ctx;
+pub mod delete;
+pub mod names;
+pub mod plan;
 pub mod symlink;
+pub mod transfer;
+pub mod trash;
+pub mod undo;
 
 use fm_vfs::{FmError, VfsUri};
 
+pub use ctx::{
+    Backends, CancelFlag, Choice, Conflict, ConflictSide, Decision, OpCtx, OpReport, Progress,
+    SingleBackend,
+};
+pub use delete::{delete_permanent, trash_items};
+pub use names::validate_name;
+pub use plan::{Plan, PlanLimits, plan_transfer};
 pub use symlink::SymlinkPolicy;
+pub use undo::{UndoRecord, UndoStack};
 
 /// What to do when the destination already exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -52,49 +67,65 @@ impl TransferProgress {
     }
 }
 
-/// Copy entry point — implemented in change 3.
-pub fn copy(_from: &VfsUri, _to: &VfsUri, _policy: ConflictPolicy) -> Result<(), FmError> {
-    Err(FmError::Unsupported("ops::copy (change 3)"))
+/// Plan and copy `sources` into the directory `dest_dir`.
+pub fn copy(
+    backends: &dyn Backends,
+    sources: &[VfsUri],
+    dest_dir: &VfsUri,
+    ctx: &mut OpCtx<'_>,
+) -> Result<OpReport, FmError> {
+    let plan = plan_transfer(backends, sources, dest_dir, PlanLimits::default())?;
+    Ok(transfer::run_copy(backends, &plan, ctx))
 }
 
-/// Move entry point — implemented in change 3.
-pub fn move_(_from: &VfsUri, _to: &VfsUri, _policy: ConflictPolicy) -> Result<(), FmError> {
-    Err(FmError::Unsupported("ops::move_ (change 3)"))
+/// Plan and move `sources` into the directory `dest_dir`.
+pub fn move_(
+    backends: &dyn Backends,
+    sources: &[VfsUri],
+    dest_dir: &VfsUri,
+    ctx: &mut OpCtx<'_>,
+) -> Result<OpReport, FmError> {
+    let plan = plan_transfer(backends, sources, dest_dir, PlanLimits::default())?;
+    Ok(transfer::run_move(backends, &plan, ctx))
 }
 
-/// Delete entry point (must go through `trash` in the real pipeline) — change 3.
-pub fn delete(_uri: &VfsUri) -> Result<(), FmError> {
-    Err(FmError::Unsupported("ops::delete (change 3)"))
+/// Create the directory `name` inside `parent`.
+pub fn mkdir(backends: &dyn Backends, parent: &VfsUri, name: &str) -> Result<VfsUri, FmError> {
+    validate_name(name)?;
+    let target = parent.join(name)?;
+    let vfs = backends.vfs(&target)?;
+    match vfs.stat(&target) {
+        Ok(_) => return Err(FmError::AlreadyExists(target.to_string())),
+        Err(FmError::NotFound(_)) => {}
+        Err(e) => return Err(e),
+    }
+    vfs.create_dir(&target)?;
+    Ok(target)
 }
 
-/// mkdir entry point — change 3.
-pub fn mkdir(_uri: &VfsUri) -> Result<(), FmError> {
-    Err(FmError::Unsupported("ops::mkdir (change 3)"))
-}
-
-/// In-place rename entry point — change 3.
-pub fn rename(_from: &VfsUri, _to: &VfsUri) -> Result<(), FmError> {
-    Err(FmError::Unsupported("ops::rename (change 3)"))
+/// Rename `uri` to `new_name` within its directory; never overwrites.
+pub fn rename(backends: &dyn Backends, uri: &VfsUri, new_name: &str) -> Result<VfsUri, FmError> {
+    validate_name(new_name)?;
+    let parent = uri
+        .parent()
+        .ok_or_else(|| FmError::InvalidParams("cannot rename a filesystem root".into()))?;
+    let target = parent.join(new_name)?;
+    if target == *uri {
+        return Ok(target);
+    }
+    let vfs = backends.vfs(uri)?;
+    match vfs.stat(&target) {
+        Ok(_) => return Err(FmError::AlreadyExists(target.to_string())),
+        Err(FmError::NotFound(_)) => {}
+        Err(e) => return Err(e),
+    }
+    vfs.rename(uri, &target)?;
+    Ok(target)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn stubs_are_unsupported_not_panics() {
-        let a = VfsUri::parse("/a").expect("uri");
-        let b = VfsUri::parse("/b").expect("uri");
-        for result in [
-            copy(&a, &b, ConflictPolicy::Ask),
-            move_(&a, &b, ConflictPolicy::Overwrite),
-            delete(&a),
-            mkdir(&a),
-            rename(&a, &b),
-        ] {
-            assert!(matches!(result, Err(FmError::Unsupported(_))));
-        }
-    }
 
     #[test]
     fn progress_fraction_is_total_safe() {

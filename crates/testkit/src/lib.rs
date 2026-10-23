@@ -4,6 +4,10 @@
 //! `MemFs` covers every trait method so `ops`/`engine` tests need no disk and no
 //! network. It is `Send + Sync` and safe to share across job lanes.
 
+pub mod fault;
+
+pub use fault::{FaultFs, Faults};
+
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::sync::{Arc, Mutex, MutexGuard};
