@@ -47,7 +47,7 @@
 
 - [x] 7.1 Security tests from the delta: traversal names, cancelled write leaves nothing, no silent trash downgrade, redacted errors
 - [x] 7.2 `docs/architecture.md` §7/§8 synced to the landed shape; `docs/development.md` manual DnD/ops smoke checklist; roadmap status
-- [ ] 7.3 Whole `cargo xtask ci` green; manual smoke on a real window (user); `log/devlog.md` entry with numbers; commit + `/opsx-archive` on user go-ahead
+- [x] 7.3 Whole `cargo xtask ci` green; manual smoke on a real window (user); `log/devlog.md` entry with numbers; commit + `/opsx-archive` on user go-ahead
 
 ## 8. Follow-ups (post-group 7)
 

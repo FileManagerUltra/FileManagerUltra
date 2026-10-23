@@ -3,11 +3,9 @@
 ## Purpose
 
 Security baseline: hostile input, no secrets on disk, owner-only state files, no unsafe, symlink containment. Later changes extend this capability.
-
 ## Requirements
-
 ### Requirement: Hostile input never crashes or escapes
-All parsers and entry points that touch attacker-controlled data — `VfsUri` parsing, command parameters, and (later) remote directory listings and drop payloads — SHALL reject malformed input with `Err`, never panic, never allocate unbounded memory, and never treat input as a trusted path.
+All parsers and entry points that touch attacker-controlled data — `VfsUri` parsing, command parameters, directory listings (local and, from change 4, remote), and drop payloads — SHALL reject malformed input with `Err`, never panic, never allocate unbounded memory, and never treat input as a trusted path. Directory reads are capped at a bounded entry count; names and metadata from listings are rendered as data, never interpreted as markup or paths.
 
 #### Scenario: Adversarial URIs
 - **WHEN** `VfsUri` parsing is fuzzed/pro property-tested with inputs containing `..` segments, NUL bytes, overlong components (≥ 4 KiB), non-UTF-8 bytes, missing schemes, `file://` with a host, repeated `//`, and 10 000-character paths
@@ -20,6 +18,14 @@ All parsers and entry points that touch attacker-controlled data — `VfsUri` pa
 #### Scenario: Command parameters are untrusted
 - **WHEN** the command fuzz suite feeds every registered command wrong-typed, oversized (≥ 1 MiB string), empty and deeply-nested parameters
 - **THEN** each call returns `Ok`/`Err`, the process survives, and no single call allocates more than the configured cap
+
+#### Scenario: Hostile directory content
+- **WHEN** a directory fixture contains more than the configured entry cap, 4 KiB component names, control characters, non-UTF-8 bytes and special files (fifo/device/socket)
+- **THEN** reads either return a bounded capped `Err` or a bounded `Ok`, tree and listing render every entry as inert data without panic or unbounded allocation, and special files are never opened as regular files
+
+#### Scenario: Capped reads, explicit failures
+- **WHEN** a local or in-memory backend is asked to read a directory with more than `MAX_DIR_ENTRIES` entries
+- **THEN** the read fails with an actionable error naming the cap — the user is never silently shown a truncated listing
 
 ### Requirement: Secrets are never written to disk
 The scaffolded preferences file SHALL contain only non-secret settings (theme, window state). Passwords, passphrases, private keys and session tokens SHALL NOT be serializable into it, and error/reporting paths SHALL redact credentials.
@@ -68,3 +74,19 @@ Operations that write into a directory (copy, move, mkdir) SHALL resolve symlink
 #### Scenario: Symlinked file inside the tree
 - **WHEN** a source entry is a symlink to a file inside the same tree
 - **THEN** the copy copies the symlink's target contents (or the link itself, per documented policy) and never silently follows it outside the root
+
+### Requirement: Operations never escape or silently destroy
+File operations and drop payloads SHALL be treated as hostile: sources and destinations are validated `VfsUri`s; operations never write outside the chosen destination directory, never overwrite without an explicit decision, never delete a source before a verified copy, and never downgrade trash to permanent delete silently.
+
+#### Scenario: Traversal in a dropped name
+- **WHEN** a payload entry name contains `..` or a separator
+- **THEN** the item is rejected and nothing is written outside the destination
+
+#### Scenario: Cancelled write leaves no partial file
+- **WHEN** a copy is cancelled or fails mid-file
+- **THEN** no destination file with partial content remains
+
+#### Scenario: Errors stay redacted
+- **WHEN** an operation fails on a URI carrying credentials
+- **THEN** the displayed error contains no secret
+
