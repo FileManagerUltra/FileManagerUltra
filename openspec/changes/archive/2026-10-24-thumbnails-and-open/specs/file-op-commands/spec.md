@@ -39,7 +39,7 @@ An entry classified as a program SHALL NOT start unless the caller passes `mode:
 
 
 ### Requirement: Cut, copy and paste
-`file.clip_copy` and `file.clip_cut` SHALL remember the focused selection (Files pane or thumbnail grid) and mirror its paths to the OS clipboard as text; `file.clip_paste` SHALL copy (or, after a cut, move and clear the clipboard) the remembered items into the focused folder through the ordinary pipelines with conflict policy `ask`. Paste with `os_text` that differs from what was mirrored SHALL fail with a notice and clear the clipboard. Ctrl/Cmd+X/C/V arrive as egui clipboard events and SHALL be mapped to these commands except while a terminal has focus, text is being edited or a dialog is open.
+`file.clip_copy` and `file.clip_cut` SHALL remember the focused selection (Files pane or thumbnail grid) and mirror its paths to the OS clipboard as text; `file.clip_paste` SHALL copy (an item already in the destination folder is duplicated as `name (2).ext` via `ops::duplicate`, never skipped; or, after a cut, move and clear the clipboard) the remembered items into the focused folder through the ordinary pipelines with conflict policy `ask`. Paste with `os_text` that differs from what was mirrored SHALL fail with a notice and clear the clipboard. Ctrl/Cmd+X/C/V arrive as egui clipboard events and SHALL be mapped to these commands except while a terminal has focus, text is being edited or a dialog is open.
 
 #### Scenario: Cut and paste
 - **WHEN** a file is cut and pasted into another folder

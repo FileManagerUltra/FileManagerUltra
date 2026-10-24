@@ -547,6 +547,7 @@ fn clipboard_copy_cut_and_paste_run_the_pipelines() {
     select(&mut s, "a.txt", "/src");
     assert!(!s.command_enabled("file.clip_paste"), "nothing copied yet");
     dispatch(&mut s, "file.clip_copy", Params::Null).expect("copy");
+    assert_eq!(s.info.as_ref().map(|i| i.0.as_str()), Some("Copied 1 item"));
     assert_eq!(s.clipboard_outbox.as_deref(), Some("/src/a.txt"));
     select(&mut s, "a.txt", "/dst");
     dispatch(&mut s, "file.clip_paste", json!({"os_text": "/src/a.txt"})).expect("paste");
@@ -554,6 +555,13 @@ fn clipboard_copy_cut_and_paste_run_the_pipelines() {
     assert_eq!(finish(&mut s, id), OpState::Finished);
     assert_eq!(fs.get_str("/dst/a.txt").expect("copied"), b"hello");
     assert!(fs.get_str("/src/a.txt").is_ok(), "copy keeps the source");
+
+    // Pasting back into the source folder duplicates under a numbered name.
+    select(&mut s, "a.txt", "/src");
+    dispatch(&mut s, "file.clip_paste", Params::Null).expect("paste in place");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert_eq!(fs.get_str("/src/a (2).txt").expect("duplicate"), b"hello");
 
     select(&mut s, "b.txt", "/src");
     dispatch(&mut s, "file.clip_cut", Params::Null).expect("cut");

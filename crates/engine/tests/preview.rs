@@ -556,3 +556,42 @@ fn opening_a_folder_from_a_focused_preview_navigates_the_files_pane() {
         .expect("open");
     assert_eq!(r.s.layout.state(r.files).expect("files").location, sub_uri);
 }
+
+#[test]
+fn new_images_in_a_shown_grid_get_thumbnails_without_a_window_change() {
+    use fm_engine::thumbs::ThumbState;
+    let mut r = rig(&[]);
+    let sub = r._dir.path().join("sub");
+    std::fs::create_dir(&sub).expect("sub");
+    let png = |name: &str| {
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([1, 2, 3, 255]))
+            .save(sub.join(name))
+            .expect("png");
+    };
+    png("a.png");
+    let files = r.files;
+    r.s.refresh_read(r.s.layout.state(files).expect("pane").location.clone())
+        .expect("refresh");
+    assert!(pump(&mut r.s, |s| s.pane_view_ready(files)));
+    r.cursor("sub");
+    r.wait_static();
+    r.s.dispatch("preview.thumbs.toggle", &json!({}))
+        .expect("on");
+    r.s.dispatch("preview.thumbs.visible", &json!({"first": 0, "count": 5}))
+        .expect("visible");
+    png("b.png");
+    let sub_uri = VfsUri::parse(&sub.to_string_lossy()).expect("uri");
+    r.s.refresh_read(sub_uri).expect("refresh");
+    let p = r.preview;
+    let found = pump(&mut r.s, |s| {
+        let Some(Body::Static(a)) = s.preview_slot(p).map(|x| &x.body) else {
+            return false;
+        };
+        let Preview::Dir(d) = &**a else { return false };
+        d.items
+            .iter()
+            .find(|e| e.name == "b.png")
+            .is_some_and(|e| !matches!(s.thumbs.get(e, 160), ThumbState::None))
+    });
+    assert!(found, "new image was never requested");
+}

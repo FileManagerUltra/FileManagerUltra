@@ -598,6 +598,7 @@ impl Session {
         };
         let mut changed = false;
         let mut refilter = Vec::new();
+        let mut rewant = Vec::new();
         for msg in msgs {
             match msg {
                 Msg::Rendered {
@@ -615,6 +616,10 @@ impl Session {
                         Preview::Log(doc) => Body::Log(Box::new(LogView::new(doc))),
                         other => Body::Static(Arc::new(other)),
                     };
+                    // New items (after a paste, say) need thumbnails even if the window is unchanged.
+                    if let Some(w) = slot.thumb_window {
+                        rewant.push((pane, w));
+                    }
                     changed = true;
                 }
                 Msg::LogDone {
@@ -668,6 +673,10 @@ impl Session {
         }
         for pane in refilter {
             self.start_filter(pane);
+        }
+        for (pane, window) in rewant {
+            // A vanished backend just means no thumbnails; the listing itself reports errors.
+            let _ = crate::thumb_cmds::request(self, pane, window);
         }
         changed
     }

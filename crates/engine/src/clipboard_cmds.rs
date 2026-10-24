@@ -33,7 +33,20 @@ fn store(s: &mut Session, cut: bool) {
         .collect::<Vec<_>>()
         .join("\n");
     s.clipboard_outbox = Some(text.clone());
+    let verb = if cut { "Cut" } else { "Copied" };
+    s.info = Some((
+        format!("{verb} {}", plural(sources.len())),
+        std::time::Instant::now(),
+    ));
     s.clipboard = Some(Clipboard { sources, cut, text });
+}
+
+fn plural(n: usize) -> String {
+    if n == 1 {
+        "1 item".to_string()
+    } else {
+        format!("{n} items")
+    }
 }
 
 fn can_paste(s: &Session) -> bool {
@@ -102,6 +115,7 @@ pub fn paste() -> CommandSpec {
             }
             let dest = focused_dir(s)
                 .ok_or_else(|| FmError::NotFound("a folder to paste into".to_string()))?;
+            let count = plural(clip.sources.len());
             let policy = ConflictPolicy::Ask;
             let request = if clip.cut {
                 OpRequest::Move {
@@ -110,13 +124,14 @@ pub fn paste() -> CommandSpec {
                     policy,
                 }
             } else {
-                OpRequest::Copy {
+                OpRequest::Duplicate {
                     sources: clip.sources,
                     dest,
                     policy,
                 }
             };
             s.submit_op(request)?;
+            s.info = Some((format!("Pasting {count}"), std::time::Instant::now()));
             if clip.cut {
                 s.clipboard = None;
             }

@@ -18,7 +18,7 @@ Out of scope until after these five: archives, previews, tabs, full-text search,
 
 ## Current focus
 
-`pane-preview` (Preview pane + log viewer) is implemented (video: poster frame + metadata via ffmpeg subprocess, no playback yet), awaiting real-window smoke tests. `pane-types` (archived) and `pane-arrange` (drag/resize/zoom panes, Terminator-style) are implemented and awaiting real-window smoke tests before archiving. `thumbnails-and-open` (thumbnail grid for directory previews, `file.open` activation with a program-confirm dialog, listing paging) is implemented with all tasks ticked; it too waits for a windowed smoke run before archive. `current-folder-row` (`.` row; navigation starts on the pane's own folder so a Preview can show it) is implemented and awaits the same windowed smoke pass. `workspaces` (workspace tabs, saved layouts, startup restore) is implemented and awaits the same pass.
+`pane-preview`, `pane-arrange`, `thumbnails-and-open`, `current-folder-row` and `workspaces` are implemented, smoke-tested in a real window and archived (their specs live in `openspec/specs/`). Next up: change 4 (`network-backends`), then change 5 (`live-watch-and-packaging`).
 
 ## Ideas for future changes
 

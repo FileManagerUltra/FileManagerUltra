@@ -51,6 +51,12 @@ pub enum OpRequest {
         dest: VfsUri,
         policy: ConflictPolicy,
     },
+    /// Copy that numbers items already inside `dest` (`a (2).txt`) instead of skipping them.
+    Duplicate {
+        sources: Vec<VfsUri>,
+        dest: VfsUri,
+        policy: ConflictPolicy,
+    },
     Trash {
         sources: Vec<VfsUri>,
     },
@@ -88,7 +94,7 @@ impl OpRequest {
     /// The kind recorded on the undo stack; `None` for undo itself.
     pub fn kind(&self) -> Option<OpKind> {
         Some(match self {
-            Self::Copy { .. } => OpKind::Copy,
+            Self::Copy { .. } | Self::Duplicate { .. } => OpKind::Copy,
             Self::Move { .. } => OpKind::Move,
             Self::Trash { .. } | Self::DeletePermanent { .. } => OpKind::Delete,
             Self::Mkdir { .. } => OpKind::Mkdir,
@@ -100,7 +106,7 @@ impl OpRequest {
 
     pub fn label(&self) -> String {
         match self {
-            Self::Copy { sources, dest, .. } => {
+            Self::Copy { sources, dest, .. } | Self::Duplicate { sources, dest, .. } => {
                 format!("Copy {} to {}", items(sources.len()), leaf(dest))
             }
             Self::Move { sources, dest, .. } => {
@@ -117,7 +123,9 @@ impl OpRequest {
 
     fn lane_uri(&self) -> Option<VfsUri> {
         match self {
-            Self::Copy { dest, .. } | Self::Move { dest, .. } => Some(dest.clone()),
+            Self::Copy { dest, .. } | Self::Move { dest, .. } | Self::Duplicate { dest, .. } => {
+                Some(dest.clone())
+            }
             Self::Trash { sources } | Self::DeletePermanent { sources } => sources.first().cloned(),
             Self::Mkdir { parent, .. } | Self::NewFile { parent, .. } => Some(parent.clone()),
             Self::Rename { uri, .. } => Some(uri.clone()),
@@ -127,7 +135,9 @@ impl OpRequest {
 
     fn uris(&self) -> Vec<VfsUri> {
         match self {
-            Self::Copy { sources, dest, .. } | Self::Move { sources, dest, .. } => {
+            Self::Copy { sources, dest, .. }
+            | Self::Move { sources, dest, .. }
+            | Self::Duplicate { sources, dest, .. } => {
                 let mut all = sources.clone();
                 all.push(dest.clone());
                 all
@@ -150,7 +160,7 @@ impl OpRequest {
             }
         };
         match self {
-            Self::Copy { dest, .. } => add(Some(dest.clone())),
+            Self::Copy { dest, .. } | Self::Duplicate { dest, .. } => add(Some(dest.clone())),
             Self::Move { sources, dest, .. } => {
                 add(Some(dest.clone()));
                 sources.iter().for_each(|s| add(s.parent()));
@@ -340,7 +350,9 @@ fn run(
         decision
     };
     let policy = match request {
-        OpRequest::Copy { policy, .. } | OpRequest::Move { policy, .. } => *policy,
+        OpRequest::Copy { policy, .. }
+        | OpRequest::Move { policy, .. }
+        | OpRequest::Duplicate { policy, .. } => *policy,
         _ => ConflictPolicy::Ask,
     };
     let mut octx = OpCtx::new(policy, &mut on_progress, &mut on_conflict)
@@ -349,6 +361,9 @@ fn run(
 
     let report = match request {
         OpRequest::Copy { sources, dest, .. } => fm_ops::copy(backends, sources, dest, &mut octx)?,
+        OpRequest::Duplicate { sources, dest, .. } => {
+            fm_ops::duplicate(backends, sources, dest, &mut octx)?
+        }
         OpRequest::Move { sources, dest, .. } => fm_ops::move_(backends, sources, dest, &mut octx)?,
         OpRequest::Trash { sources } => fm_ops::trash_items(sources, &mut octx),
         OpRequest::DeletePermanent { sources } => {

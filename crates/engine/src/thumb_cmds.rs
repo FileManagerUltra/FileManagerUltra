@@ -36,7 +36,11 @@ fn slot_mut(s: &mut Session, pane: PaneId) -> &mut PreviewSlot {
 }
 
 /// Queue the entries around `window` (visible ones first, then a screenful after and before).
-fn request(s: &mut Session, pane: PaneId, window: (usize, usize)) -> Result<(), FmError> {
+pub(crate) fn request(
+    s: &mut Session,
+    pane: PaneId,
+    window: (usize, usize),
+) -> Result<(), FmError> {
     let Some(slot) = s.previews.slots.get_mut(&pane) else {
         return Ok(());
     };

@@ -48,3 +48,17 @@ Tree expansion, listing sort, selection, scroll and history SHALL live in `fm-la
 - **WHEN** a pane with an expanded tree, a non-default sort and a selection is split
 - **THEN** the original pane keeps its expansion, sort and selection after the split
 
+### Requirement: Split handles give feedback and stay usable
+A split handle SHALL highlight and show a resize cursor on hover, SHALL never shrink a pane below its minimum size, and a double-click SHALL reset that split to its equalised ratio.
+
+#### Scenario: Double-click resets
+- **WHEN** the user double-clicks a split handle
+- **THEN** that split's ratio becomes its equalised value
+
+### Requirement: Panes have a close button
+Every pane header SHALL show a close button while more than one pane exists, dispatching `pane.close {pane}`. `pane.close` SHALL accept an optional `pane` id (default: the focused pane) and reject a non-numeric or unknown id with `Err` and no change.
+
+#### Scenario: Close by id
+- **WHEN** `pane.close {"pane": <id>}` is dispatched with three panes open
+- **THEN** exactly that pane is closed and the other two remain
+

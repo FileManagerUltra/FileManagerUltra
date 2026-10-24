@@ -360,6 +360,20 @@ impl eframe::App for App {
                         self.session.notice = None;
                     }
                 }
+                if let Some((msg, at)) = self.session.info.clone() {
+                    const SHOWN: std::time::Duration = std::time::Duration::from_secs(3);
+                    let left = SHOWN.saturating_sub(at.elapsed());
+                    if !left.is_zero() {
+                        ui.label(
+                            egui::RichText::new(msg)
+                                .color(tokens.success)
+                                .font(tokens.font()),
+                        );
+                        ctx.request_repaint_after(left);
+                    } else {
+                        self.session.info = None;
+                    }
+                }
                 fm_ui::jobs::indicator(ui, &self.session, &tokens);
                 ui.label(tokens.muted(location));
                 ui.label(tokens.muted(format!("{count} items")));

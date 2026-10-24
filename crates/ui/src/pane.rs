@@ -20,7 +20,10 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         (i.pointer.button_pressed(egui::PointerButton::Primary)
             || i.pointer.button_pressed(egui::PointerButton::Secondary))
             && i.pointer.interact_pos().is_some_and(|p| area.contains(p))
-    });
+    }) && ui
+        .input(|i| i.pointer.interact_pos())
+        .and_then(|p| ui.ctx().layer_id_at(p))
+        .is_none_or(|layer| layer == ui.layer_id());
     let focused = s.layout.focused() == pane;
     let state = s.layout.state(pane)?;
     let location = state.location.clone();
@@ -295,6 +298,56 @@ mod tests {
             });
             output.textures_delta.clear();
         }
+    }
+
+    #[test]
+    fn a_press_on_a_popup_over_a_pane_does_not_focus_that_pane() {
+        let tokens = Tokens::dark();
+        let mut s = ready_session();
+        let second = s
+            .layout
+            .split(1, fm_layout::Axis::Horizontal, 0.5)
+            .expect("split");
+        s.layout.focus_pane(1).expect("focus");
+        let ctx = egui::Context::default();
+        let at = egui::pos2(100.0, 100.0);
+        let frame = |s: &mut Session, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let _ = show(ui, s, second, &tokens);
+                    });
+                    egui::Area::new(egui::Id::NULL.with("menu"))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(egui::pos2(0.0, 0.0))
+                        .show(ctx, |ui| {
+                            ui.set_min_size(egui::vec2(400.0, 400.0));
+                            let _ = ui.button("Paste");
+                        });
+                },
+            );
+            out.textures_delta.clear();
+        };
+        frame(&mut s, vec![]);
+        frame(&mut s, vec![egui::Event::PointerMoved(at)]);
+        frame(
+            &mut s,
+            vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert_eq!(s.layout.focused(), 1, "the popup swallowed the press");
     }
 
     #[test]

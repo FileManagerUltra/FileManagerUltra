@@ -22,7 +22,7 @@ pub use ctx::{
 };
 pub use delete::{delete_permanent, trash_items};
 pub use names::validate_name;
-pub use plan::{Plan, PlanLimits, plan_transfer};
+pub use plan::{Plan, PlanLimits, plan_duplicating, plan_transfer};
 pub use symlink::SymlinkPolicy;
 pub use undo::{UndoRecord, UndoStack};
 
@@ -78,6 +78,17 @@ pub fn copy(
     ctx: &mut OpCtx<'_>,
 ) -> Result<OpReport, FmError> {
     let plan = plan_transfer(backends, sources, dest_dir, PlanLimits::default())?;
+    Ok(transfer::run_copy(backends, &plan, ctx))
+}
+
+/// Like [`copy`], but items already inside `dest_dir` are duplicated as `name (N).ext`.
+pub fn duplicate(
+    backends: &dyn Backends,
+    sources: &[VfsUri],
+    dest_dir: &VfsUri,
+    ctx: &mut OpCtx<'_>,
+) -> Result<OpReport, FmError> {
+    let plan = plan_duplicating(backends, sources, dest_dir, PlanLimits::default())?;
     Ok(transfer::run_copy(backends, &plan, ctx))
 }
 

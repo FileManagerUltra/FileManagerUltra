@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use fm_vfs::{EntryKind, FmError, VfsUri};
 
 use crate::ctx::Backends;
-use crate::names::validate_name;
+use crate::names::{keep_both_name, validate_name};
 
 /// Hard caps so a hostile or accidental selection cannot allocate without bound.
 #[derive(Debug, Clone, Copy)]
@@ -68,12 +68,34 @@ impl Plan {
     }
 }
 
-/// Plan copying/moving `sources` into the directory `dest_dir`.
+/// Plan copying/moving `sources` into the directory `dest_dir`. An item already in
+/// `dest_dir` is a silent no-op.
 pub fn plan_transfer(
     backends: &dyn Backends,
     sources: &[VfsUri],
     dest_dir: &VfsUri,
     limits: PlanLimits,
+) -> Result<Plan, FmError> {
+    plan_inner(backends, sources, dest_dir, limits, false)
+}
+
+/// Like [`plan_transfer`], but an item already in `dest_dir` is duplicated under the first
+/// free `name (N).ext` instead of being skipped.
+pub fn plan_duplicating(
+    backends: &dyn Backends,
+    sources: &[VfsUri],
+    dest_dir: &VfsUri,
+    limits: PlanLimits,
+) -> Result<Plan, FmError> {
+    plan_inner(backends, sources, dest_dir, limits, true)
+}
+
+fn plan_inner(
+    backends: &dyn Backends,
+    sources: &[VfsUri],
+    dest_dir: &VfsUri,
+    limits: PlanLimits,
+    duplicate_in_place: bool,
 ) -> Result<Plan, FmError> {
     let dest_vfs = backends.vfs(dest_dir)?;
     if !dest_vfs.stat(dest_dir)?.is_dir() {
@@ -89,10 +111,13 @@ pub fn plan_transfer(
             .file_name()
             .ok_or_else(|| FmError::InvalidParams("cannot transfer a filesystem root".into()))?;
         validate_name(name)?;
-        let dst = dest_dir.join(name)?;
+        let mut dst = dest_dir.join(name)?;
         if *src == dst {
-            plan.noops += 1;
-            continue;
+            if !duplicate_in_place {
+                plan.noops += 1;
+                continue;
+            }
+            dst = keep_both_name(&*backends.vfs(dest_dir)?, dest_dir, name)?;
         }
         let vfs = backends.vfs(src)?;
         let entry = vfs.stat(src)?;
@@ -258,6 +283,21 @@ mod tests {
         .expect("plan");
         assert!(plan.is_empty());
         assert_eq!(plan.noops, 1);
+    }
+
+    #[test]
+    fn duplicating_numbers_items_already_in_the_destination() {
+        let fs = tree();
+        let plan = plan_duplicating(
+            &backends(&fs),
+            &[uri("/src/top.txt")],
+            &uri("/src"),
+            PlanLimits::default(),
+        )
+        .expect("plan");
+        assert_eq!(plan.noops, 0);
+        assert_eq!(plan.items.len(), 1);
+        assert_eq!(plan.items[0].dst, uri("/src/top (2).txt"));
     }
 
     #[test]

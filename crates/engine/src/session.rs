@@ -56,6 +56,8 @@ pub struct Session {
     pub running: bool,
     /// Last command failure the user should see (status bar); the UI clears it.
     pub notice: Option<String>,
+    /// Short confirmation for the status bar; the UI hides it after a few seconds.
+    pub info: Option<(String, std::time::Instant)>,
     /// Dot-files are hidden by default; `view.hidden.toggle` flips this for every pane.
     pub show_hidden: bool,
     /// Show `-> target` after symlink names; `view.links.toggle` flips it.
@@ -113,6 +115,7 @@ impl Default for Session {
             clipboard_outbox: None,
             running: true,
             notice: None,
+            info: None,
             show_hidden: false,
             show_link_targets: true,
             path_edit: None,
