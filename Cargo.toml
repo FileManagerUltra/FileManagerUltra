@@ -53,6 +53,7 @@ directories = "5"
 log = "0.4"
 sysinfo = "0.39"
 trash = "5"
+opener = { version = "0.9", default-features = false }
 portable-pty = "0.9"
 vt100 = "0.18"
 
@@ -77,4 +78,8 @@ dbg_macro = "warn"
 
 # Image/text decoding is unusably slow unoptimised; keep dev builds usable on large files.
 [profile.dev.package."*"]
+opt-level = 3
+
+# Decoding/resizing is generic and inlined into this crate, so it needs optimising too.
+[profile.dev.package.fm-preview]
 opt-level = 3

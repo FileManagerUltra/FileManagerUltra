@@ -35,6 +35,9 @@ pub struct Prefs {
     /// original.
     #[serde(default = "default_true")]
     pub retarget_links: bool,
+    /// A folder in the preview pane counts (and thumbnails) every file below it.
+    #[serde(default)]
+    pub recursive_preview: bool,
 }
 
 fn default_true() -> bool {
@@ -48,6 +51,7 @@ impl Default for Prefs {
             window_maximized: false,
             last_dir: None,
             retarget_links: true,
+            recursive_preview: false,
         }
     }
 }
@@ -63,6 +67,12 @@ pub const MAX_PREFS_BYTES: u64 = 10 * 1024 * 1024;
 pub fn default_config_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", fm_brand::APP_SLUG)
         .map(|dirs| dirs.config_dir().to_path_buf())
+}
+
+/// Platform cache directory for regenerable data (thumbnails).
+pub fn default_cache_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", fm_brand::APP_SLUG)
+        .map(|dirs| dirs.cache_dir().to_path_buf())
 }
 
 /// Load preferences from `path`. Missing, unreadable, corrupt or oversized files
@@ -84,11 +94,16 @@ pub fn load(path: &Path) -> Prefs {
 
 /// Save preferences into `dir`/`prefs.toml` (creating the directory, owner-only).
 pub fn save(dir: &Path, prefs: &Prefs) -> Result<(), FmError> {
-    create_config_dir(dir)?;
     let text = toml::to_string(prefs).map_err(|err| FmError::Io(std::io::Error::other(err)))?;
-    let final_path = dir.join(PREFS_FILE);
-    let tmp_path = dir.join(format!("{PREFS_FILE}.tmp"));
-    write_owner_only(&tmp_path, text.as_bytes())?;
+    write_atomic(dir, PREFS_FILE, text.as_bytes())
+}
+
+/// Write `dir`/`file` owner-only through a temp file and an atomic rename.
+pub(crate) fn write_atomic(dir: &Path, file: &str, bytes: &[u8]) -> Result<(), FmError> {
+    create_config_dir(dir)?;
+    let final_path = dir.join(file);
+    let tmp_path = dir.join(format!("{file}.tmp"));
+    write_owner_only(&tmp_path, bytes)?;
     std::fs::rename(&tmp_path, &final_path).map_err(|err| {
         let _ = std::fs::remove_file(&tmp_path);
         FmError::Io(err)
@@ -165,6 +180,7 @@ mod tests {
             window_maximized: true,
             last_dir: Some("/home/alice".to_string()),
             retarget_links: false,
+            recursive_preview: true,
         };
         save(&dir, &prefs).expect("save");
         assert_eq!(load(&dir.join(PREFS_FILE)), prefs);
@@ -212,6 +228,7 @@ mod tests {
             window_maximized: false,
             last_dir: Some("/tmp".to_string()),
             retarget_links: true,
+            recursive_preview: false,
         };
         let text = toml::to_string(&prefs).expect("serialize");
         let parsed: toml::Table = toml::from_str(&text).expect("parse");
@@ -219,7 +236,13 @@ mod tests {
         keys.sort();
         assert_eq!(
             keys,
-            ["last_dir", "retarget_links", "theme", "window_maximized"]
+            [
+                "last_dir",
+                "recursive_preview",
+                "retarget_links",
+                "theme",
+                "window_maximized"
+            ]
         );
         // No secret-ish key can appear.
         for key in &keys {

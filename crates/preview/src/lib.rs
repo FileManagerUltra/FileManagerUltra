@@ -10,9 +10,11 @@ pub mod image_prev;
 pub mod log;
 pub mod markdown;
 pub mod platform;
+pub mod player;
 pub mod sniff;
 pub mod structured;
 pub mod text;
+pub mod thumbs;
 pub mod video;
 
 use std::time::SystemTime;
@@ -44,6 +46,30 @@ pub struct Limits {
     pub hex_bytes: usize,
     /// Directory entries counted.
     pub dir_entries: usize,
+    /// Directory entries kept for the thumbnail grid.
+    pub dir_items: usize,
+    /// Entries visited by a recursive folder scan (files, folders and other nodes).
+    pub dir_scan_entries: usize,
+    /// Subfolder listings opened by a recursive folder scan.
+    pub dir_scan_dirs: usize,
+    /// Levels below the previewed folder a recursive scan descends.
+    pub dir_scan_depth: usize,
+    /// Wall-clock budget of a recursive folder scan.
+    pub dir_scan_millis: u64,
+}
+
+impl Limits {
+    /// A recursive scan that runs to completion (cancelled by the caller, not by a budget);
+    /// the caps only exist to stop a pathological tree from running forever.
+    pub fn unbounded_scan() -> Self {
+        Self {
+            dir_scan_entries: 100_000_000,
+            dir_scan_dirs: 10_000_000,
+            dir_scan_depth: 512,
+            dir_scan_millis: 24 * 3600 * 1000,
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for Limits {
@@ -58,6 +84,11 @@ impl Default for Limits {
             gif_frames: 120,
             hex_bytes: 4096,
             dir_entries: 100_000,
+            dir_items: 5_000,
+            dir_scan_entries: 25_000,
+            dir_scan_dirs: 2_000,
+            dir_scan_depth: 32,
+            dir_scan_millis: 4_000,
         }
     }
 }
@@ -112,7 +143,25 @@ pub struct DirDoc {
     pub bytes: u64,
     pub newest: Option<(String, SystemTime)>,
     pub truncated: bool,
+    /// Visible children (folders first, then by name) for the thumbnail grid.
+    /// When `recursive`, `name` is the path relative to the previewed folder.
+    pub items: Vec<Entry>,
+    /// More children exist than `items` holds.
+    pub items_truncated: bool,
+    /// The totals include every subfolder below the previewed one.
+    pub recursive: bool,
+    /// Subfolders whose listing could not be read (permission, vanished, dead share).
+    pub unreadable: usize,
+    pub oldest: Option<(String, SystemTime)>,
+    pub largest: Option<(String, u64)>,
+    pub hidden: usize,
+    /// Recursive scans: each direct subfolder → (files, bytes) below it; at most `SUBDIRS_MAX`.
+    pub subdirs: std::collections::BTreeMap<String, (usize, u64)>,
+    /// A recursive scan is still running; the totals are partial.
+    pub scanning: bool,
 }
+
+pub const SUBDIRS_MAX: usize = 10_000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetaDoc {
@@ -120,6 +169,20 @@ pub struct MetaDoc {
     pub hint: Option<String>,
     /// A frame to show under the rows (video posters).
     pub poster: Option<Box<ImageDoc>>,
+    /// Set when the video can be played in the pane.
+    pub video: Option<VideoInfo>,
+}
+
+/// What the player needs to know about a local video.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VideoInfo {
+    /// Absolute local path (checked again before it reaches ffmpeg).
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    /// Seconds; 0 when unknown.
+    pub duration: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -144,9 +207,21 @@ pub fn base_meta(e: &Entry) -> Vec<(String, String)> {
     rows
 }
 
+/// Per-request choices that change the preview model (not the global limits).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RenderOpts {
+    /// Directory previews count and list every file below the folder.
+    pub recursive: bool,
+}
+
 /// Preview `entry`, never panicking: a parser panic becomes an error card.
 pub fn render(vfs: &dyn Vfs, entry: &Entry, limits: &Limits) -> Preview {
-    let run = std::panic::AssertUnwindSafe(|| render_inner(vfs, entry, limits));
+    render_with(vfs, entry, limits, RenderOpts::default())
+}
+
+/// [`render`] with per-request options.
+pub fn render_with(vfs: &dyn Vfs, entry: &Entry, limits: &Limits, opts: RenderOpts) -> Preview {
+    let run = std::panic::AssertUnwindSafe(|| render_inner(vfs, entry, limits, opts));
     match std::panic::catch_unwind(run) {
         Ok(Ok(p)) => p,
         Ok(Err(e)) => Preview::Error(e.to_string()),
@@ -154,15 +229,21 @@ pub fn render(vfs: &dyn Vfs, entry: &Entry, limits: &Limits) -> Preview {
     }
 }
 
-fn render_inner(vfs: &dyn Vfs, entry: &Entry, limits: &Limits) -> Result<Preview, FmError> {
+fn render_inner(
+    vfs: &dyn Vfs,
+    entry: &Entry,
+    limits: &Limits,
+    opts: RenderOpts,
+) -> Result<Preview, FmError> {
     if entry.is_dir_like() {
-        return dir::summarize(vfs, entry, limits).map(Preview::Dir);
+        return dir::summarize(vfs, entry, limits, opts.recursive).map(Preview::Dir);
     }
     if !entry.is_file() && !entry.is_symlink() {
         return Ok(Preview::Meta(MetaDoc {
             rows: base_meta(entry),
             hint: Some("Special files are never opened.".into()),
             poster: None,
+            video: None,
         }));
     }
     let head = read_head(vfs, entry, 8192)?;
@@ -178,6 +259,7 @@ fn render_inner(vfs: &dyn Vfs, entry: &Entry, limits: &Limits) -> Result<Preview
             rows: base_meta(entry),
             hint: Some(kind.hint().into()),
             poster: None,
+            video: None,
         })),
         Kind::Binary => hex::render(vfs, entry, limits).map(Preview::Hex),
     }

@@ -17,14 +17,44 @@ fn error_card(entry: &Entry, why: String) -> Preview {
         rows,
         hint: Some("The image was not decoded.".into()),
         poster: None,
+        video: None,
     })
 }
 
 fn fit(img: DynamicImage, edge: u32) -> DynamicImage {
-    if img.width() > edge || img.height() > edge {
-        img.thumbnail(edge, edge)
+    if img.width() <= edge && img.height() <= edge {
+        return img;
+    }
+    let scale = f64::from(edge) / f64::from(img.width().max(img.height()));
+    let w = ((f64::from(img.width()) * scale).round() as u32).max(1);
+    let h = ((f64::from(img.height()) * scale).round() as u32).max(1);
+    resize_simd(&img, w, h).unwrap_or_else(|| img.thumbnail(edge, edge))
+}
+
+/// SIMD resize; `None` makes the caller fall back to the (slower) `image` filter.
+fn resize_simd(img: &DynamicImage, w: u32, h: u32) -> Option<DynamicImage> {
+    use fast_image_resize::{
+        FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image,
+    };
+    let opts = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
+    let mut resizer = Resizer::new();
+    if img.color().has_alpha() {
+        let rgba = img.to_rgba8();
+        let (sw, sh) = (rgba.width(), rgba.height());
+        let mut src = Image::from_vec_u8(sw, sh, rgba.into_raw(), PixelType::U8x4).ok()?;
+        let mut dst = Image::new(w, h, PixelType::U8x4);
+        let mul = fast_image_resize::MulDiv::default();
+        mul.multiply_alpha_inplace(&mut src).ok()?;
+        resizer.resize(&src, &mut dst, &opts).ok()?;
+        mul.divide_alpha_inplace(&mut dst).ok()?;
+        image::RgbaImage::from_raw(w, h, dst.into_vec()).map(DynamicImage::ImageRgba8)
     } else {
-        img
+        let rgb = img.to_rgb8();
+        let (sw, sh) = (rgb.width(), rgb.height());
+        let src = Image::from_vec_u8(sw, sh, rgb.into_raw(), PixelType::U8x3).ok()?;
+        let mut dst = Image::new(w, h, PixelType::U8x3);
+        resizer.resize(&src, &mut dst, &opts).ok()?;
+        image::RgbImage::from_raw(w, h, dst.into_vec()).map(DynamicImage::ImageRgb8)
     }
 }
 
@@ -52,6 +82,15 @@ pub fn render(vfs: &dyn Vfs, entry: &Entry, limits: &Limits) -> Result<Preview, 
 }
 
 pub fn decode(entry: &Entry, bytes: &[u8], limits: &Limits) -> Preview {
+    decode_with(entry, bytes, limits, true)
+}
+
+/// Like [`decode`] but never decodes animation frames (thumbnails want the first frame only).
+pub fn decode_still(entry: &Entry, bytes: &[u8], limits: &Limits) -> Preview {
+    decode_with(entry, bytes, limits, false)
+}
+
+fn decode_with(entry: &Entry, bytes: &[u8], limits: &Limits, animate: bool) -> Preview {
     let reader = match ImageReader::new(Cursor::new(bytes)).with_guessed_format() {
         Ok(r) => r,
         Err(e) => return error_card(entry, e.to_string()),
@@ -71,7 +110,8 @@ pub fn decode(entry: &Entry, bytes: &[u8], limits: &Limits) -> Preview {
     lim.max_image_width = Some(w);
     lim.max_image_height = Some(h);
 
-    if format == ImageFormat::Gif
+    if animate
+        && format == ImageFormat::Gif
         && let Some(doc) = gif(bytes, (w, h), lim.clone(), limits)
         && doc.frames.len() > 1
     {

@@ -18,6 +18,7 @@ pub(crate) enum KeyOutcome {
     None,
     Move(isize, bool),
     Absolute(usize, bool),
+    Page(isize, bool),
     SelectAll,
     Open,
 }
@@ -28,6 +29,8 @@ pub(crate) fn key_outcome(key: Key, modifiers: Modifiers) -> KeyOutcome {
         Key::ArrowDown => KeyOutcome::Move(1, modifiers.shift),
         Key::Home => KeyOutcome::Absolute(0, modifiers.shift),
         Key::End => KeyOutcome::Absolute(usize::MAX, modifiers.shift),
+        Key::PageUp => KeyOutcome::Page(-1, modifiers.shift),
+        Key::PageDown => KeyOutcome::Page(1, modifiers.shift),
         Key::Enter => KeyOutcome::Open,
         Key::A if modifiers.command => KeyOutcome::SelectAll,
         _ => KeyOutcome::None,
@@ -318,8 +321,10 @@ fn ready_rows(
 ) -> Option<VfsUri> {
     let (entries, ix) = s.pane_view(pane)?;
     let mut open: Option<VfsUri> = None;
+    // Row 0 is always `.` (the pane's own folder); `..` follows below a root.
     let has_parent = parent.is_some();
-    let total = ix.order.len() + usize::from(has_parent);
+    let specials = 1 + usize::from(has_parent);
+    let total = ix.order.len() + specials;
     if total == 0 {
         ui.label(tokens.muted("(empty)"));
         return None;
@@ -330,20 +335,33 @@ fn ready_rows(
         .filter_map(|i| entries.get(*i as usize).map(|e| e.name.clone()))
         .collect();
 
-    // An empty directory has nothing else to put the cursor on.
+    // An empty directory owns no entry row: park the cursor on `.` unless the user
+    // already chose a special row.
     if names.is_empty()
-        && has_parent
         && let Some(state) = s.layout.state_mut(pane)
+        && !state.listing.on_current
+        && !state.listing.on_parent
     {
-        state.listing.on_parent = true;
+        state.listing.focus_current();
     }
 
     // Keyboard once per frame, before painting (so the scroll offset can be
     // applied on the same frame without fighting the wheel).
+    let saved_scroll = s
+        .layout
+        .state(pane)
+        .map(|p| p.listing.scroll)
+        .unwrap_or(0.0);
     let mut scroll_to: Option<f32> = None;
     let mut open_key = false;
+    let pitch = tokens.row_height + ui.spacing().item_spacing.y;
+    let page_rows = ((ui.available_height() / pitch).floor() as isize - 1).max(1);
     let tree_active = s.layout.state(pane).is_some_and(|p| p.tree.active);
-    if pane_focused && !tree_active && !ui.ctx().text_edit_focused() {
+    if pane_focused
+        && !tree_active
+        && !ui.ctx().text_edit_focused()
+        && !crate::preview::grid_has_keyboard(ui.ctx())
+    {
         let outcomes: Vec<KeyOutcome> = ui.input(|i| {
             i.events
                 .iter()
@@ -366,12 +384,31 @@ fn ready_rows(
             for outcome in outcomes {
                 moved |= matches!(
                     outcome,
-                    KeyOutcome::Move(..) | KeyOutcome::Absolute(..) | KeyOutcome::SelectAll
+                    KeyOutcome::Move(..)
+                        | KeyOutcome::Absolute(..)
+                        | KeyOutcome::Page(..)
+                        | KeyOutcome::SelectAll
                 );
                 match outcome {
                     KeyOutcome::None => {}
                     KeyOutcome::Move(delta, extend) => {
-                        listing.move_focus_with_parent(&names, delta, extend, has_parent);
+                        listing.move_focus_with_specials(&names, delta, extend, true, has_parent);
+                    }
+                    KeyOutcome::Page(dir, extend) => {
+                        let last = names.len().saturating_sub(1) as isize;
+                        let from = if listing.on_current || listing.on_parent {
+                            0
+                        } else {
+                            listing.focused_row as isize
+                        };
+                        let to = (from + dir * page_rows).clamp(0, last) as usize;
+                        if to == 0 && !extend && dir < 0 && has_parent {
+                            listing.focus_parent();
+                        } else if to == 0 && !extend && dir < 0 && names.is_empty() {
+                            listing.focus_current();
+                        } else {
+                            listing.focus_absolute(&names, to, extend);
+                        }
                     }
                     KeyOutcome::Absolute(idx, extend) => {
                         let idx = if idx == usize::MAX {
@@ -379,8 +416,8 @@ fn ready_rows(
                         } else {
                             idx
                         };
-                        if idx == 0 && !extend && has_parent {
-                            listing.focus_parent();
+                        if idx == 0 && !extend {
+                            listing.focus_current();
                         } else {
                             listing.focus_absolute(&names, idx, extend);
                         }
@@ -391,34 +428,44 @@ fn ready_rows(
             }
             // Keys that do not move focus (bare Shift/Ctrl, letters) must not re-scroll.
             if moved {
-                let row = if listing.on_parent {
+                let row = if listing.on_current {
                     0
+                } else if listing.on_parent {
+                    1 // `..` sits directly below the always-present `.`
                 } else {
-                    listing.focused_row.min(names.len().saturating_sub(1))
+                    listing.focused_row.min(names.len().saturating_sub(1)) + specials
                 };
-                scroll_to = Some(row as f32 * tokens.row_height);
+                // Scroll just enough to keep the focused row visible.
+                let top = row as f32 * pitch;
+                let bottom = top + tokens.row_height;
+                let view = ui.available_height();
+                if top < saved_scroll {
+                    scroll_to = Some(top);
+                } else if bottom > saved_scroll + view {
+                    scroll_to = Some(bottom - view);
+                }
             }
         }
     }
     let on_parent = s.layout.state(pane).is_some_and(|p| p.listing.on_parent);
+    let on_current = s.layout.state(pane).is_some_and(|p| p.listing.on_current);
     if open_key && on_parent {
         open = parent.cloned();
-    } else if open_key {
+    } else if open_key && !on_current {
         let focus = s.layout.state(pane).map(|p| p.listing.focused_row);
         let name = focus.and_then(|row| names.get(row).cloned());
         if let Some(name) = name
-            && let Some(entry) = entries.iter().find(|e| e.name == name && e.is_dir_like())
+            && let Some(entry) = entries.iter().find(|e| e.name == name)
         {
             open = Some(entry.uri.clone());
         }
     }
 
     let row_height = tokens.row_height;
-    let saved_scroll = s
+    let widths = s
         .layout
         .state(pane)
-        .map(|p| p.listing.scroll)
-        .unwrap_or(0.0);
+        .map_or([0.0; 3], |state| state.col_widths);
     let builder = egui::ScrollArea::vertical()
         .id_salt(format!("fm-list-{pane}"))
         .auto_shrink([false, false]);
@@ -431,11 +478,22 @@ fn ready_rows(
     };
     let output = builder.show_rows(ui, row_height, total, |ui, row_range| {
         for row in row_range {
-            if has_parent && row == 0 {
-                parent_row(ui, tokens, parent, on_parent && pane_focused, &mut open);
+            if row == 0 {
+                current_row(ui, s, pane, tokens, widths, on_current && pane_focused);
                 continue;
             }
-            let entry_row = if has_parent { row - 1 } else { row };
+            if has_parent && row == 1 {
+                parent_row(
+                    ui,
+                    tokens,
+                    parent,
+                    widths,
+                    on_parent && pane_focused,
+                    &mut open,
+                );
+                continue;
+            }
+            let entry_row = row - specials;
             let Some(idx) = ix.order.get(entry_row).copied() else {
                 continue;
             };
@@ -454,10 +512,54 @@ fn ready_rows(
     open
 }
 
+/// Where an entry's name starts: the Name column after the icon gutter, shared by the
+/// special rows so `.`/`..` line up with the files below them.
+fn name_origin(rect: egui::Rect, widths: [f32; 3], tokens: &Tokens) -> egui::Pos2 {
+    columns(rect, widths).name.left_center() + egui::vec2(tokens.padding + ICON_GUTTER, 0.0)
+}
+
+fn current_row(
+    ui: &mut Ui,
+    s: &mut Session,
+    pane: PaneId,
+    tokens: &Tokens,
+    widths: [f32; 3],
+    focused: bool,
+) {
+    let available = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(available, tokens.row_height),
+        egui::Sense::click(),
+    );
+    if response.clicked()
+        && let Some(state) = s.layout.state_mut(pane)
+    {
+        state.listing.focus_current();
+    }
+    response.clone().on_hover_text("Current folder");
+    if focused {
+        ui.painter().rect_filled(rect, 0.0, tokens.selection_bg);
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 0.0, tokens.hover_bg);
+    }
+    ui.painter().text(
+        name_origin(rect, widths, tokens),
+        egui::Align2::LEFT_CENTER,
+        ".",
+        tokens.font(),
+        if focused {
+            tokens.selection_text
+        } else {
+            tokens.text
+        },
+    );
+}
+
 fn parent_row(
     ui: &mut Ui,
     tokens: &Tokens,
     parent: Option<&VfsUri>,
+    widths: [f32; 3],
     focused: bool,
     open: &mut Option<VfsUri>,
 ) {
@@ -479,7 +581,7 @@ fn parent_row(
         ui.painter().rect_filled(rect, 0.0, tokens.hover_bg);
     }
     ui.painter().text(
-        rect.left_center() + egui::vec2(tokens.padding, 0.0),
+        name_origin(rect, widths, tokens),
         egui::Align2::LEFT_CENTER,
         "..",
         tokens.font(),
@@ -502,7 +604,8 @@ fn entry_row_ui(
 ) -> Option<VfsUri> {
     let state = s.layout.state(pane)?;
     let selected = state.listing.is_selected(&entry.name);
-    let focused = state.listing.focused_row == row && !state.listing.on_parent;
+    let focused =
+        state.listing.focused_row == row && !state.listing.on_parent && !state.listing.on_current;
     let widths = state.col_widths;
 
     let available = ui.available_width();
@@ -534,16 +637,30 @@ fn entry_row_ui(
                 state.listing.extend_to(&names, row);
             } else if modifiers.command {
                 state.listing.toggle(&entry.name, row);
+            } else if selected && state.listing.selected_count() == 1 && !response.double_clicked()
+            {
+                // Clicking the only selected item again lets go of it: the folder itself (`.`)
+                // becomes the target.
+                state.listing.focus_current();
             } else {
                 state.listing.select_only(Some(&entry.name), row);
             }
         }
     }
-    let open = if response.double_clicked() && entry.is_dir_like() {
+    // Right-click acts on the row under the pointer unless it is already part of the selection.
+    if response.secondary_clicked()
+        && !selected
+        && let Some(state) = s.layout.state_mut(pane)
+    {
+        state.tree.active = false;
+        state.listing.select_only(Some(&entry.name), row);
+    }
+    let mut open = if response.double_clicked() {
         Some(entry.uri.clone())
     } else {
         None
     };
+    crate::context_menu::attach(&response, s, &entry.uri, &mut open);
 
     let bg = if selected || (focused && pane_focused) {
         Some(tokens.selection_bg)
@@ -774,6 +891,10 @@ mod tests {
         assert_eq!(
             key_outcome(Key::A, Modifiers::COMMAND),
             KeyOutcome::SelectAll
+        );
+        assert_eq!(
+            key_outcome(Key::PageDown, Modifiers::SHIFT),
+            KeyOutcome::Page(1, true)
         );
         assert_eq!(key_outcome(Key::Enter, Modifiers::NONE), KeyOutcome::Open);
         assert_eq!(key_outcome(Key::Escape, Modifiers::NONE), KeyOutcome::None);

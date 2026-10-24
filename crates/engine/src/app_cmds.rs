@@ -2,7 +2,8 @@
 
 use crate::registry::{CommandSpec, Params};
 
-/// `app.quit` — ask the shell to stop (the eframe loop observes `running == false`).
+/// `app.quit` — ask the shell to stop (the eframe loop observes `running == false`); with
+/// unsaved workspace changes it raises the confirmation first.
 pub fn quit() -> CommandSpec {
     CommandSpec {
         id: "app.quit",
@@ -12,7 +13,7 @@ pub fn quit() -> CommandSpec {
         params: "none",
         enabled: |_session| true,
         run: |session, _params: &Params| {
-            session.running = false;
+            session.request_quit();
             Ok(())
         },
     }

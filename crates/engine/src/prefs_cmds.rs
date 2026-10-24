@@ -44,12 +44,58 @@ pub fn retarget_links() -> CommandSpec {
     }
 }
 
+/// `prefs.preview.recursive` — whether a folder in the preview pane counts and thumbnails
+/// every file below it. Without `value` the setting is toggled.
+pub fn recursive_preview() -> CommandSpec {
+    CommandSpec {
+        id: "prefs.preview.recursive",
+        label: "Recursive Folder Preview",
+        menu: &["File", "Preferences", "Recursive folder preview"],
+        shortcut: None,
+        params: "value?: bool",
+        enabled: |_session| true,
+        run: |session, params| {
+            let value = match object(params)?.and_then(|m| m.get("value")) {
+                None => !session.prefs.recursive_preview,
+                Some(v) => v.as_bool().ok_or_else(|| {
+                    FmError::InvalidParams("value must be true or false".to_string())
+                })?,
+            };
+            if value != session.prefs.recursive_preview {
+                session.prefs.recursive_preview = value;
+                // The render key includes the scope, so folders re-render; the grids ask
+                // for their window again once the new item list lands.
+                let panes: Vec<_> = session.previews.slots.keys().copied().collect();
+                for pane in panes {
+                    if let Some(slot) = session.previews.slots.get_mut(&pane) {
+                        slot.thumb_window = None;
+                    }
+                    session.thumbs.cancel(pane);
+                }
+            }
+            Ok(())
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
     use crate::session::Session;
+
+    #[test]
+    fn recursive_preview_toggles_and_rejects_bad_values() {
+        let mut s = Session::default();
+        assert!(!s.prefs.recursive_preview);
+        (recursive_preview().run)(&mut s, &Params::Null).expect("toggle");
+        assert!(s.prefs.recursive_preview);
+        (recursive_preview().run)(&mut s, &json!({"value": false})).expect("set");
+        assert!(!s.prefs.recursive_preview);
+        assert!((recursive_preview().run)(&mut s, &json!({"value": 3})).is_err());
+        assert!(!s.prefs.recursive_preview, "unchanged on error");
+    }
 
     #[test]
     fn preferences_raises_the_flag() {

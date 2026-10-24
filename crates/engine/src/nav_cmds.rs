@@ -5,6 +5,19 @@ use fm_vfs::{FmError, VfsUri};
 use crate::registry::{CommandSpec, Params};
 use crate::session::Session;
 
+/// The pane navigation acts on: the focused Files pane, or the one a focused Preview shows.
+fn nav_pane(s: &Session) -> fm_layout::PaneId {
+    let focused = s.layout.focused();
+    s.layout
+        .preview_target(focused)
+        .filter(|_| {
+            s.layout
+                .state(focused)
+                .is_some_and(|p| p.kind == fm_layout::PaneKind::Preview)
+        })
+        .unwrap_or(focused)
+}
+
 fn focused_pane(s: &Session) -> Option<&fm_layout::PaneState> {
     s.layout
         .state(s.layout.focused())
@@ -35,7 +48,7 @@ fn expand_unless_tree_driven(pane: &mut fm_layout::PaneState) {
     }
 }
 
-/// `nav.open` — navigate the focused pane to a uri.
+/// `nav.open` — navigate the focused pane (or the Files pane a focused Preview shows) to a uri.
 pub fn open() -> CommandSpec {
     CommandSpec {
         id: "nav.open",
@@ -51,10 +64,10 @@ pub fn open() -> CommandSpec {
             // No backend → error before committing the location (no ghost "loading").
             s.backends.require(&to)?;
             {
-                let focused = s.layout.focused();
+                let target = nav_pane(s);
                 let pane = s
                     .layout
-                    .state_mut(focused)
+                    .state_mut(target)
                     .ok_or_else(|| FmError::NotFound("focused pane".to_string()))?;
                 pane.navigate(to.clone());
                 expand_unless_tree_driven(pane);

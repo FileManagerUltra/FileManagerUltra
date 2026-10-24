@@ -23,6 +23,8 @@ pub struct Faults {
     pub fail_write_after: Option<u64>,
     /// `stat`/`open_read` report these as missing.
     pub vanished: Vec<VfsUri>,
+    /// `read_dir` on these returns a permission error (unreadable subfolders).
+    pub unreadable_dirs: Vec<VfsUri>,
     /// `rename` returns `Unsupported`.
     pub rename_unsupported: bool,
     /// Overrides `same_device`.
@@ -116,6 +118,9 @@ impl<V: Vfs> Vfs for FaultFs<V> {
     }
 
     fn read_dir(&self, uri: &VfsUri) -> Result<Vec<Entry>, FmError> {
+        if self.faults().unreadable_dirs.contains(uri) {
+            return Err(FmError::PermissionDenied(uri.to_string()));
+        }
         self.inner.read_dir(uri)
     }
 

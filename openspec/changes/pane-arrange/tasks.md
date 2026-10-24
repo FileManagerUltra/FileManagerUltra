@@ -15,14 +15,14 @@
 - [x] 3.2 Border drag source in `pane.rs`; target overlay on every pane kind
 - [x] 3.3 Divider widget in `fm-app`: hover colour/cursor, double-click reset, min size
 - [x] 3.4 Renderer honours zoom
-- [ ] 3.5 Tests: `slot_for` table, headless render of overlay (dark + light)
+- [x] 3.5 Tests: `slot_for` table, headless render of overlay (dark + light)
 
 ## 4. App wiring
 
 - [x] 4.1 Panes menu entries; `Ctrl+Shift` chords work in terminal panes; shortcut tests
-- [ ] 4.2 Brand-check / layers green
+- [x] 4.2 Brand-check / layers green
 
 ## 5. Docs and gate
 
-- [ ] 5.1 `docs/architecture.md` (layout ops, zoom, drag payload), `docs/roadmap.md`, devlog
-- [ ] 5.2 `cargo xtask ci` green
+- [x] 5.1 `docs/architecture.md` (layout ops, zoom, drag payload), `docs/roadmap.md`, devlog
+- [x] 5.2 `cargo xtask ci` green

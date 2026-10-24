@@ -17,7 +17,8 @@ const MAX_TREE: f32 = 420.0;
 pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Option<VfsUri> {
     let area = ui.available_rect_before_wrap();
     let pressed_inside = ui.input(|i| {
-        i.pointer.button_pressed(egui::PointerButton::Primary)
+        (i.pointer.button_pressed(egui::PointerButton::Primary)
+            || i.pointer.button_pressed(egui::PointerButton::Secondary))
             && i.pointer.interact_pos().is_some_and(|p| area.contains(p))
     });
     let focused = s.layout.focused() == pane;
@@ -50,6 +51,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         .stroke(stroke)
         .inner_margin(egui::Margin::same(tokens.padding as i8))
         .show(ui, |ui| {
+            // A frame only wraps its content; make it fill the slot it was given, however the
+            // window was resized.
+            ui.set_min_size(ui.available_size());
             // The active pane gets a solid accent header bar; inactive ones stay muted.
             if kind == PaneKind::Files && crate::locationbar::is_editing(s, pane) {
                 crate::locationbar::show_editor(ui, s, pane, tokens);
@@ -65,6 +69,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             row,
                             Layout::right_to_left(Align::Center),
                             |ui| {
+                                close_button(ui, s, pane);
                                 kind_menu(ui, s, pane, kind);
                                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                                     if kind == PaneKind::Files {
@@ -86,7 +91,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 return;
             }
             if kind == PaneKind::Preview {
-                crate::preview::show(ui, s, pane, tokens);
+                open = crate::preview::show(ui, s, pane, tokens);
                 return;
             }
 
@@ -100,6 +105,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     egui::vec2(width, height),
                     Layout::top_down(Align::Min),
                     |ui| {
+                        ui.set_min_size(ui.available_size());
                         if let Some(target) = tree::show(ui, s, pane, tokens) {
                             open = Some(target);
                         }
@@ -130,6 +136,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     egui::vec2(ui.available_width(), height),
                     Layout::top_down(Align::Min),
                     |ui| {
+                        ui.set_min_size(ui.available_size());
                         if let Some(target) = listing::show(ui, s, pane, tokens, focused) {
                             open = Some(target);
                         }
@@ -160,6 +167,20 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         let _ = s.layout.focus_pane(pane);
     }
     open
+}
+
+/// `×` in the header; dispatches `pane.close` for this pane. Hidden on the last pane.
+fn close_button(ui: &mut Ui, s: &mut Session, pane: PaneId) {
+    if s.layout.panes().len() < 2 {
+        return;
+    }
+    if ui
+        .add(egui::Button::new("×").frame(false))
+        .on_hover_text("Close pane")
+        .clicked()
+    {
+        s.dispatch_or_notice("pane.close", &serde_json::json!({ "pane": pane }));
+    }
 }
 
 /// Pane-type switcher; dispatches `pane.kind.set`. Unsupported kinds are greyed out.
@@ -339,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn up_from_the_first_row_reaches_the_parent_row_and_enter_opens_it() {
+    fn up_walks_from_the_first_entry_through_parent_to_the_current_row() {
         let tokens = Tokens::dark();
         let mut s = ready_session();
         let ctx = egui::Context::default();
@@ -375,10 +396,20 @@ mod tests {
         assert!(s.layout.state(1).is_some_and(|p| p.listing.on_parent));
         let opened = frame(&mut s, vec![key(egui::Key::Enter)]);
         assert_eq!(opened, VfsUri::parse("/d").expect("uri").parent());
+        // Up from `..` reaches `.`; activating `.` does not navigate.
+        assert!(frame(&mut s, vec![key(egui::Key::ArrowUp)]).is_none());
+        let p = s.layout.state(1).expect("pane");
+        assert!(p.listing.on_current && !p.listing.on_parent);
+        assert_eq!(frame(&mut s, vec![key(egui::Key::Enter)]), None);
+        // Down returns to `..`, and Home comes back to `.`.
+        frame(&mut s, vec![key(egui::Key::ArrowDown)]);
+        assert!(s.layout.state(1).is_some_and(|p| p.listing.on_parent));
+        frame(&mut s, vec![key(egui::Key::Home)]);
+        assert!(s.layout.state(1).is_some_and(|p| p.listing.on_current));
     }
 
     #[test]
-    fn an_empty_directory_starts_with_the_cursor_on_the_parent_row() {
+    fn an_empty_directory_starts_with_the_cursor_on_the_current_row() {
         let tokens = Tokens::dark();
         let mut s = Session::default();
         let mem = MemFs::new();
@@ -400,6 +431,6 @@ mod tests {
             });
         });
         out.textures_delta.clear();
-        assert!(s.layout.state(1).is_some_and(|p| p.listing.on_parent));
+        assert!(s.layout.state(1).is_some_and(|p| p.listing.on_current));
     }
 }

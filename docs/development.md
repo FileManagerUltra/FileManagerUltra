@@ -124,6 +124,21 @@ Use a scratch directory with a few files, a subfolder and one name that exists i
 4. Drag a pane by its outer border (the edge highlights) onto another: the outer quarter of an edge inserts there, the middle swaps; Esc cancels. Terminals keep running through moves.
 5. Dividers highlight on hover; double-click resets to an equal split. In a Files pane drag the tree divider and the listing header borders (double-click resets).
 
+### Thumbnails, opening files, paging (change `thumbnails-and-open`)
+
+1. Open a Preview pane (`Ctrl+Shift+P`), navigate its source Files pane into a folder of images: the header offers a thumbnails toggle (also View → Preview Thumbnails). Tiles appear; scroll a large folder and confirm the UI never stalls and off-screen tiles are not all decoded.
+2. View → Thumbnail Size cycles small → medium → large and the visible tiles re-render. Arrow keys / PageUp / PageDown / Home / End move the tile focus without the Files pane stealing the keys. View → Clear Thumbnail Cache empties it (tiles reload).
+3. A folder on a remote location keeps the summary card (no downloads). A file edited on disk shows a regenerated thumbnail.
+4. Double-click a document (e.g. a PDF or an image) in a Files pane: it opens in the system default application; the pane does not navigate.
+5. Double-click an executable script: a "Run program?" dialog offers *Run* / *Open as document* / *Cancel*; nothing starts until chosen. Cancel leaves the app untouched.
+6. A folder still navigates on Enter/double-click. Layout keys in the listing: PageUp/PageDown move a screenful, Shift extends the selection, the view scrolls to the focused row.
+
+### Current folder row (change `current-folder-row`)
+
+1. Select folders in the tree: each time the listing opens, its cursor is on the `.` row (nothing selected) and a Preview pane following that Files pane shows the folder itself (summary card, or the thumbnail grid with thumbnails on).
+2. Arrow Up from the first entry walks `..` then `.`; Home lands on `.`; Enter/double-click on `.` does nothing. Dragging from `.` starts no drag and `.` is not a drop target.
+3. In an empty folder the cursor starts on `.`; Up reaches `..` and stays there across frames. `nav.refresh` leaves the cursor wherever it was.
+
 ## Config files
 
 Preferences live in the platform config directory for the brand slug
@@ -135,6 +150,36 @@ Preferences live in the platform config directory for the brand slug
 
 The file is created `0600` (directory `0700`) on Unix and contains **only**
 non-secret settings (theme, window state, last directory).
+
+Regenerable data lives in the platform **cache** directory instead
+(`<cache>/thumbs`, trimmed to 256 MiB on use, files `0600` / directory `0700`
+on Unix): deleting it is always safe — thumbnails are rebuilt on demand.
+
+### Workspaces, preview and panes (recent changes)
+
+1. `Ctrl+T` adds a tab, `Ctrl+1..0` switches, `Ctrl+W` closes; a non-auto-save tab with changes prompts Save / Discard / Cancel on close and quit. Restart restores the saved workspaces flagged Open at startup.
+Works as expected
+
+2. A terminal pane restored at startup shows a live shell, not a black screen.
+Works as expected
+
+3. Folder preview: Total size is human-readable, a recursive scan keeps running in the background with a 1 s refresh and stops when you pick another folder; the list shows subfolders with recursive sizes.
+Works as expected
+
+4. Resize the window and drag split handles (also in a 2-over-1 layout): panes fill their slots and each divider moves only its own split. The preview scrolls when short.
+Works as expected
+
+5. Thumbnail grid: click / Ctrl+click / Shift+click / double-click / Enter / Ctrl+A / drag behave like the Files pane. `F5`, `F6`, `F2`, `F7`, `F8`, `Delete` act on the selection, and the grid updates after the action.
+Seems to work, but Ctrl-c ctlv-v, ctrl-x to copy, paste, move a file does not, that should be added.
+Double click a folder in the thumbnail view should open that folder (also affects the connected Files panel)
+Files panel: Single click on a selected file selects the file, another single click on that file should deselect that file and select the current directory (.)
+
+6. Right-click a row or thumbnail: the same context menu in both views; entries are greyed when not applicable.
+Works as expected
+
+7. Every pane header has a `×` (hidden on the last pane).
+8. `Ctrl+C` / `Ctrl+X` / `Ctrl+V` copy, cut and paste files (Files pane or thumbnail grid) into the focused folder; Edit menu and context menu show the same entries. Double-clicking a folder thumbnail navigates the connected Files pane. Clicking the only selected file again selects `.`.
+Works as expected
 
 ## Dev log
 

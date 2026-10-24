@@ -44,22 +44,27 @@ fn split(s: &mut Session, axis: Axis) -> Result<(), FmError> {
     Ok(())
 }
 
-/// `pane.close` — close the focused pane (disabled on the last one).
+/// `pane.close` — close `pane` (default: the focused one); disabled on the last pane.
 pub fn close() -> CommandSpec {
     CommandSpec {
         id: "pane.close",
         label: "Close Pane",
         menu: &["Panes", "Close"],
         shortcut: None,
-        params: "none",
+        params: "pane?: id",
         enabled: |s| s.layout.panes().len() > 1,
-        run: |s, _p: &Params| {
+        run: |s, params: &Params| {
             if s.layout.panes().len() <= 1 {
                 return Ok(()); // defensive no-op; the menu is greyed out
             }
-            let focused = s.layout.focused();
-            s.layout.close(focused)?;
-            s.drop_terminal(focused);
+            let target = match crate::file_cmds::object(params)?.and_then(|m| m.get("pane")) {
+                Some(value) => value
+                    .as_u64()
+                    .ok_or_else(|| FmError::InvalidParams("pane: pane id".to_string()))?,
+                None => s.layout.focused(),
+            };
+            s.layout.close(target)?;
+            s.drop_terminal(target);
             Ok(())
         },
     }

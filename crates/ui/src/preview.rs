@@ -31,8 +31,10 @@ fn mono(tokens: &Tokens) -> FontId {
 }
 
 /// Render the preview pane body.
-pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
+pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Option<fm_vfs::VfsUri> {
     let mut actions: Vec<Action> = Vec::new();
+    let mut open: Option<fm_vfs::VfsUri> = None;
+    let mut published: Option<fm_engine::file_cmds::GridSelection> = None;
     toolbar(ui, s, pane, &mut actions);
     ui.separator();
     if let Some(slot) = s.preview_slot(pane) {
@@ -42,6 +44,28 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
                 ui.centered_and_justified(|ui| ui.spinner());
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(100));
+            }
+            Body::Static(p) if slot.thumbs && matches!(&**p, Preview::Dir(_)) => {
+                if let Preview::Dir(d) = &**p {
+                    thumb_grid(
+                        ui,
+                        s,
+                        pane,
+                        tokens,
+                        d,
+                        slot.thumb_size,
+                        slot.thumb_window,
+                        &mut actions,
+                        &mut open,
+                        slot.subject.as_ref().map(|e| e.uri.clone()),
+                        &mut published,
+                    );
+                }
+            }
+            Body::Static(p) if slot.video.is_some() => {
+                if let (Preview::Meta(m), Some(v)) = (&**p, &slot.video) {
+                    video_body(ui, pane, tokens, p, m, v, &mut actions);
+                }
             }
             Body::Static(p) => {
                 let p = p.clone();
@@ -57,6 +81,14 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
         }
         s.dispatch_or_notice(id, &params);
     }
+    match published {
+        Some(g) => s.grid_selection = Some(g),
+        None if s.grid_selection.as_ref().is_some_and(|g| g.pane == pane) => {
+            s.grid_selection = None;
+        }
+        None => {}
+    }
+    open
 }
 
 fn centered(ui: &mut Ui, tokens: &Tokens, msg: &str) {
@@ -72,8 +104,16 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
         if let Some(e) = &slot.subject {
             ui.label(RichText::new(&e.name).strong());
         }
+        // Right-aligned, framed buttons so view options stand apart from the title.
+        ui.add_space(ui.available_width().min(12.0));
+        ui.separator();
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.spacing_mut().button_padding = vec2(10.0, 3.0);
         let wrap_pretty = |ui: &mut Ui, actions: &mut Vec<Action>| {
-            if ui.selectable_label(slot.wrap, "Wrap").clicked() {
+            if ui
+                .add(egui::Button::selectable(slot.wrap, "Wrap"))
+                .clicked()
+            {
                 actions.push(("preview.toggle_wrap", json!({})));
             }
         };
@@ -104,6 +144,13 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                         }
                     }
                 }
+                Preview::Dir(_) => thumb_toolbar(
+                    ui,
+                    slot.thumbs,
+                    slot.thumb_size,
+                    s.prefs.recursive_preview,
+                    actions,
+                ),
                 _ => {}
             },
             Body::Log(v) => log_toolbar(ui, pane, v, actions),
@@ -167,20 +214,28 @@ fn static_body(
         Preview::Markdown(m) => markdown(ui, tokens, &m.blocks, m.truncated),
         Preview::Image(i) => image(ui, pane, tokens, p, i, zoom),
         Preview::Hex(h) => hex(ui, tokens, h),
-        Preview::Dir(d) => dir_card(ui, tokens, d),
-        Preview::Meta(m) => {
+        Preview::Dir(d) => scrolled(ui, pane, "dir", |ui| dir_card(ui, tokens, d)),
+        Preview::Meta(m) => scrolled(ui, pane, "meta", |ui| {
             meta_card(ui, tokens, m);
             if let Some(poster) = &m.poster {
                 image(ui, pane, tokens, p, poster, Zoom::Fit);
             }
-        }
-        Preview::Error(e) => {
+        }),
+        Preview::Error(e) => scrolled(ui, pane, "err", |ui| {
             ui.add_space(12.0);
             ui.label(RichText::new("Cannot preview").color(tokens.error).strong());
             ui.label(e);
-        }
+        }),
         Preview::Log(_) => centered(ui, tokens, "Log"),
     }
+}
+
+/// Cards are taller than a small pane; scroll them instead of overflowing the slot.
+fn scrolled(ui: &mut Ui, pane: PaneId, what: &str, add: impl FnOnce(&mut Ui)) {
+    ScrollArea::vertical()
+        .id_salt(("pv-scroll", what, pane))
+        .auto_shrink(false)
+        .show(ui, add);
 }
 
 fn spans_job(tokens: &Tokens, spans: &[Span], wrap: bool, width: f32) -> LayoutJob {
@@ -192,11 +247,7 @@ fn spans_job(tokens: &Tokens, spans: &[Span], wrap: bool, width: f32) -> LayoutJ
             TextFormat::simple(mono(tokens), tokens.syntax(sp.class)),
         );
     }
-    if wrap {
-        job.wrap.max_width = width;
-    } else {
-        job.wrap.max_width = f32::INFINITY;
-    }
+    job.wrap.max_width = if wrap { width } else { f32::INFINITY };
     job
 }
 
@@ -210,12 +261,15 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
     }
     let gutter = d.lines.len().to_string().len();
     let row_h = ui.fonts_mut(|f| f.row_height(&mono(tokens))) + 2.0;
-    let area = ScrollArea::both()
-        .id_salt(("pv-text", pane))
-        .auto_shrink(false);
+    let area = if wrap {
+        ScrollArea::vertical()
+    } else {
+        ScrollArea::both()
+    }
+    .id_salt(("pv-text", pane))
+    .auto_shrink(false);
     if wrap {
         area.show(ui, |ui| {
-            let width = ui.available_width();
             for (i, line) in d.lines.iter().enumerate() {
                 ui.horizontal_top(|ui| {
                     ui.label(
@@ -223,12 +277,7 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
                             .font(mono(tokens))
                             .color(tokens.text_muted),
                     );
-                    ui.label(spans_job(
-                        tokens,
-                        line,
-                        true,
-                        width - 12.0 * gutter as f32 - 20.0,
-                    ));
+                    ui.add(egui::Label::new(spans_job(tokens, line, true, 0.0)).wrap());
                 });
             }
         });
@@ -474,20 +523,573 @@ fn meta_card(ui: &mut Ui, tokens: &Tokens, m: &MetaDoc) {
     }
 }
 
+/// A playable video: the newest frame (or the poster before one arrives), a play/seek bar
+/// and the metadata rows below.
+fn video_body(
+    ui: &mut Ui,
+    pane: PaneId,
+    tokens: &Tokens,
+    p: &Arc<Preview>,
+    m: &MetaDoc,
+    v: &fm_engine::video_cmds::VideoState,
+    actions: &mut Vec<Action>,
+) {
+    let ppp = ui.ctx().pixels_per_point();
+    let avail = ui.available_size();
+    let bucket = fm_engine::video_cmds::width_bucket(avail.x * ppp);
+    if v.width != Some(bucket) {
+        actions.push(("preview.video.fit", json!({ "width": avail.x * ppp })));
+    }
+    ScrollArea::vertical()
+        .id_salt(("pv-video", pane))
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            let controls_h = ui.spacing().interact_size.y + ui.spacing().item_spacing.y * 2.0;
+            let aspect = v.info.height as f32 / v.info.width.max(1) as f32;
+            let w = avail
+                .x
+                .min(((avail.y - controls_h) / aspect.max(0.01)).max(64.0));
+            let size = vec2(w, w * aspect);
+            if let Some(f) = &v.frame {
+                let id = Id::NULL.with(("pv-video-tex", pane));
+                let ctx = ui.ctx().clone();
+                let cached: Option<(usize, egui::TextureHandle)> = ctx.data_mut(|d| d.get_temp(id));
+                let key = Arc::as_ptr(f) as usize;
+                let image = || {
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [f.width as usize, f.height as usize],
+                        &f.rgba,
+                    )
+                };
+                let tex = match cached {
+                    Some((k, t)) if k == key => t,
+                    Some((_, mut t)) => {
+                        t.set(image(), egui::TextureOptions::LINEAR);
+                        t
+                    }
+                    None => ctx.load_texture(
+                        format!("pv-video-{pane}"),
+                        image(),
+                        egui::TextureOptions::LINEAR,
+                    ),
+                };
+                ctx.data_mut(|d| d.insert_temp(id, (key, tex.clone())));
+                let (rect, resp) = ui.allocate_exact_size(vec2(avail.x, size.y), Sense::click());
+                let at = egui::Rect::from_center_size(rect.center(), size);
+                egui::Image::new((tex.id(), size)).paint_at(ui, at);
+                if resp.clicked() {
+                    actions.push(("preview.video.play", json!({})));
+                }
+            } else if let Some(poster) = &m.poster {
+                image(ui, pane, tokens, p, poster, Zoom::Fit);
+            } else {
+                ui.allocate_space(vec2(avail.x, size.y.min(120.0)));
+            }
+            video_controls(ui, pane, v, actions);
+            if let Some(e) = &v.error {
+                ui.colored_label(tokens.error, e);
+            }
+            meta_card(ui, tokens, m);
+        });
+    if v.playing {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(16));
+    }
+}
+
+fn clock(secs: f64) -> String {
+    let t = secs.max(0.0) as u64;
+    if t >= 3600 {
+        format!("{}:{:02}:{:02}", t / 3600, t / 60 % 60, t % 60)
+    } else {
+        format!("{}:{:02}", t / 60, t % 60)
+    }
+}
+
+fn video_controls(
+    ui: &mut Ui,
+    pane: PaneId,
+    v: &fm_engine::video_cmds::VideoState,
+    actions: &mut Vec<Action>,
+) {
+    ui.horizontal(|ui| {
+        let label = if v.playing { "Pause" } else { "Play" };
+        if ui.button(label).clicked() {
+            actions.push(("preview.video.play", json!({})));
+        }
+        let dur = v.info.duration.max(0.0);
+        let id = Id::NULL.with(("pv-video-seek", pane));
+        let dragging: Option<f64> = ui.data(|d| d.get_temp(id));
+        let mut value = dragging.unwrap_or(v.pos).clamp(0.0, dur);
+        ui.label(format!("{} / {}", clock(value), clock(dur)));
+        ui.spacing_mut().slider_width = (ui.available_width() - 16.0).max(60.0);
+        let resp = ui.add_enabled(
+            dur > 0.0,
+            egui::Slider::new(&mut value, 0.0..=dur.max(0.1)).show_value(false),
+        );
+        if resp.dragged() {
+            ui.data_mut(|d| d.insert_temp(id, value));
+        } else {
+            ui.data_mut(|d| d.remove::<f64>(id));
+            if resp.changed() || resp.drag_stopped() {
+                actions.push(("preview.video.seek", json!({ "to": value })));
+            }
+        }
+    });
+}
+
+fn thumb_toolbar(ui: &mut Ui, on: bool, size: usize, recursive: bool, actions: &mut Vec<Action>) {
+    let r = ui
+        .add(egui::Button::selectable(recursive, "Recursive"))
+        .on_hover_text("Include subfolders (also in Preferences)");
+    if r.clicked() {
+        actions.push(("prefs.preview.recursive", json!({ "value": !recursive })));
+    }
+    ui.separator();
+    if ui.add(egui::Button::selectable(on, "Thumbnails")).clicked() {
+        actions.push(("preview.thumbs.toggle", json!({})));
+    }
+    if on {
+        for (ix, (label, name)) in [("S", "small"), ("M", "medium"), ("L", "large")]
+            .into_iter()
+            .enumerate()
+        {
+            let r = ui
+                .add(egui::Button::selectable(size == ix, label))
+                .on_hover_text(format!("{name} thumbnails"));
+            if r.clicked() {
+                actions.push(("preview.thumbs.size", json!({ "size": name })));
+            }
+        }
+    }
+}
+
+/// Short type label for the tile of a file without a thumbnail.
+fn tile_label(entry: &fm_vfs::Entry) -> String {
+    if entry.is_dir_like() {
+        return "Folder".into();
+    }
+    match entry.name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && ext.chars().count() <= 5 => ext.to_uppercase(),
+        _ => "File".into(),
+    }
+}
+
+/// Virtualized thumbnail grid for a folder: only the rows on screen are laid out, and the
+/// engine is told which window is visible so it decodes just those (plus a screenful around).
+#[allow(clippy::too_many_arguments)]
+const ARROW_KEYS: egui::EventFilter = egui::EventFilter {
+    horizontal_arrows: true,
+    vertical_arrows: true,
+    tab: false,
+    escape: false,
+};
+
+/// The thumbnail grid's selection, with the same click rules as the file listing:
+/// click selects one, Ctrl toggles, Shift extends from the anchor.
+#[derive(Clone, Default)]
+struct ThumbSel {
+    names: std::collections::BTreeSet<String>,
+    anchor: usize,
+}
+
+impl ThumbSel {
+    fn click(&mut self, items: &[fm_vfs::Entry], index: usize, shift: bool, toggle: bool) {
+        let Some(entry) = items.get(index) else {
+            return;
+        };
+        if shift {
+            let (lo, hi) = (self.anchor.min(index), self.anchor.max(index));
+            self.names = items
+                .iter()
+                .skip(lo)
+                .take(hi - lo + 1)
+                .map(|e| e.name.clone())
+                .collect();
+        } else if toggle {
+            if !self.names.remove(&entry.name) {
+                self.names.insert(entry.name.clone());
+            }
+            self.anchor = index;
+        } else {
+            self.names = std::iter::once(entry.name.clone()).collect();
+            self.anchor = index;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn thumb_grid(
+    ui: &mut Ui,
+    s: &Session,
+    pane: PaneId,
+    tokens: &Tokens,
+    d: &DirDoc,
+    size: usize,
+    asked: Option<(usize, usize)>,
+    actions: &mut Vec<Action>,
+    open: &mut Option<fm_vfs::VfsUri>,
+    dir: Option<fm_vfs::VfsUri>,
+    published: &mut Option<fm_engine::file_cmds::GridSelection>,
+) {
+    use fm_engine::thumbs::ThumbState;
+    use fm_preview::thumbs::EDGES;
+
+    if d.items.is_empty() {
+        centered(ui, tokens, "(empty folder)");
+        return;
+    }
+    let edge = EDGES.get(size).copied().unwrap_or(EDGES[0]);
+    let gap = tokens.padding;
+    let label_h = ui.fonts_mut(|f| f.row_height(&tokens.font())) + 2.0;
+    let width = ui.available_width();
+    let cell = (edge as f32).min((width - gap).max(32.0));
+    let cols = (((width + gap) / (cell + gap)).floor() as usize).max(1);
+    let rows = d.items.len().div_ceil(cols);
+    let row_h = cell + label_h + gap;
+
+    let ctx = ui.ctx().clone();
+    let cache_id = Id::NULL.with(("pv-thumb-tex", pane));
+    type Cache =
+        std::collections::HashMap<usize, (Arc<fm_preview::thumbs::Thumb>, egui::TextureHandle)>;
+    let mut cache: Cache = ctx.data_mut(|dt| dt.get_temp(cache_id)).unwrap_or_default();
+    let mut used: Cache = Cache::new();
+    let mut waiting = false;
+    let mut window = None;
+
+    // Keyboard cursor: only active once a cell was clicked (grid focus).
+    let grid_id = Id::NULL.with(("pv-thumb-grid", pane));
+    let state_id = Id::NULL.with(("pv-thumb-state", pane));
+    let (mut cursor, mut offset, view_h): (usize, f32, f32) = ctx
+        .data_mut(|dt| dt.get_temp(state_id))
+        .unwrap_or((0, 0.0, 0.0));
+    let count = d.items.len();
+    // A grid that was not drawn last frame (just toggled on, or a new folder) takes the focus
+    // with the cursor on the first item, so the keys work immediately.
+    let pass = ctx.cumulative_pass_nr();
+    let shown_id = Id::NULL.with(("pv-thumb-shown", pane));
+    let want_id = Id::NULL.with(("pv-thumb-want-focus", pane));
+    let last_shown: Option<u64> = ctx.data(|dt| dt.get_temp(shown_id));
+    let sel_id = Id::NULL.with(("pv-thumb-sel", pane));
+    let mut sel: ThumbSel = ctx.data_mut(|dt| dt.get_temp(sel_id)).unwrap_or_default();
+    if last_shown.is_none_or(|n| pass.saturating_sub(n) > 2) {
+        cursor = 0;
+        offset = 0.0;
+        sel = ThumbSel::default();
+        ctx.data_mut(|dt| dt.insert_temp(want_id, true));
+    }
+    // Keep asking until egui reports the focus (the first pass of a window may be discarded).
+    if ctx.data(|dt| dt.get_temp::<bool>(want_id)).unwrap_or(false) {
+        if ctx.memory(|m| m.has_focus(grid_id)) {
+            ctx.data_mut(|dt| dt.insert_temp(want_id, false));
+        } else {
+            ctx.memory_mut(|m| m.request_focus(grid_id));
+        }
+    }
+    ctx.data_mut(|dt| dt.insert_temp(shown_id, pass));
+    cursor = cursor.min(count - 1);
+    let mut scroll_to = None;
+    // Registering the widget keeps egui from dropping focus as "disappeared".
+    ui.interact(ui.max_rect(), grid_id, Sense::focusable_noninteractive());
+    let active = ctx.memory_mut(|m| {
+        let on = m.has_focus(grid_id);
+        if on {
+            m.set_focus_lock_filter(grid_id, ARROW_KEYS);
+        }
+        on
+    });
+    ctx.data_mut(|dt| dt.insert_temp(Id::NULL.with("pv-grid-active"), active));
+    if active {
+        let page_rows = ((view_h / row_h).floor() as usize).saturating_sub(1).max(1);
+        let mut target = cursor;
+        ui.input_mut(|i| {
+            use egui::{Key, Modifiers};
+            if i.consume_key(Modifiers::COMMAND, Key::A) {
+                sel.names = d.items.iter().map(|e| e.name.clone()).collect();
+            }
+            if i.consume_key(Modifiers::NONE, Key::Enter)
+                && let Some(entry) = d.items.get(cursor)
+            {
+                *open = Some(entry.uri.clone());
+            }
+            // Shift variants extend the selection; the movement itself is the same.
+            let mut key =
+                |k| i.consume_key(Modifiers::SHIFT, k) | i.consume_key(Modifiers::NONE, k);
+            if key(Key::ArrowLeft) {
+                target = target.saturating_sub(1);
+            }
+            if key(Key::ArrowRight) {
+                target = (target + 1).min(count - 1);
+            }
+            if key(Key::ArrowUp) && target >= cols {
+                target -= cols;
+            }
+            if key(Key::ArrowDown) && target + cols < count {
+                target += cols;
+            }
+            if key(Key::PageUp) {
+                target = target.saturating_sub(page_rows * cols);
+            }
+            if key(Key::PageDown) {
+                target = (target + page_rows * cols).min(count - 1);
+            }
+            if key(Key::Home) {
+                target = 0;
+            }
+            if key(Key::End) {
+                target = count - 1;
+            }
+        });
+        if target != cursor {
+            cursor = target;
+            sel.click(&d.items, cursor, ui.input(|i| i.modifiers.shift), false);
+            // Minimal scroll: only move when the cursor row leaves the viewport.
+            let top = (cursor / cols) as f32 * row_h;
+            let bottom = top + row_h - gap;
+            if top < offset {
+                scroll_to = Some(top);
+            } else if bottom > offset + view_h {
+                scroll_to = Some(bottom - view_h);
+            }
+        }
+    }
+
+    let mut area = ScrollArea::vertical()
+        .id_salt(("pv-thumbs", pane))
+        .auto_shrink(false);
+    if let Some(y) = scroll_to {
+        area = area.vertical_scroll_offset(y.max(0.0));
+    }
+    let out = area.show_rows(ui, row_h, rows, |ui, range| {
+        ui.spacing_mut().item_spacing = vec2(gap, 0.0);
+        window = Some((range.start * cols, range.len() * cols));
+        for row in range {
+            ui.horizontal(|ui| {
+                for col in 0..cols {
+                    let Some(entry) = d.items.get(row * cols + col) else {
+                        break;
+                    };
+                    let index = row * cols + col;
+                    let (rect, resp) =
+                        ui.allocate_exact_size(vec2(cell, row_h - gap), Sense::click_and_drag());
+                    if resp.drag_started() {
+                        if !sel.names.contains(&entry.name) {
+                            cursor = index;
+                            sel.click(&d.items, index, false, false);
+                        }
+                        let sources: Vec<_> = d
+                            .items
+                            .iter()
+                            .filter(|e| sel.names.contains(&e.name))
+                            .map(|e| e.uri.clone())
+                            .collect();
+                        resp.dnd_set_drag_payload(crate::dnd::DragPayload {
+                            sources,
+                            origin: pane,
+                        });
+                    }
+                    if resp.clicked() || resp.secondary_clicked() {
+                        cursor = index;
+                        let m = ui.input(|i| i.modifiers);
+                        if resp.clicked() {
+                            sel.click(&d.items, index, m.shift, m.command);
+                        } else if !sel.names.contains(&entry.name) {
+                            sel.click(&d.items, index, false, false);
+                        }
+                        ctx.memory_mut(|m| {
+                            m.request_focus(grid_id);
+                            m.set_focus_lock_filter(grid_id, ARROW_KEYS);
+                        });
+                    }
+                    if resp.double_clicked() {
+                        *open = Some(entry.uri.clone());
+                    }
+                    crate::context_menu::attach(&resp, s, &entry.uri, open);
+                    let focused = ctx.memory(|m| m.has_focus(grid_id));
+                    if sel.names.contains(&entry.name) {
+                        ui.painter()
+                            .rect_filled(rect, tokens.corner_radius, tokens.selection_bg);
+                    } else if resp.hovered() {
+                        ui.painter()
+                            .rect_filled(rect, tokens.corner_radius, tokens.hover_bg);
+                    }
+                    if focused && index == cursor {
+                        ui.painter().rect_stroke(
+                            rect,
+                            tokens.corner_radius,
+                            egui::Stroke::new(tokens.border_width.max(1.5), tokens.accent),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    let art = egui::Rect::from_min_size(rect.min, vec2(cell, cell));
+                    match s.thumbs.get(entry, edge) {
+                        ThumbState::Ready(t) => {
+                            let key = Arc::as_ptr(&t) as usize;
+                            let (_, tex) = cache.remove(&key).unwrap_or_else(|| {
+                                let ci = egui::ColorImage::from_rgba_unmultiplied(
+                                    [t.width as usize, t.height as usize],
+                                    &t.rgba,
+                                );
+                                let tex = ctx.load_texture(
+                                    format!("pv-thumb-{pane}-{key}"),
+                                    ci,
+                                    egui::TextureOptions::LINEAR,
+                                );
+                                (t.clone(), tex)
+                            });
+                            let natural = vec2(t.width as f32, t.height as f32);
+                            let fit = cell / edge as f32;
+                            let draw = natural * fit;
+                            let at = egui::Rect::from_center_size(art.center(), draw);
+                            egui::Image::new((tex.id(), draw)).paint_at(ui, at);
+                            used.insert(key, (t, tex));
+                        }
+                        state => {
+                            waiting |= matches!(state, ThumbState::Pending);
+                            let inner = art.shrink(gap);
+                            ui.painter().rect_stroke(
+                                inner,
+                                tokens.corner_radius,
+                                egui::Stroke::new(tokens.border_width, tokens.border),
+                                egui::StrokeKind::Inside,
+                            );
+                            let text = if matches!(state, ThumbState::Pending) {
+                                "…".to_string()
+                            } else {
+                                tile_label(entry)
+                            };
+                            ui.painter().text(
+                                inner.center(),
+                                egui::Align2::CENTER_CENTER,
+                                text,
+                                tokens.font(),
+                                tokens.text_muted,
+                            );
+                        }
+                    }
+                    let mut job =
+                        LayoutJob::simple(entry.name.clone(), tokens.font(), tokens.text, cell);
+                    job.wrap.max_rows = 1;
+                    job.wrap.break_anywhere = true;
+                    let galley = ui.fonts_mut(|f| f.layout_job(job));
+                    let pos = egui::pos2(
+                        rect.center().x - galley.size().x / 2.0,
+                        rect.min.y + cell + 1.0,
+                    );
+                    ui.painter().galley(pos, galley, tokens.text);
+                    resp.on_hover_text(&entry.name);
+                }
+            });
+        }
+    });
+    offset = out.state.clamped_offset().y;
+    ctx.data_mut(|dt| dt.insert_temp(state_id, (cursor, offset, out.inner_rect.height())));
+    if let Some(dir) = dir {
+        *published = Some(fm_engine::file_cmds::GridSelection {
+            pane,
+            dir,
+            items: d
+                .items
+                .iter()
+                .filter(|e| sel.names.contains(&e.name))
+                .map(|e| e.uri.clone())
+                .collect(),
+        });
+    }
+    ctx.data_mut(|dt| dt.insert_temp(sel_id, sel));
+    ctx.data_mut(|dt| dt.insert_temp(cache_id, used));
+    if waiting {
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+    if let Some(w) = window
+        && asked != Some(w)
+    {
+        actions.push((
+            "preview.thumbs.visible",
+            json!({ "first": w.0, "count": w.1 }),
+        ));
+    }
+    if d.items_truncated {
+        ui.label(tokens.muted(format!("Showing the first {} entries", d.items.len())));
+    }
+}
+
+const SUBDIRS_SHOWN: usize = 12;
+
 fn dir_card(ui: &mut Ui, tokens: &Tokens, d: &DirDoc) {
     ui.add_space(8.0);
     let mut rows = vec![
         ("Files".to_string(), d.files.to_string()),
         ("Folders".to_string(), d.dirs.to_string()),
         ("Other".to_string(), d.other.to_string()),
-        ("Total size".to_string(), format!("{} bytes", d.bytes)),
+        (
+            "Total size".to_string(),
+            format!(
+                "{} ({} bytes)",
+                crate::listing::human_size(d.bytes),
+                d.bytes
+            ),
+        ),
     ];
+    if d.files > 0 {
+        rows.push((
+            "Average file".to_string(),
+            crate::listing::human_size(d.bytes / d.files as u64),
+        ));
+    }
+    if let Some((name, size)) = &d.largest {
+        rows.push((
+            "Largest".to_string(),
+            format!("{name} ({})", crate::listing::human_size(*size)),
+        ));
+    }
+    if d.hidden > 0 {
+        rows.push(("Hidden".to_string(), d.hidden.to_string()));
+    }
     if let Some((name, _)) = &d.newest {
         rows.push(("Newest".to_string(), name.clone()));
     }
+    if let Some((name, _)) = &d.oldest {
+        rows.push(("Oldest".to_string(), name.clone()));
+    }
+    let mut subdirs: Vec<(&String, &(usize, u64))> = d.subdirs.iter().collect();
+    subdirs.sort_by(|a, b| b.1.1.cmp(&a.1.1).then(a.0.cmp(b.0)));
+    let more = subdirs.len().saturating_sub(SUBDIRS_SHOWN);
+    for (name, (n, bytes)) in subdirs.into_iter().take(SUBDIRS_SHOWN) {
+        rows.push((
+            format!("{name}/"),
+            format!(
+                "{} ({n} {})",
+                crate::listing::human_size(*bytes),
+                if *n == 1 { "file" } else { "files" }
+            ),
+        ));
+    }
+    if more > 0 {
+        rows.push(("…".to_string(), format!("and {more} more folders")));
+    }
+    if d.recursive {
+        rows.push(("Scope".to_string(), "all subfolders".to_string()));
+    }
     card_rows(ui, tokens, "pv-dir", &rows);
+    if d.unreadable > 0 {
+        ui.label(tokens.muted(format!("{} folder(s) could not be read", d.unreadable)));
+    }
+    if d.scanning {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(tokens.muted("Still scanning; totals so far"));
+        });
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(500));
+    }
     if d.truncated {
-        ui.label(tokens.muted("Only the first entries were counted"));
+        let why = if d.recursive {
+            "The scan stopped early; totals only cover the folders listed before that"
+        } else {
+            "Only the first entries were counted"
+        };
+        ui.label(tokens.muted(why));
     }
 }
 
@@ -804,10 +1406,41 @@ fn log_row(
     }
 }
 
+/// True while a thumbnail grid owns the keyboard, so the file listing must not also act on keys.
+pub fn grid_has_keyboard(ctx: &egui::Context) -> bool {
+    ctx.data(|dt| dt.get_temp::<bool>(Id::NULL.with("pv-grid-active")))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    #[test]
+    fn thumb_selection_follows_the_listing_click_rules() {
+        use fm_vfs::{Entry, EntryKind, VfsUri};
+        let items: Vec<Entry> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|n| {
+                let uri = VfsUri::parse(&format!("/t/{n}")).expect("uri");
+                let mut e = Entry::new(uri, EntryKind::File);
+                e.name = (*n).to_string();
+                e
+            })
+            .collect();
+        let names = |s: &ThumbSel| s.names.iter().cloned().collect::<Vec<_>>().join("");
+        let mut s = ThumbSel::default();
+        s.click(&items, 1, false, false);
+        assert_eq!(names(&s), "b");
+        s.click(&items, 3, false, true);
+        assert_eq!(names(&s), "bd");
+        s.click(&items, 3, false, true);
+        assert_eq!(names(&s), "b");
+        s.click(&items, 4, true, false);
+        assert_eq!(names(&s), "de");
+        s.click(&items, 9, false, false);
+        assert_eq!(names(&s), "de");
+    }
     use fm_vfs::VfsUri;
     use std::time::{Duration, Instant};
 
@@ -816,6 +1449,14 @@ mod tests {
         0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89, 0, 0, 0, 0x0d, 0x49, 0x44,
         0x41, 0x54, 0x78, 0x9c, 0x63, 0x60, 0, 0, 0, 2, 0, 1, 0xe2, 0x21, 0xbc, 0x33, 0, 0, 0, 0,
         0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    const GOOD_PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0xd, 0xa, 0x1a, 0xa, 0x0, 0x0, 0x0, 0xd, 0x49, 0x48, 0x44, 0x52,
+        0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x8, 0x6, 0x0, 0x0, 0x0, 0x1f, 0x15, 0xc4, 0x89,
+        0x0, 0x0, 0x0, 0xd, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x60, 0x64, 0x62, 0xfe, 0xf,
+        0x0, 0x1, 0x14, 0x1, 0x6, 0xd6, 0xb9, 0xa6, 0x45, 0x0, 0x0, 0x0, 0x0, 0x49, 0x45, 0x4e,
+        0x44, 0xae, 0x42, 0x60, 0x82,
     ];
 
     fn frame(s: &mut Session, pane: PaneId, tokens: &Tokens) {
@@ -877,6 +1518,7 @@ mod tests {
                 .position(|i| entries[*i as usize].name == name)
                 .expect("row");
             let st = s.layout.state_mut(files_pane).expect("pane");
+            st.listing.on_current = false;
             st.listing.on_parent = false;
             st.listing.focused_row = row;
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -904,5 +1546,179 @@ mod tests {
                 frame(&mut s, pane, &tokens);
             }
         }
+    }
+
+    #[test]
+    fn thumbnail_grid_asks_for_its_window_and_renders_in_both_palettes() {
+        use fm_engine::thumbs::ThumbState;
+        let dir = tempfile::tempdir().expect("tmp");
+        let photos = dir.path().join("photos");
+        std::fs::create_dir_all(photos.join("sub")).expect("dirs");
+        std::fs::write(photos.join("a.png"), GOOD_PNG).expect("a");
+        std::fs::write(photos.join("b.png"), GOOD_PNG).expect("b");
+        std::fs::write(photos.join("c.txt"), b"hi").expect("c");
+        let mut s = Session::new().expect("session");
+        let uri = VfsUri::parse(&dir.path().to_string_lossy()).expect("uri");
+        let files_pane = s.layout.focused();
+        s.layout
+            .state_mut(files_pane)
+            .expect("pane")
+            .navigate(uri.clone());
+        s.ensure_read(uri).expect("read");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !s.pane_view_ready(files_pane) {
+            assert!(Instant::now() < deadline);
+            s.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        s.dispatch("view.preview.toggle", &json!({})).expect("open");
+        let pane = s
+            .layout
+            .panes()
+            .into_iter()
+            .find(|p| {
+                s.layout
+                    .state(*p)
+                    .is_some_and(|st| st.kind == PaneKind::Preview)
+            })
+            .expect("preview pane");
+        let st = s.layout.state_mut(files_pane).expect("pane");
+        st.listing.on_current = false;
+        st.listing.on_parent = false;
+        st.listing.focused_row = 0;
+        let items = loop {
+            s.poll();
+            let slot = s.preview_slot(pane).expect("slot");
+            if let Body::Static(p) = &slot.body
+                && let Preview::Dir(d) = &**p
+            {
+                break d.items.clone();
+            }
+            assert!(Instant::now() < deadline, "dir never rendered");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(items.len(), 4);
+        s.dispatch("preview.thumbs.toggle", &json!({})).expect("on");
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            let a = items.iter().find(|e| e.name == "a.png").expect("a.png");
+            while !matches!(s.thumbs.get(a, 160), ThumbState::Ready(_)) {
+                frame(&mut s, pane, &tokens);
+                s.poll();
+                assert!(Instant::now() < deadline, "thumbnail never arrived");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            frame(&mut s, pane, &tokens);
+        }
+        s.dispatch("preview.thumbs.size", &json!({"size": "large"}))
+            .expect("size");
+        frame(&mut s, pane, &Tokens::dark());
+        assert!(
+            s.preview_slot(pane)
+                .is_some_and(|sl| sl.thumb_window.is_some())
+        );
+
+        // A focused grid moves its cursor with the keys and tells the listing to stand down.
+        let tokens = Tokens::dark();
+        let ctx = egui::Context::default();
+        crate::theme::apply_to(&ctx, &tokens);
+        let state_id = Id::NULL.with(("pv-thumb-state", pane));
+        let mut run = |ctx: &egui::Context, key: Option<egui::Key>| {
+            let mut input = egui::RawInput::default();
+            if let Some(key) = key {
+                input.events.push(egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            let mut out = ctx.run_ui(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| show(ui, &mut s, pane, &tokens));
+            });
+            out.textures_delta.clear();
+        };
+        run(&ctx, None);
+        run(&ctx, None);
+        run(&ctx, None);
+        assert!(grid_has_keyboard(&ctx), "grid never got focus");
+        run(&ctx, Some(egui::Key::ArrowRight));
+        let cursor = |ctx: &egui::Context| {
+            ctx.data(|d| d.get_temp::<(usize, f32, f32)>(state_id))
+                .map(|t| t.0)
+        };
+        assert_eq!(cursor(&ctx), Some(1));
+        assert!(grid_has_keyboard(&ctx));
+        run(&ctx, Some(egui::Key::PageDown));
+        assert_eq!(cursor(&ctx), Some(3));
+        run(&ctx, Some(egui::Key::Home));
+        assert_eq!(cursor(&ctx), Some(0));
+    }
+
+    #[test]
+    fn a_video_renders_with_controls_in_both_palettes() {
+        let Some(ffmpeg) = fm_preview::video::find_tool("ffmpeg") else {
+            return;
+        };
+        let dir = tempfile::tempdir().expect("tmp");
+        let clip = dir.path().join("clip.mp4");
+        let made = std::process::Command::new(ffmpeg)
+            .args(["-v", "error", "-f", "lavfi", "-i"])
+            .arg("testsrc=size=320x240:rate=25:duration=3")
+            .args(["-pix_fmt", "yuv420p", "-y"])
+            .arg(&clip)
+            .status();
+        if !made.is_ok_and(|s| s.success()) {
+            return;
+        }
+        let mut s = Session::new().expect("session");
+        let uri = VfsUri::parse(&dir.path().to_string_lossy()).expect("uri");
+        let files_pane = s.layout.focused();
+        s.layout
+            .state_mut(files_pane)
+            .expect("pane")
+            .navigate(uri.clone());
+        s.ensure_read(uri).expect("read");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !s.pane_view_ready(files_pane) {
+            assert!(Instant::now() < deadline);
+            s.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        s.dispatch("view.preview.toggle", &json!({})).expect("open");
+        let pane = s
+            .layout
+            .panes()
+            .into_iter()
+            .find(|p| {
+                s.layout
+                    .state(*p)
+                    .is_some_and(|st| st.kind == PaneKind::Preview)
+            })
+            .expect("preview pane");
+        let st = s.layout.state_mut(files_pane).expect("pane");
+        st.listing.on_current = false;
+        st.listing.on_parent = false;
+        st.listing.focused_row = 0;
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            // The first frames report the pane width; the decoder then delivers a frame.
+            let until = Instant::now() + Duration::from_secs(10);
+            loop {
+                frame(&mut s, pane, &tokens);
+                s.poll();
+                if s.preview_slot(pane)
+                    .and_then(|sl| sl.video.as_ref())
+                    .is_some_and(|v| v.frame.is_some())
+                {
+                    break;
+                }
+                assert!(Instant::now() < until, "no video frame");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            frame(&mut s, pane, &tokens);
+        }
+        s.dispatch("preview.video.play", &json!({"on": false, "pane": pane}))
+            .expect("pause");
+        frame(&mut s, pane, &Tokens::dark());
     }
 }

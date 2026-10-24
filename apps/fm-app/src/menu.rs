@@ -38,6 +38,10 @@ pub const PREVIEW_WRAP: &str = "preview.toggle_wrap";
 pub const LOG_FOLLOW: &str = "preview.log.follow";
 pub const LOG_COLUMNS: &str = "preview.log.columns";
 pub const LOG_MARK: &str = "preview.log.mark";
+pub const THUMBS_TOGGLE: &str = "preview.thumbs.toggle";
+pub const THUMBS_SIZE: &str = "preview.thumbs.size";
+pub const THUMBS_CLEAR: &str = "preview.thumbs.clear_cache";
+pub const VIDEO_PLAY: &str = "preview.video.play";
 pub const LOG_EARLIER: &str = "preview.log.earlier";
 pub const TERM_RESTART: &str = "term.restart";
 pub const PANE_FOCUS_NEXT: &str = "pane.focus.next";
@@ -61,6 +65,13 @@ pub const FILE_RENAME: &str = "file.rename";
 pub const FILE_DELETE: &str = "file.delete";
 pub const FILE_DELETE_PERMANENT: &str = "file.delete_permanent";
 pub const EDIT_UNDO: &str = "edit.undo";
+pub const FILE_CLIP_COPY: &str = "file.clip_copy";
+pub const FILE_CLIP_CUT: &str = "file.clip_cut";
+pub const FILE_CLIP_PASTE: &str = "file.clip_paste";
+pub const WS_NEW: &str = "workspace.new";
+pub const WS_CLOSE: &str = "workspace.close";
+pub const WS_SAVE: &str = "workspace.save";
+pub const WS_RENAME: &str = "workspace.rename";
 
 /// Every command id referenced by the menus or the shortcut table.
 /// (Used by the tests and by `cargo xtask brand-check`'s registry cross-check.)
@@ -98,6 +109,10 @@ pub fn all_ids() -> &'static [&'static str] {
         LOG_COLUMNS,
         LOG_MARK,
         LOG_EARLIER,
+        THUMBS_TOGGLE,
+        THUMBS_SIZE,
+        THUMBS_CLEAR,
+        VIDEO_PLAY,
         NAV_UP,
         NAV_BACK,
         NAV_FORWARD,
@@ -118,6 +133,13 @@ pub fn all_ids() -> &'static [&'static str] {
         FILE_DELETE,
         FILE_DELETE_PERMANENT,
         EDIT_UNDO,
+        FILE_CLIP_COPY,
+        FILE_CLIP_CUT,
+        FILE_CLIP_PASTE,
+        WS_NEW,
+        WS_CLOSE,
+        WS_SAVE,
+        WS_RENAME,
     ]
 }
 
@@ -129,6 +151,14 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
         (
             PREFERENCES,
             egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma),
+        ),
+        (
+            WS_NEW,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::T),
+        ),
+        (
+            WS_CLOSE,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::W),
         ),
         (
             QUIT,
@@ -257,6 +287,10 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
             egui::KeyboardShortcut::new(Modifiers::NONE, Key::F8),
         ),
         (
+            FILE_DELETE,
+            egui::KeyboardShortcut::new(Modifiers::NONE, Key::Delete),
+        ),
+        (
             FILE_DELETE_PERMANENT,
             egui::KeyboardShortcut::new(Modifiers::SHIFT, Key::Delete),
         ),
@@ -264,18 +298,105 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
             EDIT_UNDO,
             egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::Z),
         ),
+        // Real windows deliver these as clipboard events instead; see `clipboard_event_ids`.
+        (
+            FILE_CLIP_COPY,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::C),
+        ),
+        (
+            FILE_CLIP_CUT,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::X),
+        ),
+        (
+            FILE_CLIP_PASTE,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::V),
+        ),
     ]
+}
+
+/// Ctrl/Cmd+C, X and V reach egui as clipboard events, never as key presses. Take them out of
+/// the frame's input and map them to the file-clipboard commands (paste carries the OS text).
+fn clipboard_events(ctx: &egui::Context) -> Vec<(&'static str, Option<String>)> {
+    ctx.input_mut(|input| {
+        let mut found = Vec::new();
+        input.events.retain(|event| match event {
+            egui::Event::Copy => {
+                found.push((FILE_CLIP_COPY, None));
+                false
+            }
+            egui::Event::Cut => {
+                found.push((FILE_CLIP_CUT, None));
+                false
+            }
+            egui::Event::Paste(text) => {
+                found.push((FILE_CLIP_PASTE, Some(text.clone())));
+                false
+            }
+            _ => true,
+        });
+        found
+    })
 }
 
 /// Run a command; ids that need input first open their dialog instead. A failure becomes the
 /// visible notice and never crashes the frame.
-fn dispatch(session: &mut Session, dialogs: &mut Dialogs, id: &str) {
+pub(crate) fn dispatch(session: &mut Session, dialogs: &mut Dialogs, id: &str) {
     if let Some(dialog) = dialog_for(id, session) {
         dialogs.request(dialog);
         return;
     }
     if let Err(err) = session.dispatch(id, &Params::Null) {
         session.notice = Some(err.to_string());
+    }
+}
+
+/// Switch / open-saved / delete-saved submenus; the lists are data, so they are not constants.
+fn workspace_lists(ui: &mut egui::Ui, session: &mut Session) {
+    let mut run: Option<(&'static str, serde_json::Value)> = None;
+    let tabs: Vec<String> = session
+        .workspaces
+        .tabs
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+    let saved: Vec<String> = session
+        .workspaces
+        .saved
+        .iter()
+        .map(|w| w.name.clone())
+        .collect();
+    ui.separator();
+    ui.add_enabled_ui(tabs.len() > 1, |ui| {
+        ui.menu_button("Switch to", |ui| {
+            for (ix, name) in tabs.iter().enumerate() {
+                let active = ix == session.workspaces.active;
+                if ui.selectable_label(active, name).clicked() {
+                    run = Some(("workspace.switch", serde_json::json!({ "n": ix + 1 })));
+                    ui.close();
+                }
+            }
+        });
+    });
+    ui.add_enabled_ui(!saved.is_empty(), |ui| {
+        ui.menu_button("Open saved", |ui| {
+            for name in &saved {
+                if ui.button(name).clicked() {
+                    run = Some(("workspace.open", serde_json::json!({ "name": name })));
+                    ui.close();
+                }
+            }
+        });
+        ui.menu_button("Delete saved", |ui| {
+            for name in &saved {
+                if ui.button(name).clicked() {
+                    run = Some(("workspace.delete", serde_json::json!({ "name": name })));
+                    ui.close();
+                }
+            }
+        });
+    });
+    if let Some((id, params)) = run {
+        session.dispatch_or_notice(id, &params);
     }
 }
 
@@ -351,6 +472,10 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
         });
         ui.menu_button("Edit", |ui| {
             item(ui, session, dialogs, EDIT_UNDO);
+            ui.separator();
+            item(ui, session, dialogs, FILE_CLIP_CUT);
+            item(ui, session, dialogs, FILE_CLIP_COPY);
+            item(ui, session, dialogs, FILE_CLIP_PASTE);
         });
         ui.menu_button("Go", |ui| {
             item(ui, session, dialogs, NAV_GOTO);
@@ -359,6 +484,13 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, NAV_BACK);
             item(ui, session, dialogs, NAV_FORWARD);
             item(ui, session, dialogs, NAV_REFRESH);
+        });
+        ui.menu_button("Workspace", |ui| {
+            item(ui, session, dialogs, WS_NEW);
+            item(ui, session, dialogs, WS_RENAME);
+            item(ui, session, dialogs, WS_SAVE);
+            item(ui, session, dialogs, WS_CLOSE);
+            workspace_lists(ui, session);
         });
         ui.menu_button("Panes", |ui| {
             item(ui, session, dialogs, PANE_SPLIT_H);
@@ -395,6 +527,11 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             ui.menu_button("Preview", |ui| {
                 item(ui, session, dialogs, PREVIEW_PRETTY);
                 item(ui, session, dialogs, PREVIEW_WRAP);
+                ui.separator();
+                item(ui, session, dialogs, THUMBS_TOGGLE);
+                item(ui, session, dialogs, THUMBS_SIZE);
+                item(ui, session, dialogs, THUMBS_CLEAR);
+                item(ui, session, dialogs, VIDEO_PLAY);
                 ui.separator();
                 item(ui, session, dialogs, LOG_FOLLOW);
                 item(ui, session, dialogs, LOG_COLUMNS);
@@ -473,6 +610,28 @@ pub fn consume_shortcuts(
             }
         }
     }
+    if !terminal && !typing {
+        for (id, os_text) in clipboard_events(ctx) {
+            match os_text {
+                Some(text) => {
+                    session.dispatch_or_notice(id, &serde_json::json!({ "os_text": text }))
+                }
+                None => session.dispatch_or_notice(id, &serde_json::Value::Null),
+            };
+            fired.push(id);
+        }
+    }
+    if !terminal && !typing && !dialogs.is_open() {
+        use egui::Key::*;
+        let digits = [Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9, Num0];
+        for (ix, key) in digits.into_iter().enumerate() {
+            let sc = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key);
+            if ctx.input_mut(|input| input.consume_shortcut(&sc)) {
+                session.dispatch_or_notice("workspace.switch", &serde_json::json!({ "n": ix + 1 }));
+                fired.push("workspace.switch");
+            }
+        }
+    }
     if terminal {
         let swap = egui::KeyboardShortcut::new(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
@@ -489,6 +648,33 @@ pub fn consume_shortcuts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clipboard_events_become_file_clipboard_commands() {
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            events: vec![
+                egui::Event::Copy,
+                egui::Event::Cut,
+                egui::Event::Paste("/a".into()),
+            ],
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            let ctx = ui.ctx();
+            let found = clipboard_events(ctx);
+            assert_eq!(
+                found,
+                vec![
+                    (FILE_CLIP_COPY, None),
+                    (FILE_CLIP_CUT, None),
+                    (FILE_CLIP_PASTE, Some("/a".to_string())),
+                ]
+            );
+            assert!(clipboard_events(ctx).is_empty(), "events are taken once");
+        });
+        out.textures_delta.clear();
+    }
 
     #[test]
     fn every_menu_and_shortcut_id_is_registered() {
@@ -568,6 +754,7 @@ mod tests {
             Key::M => "M",
             Key::O => "O",
             Key::X => "X",
+            Key::W => "W",
             _ => "?",
         }
     }

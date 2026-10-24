@@ -3,6 +3,7 @@
 //! Widgets take tokens; no widget ever hard-codes a colour.
 
 pub mod arrange;
+pub mod context_menu;
 pub mod dialogs;
 pub mod dnd;
 pub mod jobs;
@@ -14,5 +15,6 @@ pub mod preview;
 pub mod terminal;
 pub mod theme;
 pub mod tree;
+pub mod workspaces;
 
 pub use theme::{Tokens, apply_to};

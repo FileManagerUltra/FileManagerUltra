@@ -246,6 +246,7 @@ UI thread (eframe)                 engine workers                backends
 - **Conflicts** are resolved *during* the job: the worker parks on a decision channel and the UI shows the dialog from `FileOps::pending_conflict()`, answering with `job.resolve_conflict {job, choice, apply_to_all?}`. Cancel (or a dropped channel) resolves as Cancel, so a parked worker is never leaked.
 - **Undo/trash:** delete (F8) moves local entries to the platform trash and records an `UndoRecord` (created / moved / trashed / renamed); `edit.undo` replays it with an actionable error when stale. Remote URIs never fall back to a permanent delete; `file.delete_permanent` needs `confirm: true`. macOS cannot restore from trash (documented).
 - **UI contract:** dialogs and the jobs panel (`fm-ui::dialogs`, `fm-ui::jobs`) only dispatch command ids; dispatch failures surface as `Session::notice` in the status bar.
+- **Thumbnails (`thumbnails-and-open`):** `engine::thumbs::ThumbService` owns its own pool (≤ 4 workers, *not* a job lane — a folder of images must not queue behind file copies) and a per-pane generation counter. The grid reports the visible window (`preview.thumbs.visible`); the engine queues visible entries, then one screenful after and one before, and drops results whose generation is stale. Decoded RGBA lives in a 192 MiB LRU; PNGs go to `<cache>/thumbs` (256 MiB cap, `0600`/`0700`, temp + rename). Only `file://` entries are thumbnailed.
 
 ### Watching
 
@@ -276,7 +277,7 @@ UI thread (eframe)                 engine workers                backends
 | tree background / tree root label | the tree's current root |
 | listing row (directory) | that directory (highlight the row) |
 | listing row (file) | the current directory (i.e. beside the file) |
-| listing background / `..` row | the pane's current directory |
+| listing background / `..` row | the pane's current directory (the `.` row is not a drop target) |
 | another pane's border/chrome | rejected (no drop) |
 
 Guards enforced by `ops` regardless of UI: never drop a directory into itself or a descendant; never overwrite without an explicit conflict decision; never copy a file onto itself (same uri) — silently ignored.
@@ -290,7 +291,7 @@ Guards enforced by `ops` regardless of UI: never drop a directory into itself or
 ## 9. UI architecture (`fm-ui` + `fm-app`)
 
 - **Pane chrome (`fm-ui::pane`):** location bar with focus marker, focus ring (accent stroke on the focused pane), tree/listing split with a drag handle that writes `PaneState::tree_width`; a click inside the pane focuses it. Returns an "open" request; the shell dispatches `nav.open`.
-- **Listing (`fm-ui::listing`):** fixed row height + `ScrollArea::show_rows` (virtualized) so 200 000 rows cost one screenful of widgets; columns name/size/mtime/type with header-click sort (dispatched into the engine's per-pane view index, never a re-read); `..` row; click/ctrl/shift selection; keyboard (arrows/Home/End/Ctrl+A/Enter) on the focused pane; loading / empty / failed (+Ctrl+R hint) states.
+- **Listing (`fm-ui::listing`):** fixed row height + `ScrollArea::show_rows` (virtualized) so 200 000 rows cost one screenful of widgets; columns name/size/mtime/type with header-click sort (dispatched into the engine's per-pane view index, never a re-read); `.` (the pane's own folder) and `..` rows, with navigation leaving the cursor on `.`; click/ctrl/shift selection; keyboard (arrows/Home/End/Ctrl+A/Enter) on the focused pane; loading / empty / failed (+Ctrl+R hint) states.
 - **Tree (`fm-ui::tree`):** lazy — rows are flattened from `DirCache` for expanded nodes only (row cap 10 000); expand on click/Right, collapse Left, Enter opens; loading/error affordances inline; long names ellipsize with a full-path tooltip.
 - **Shell (`fm-app`):** recursive `render_pane_node` walks `PaneNode`; splits lay out two children with a drag handle writing `Layout::set_ratio` (clamped); the status bar shows the focused pane's location, item count, selection count and theme; `Session::poll()` runs once per frame and the startup read is submitted before the first paint.
 - **Shortcut routing:** `fm-app`'s catalogue maps keys → command ids (`Ctrl+Q` quit, `Ctrl+Shift+T` theme toggle, `Tab` pane.swap, `Backspace` nav.up, `Alt+Left/Right` nav.back/forward, `Ctrl+R` nav.refresh, `Ctrl+H` view.hidden.toggle (dot-files hidden by default, session-wide)); every entry must exist in the registry or the crate tests + `brand-check` fail it.
@@ -367,3 +368,15 @@ Change 3 extends `security` with drag & drop and `ops` rules (destination contai
 ### Preview pane (`pane-preview`)
 
 `fm-preview` (L1) turns a `Vfs` entry into a pure `Preview` model (text/structured/markdown/image/hex/dir/log/meta/error): magic-byte sniffing, syntect highlighting mapped to semantic `Class`es, capped reads, `catch_unwind` containment. `engine::preview_cmds` owns a `PreviewHub` of per-pane `PreviewSlot`s: the target is the Files pane's cursor entry (or a pinned pane), changes are debounced (120 ms), rendered on the pane's lane with a 3 s budget, and results come back through an inbox tagged with a token so stale renders are dropped. Log files become a `LogView` over `Arc<RwLock<LogDoc>>`: tail-first 8 MiB window, "Load earlier" chunks (64 MiB cap), filters run as jobs and are accepted only for the matching `rev`, Follow polls every 500 ms and survives truncate/rotation. `fm-ui::preview` only draws; colours come from `Tokens::{syntax, level, status}`. Commands: `view.preview.toggle`, `pane.preview.source`, `preview.{zoom,toggle_wrap,toggle_pretty}`, `preview.log.*`.
+
+### Thumbnails and file activation (`thumbnails-and-open`)
+
+A Preview pane showing a directory can switch to a **thumbnail grid** (`preview.thumbs.*`): `fm-preview::thumbs` classifies entries (images, video posters, name tiles), decodes with the existing caps and resizes with `fast_image_resize`; `engine::thumbs` schedules only the visible window on its own worker pool (see §7) and caches results in memory (192 MiB LRU) and on disk (`<cache>/thumbs`, 256 MiB, owner-only). The grid is local-only and keyboard-navigable; remote folders keep the summary card.
+
+**Activation** is a command path, not a UI shortcut: double-click/Enter calls `open_cmds::plan` (pure, from the cached listing) → `Navigate` / `Launch` / `ConfirmRun`. `file.open {uri, mode?, confirm?}` re-stats the entry, refuses special files and non-local uris, and starts documents via `opener` or programs via a direct detached spawn — never a shell, and never without `confirm: true` (the UI shows the *Run* / *Open as document* / *Cancel* dialog for programs). Listing paging (`PageUp`/`PageDown`) rides the existing move/extend machinery.
+
+Dependencies added: `opener 0.9` (no default features; `xdg-open`-class hand-off on Linux, `ShellExecuteW`, `NSWorkspace`) and `fast_image_resize 6` (pure Rust, runtime SIMD). Neither needs system libraries or a C toolchain at build time. `fm-preview` is pinned to `opt-level = 3` in dev profiles because decode/resize generics are inlined into it.
+
+### Workspace tabs (`workspaces`)
+
+`Session::layout` is the active tab's layout; inactive tabs park theirs in `Tab.layout` (`engine::workspace`). Each tab gets a disjoint pane-id range so terminals, previews and view indexes of background tabs stay valid. Up to 10 workspaces persist in `workspaces.json` (owner-only, atomic, no secrets); the engine does no I/O: `workspace_tick()` returns the JSON and `fm-app` writes it (~1 s, and on exit). Commands: `workspace.*`.

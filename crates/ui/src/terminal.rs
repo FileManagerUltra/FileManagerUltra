@@ -147,6 +147,12 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused
 
     let cols = ((rect.width() - 2.0 * PAD) / m.cw).floor().max(2.0) as u16;
     let rows = ((rect.height() - 2.0 * PAD) / m.ch).floor().max(2.0) as u16;
+    // Restored workspaces carry terminal panes without a shell; start it on first render.
+    if s.terminal(pane).is_none()
+        && let Err(err) = s.ensure_terminal(pane)
+    {
+        s.notice = Some(err.to_string());
+    }
     s.terminal_resize(pane, rows, cols);
 
     let Some(snap) = s.terminal_snapshot(pane) else {

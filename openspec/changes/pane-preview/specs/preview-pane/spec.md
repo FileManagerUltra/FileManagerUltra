@@ -52,14 +52,14 @@ Previews SHALL enforce size, line, dimension, frame and time limits, check image
 - **THEN** the pane shows "the file could not be previewed" and the app keeps running
 
 ### Requirement: Video playback is owned by the pane
-A Preview pane SHALL play at most one video, controllable with play/pause and seek; leaving the file, switching the pane kind or closing the pane SHALL stop it and end the decoder process. Without a decoder available the pane SHALL show metadata and a hint instead.
+A Preview pane SHALL play at most one video (silently; audio output is out of scope for now), starting automatically, controllable with play/pause and seek, decoded at a size fitted to the pane; leaving the file, switching the pane kind or closing the pane SHALL stop it and end the decoder process. Without a decoder available the pane SHALL show metadata and a hint instead.
 
 #### Scenario: Pane closed while playing
 - **WHEN** a Preview pane is closed during playback
 - **THEN** the decoder child process no longer exists
 
 ### Requirement: Preview commands
-`pane.preview.source`, `preview.zoom`, `preview.toggle_wrap`, `preview.toggle_pretty` and `preview.video.toggle` SHALL be commands with ids, menu paths and bad-parameter tests; they are no-ops unless the focused pane is a Preview.
+`pane.preview.source`, `preview.zoom`, `preview.toggle_wrap`, `preview.toggle_pretty` and `preview.video.play`, `preview.video.seek` and `preview.video.fit` SHALL be commands with ids, menu paths and bad-parameter tests; they are no-ops unless the focused pane is a Preview.
 
 #### Scenario: Bad source
 - **WHEN** `pane.preview.source` is given a pane that is not a Files pane

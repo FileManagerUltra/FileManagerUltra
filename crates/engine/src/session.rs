@@ -40,7 +40,18 @@ pub struct Session {
     pub registry: Registry,
     pub prefs: Prefs,
     pub jobs: JobQueue,
+    /// The active workspace tab's layout; inactive tabs park theirs in `workspaces`.
     pub layout: Layout,
+    /// Open workspace tabs and the saved set (capability `workspaces`).
+    pub workspaces: crate::workspace::Workspaces,
+    /// Raised when quitting or closing a tab would lose unsaved workspace changes.
+    pub unsaved_prompt: Option<crate::workspace::UnsavedPrompt>,
+    /// The focused thumbnail grid's selection, published by the UI each frame.
+    pub grid_selection: Option<crate::file_cmds::GridSelection>,
+    /// Files cut or copied for a later paste.
+    pub clipboard: Option<crate::clipboard_cmds::Clipboard>,
+    /// Text for the app to put on the OS clipboard (taken once per frame).
+    pub clipboard_outbox: Option<String>,
     /// `app.quit` flips this; the eframe loop stops on it.
     pub running: bool,
     /// Last command failure the user should see (status bar); the UI clears it.
@@ -59,6 +70,8 @@ pub struct Session {
     pub terminal_selection: Option<crate::term_cmds::TermSelection>,
     /// Preview pane contents and their background jobs (capability `preview-pane`).
     pub previews: crate::preview_cmds::PreviewHub,
+    /// Thumbnails for directory previews (own worker pool, memory + disk cache).
+    pub thumbs: crate::thumbs::ThumbService,
     /// Text a command wants on the system clipboard; the app shell drains it.
     pub clipboard_out: Option<String>,
     /// A pane-type switch waiting for the user to confirm ending a running terminal job.
@@ -87,11 +100,17 @@ pub struct Session {
 
 impl Default for Session {
     fn default() -> Self {
+        let first_layout = Layout::single(VfsUri::root_file());
         Self {
             registry: Registry::new(),
             prefs: Prefs::default(),
             jobs: JobQueue::new(),
-            layout: Layout::single(VfsUri::root_file()),
+            layout: first_layout.clone(),
+            workspaces: crate::workspace::Workspaces::new(&first_layout),
+            unsaved_prompt: None,
+            grid_selection: None,
+            clipboard: None,
+            clipboard_outbox: None,
             running: true,
             notice: None,
             show_hidden: false,
@@ -101,6 +120,7 @@ impl Default for Session {
             terminals: HashMap::new(),
             terminal_selection: None,
             previews: Default::default(),
+            thumbs: Default::default(),
             clipboard_out: None,
             pending_kind: None,
             about_open: false,
@@ -202,6 +222,7 @@ impl Session {
             self.reads.remove(&old);
         }
         self.dirs.invalidate(&uri);
+        self.dir_changed(&uri);
         self.submit_read(uri)
     }
 
@@ -209,6 +230,7 @@ impl Session {
     pub fn is_busy(&self) -> bool {
         !self.inflight.is_empty()
             || self.previews.is_busy()
+            || self.thumbs.is_busy()
             || self.fileops.jobs().iter().any(|j| j.state.is_running())
     }
 

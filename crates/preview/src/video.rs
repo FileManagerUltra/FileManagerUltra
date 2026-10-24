@@ -29,13 +29,13 @@ pub fn find_tool(tool: &str) -> Option<PathBuf> {
 }
 
 /// A path that can never be read as an option or smuggle a protocol.
-fn safe_path(path: &str) -> bool {
+pub(crate) fn safe_path(path: &str) -> bool {
     let absolute =
         path.starts_with('/') || path.get(1..3) == Some(":\\") || path.starts_with("\\\\");
     absolute && !path.contains('\0')
 }
 
-fn command(tool: &Path) -> Command {
+pub(crate) fn command(tool: &Path) -> Command {
     let mut c = Command::new(tool);
     c.stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -76,6 +76,8 @@ fn run(mut cmd: Command, timeout: Duration, max: u64) -> Option<Vec<u8>> {
 struct Probe {
     rows: Vec<(String, String)>,
     duration: Option<f64>,
+    /// Width, height and frame rate of the first video stream.
+    video: Option<(u32, u32, f64)>,
 }
 
 fn probe(ffprobe: &Path, path: &str) -> Option<Probe> {
@@ -102,6 +104,7 @@ fn parse_probe(raw: &[u8]) -> Option<Probe> {
         |o: &serde_json::Value, k: &str| o.get(k).and_then(|x| x.as_str()).map(str::to_string);
     let mut rows = Vec::new();
     let mut duration = None;
+    let mut video = None;
     if let Some(f) = v.get("format") {
         if let Some(n) = text(f, "format_long_name") {
             rows.push(("Container".to_string(), n));
@@ -128,10 +131,19 @@ fn parse_probe(raw: &[u8]) -> Option<Probe> {
                     (Some(w), Some(h)) => format!(" · {w}×{h}"),
                     _ => String::new(),
                 };
-                let fps = text(s, "avg_frame_rate")
-                    .and_then(|r| frame_rate(&r))
-                    .map(|f| format!(" · {f:.2} fps"))
-                    .unwrap_or_default();
+                let rate = text(s, "avg_frame_rate").and_then(|r| frame_rate(&r));
+                if video.is_none()
+                    && let (Some(w), Some(h)) = (
+                        s.get("width").and_then(|x| x.as_u64()),
+                        s.get("height").and_then(|x| x.as_u64()),
+                    )
+                    && let (Ok(w), Ok(h)) = (u32::try_from(w), u32::try_from(h))
+                    && (1..=16_384).contains(&w)
+                    && (1..=16_384).contains(&h)
+                {
+                    video = Some((w, h, rate.unwrap_or(25.0).min(120.0)));
+                }
+                let fps = rate.map(|f| format!(" · {f:.2} fps")).unwrap_or_default();
                 rows.push(("Video".to_string(), format!("{codec}{size}{fps}")));
             }
             Some("audio") => {
@@ -149,7 +161,11 @@ fn parse_probe(raw: &[u8]) -> Option<Probe> {
             _ => {}
         }
     }
-    Some(Probe { rows, duration })
+    Some(Probe {
+        rows,
+        duration,
+        video,
+    })
 }
 
 fn frame_rate(r: &str) -> Option<f64> {
@@ -163,7 +179,14 @@ fn clock(secs: f64) -> String {
     format!("{}:{:02}:{:02}", t / 3600, t / 60 % 60, t % 60)
 }
 
-fn poster(ffmpeg: &Path, path: &str, at: f64, entry: &Entry, limits: &Limits) -> Option<ImageDoc> {
+fn poster(
+    ffmpeg: &Path,
+    path: &str,
+    at: f64,
+    width: u32,
+    entry: &Entry,
+    limits: &Limits,
+) -> Option<ImageDoc> {
     let mut c = command(ffmpeg);
     c.args([
         "-v",
@@ -176,22 +199,36 @@ fn poster(ffmpeg: &Path, path: &str, at: f64, entry: &Entry, limits: &Limits) ->
     .arg(format!("{at:.3}"))
     .arg("-i")
     .arg(path)
-    .args([
-        "-frames:v",
-        "1",
-        "-vf",
-        "scale='min(1280,iw)':-2",
-        "-f",
-        "image2pipe",
-        "-c:v",
-        "png",
-        "-",
-    ]);
+    .args(["-frames:v", "1", "-vf"])
+    .arg(format!("scale='min({width},iw)':-2"))
+    .args(["-f", "image2pipe", "-c:v", "png", "-"]);
     let png = run(c, POSTER_TIMEOUT, POSTER_BYTES)?;
     match image_prev::decode(entry, &png, limits) {
         Preview::Image(doc) => Some(doc),
         _ => None,
     }
+}
+
+/// A small still of a local video for directory thumbnails; `None` without ffmpeg.
+pub fn thumbnail(entry: &Entry, edge: u32) -> Option<ImageDoc> {
+    let path = entry.uri.path_str();
+    if entry.uri.scheme() != Scheme::File || !entry.uri.authority().is_local() || !safe_path(path) {
+        return None;
+    }
+    static TOOLS: std::sync::OnceLock<(Option<PathBuf>, Option<PathBuf>)> =
+        std::sync::OnceLock::new();
+    let (ffmpeg, ffprobe) = TOOLS.get_or_init(|| (find_tool("ffmpeg"), find_tool("ffprobe")));
+    let ffmpeg = ffmpeg.as_ref()?;
+    let duration = ffprobe
+        .as_ref()
+        .and_then(|p| probe(p, path))
+        .and_then(|p| p.duration);
+    let at = duration.map_or(0.0, |d| (d * 0.1).min(10.0));
+    let limits = Limits {
+        image_edge: edge,
+        ..Limits::default()
+    };
+    poster(ffmpeg, path, at, edge, entry, &limits)
 }
 
 pub fn render(entry: &Entry, limits: &Limits) -> Preview {
@@ -203,6 +240,7 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
             rows,
             hint: Some("Video previews need a local file; copy it locally to preview.".into()),
             poster: None,
+            video: None,
         });
     }
     let (Some(ffprobe), Some(ffmpeg)) = (find_tool("ffprobe"), find_tool("ffmpeg")) else {
@@ -210,6 +248,7 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
             rows,
             hint: Some("Install ffmpeg (ffprobe + ffmpeg on PATH) to see video details and a poster frame.".into()),
             poster: None,
+            video: None,
         });
     };
     if !safe_path(path) {
@@ -217,6 +256,7 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
             rows,
             hint: Some("This path cannot be passed safely to ffmpeg.".into()),
             poster: None,
+            video: None,
         });
     }
     let info = probe(&ffprobe, path);
@@ -231,10 +271,21 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
         }
         None => Some("ffprobe could not read this file.".to_string()),
     };
+    let video = info.as_ref().and_then(|p| {
+        let (width, height, fps) = p.video?;
+        Some(crate::VideoInfo {
+            path: path.to_string(),
+            width,
+            height,
+            fps,
+            duration: p.duration.unwrap_or(0.0),
+        })
+    });
     Preview::Meta(MetaDoc {
         rows,
         hint,
-        poster: poster(&ffmpeg, path, at, entry, limits).map(Box::new),
+        poster: poster(&ffmpeg, path, at, 1280, entry, limits).map(Box::new),
+        video,
     })
 }
 

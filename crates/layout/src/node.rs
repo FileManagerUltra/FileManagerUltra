@@ -49,7 +49,7 @@ impl Edge {
 }
 
 /// The pane tree.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PaneNode {
     Leaf(PaneId),
     Split {
@@ -90,6 +90,22 @@ impl PaneNode {
         }
     }
 
+    /// Rewrite every leaf id through `map`; ids absent from the map are left alone.
+    pub(crate) fn relabel(&mut self, map: &std::collections::BTreeMap<PaneId, PaneId>) {
+        match self {
+            Self::Leaf(id) => {
+                if let Some(n) = map.get(id) {
+                    *id = *n;
+                }
+            }
+            Self::Split { a, b, ratio, .. } => {
+                *ratio = clamp_ratio(*ratio);
+                a.relabel(map);
+                b.relabel(map);
+            }
+        }
+    }
+
     pub fn contains(&self, id: PaneId) -> bool {
         match self {
             Self::Leaf(me) => *me == id,
@@ -109,6 +125,38 @@ impl PaneNode {
                     true
                 } else {
                     a.set_ratio(handle, ratio) || b.set_ratio(handle, ratio)
+                }
+            }
+        }
+    }
+
+    /// The split whose first-leaf pair is `(a_first, b_first)`. Unlike a handle named by its
+    /// first leaf alone, this is unique: nested splits share the same first leaf.
+    pub fn set_ratio_at(&mut self, a_first: PaneId, b_first: PaneId, ratio: f32) -> bool {
+        match self {
+            Self::Leaf(_) => false,
+            Self::Split { a, b, ratio: r, .. } => {
+                if a.panes().first() == Some(&a_first) && b.panes().first() == Some(&b_first) {
+                    *r = clamp_ratio(ratio);
+                    true
+                } else {
+                    a.set_ratio_at(a_first, b_first, ratio)
+                        || b.set_ratio_at(a_first, b_first, ratio)
+                }
+            }
+        }
+    }
+
+    pub fn equal_ratio_at(&self, a_first: PaneId, b_first: PaneId) -> Option<f32> {
+        match self {
+            Self::Leaf(_) => None,
+            Self::Split { axis, a, b, .. } => {
+                if a.panes().first() == Some(&a_first) && b.panes().first() == Some(&b_first) {
+                    let (sa, sb) = (a.span(*axis), b.span(*axis));
+                    Some(clamp_ratio(sa as f32 / (sa + sb).max(1) as f32))
+                } else {
+                    a.equal_ratio_at(a_first, b_first)
+                        .or_else(|| b.equal_ratio_at(a_first, b_first))
                 }
             }
         }

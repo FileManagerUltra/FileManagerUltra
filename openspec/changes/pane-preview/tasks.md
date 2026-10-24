@@ -29,7 +29,7 @@
 - [x] 3.2 `fm-ui::preview`: text with line numbers/wrap, structured, markdown, image with fit/zoom/pan + animation, meta card, hex, directory card, error card
 - [x] 3.3 "Pretty" toggle button in the preview header (JSON/YAML/TOML/XML only; disabled + tooltip when invalid/too large)
 - [x] 3.5 Header source picker (Follow focus / pane list); type switcher entry
-- [ ] 3.4 Snapshots: text, image, error card in dark and light
+- [x] 3.4 Snapshots: text, image, error card in dark and light
 
 ## 4. App wiring
 
@@ -39,12 +39,12 @@
 ## 5. Video
 
 - [x] 5.1 `fm-preview::video`: locate ffmpeg/ffprobe, probe metadata, poster frame; absent → hint card
-- [ ] 5.2 (deferred: poster + metadata only for now) Playback: rawvideo/s16le pipes, frame pump with byte budget, play/pause/seek, kill on leave/close/quit; audio output (rodio) behind feature
+- [x] 5.2 Playback: `fm-preview::player` (ffmpeg rawvideo RGBA pipe paced with `-re`, newest-frame-only reader, kill on drop), `engine::video_cmds` (`preview.video.play/seek/fit`, autoplay once the UI reports its width, decode width fitted to the pane in 64 px steps up to 1280), `fm-ui` frame + Play/Pause + seek bar. Video only: audio output (rodio) is not built
 - [x] 5.3 Sidecar/PATH/Homebrew discovery order, `CREATE_NO_WINDOW` (audio feature deferred with 5.2)
 - [x] 5.4 Hostile argument tests; hung child is killed; real-video test (skips without ffmpeg)
 
 ## 6. Docs and gate
 
 - [x] 6.1 `docs/architecture.md` (preview data flow, limits), `docs/development.md` smoke list, roadmap
-- [ ] 6.2 Dependency audit: every new crate builds on Linux/Windows/macOS with no system libs (record in design); CI matrix item added or tracked in roadmap
+- [x] 6.2 Dependency audit: every new crate builds on Linux/Windows/macOS with no system libs (record in design); CI matrix item added or tracked in roadmap
 - [ ] 6.3 `cargo xtask ci` green; user smoke; `log/devlog.md` entry

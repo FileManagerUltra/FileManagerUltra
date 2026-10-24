@@ -8,6 +8,7 @@
 pub mod app_cmds;
 pub mod arrange_cmds;
 pub mod backends;
+pub mod clipboard_cmds;
 pub mod commands;
 pub mod dircache;
 pub mod dnd_cmds;
@@ -17,6 +18,7 @@ pub mod goto_cmds;
 pub mod job_cmds;
 pub mod jobs;
 pub mod nav_cmds;
+pub mod open_cmds;
 pub mod pane_cmds;
 pub mod pane_kind_cmds;
 pub mod prefs;
@@ -27,7 +29,12 @@ pub mod session;
 pub mod sort_cmds;
 pub mod term_cmds;
 pub mod theme_cmds;
+pub mod thumb_cmds;
+pub mod thumbs;
+pub mod video_cmds;
 pub mod view_cmds;
+pub mod workspace;
+pub mod workspace_cmds;
 
 pub use backends::{VfsRegistry, lane_for};
 pub use dircache::{DirCache, DirState, ReadOutcome};

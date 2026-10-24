@@ -13,3 +13,6 @@ workspace = true
 [dependencies]
 fm-vfs.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

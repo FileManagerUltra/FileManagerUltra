@@ -28,6 +28,16 @@ pub enum Dialog {
     ConfirmDelete {
         sources: Vec<VfsUri>,
     },
+    /// Rename a workspace tab (0-based position).
+    RenameWorkspace {
+        tab: usize,
+        name: String,
+    },
+    /// Double-clicked program: run it, open it as a document, or do nothing.
+    ConfirmRun {
+        uri: VfsUri,
+        name: String,
+    },
     /// Copy/move with no other pane to take as destination.
     Destination {
         command: &'static str,
@@ -46,21 +56,28 @@ pub struct Dialogs {
 /// The dialog a command needs before it can run, if any. The app calls this for shortcuts and
 /// menu items; `None` means dispatch the command directly.
 pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
-    let pane = s.layout.state(s.layout.focused())?;
+    if id == "workspace.rename" {
+        let tab = s.workspaces.active;
+        return Some(Dialog::RenameWorkspace {
+            tab,
+            name: s.workspaces.tabs.get(tab)?.name.clone(),
+        });
+    }
+    let dir = file_cmds::focused_dir(s)?;
     let selection = file_cmds::focused_selection(s);
     match id {
         "file.mkdir" => Some(Dialog::Mkdir {
-            dir: pane.location.clone(),
+            dir: dir.clone(),
             name: String::new(),
         }),
         "file.newfile" => Some(Dialog::NewFile {
-            dir: pane.location.clone(),
+            dir: dir.clone(),
             name: String::new(),
         }),
         "file.rename" if selection.len() == 1 => {
             let current = selection.first()?.file_name()?.to_string();
             Some(Dialog::Rename {
-                dir: pane.location.clone(),
+                dir: dir.clone(),
                 name: current.clone(),
                 current,
             })
@@ -79,7 +96,7 @@ pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
                     "file.move"
                 },
                 sources: selection,
-                dest: pane.location.to_string(),
+                dest: dir.to_string(),
             })
         }
         _ => None,
@@ -100,6 +117,7 @@ impl Dialogs {
     pub fn show(&mut self, ctx: &Context, s: &mut Session, tokens: &Tokens) {
         conflict_dialog(ctx, s, tokens);
         kind_switch_dialog(ctx, s, tokens);
+        unsaved_dialog(ctx, s, tokens);
         let Some(mut dialog) = self.open.take() else {
             return;
         };
@@ -150,6 +168,22 @@ impl Dialogs {
                     !(cancel || esc)
                 }
             }
+            Dialog::RenameWorkspace { tab, name } => {
+                let verdict = fm_engine::workspace::clean_name(name)
+                    .map(|_| ())
+                    .map_err(|_| "1-40 characters, no control characters".to_string());
+                let (go, cancel) =
+                    name_dialog(ctx, tokens, "Rename workspace", name, &verdict, focus);
+                if (go || enter) && verdict.is_ok() {
+                    s.dispatch_or_notice(
+                        "workspace.rename",
+                        &json!({"tab": *tab, "name": name.as_str()}),
+                    );
+                    false
+                } else {
+                    !(cancel || esc)
+                }
+            }
             Dialog::ConfirmDelete { sources } => {
                 let (go, cancel) = confirm_delete(ctx, tokens, sources.len());
                 if go {
@@ -161,6 +195,24 @@ impl Dialogs {
                     false
                 } else {
                     !(cancel || esc)
+                }
+            }
+            Dialog::ConfirmRun { uri, name } => {
+                let (choice, cancel) = confirm_run(ctx, tokens, name);
+                let uri_s = uri.path_str().to_string();
+                match choice {
+                    Some(run) => {
+                        s.dispatch_or_notice(
+                            "file.open",
+                            &json!({
+                                "uri": uri_s,
+                                "mode": if run { "run" } else { "default" },
+                                "confirm": true,
+                            }),
+                        );
+                        false
+                    }
+                    None => !(cancel || esc),
                 }
             }
             Dialog::Destination {
@@ -250,6 +302,65 @@ fn name_dialog(
     (go, cancel)
 }
 
+/// Quitting or closing a workspace tab that has changes the user has not saved.
+fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    let Some(prompt) = s.unsaved_prompt.clone() else {
+        return;
+    };
+    let quitting = prompt.after == fm_engine::workspace::AfterPrompt::Quit;
+    let mut choice: Option<&str> = None;
+    egui::Window::new("Unsaved workspace changes")
+        .id(Id::NULL.with("fm-unsaved-workspaces"))
+        .collapsible(false)
+        .movable(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .frame(frame(tokens))
+        .show(ctx, |ui| {
+            let noun = if prompt.names.len() == 1 {
+                "workspace has"
+            } else {
+                "workspaces have"
+            };
+            ui.label(
+                RichText::new(format!("These {noun} unsaved changes:"))
+                    .color(tokens.text)
+                    .font(tokens.font()),
+            );
+            for name in &prompt.names {
+                ui.label(RichText::new(format!("  {name}")).color(tokens.warning));
+            }
+            ui.horizontal(|ui| {
+                if ui.button("Save").clicked() {
+                    choice = Some("save");
+                }
+                if ui
+                    .button(if quitting {
+                        "Quit without saving"
+                    } else {
+                        "Close without saving"
+                    })
+                    .clicked()
+                {
+                    choice = Some("discard");
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some("cancel");
+                }
+            });
+        });
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        choice = Some("cancel");
+    }
+    if let Some(choice) = choice {
+        s.dispatch_or_notice("workspace.prompt", &json!({ "choice": choice }));
+        if s.unsaved_prompt.is_some() && choice == "save" {
+            // Saving failed (the notice says why); do not leave the dialog stuck open.
+            s.unsaved_prompt = None;
+        }
+    }
+}
+
 fn confirm_delete(ctx: &Context, tokens: &Tokens, count: usize) -> (bool, bool) {
     let (mut go, mut cancel) = (false, false);
     egui::Window::new("Delete permanently")
@@ -281,6 +392,42 @@ fn confirm_delete(ctx: &Context, tokens: &Tokens, count: usize) -> (bool, bool) 
             });
         });
     (go, cancel)
+}
+
+/// `Some(true)` = run, `Some(false)` = open with the default application.
+fn confirm_run(ctx: &Context, tokens: &Tokens, name: &str) -> (Option<bool>, bool) {
+    let (mut choice, mut cancel) = (None, false);
+    egui::Window::new("Run program?")
+        .id(Id::NULL.with("fm-confirm-run"))
+        .collapsible(false)
+        .movable(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .frame(frame(tokens))
+        .show(ctx, |ui| {
+            ui.label(
+                RichText::new(format!("\"{name}\" is a program."))
+                    .color(tokens.text)
+                    .font(tokens.font()),
+            );
+            ui.label(
+                RichText::new("Only run programs you trust.")
+                    .color(tokens.warning)
+                    .font(tokens.font()),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("Run").clicked() {
+                    choice = Some(true);
+                }
+                if ui.button("Open as document").clicked() {
+                    choice = Some(false);
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    (choice, cancel)
 }
 
 /// Asks before a pane type switch ends a terminal that is running a command.

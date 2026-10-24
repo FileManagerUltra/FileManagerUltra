@@ -84,7 +84,7 @@ impl PathEdit {
     }
 }
 
-fn home_dir() -> Option<String> {
+pub(crate) fn home_dir() -> Option<String> {
     directories::BaseDirs::new().map(|b| b.home_dir().to_string_lossy().into_owned())
 }
 

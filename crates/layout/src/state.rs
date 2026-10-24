@@ -182,6 +182,9 @@ pub struct ListingState {
     /// Selected entry **names** (stable across re-reads of the same directory).
     selection: BTreeSet<String>,
     pub focused_row: usize,
+    /// The cursor is on the `.` row: the pane's own folder, which has no entry.
+    #[serde(default)]
+    pub on_current: bool,
     /// The cursor is on the `..` row (it is not an entry, so it has no `focused_row`).
     pub on_parent: bool,
     pub scroll: f32,
@@ -193,6 +196,7 @@ impl Default for ListingState {
             sort: SortSpec::default(),
             selection: BTreeSet::new(),
             focused_row: 0,
+            on_current: false,
             on_parent: false,
             scroll: 0.0,
         }
@@ -215,6 +219,7 @@ impl ListingState {
     /// Clear the selection and select `name` (if any), focusing its row.
     pub fn select_only(&mut self, name: Option<&str>, row: usize) {
         self.selection.clear();
+        self.on_current = false;
         self.on_parent = false;
         if let Some(name) = name {
             self.selection.insert(name.to_string());
@@ -224,6 +229,7 @@ impl ListingState {
 
     /// Ctrl-style: toggle `name`, move focus to its row.
     pub fn toggle(&mut self, name: &str, row: usize) {
+        self.on_current = false;
         self.on_parent = false;
         if !self.selection.remove(name) {
             self.selection.insert(name.to_string());
@@ -235,6 +241,7 @@ impl ListingState {
     /// (inclusive) in the given display order, replacing the selection.
     pub fn extend_to(&mut self, order: &[String], row: usize) {
         self.selection.clear();
+        self.on_current = false;
         self.on_parent = false;
         if order.is_empty() {
             self.focused_row = 0;
@@ -251,6 +258,7 @@ impl ListingState {
 
     /// Select every name in `order` (Ctrl+A).
     pub fn select_all(&mut self, order: &[String]) {
+        self.on_current = false;
         self.on_parent = false;
         self.selection = order.iter().cloned().collect();
     }
@@ -262,37 +270,67 @@ impl ListingState {
 
     pub fn clear_selection(&mut self) {
         self.selection.clear();
+        self.on_current = false;
+        self.on_parent = false;
+    }
+
+    /// Put the cursor on the `.` row (nothing selected): the pane's own folder.
+    pub fn focus_current(&mut self) {
+        self.selection.clear();
+        self.focused_row = 0;
+        self.on_current = true;
         self.on_parent = false;
     }
 
     /// Put the cursor on the `..` row (nothing selected).
     pub fn focus_parent(&mut self) {
         self.selection.clear();
+        self.focused_row = 0;
+        self.on_current = false;
         self.on_parent = true;
     }
 
-    /// `move_focus` for a listing that shows a `..` row above the entries: Up from the first
-    /// entry (or Home) lands on `..`, Down from `..` returns to the first entry.
-    pub fn move_focus_with_parent(
+    /// `move_focus` for a listing that shows special rows above the entries: Up from the
+    /// first entry lands on `..` (when present) and then on `.`; Home lands on `.`; Down
+    /// walks back. Extending never includes a special row.
+    pub fn move_focus_with_specials(
         &mut self,
         order: &[String],
         delta: isize,
         extend: bool,
+        has_current: bool,
         has_parent: bool,
     ) {
+        if self.on_current {
+            if delta > 0 {
+                if has_parent {
+                    self.focus_parent();
+                } else if !order.is_empty() {
+                    self.select_only(order.first().map(String::as_str), 0);
+                }
+            }
+            return;
+        }
         if self.on_parent {
+            if delta < 0 && has_current {
+                self.focus_current();
+                return;
+            }
             if delta > 0 && !order.is_empty() {
                 self.select_only(order.first().map(String::as_str), 0);
             }
             return;
         }
-        if has_parent
-            && delta < 0
-            && !extend
-            && self.focused_row.min(order.len().saturating_sub(1)) == 0
-        {
-            self.focus_parent();
-            return;
+        let at_top = self.focused_row.min(order.len().saturating_sub(1)) == 0;
+        if delta < 0 && !extend && at_top {
+            if has_parent {
+                self.focus_parent();
+                return;
+            }
+            if has_current {
+                self.focus_current();
+                return;
+            }
         }
         self.move_focus(order, delta, extend);
     }
@@ -435,7 +473,7 @@ impl PaneKind {
 }
 
 /// Which Files pane a Preview pane shows the selection of.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PreviewSource {
     /// The most recently focused Files pane.
     #[default]
@@ -445,7 +483,7 @@ pub enum PreviewSource {
 }
 
 /// Everything one pane remembers about its view.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PaneState {
     /// Which body the pane shows; the Files fields below are kept while it is not `Files`.
     pub kind: PaneKind,
@@ -454,11 +492,22 @@ pub struct PaneState {
     pub listing: ListingState,
     pub history: History,
     /// Width of the tree column in px (drag-resized, persisted per pane).
+    #[serde(default = "default_tree_width")]
     pub tree_width: f32,
     /// Widths of the Size, Modified and Type columns in px (drag-resized in the header).
+    #[serde(default = "default_col_widths")]
     pub col_widths: [f32; 3],
     /// Preview panes: which Files pane to show.
+    #[serde(default)]
     pub preview_source: PreviewSource,
+}
+
+fn default_tree_width() -> f32 {
+    DEFAULT_TREE_WIDTH
+}
+
+fn default_col_widths() -> [f32; 3] {
+    DEFAULT_COL_WIDTHS
 }
 
 /// Default tree width in px.
@@ -512,8 +561,7 @@ impl PaneState {
         }
         self.history.push(to.clone());
         self.location = to;
-        self.listing.clear_selection();
-        self.listing.focused_row = 0;
+        self.listing.focus_current();
         self.listing.scroll = 0.0;
         self.reveal_location();
     }
@@ -555,8 +603,7 @@ impl PaneState {
         match self.history.back() {
             Some(loc) => {
                 self.location = loc;
-                self.listing.clear_selection();
-                self.listing.focused_row = 0;
+                self.listing.focus_current();
                 self.reveal_location();
                 true
             }
@@ -569,8 +616,7 @@ impl PaneState {
         match self.history.forward() {
             Some(loc) => {
                 self.location = loc;
-                self.listing.clear_selection();
-                self.listing.focused_row = 0;
+                self.listing.focus_current();
                 self.reveal_location();
                 true
             }
@@ -588,11 +634,13 @@ impl PaneState {
 }
 
 /// Focus bookkeeping layered on the pane tree.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Focus {
     pub focused: PaneId,
+    #[serde(default)]
     pub previous: Option<PaneId>,
     /// The most recently focused Files pane (what a following Preview shows).
+    #[serde(default)]
     pub last_files: Option<PaneId>,
 }
 
@@ -736,27 +784,51 @@ mod tests {
     }
 
     #[test]
-    fn the_parent_row_is_reachable_with_up_and_leaves_with_down() {
+    fn the_special_rows_are_reachable_with_up_and_leave_with_down() {
         let order: Vec<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
         let mut l = ListingState::default();
         l.select_only(Some("a"), 0);
-        l.move_focus_with_parent(&order, -1, false, true);
-        assert!(l.on_parent);
+        // `..` is nearer than `.`, so Up walks entry → `..` → `.`.
+        l.move_focus_with_specials(&order, -1, false, true, true);
+        assert!(l.on_parent && !l.on_current);
         assert_eq!(l.selected_count(), 0);
-        l.move_focus_with_parent(&order, -1, false, true);
-        assert!(l.on_parent);
-        l.move_focus_with_parent(&order, 1, false, true);
-        assert!(!l.on_parent);
+        l.move_focus_with_specials(&order, -1, false, true, true);
+        assert!(l.on_current && !l.on_parent);
+        l.move_focus_with_specials(&order, 1, false, true, true);
+        assert!(l.on_parent && !l.on_current);
+        l.move_focus_with_specials(&order, 1, false, true, true);
+        assert!(!l.on_parent && !l.on_current);
         assert!(l.is_selected("a"));
-        // no parent (filesystem root): Up stays on the first entry
-        l.move_focus_with_parent(&order, -1, false, false);
-        assert!(!l.on_parent);
+        // Without a parent (a root) Down leaves `.` for the first entry.
+        l.focus_current();
+        l.move_focus_with_specials(&order, 1, false, true, false);
+        assert!(!l.on_current && !l.on_parent);
         assert_eq!(l.focused_row, 0);
-        // an empty directory can still reach `..`
+        assert!(l.is_selected("a"));
+        // An empty directory can still reach both rows.
         let mut e = ListingState::default();
-        e.move_focus_with_parent(&[], -1, false, true);
+        e.move_focus_with_specials(&[], -1, false, true, true);
         assert!(e.on_parent);
-        e.move_focus_with_parent(&[], 1, false, true);
+        e.move_focus_with_specials(&[], -1, false, true, true);
+        assert!(e.on_current);
+        e.move_focus_with_specials(&[], 1, false, true, true);
+        assert!(e.on_parent);
+    }
+
+    #[test]
+    fn the_special_rows_never_join_the_selection() {
+        let order: Vec<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+        let mut l = ListingState::default();
+        l.focus_current();
+        l.select_all(&order);
+        assert!(!l.on_current && !l.on_parent);
+        assert_eq!(l.selected_count(), 2);
+        l.focus_parent();
+        l.select_only(Some("b"), 1);
+        assert!(!l.on_parent && !l.on_current);
+        l.focus_current();
+        l.clear_selection();
+        assert!(!l.on_current && !l.on_parent);
     }
 
     #[test]
@@ -914,6 +986,29 @@ mod tests {
     }
 
     #[test]
+    fn history_moves_also_start_on_the_current_folder_row() {
+        let mut p = PaneState::new(uri("/a"));
+        p.navigate(uri("/b"));
+        assert!(p.listing.on_current);
+        p.listing.select_only(Some("x"), 2);
+        assert!(p.go_back());
+        assert_eq!(p.location, uri("/a"));
+        assert!(p.listing.on_current && p.listing.selected_count() == 0);
+        p.listing.select_only(Some("y"), 1);
+        assert!(p.go_forward());
+        assert_eq!(p.location, uri("/b"));
+        assert!(p.listing.on_current && p.listing.selected_count() == 0);
+    }
+
+    #[test]
+    fn an_old_session_file_without_on_current_still_loads() {
+        let json = r#"{"sort":{"key":"Name","dir":"Asc","dirs_first":true},"selection":[],"focused_row":2,"on_parent":false,"scroll":0.0}"#;
+        let l: ListingState = serde_json::from_str(json).expect("deserialize");
+        assert!(!l.on_current);
+        assert_eq!(l.focused_row, 2);
+    }
+
+    #[test]
     fn navigating_makes_the_tree_follow() {
         let mut p = PaneState::new(uri("/"));
         p.navigate(uri("/a/b/c"));
@@ -952,10 +1047,12 @@ mod tests {
         assert_eq!(p.tree.focused.as_ref(), Some(&uri("/work/sub")));
         assert!(!p.can_go_back(), "no duplicate history entry");
 
-        // A real jump still resets selection, focus and scroll.
+        // A real jump still resets selection, focus and scroll, and parks the cursor on `.`
+        // so the folder just opened is what a following Preview shows.
         p.navigate(uri("/elsewhere"));
         assert_eq!(p.listing.selected_count(), 0);
         assert_eq!(p.listing.focused_row, 0);
+        assert!(p.listing.on_current);
         assert_eq!(p.listing.scroll, 0.0);
         assert!(p.can_go_back());
     }

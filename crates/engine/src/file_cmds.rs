@@ -90,8 +90,42 @@ pub fn validate_new_name(
     Ok(())
 }
 
+/// What the thumbnail grid of a focused Preview pane has selected, so the Files pane's
+/// file commands work on it too.
+#[derive(Debug, Clone)]
+pub struct GridSelection {
+    pub pane: fm_layout::PaneId,
+    /// The folder the grid shows (where new items are created).
+    pub dir: VfsUri,
+    pub items: Vec<VfsUri>,
+}
+
+fn focused_grid(s: &Session) -> Option<&GridSelection> {
+    s.grid_selection
+        .as_ref()
+        .filter(|g| g.pane == s.layout.focused())
+}
+
+/// The folder file commands act in: the focused Files pane's, or the focused grid's.
+pub fn focused_dir(s: &Session) -> Option<VfsUri> {
+    if let Some(g) = focused_grid(s) {
+        return Some(g.dir.clone());
+    }
+    s.layout
+        .state(s.layout.focused())
+        .filter(|p| p.kind == fm_layout::PaneKind::Files)
+        .map(|p| p.location.clone())
+}
+
+fn can_create_here(s: &Session) -> bool {
+    s.focused_is_files() || focused_grid(s).is_some()
+}
+
 /// Uris of the focused pane's selected rows.
 pub fn focused_selection(s: &Session) -> Vec<VfsUri> {
+    if let Some(g) = focused_grid(s) {
+        return g.items.clone();
+    }
     let Some(pane) = s
         .layout
         .state(s.layout.focused())
@@ -124,17 +158,15 @@ fn is_files(s: &Session, pane: fm_layout::PaneId) -> bool {
 /// Directory of the most-recently-focused other pane (the copy/move destination).
 pub fn other_pane_dir(s: &Session) -> Option<VfsUri> {
     let focused = s.layout.focused();
+    // A grid shows another pane's folder; copying into that same pane is not "the other pane".
+    let shown = focused_grid(s).and_then(|_| s.layout.preview_target(focused));
+    let usable = |p: &fm_layout::PaneId| *p != focused && Some(*p) != shown && is_files(s, *p);
     let other = s
         .layout
         .focus
         .previous
-        .filter(|p| *p != focused && is_files(s, *p))
-        .or_else(|| {
-            s.layout
-                .panes()
-                .into_iter()
-                .find(|p| *p != focused && is_files(s, *p))
-        })?;
+        .filter(usable)
+        .or_else(|| s.layout.panes().into_iter().find(usable))?;
     s.layout.state(other).map(|st| st.location.clone())
 }
 
@@ -212,17 +244,15 @@ pub fn mkdir() -> CommandSpec {
         menu: &["File", "New Folder"],
         shortcut: Some("F7"),
         params: "name: string, parent?: uri",
-        enabled: |s| s.focused_is_files(),
+        enabled: can_create_here,
         run: |s, params| {
             let map = object(params)?;
             let name = required_name(map)?;
             let parent = match map.and_then(|m| m.get("parent")) {
                 Some(value) => parse_uri(value)?,
-                None => s
-                    .layout
-                    .state(s.layout.focused())
-                    .map(|p| p.location.clone())
-                    .ok_or_else(|| FmError::NotFound("focused pane".to_string()))?,
+                None => {
+                    focused_dir(s).ok_or_else(|| FmError::NotFound("focused pane".to_string()))?
+                }
             };
             s.submit_op(OpRequest::Mkdir { parent, name }).map(|_| ())
         },
@@ -237,17 +267,15 @@ pub fn new_file() -> CommandSpec {
         menu: &["File", "New File"],
         shortcut: Some("Shift+F7"),
         params: "name: string, parent?: uri",
-        enabled: |s| s.focused_is_files(),
+        enabled: can_create_here,
         run: |s, params| {
             let map = object(params)?;
             let name = required_name(map)?;
             let parent = match map.and_then(|m| m.get("parent")) {
                 Some(value) => parse_uri(value)?,
-                None => s
-                    .layout
-                    .state(s.layout.focused())
-                    .map(|p| p.location.clone())
-                    .ok_or_else(|| FmError::NotFound("focused pane".to_string()))?,
+                None => {
+                    focused_dir(s).ok_or_else(|| FmError::NotFound("focused pane".to_string()))?
+                }
             };
             s.submit_op(OpRequest::NewFile { parent, name }).map(|_| ())
         },

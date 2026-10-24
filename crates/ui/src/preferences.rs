@@ -50,6 +50,21 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 s.dispatch_or_notice("prefs.links.retarget", &json!({"value": retarget}));
             }
             ui.add_space(tokens.padding);
+            ui.label(RichText::new("Preview").color(tokens.accent).strong());
+            let mut recursive = s.prefs.recursive_preview;
+            let response = ui
+                .checkbox(&mut recursive, "Recursive folder preview")
+                .on_hover_text(
+                    "A folder in the preview pane counts, and in thumbnail mode lists, \
+                     every file below it. Bounded by entry, depth and time limits; \
+                     links are never followed.",
+                );
+            if response.changed() {
+                s.dispatch_or_notice("prefs.preview.recursive", &json!({"value": recursive}));
+            }
+            ui.add_space(tokens.padding);
+            crate::workspaces::prefs_section(ui, s, tokens);
+            ui.add_space(tokens.padding);
             ui.label(
                 RichText::new("Changes apply to new jobs and are saved on exit.")
                     .color(tokens.text_muted),

@@ -13,7 +13,7 @@ use fm_preview::log::{
     self, FollowUpdate, Level, LogDoc, LogFilter, LogLimits, apply_filter, parse_bound,
 };
 use fm_preview::{Limits, Preview};
-use fm_vfs::{Entry, FmError, Vfs, VfsUri};
+use fm_vfs::{Entry, EntryKind, FmError, Vfs, VfsUri};
 
 use crate::backends::lane_for;
 use crate::file_cmds::object;
@@ -27,7 +27,17 @@ pub const FOLLOW_EVERY: Duration = Duration::from_millis(500);
 /// A render that takes longer is abandoned with an error card.
 pub const RENDER_BUDGET: Duration = Duration::from_secs(15);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Sets its flag on drop, so a replaced or removed slot stops its scan thread.
+#[derive(Debug, Default)]
+pub(crate) struct ScanCancel(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for ScanCancel {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Zoom {
     Fit,
     Actual,
@@ -84,10 +94,10 @@ pub enum Body {
     Log(Box<LogView>),
 }
 
-type Key = (VfsUri, Option<SystemTime>, Option<u64>);
+type Key = (VfsUri, Option<SystemTime>, Option<u64>, bool);
 
-fn key_of(e: &Entry) -> Key {
-    (e.uri.clone(), e.modified, e.size)
+fn key_of(e: &Entry, recursive: bool) -> Key {
+    (e.uri.clone(), e.modified, e.size, recursive)
 }
 
 #[derive(Debug)]
@@ -98,24 +108,42 @@ pub struct PreviewSlot {
     pub pretty: bool,
     pub wrap: bool,
     pub zoom: Zoom,
+    /// Directory thumbnail grid instead of the summary card.
+    pub thumbs: bool,
+    /// Index into [`fm_preview::thumbs::EDGES`].
+    pub thumb_size: usize,
+    /// Entries the grid last asked for: `(first, count)`.
+    pub thumb_window: Option<(usize, usize)>,
+    /// Playback of a video shown by this pane.
+    pub video: Option<crate::video_cmds::VideoState>,
     /// The Files pane being previewed (for the header).
     pub target: Option<PaneId>,
+    /// Something changed inside the previewed folder; re-render it in place.
+    pub stale: bool,
     token: u64,
     key: Option<Key>,
+    /// Stops a running recursive folder scan when the slot moves on or is dropped.
+    scan: Option<ScanCancel>,
     pending: Option<(Entry, Instant)>,
 }
 
 impl PreviewSlot {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             subject: None,
             body: Body::Empty,
             pretty: false,
             wrap: false,
             zoom: Zoom::Fit,
+            thumbs: false,
+            thumb_size: 0,
+            thumb_window: None,
+            video: None,
             target: None,
+            stale: false,
             token: 0,
             key: None,
+            scan: None,
             pending: None,
         }
     }
@@ -207,12 +235,25 @@ pub fn run_budgeted<T: Send + 'static>(
 
 impl Session {
     /// The entry under the cursor of Files pane `pane` (`None` on `..` or when empty).
+    /// On `.` this is the pane's own folder, so a following Preview shows the folder.
     fn cursor_entry(&mut self, pane: PaneId) -> Option<Entry> {
-        let on_parent = self.layout.state(pane)?.listing.on_parent;
+        let (on_current, on_parent, row, location) = {
+            let state = self.layout.state(pane)?;
+            (
+                state.listing.on_current,
+                state.listing.on_parent,
+                state.listing.focused_row,
+                state.location.clone(),
+            )
+        };
         if on_parent {
             return None;
         }
-        let row = self.layout.state(pane)?.listing.focused_row;
+        if on_current {
+            let mut entry = Entry::new(location, EntryKind::Dir);
+            entry.name = ".".to_string();
+            return Some(entry);
+        }
         let (entries, ix) = self.pane_view(pane)?;
         let i = *ix.order.get(row)?;
         entries.get(i as usize).cloned()
@@ -231,7 +272,10 @@ impl Session {
             .collect();
         let mut changed = false;
         let before = self.previews.slots.len();
-        self.previews.slots.retain(|id, _| previews.contains(id));
+        let parked = crate::workspace::background_panes(&self.workspaces);
+        self.previews
+            .slots
+            .retain(|id, _| previews.contains(id) || parked.contains(id));
         changed |= before != self.previews.slots.len();
         let now = Instant::now();
         for pane in previews {
@@ -246,11 +290,32 @@ impl Session {
             changed |= self.advance_slot(pane, desired, now);
         }
         changed |= self.drain_previews();
+        changed |= self.thumbs.take_changed();
+        changed |= self.video_tick();
         changed
+    }
+
+    /// `dir` changed on disk: folder previews showing it (or a folder above it, when
+    /// recursive) re-render in place without flashing a spinner.
+    pub(crate) fn dir_changed(&mut self, dir: &VfsUri) {
+        for slot in self.previews.slots.values_mut() {
+            let Some(subject) = slot.subject.as_ref().filter(|e| e.is_dir_like()) else {
+                continue;
+            };
+            let mut at = Some(dir.clone());
+            while let Some(d) = at {
+                if d == subject.uri {
+                    slot.stale = true;
+                    break;
+                }
+                at = d.parent();
+            }
+        }
     }
 
     fn advance_slot(&mut self, pane: PaneId, desired: Option<Entry>, now: Instant) -> bool {
         let mut changed = false;
+        let recursive = self.prefs.recursive_preview;
         let Some(slot) = self.previews.slots.get_mut(&pane) else {
             return false;
         };
@@ -258,21 +323,30 @@ impl Session {
             None => {
                 if slot.key.is_some() || slot.pending.is_some() {
                     slot.key = None;
+                    slot.scan = None;
                     slot.pending = None;
                     slot.subject = None;
                     slot.body = Body::Empty;
                     slot.pretty = false;
+                    slot.thumb_window = None;
                     self.previews.token();
                     changed = true;
                 }
             }
             Some(e) => {
+                let same_subject = slot.subject.as_ref().is_some_and(|s| s.uri == e.uri);
                 let same_log =
                     slot.log().is_some() && slot.subject.as_ref().is_some_and(|s| s.uri == e.uri);
-                if slot.key.as_ref() == Some(&key_of(&e)) || same_log {
+                if slot.stale && same_subject && slot.pending.is_none() {
+                    slot.pending = Some((e, now));
+                } else if slot.key.as_ref() == Some(&key_of(&e, recursive)) || same_log {
                     slot.pending = None;
-                } else if slot.pending.as_ref().map(|(p, _)| key_of(p)) != Some(key_of(&e)) {
+                } else if slot.pending.as_ref().map(|(p, _)| key_of(p, recursive))
+                    != Some(key_of(&e, recursive))
+                {
                     slot.pending = Some((e, now + DEBOUNCE));
+                    // The cursor moved on: stop the old folder scan right away.
+                    slot.scan = None;
                 }
             }
         }
@@ -291,19 +365,27 @@ impl Session {
 
     fn start_render(&mut self, pane: PaneId) -> bool {
         let token = self.previews.token();
+        let recursive = self.prefs.recursive_preview;
         let Some(slot) = self.previews.slots.get_mut(&pane) else {
             return false;
         };
         let Some((entry, _)) = slot.pending.take() else {
             return false;
         };
+        let refresh = slot.stale && slot.subject.as_ref().is_some_and(|s| s.uri == entry.uri);
+        slot.stale = false;
         if slot.subject.as_ref().is_none_or(|s| s.uri != entry.uri) {
             slot.pretty = false;
+            slot.thumb_window = None;
+            self.thumbs.cancel(pane);
         }
         slot.token = token;
-        slot.key = Some(key_of(&entry));
+        slot.scan = None;
+        slot.key = Some(key_of(&entry, recursive));
         slot.subject = Some(entry.clone());
-        slot.body = Body::Loading;
+        if !refresh {
+            slot.body = Body::Loading;
+        }
         let vfs = match self.backends.require(&entry.uri) {
             Ok(v) => v,
             Err(e) => {
@@ -312,8 +394,63 @@ impl Session {
             }
         };
         let inbox = self.previews.inbox.clone();
+        if recursive && entry.is_dir_like() && entry.uri.scheme() == fm_vfs::Scheme::File {
+            // A full scan has no time budget, so it gets its own thread instead of holding a job lane.
+            let cancel = ScanCancel::default();
+            let flag = cancel.0.clone();
+            slot.scan = Some(cancel);
+            let spawned = std::thread::Builder::new()
+                .name("fm-dirscan".into())
+                .spawn(move || {
+                    let (progress_inbox, progress_flag) = (inbox.clone(), flag.clone());
+                    let progress = move |doc: fm_preview::DirDoc| {
+                        if !progress_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            PreviewHub::push(
+                                &progress_inbox,
+                                Msg::Rendered {
+                                    pane,
+                                    token,
+                                    preview: Preview::Dir(doc),
+                                },
+                            );
+                        }
+                    };
+                    let run = std::panic::AssertUnwindSafe(|| {
+                        fm_preview::dir::summarize_cancellable(
+                            &*vfs,
+                            &entry,
+                            &Limits::unbounded_scan(),
+                            true,
+                            Some(&flag),
+                            Some(&progress),
+                        )
+                    });
+                    let preview = match std::panic::catch_unwind(run) {
+                        Ok(Ok(doc)) => Preview::Dir(doc),
+                        Ok(Err(e)) => Preview::Error(e.to_string()),
+                        Err(_) => Preview::Error("the folder scan failed".into()),
+                    };
+                    if !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        PreviewHub::push(
+                            &inbox,
+                            Msg::Rendered {
+                                pane,
+                                token,
+                                preview,
+                            },
+                        );
+                    }
+                });
+            if spawned.is_err() {
+                slot.scan = None;
+                slot.body = Body::Static(Arc::new(Preview::Error(
+                    "could not start the folder scan".into(),
+                )));
+            }
+            return true;
+        }
         self.jobs.submit(lane_for(entry.uri.scheme()), move |_ctx| {
-            let preview = render_budgeted(vfs, entry);
+            let preview = render_budgeted(vfs, entry, recursive);
             PreviewHub::push(
                 &inbox,
                 Msg::Rendered {
@@ -540,7 +677,7 @@ impl Session {
     }
 
     /// The Preview pane a `preview.*` command acts on.
-    fn preview_pane(&self, params: &Params) -> Result<PaneId, FmError> {
+    pub(crate) fn preview_pane(&self, params: &Params) -> Result<PaneId, FmError> {
         let is_preview = |id: PaneId| {
             self.layout
                 .state(id)
@@ -564,7 +701,7 @@ impl Session {
     }
 }
 
-fn no_preview() -> FmError {
+pub(crate) fn no_preview() -> FmError {
     FmError::NotFound("no preview pane".to_string())
 }
 
@@ -572,14 +709,19 @@ fn no_log() -> FmError {
     FmError::InvalidParams("the preview is not showing a log".to_string())
 }
 
-fn render_budgeted(vfs: Arc<dyn Vfs>, entry: Entry) -> Preview {
+fn render_budgeted(vfs: Arc<dyn Vfs>, entry: Entry, recursive: bool) -> Preview {
     run_budgeted(RENDER_BUDGET, move || {
-        fm_preview::render(&*vfs, &entry, &Limits::default())
+        fm_preview::render_with(
+            &*vfs,
+            &entry,
+            &Limits::default(),
+            fm_preview::RenderOpts { recursive },
+        )
     })
     .unwrap_or_else(|| Preview::Error("the preview took too long and was abandoned".into()))
 }
 
-fn has_preview(s: &Session) -> bool {
+pub(crate) fn has_preview(s: &Session) -> bool {
     s.layout
         .states
         .values()

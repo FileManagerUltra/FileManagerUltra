@@ -2,11 +2,13 @@
 
 use crate::app_cmds;
 use crate::arrange_cmds;
+use crate::clipboard_cmds;
 use crate::dnd_cmds;
 use crate::file_cmds;
 use crate::goto_cmds;
 use crate::job_cmds;
 use crate::nav_cmds;
+use crate::open_cmds;
 use crate::pane_cmds;
 use crate::pane_kind_cmds;
 use crate::prefs_cmds;
@@ -15,7 +17,10 @@ use crate::registry::CommandSpec;
 use crate::sort_cmds;
 use crate::term_cmds;
 use crate::theme_cmds;
+use crate::thumb_cmds;
+use crate::video_cmds;
 use crate::view_cmds;
+use crate::workspace_cmds;
 
 /// Every seed command. New modules append here; the registry fails on duplicates.
 pub fn specs() -> Vec<CommandSpec> {
@@ -24,6 +29,7 @@ pub fn specs() -> Vec<CommandSpec> {
         app_cmds::about(),
         prefs_cmds::preferences(),
         prefs_cmds::retarget_links(),
+        prefs_cmds::recursive_preview(),
         theme_cmds::dark(),
         theme_cmds::light(),
         theme_cmds::system(),
@@ -35,12 +41,17 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(preview_cmds::specs());
     specs.extend(term_cmds::specs());
     specs.extend(nav_cmds::specs());
+    specs.extend(open_cmds::specs());
+    specs.extend(thumb_cmds::specs());
+    specs.extend(video_cmds::specs());
     specs.extend(goto_cmds::specs());
     specs.extend(sort_cmds::specs());
     specs.extend(view_cmds::specs());
     specs.extend(file_cmds::specs());
+    specs.extend(clipboard_cmds::specs());
     specs.extend(job_cmds::specs());
     specs.extend(dnd_cmds::specs());
+    specs.extend(workspace_cmds::specs());
     specs
 }
 

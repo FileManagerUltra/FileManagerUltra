@@ -17,13 +17,17 @@ pub use state::{
 /// Stable id of a pane (leaf). Never reused within a layout.
 pub type PaneId = u64;
 
+/// Most panes a layout may hold; larger restored layouts are rejected.
+pub const MAX_PANES: usize = 64;
+
 /// The full pane tree plus per-pane state and focus bookkeeping.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Layout {
     pub root: PaneNode,
     pub states: BTreeMap<PaneId, PaneState>,
     pub focus: Focus,
     /// When set, only this pane is shown (the others keep their state).
+    #[serde(default)]
     pub zoomed: Option<PaneId>,
     next_id: PaneId,
 }
@@ -44,6 +48,86 @@ impl Layout {
             zoomed: None,
             next_id: 2,
         }
+    }
+
+    /// A single pane whose id is `first_id`, so layouts that share one session never clash.
+    pub fn single_at(location: VfsUri, first_id: PaneId) -> Self {
+        let mut l = Self::single(location);
+        l.relabel(first_id);
+        l
+    }
+
+    /// Renumber the panes `first_id`, `first_id + 1`, … in painting order and return the
+    /// old → new map. Per-pane engine state is keyed by id, so every layout of a session
+    /// takes ids from its own range.
+    pub fn relabel(&mut self, first_id: PaneId) -> BTreeMap<PaneId, PaneId> {
+        let map: BTreeMap<PaneId, PaneId> = self
+            .panes()
+            .into_iter()
+            .enumerate()
+            .map(|(i, old)| (old, first_id.saturating_add(i as PaneId)))
+            .collect();
+        self.root.relabel(&map);
+        let old_states = std::mem::take(&mut self.states);
+        for (old, st) in old_states {
+            if let Some(new) = map.get(&old) {
+                self.states.insert(*new, st);
+            }
+        }
+        for st in self.states.values_mut() {
+            if let PreviewSource::Pane(p) = st.preview_source {
+                st.preview_source = map
+                    .get(&p)
+                    .map_or(PreviewSource::Follow, |n| PreviewSource::Pane(*n));
+            }
+        }
+        let remap = |p: PaneId| map.get(&p).copied();
+        self.focus.focused = remap(self.focus.focused)
+            .or_else(|| self.states.keys().next().copied())
+            .unwrap_or(first_id);
+        self.focus.previous = self.focus.previous.and_then(remap);
+        self.focus.last_files = self.focus.last_files.and_then(remap);
+        self.zoomed = self.zoomed.and_then(remap);
+        self.next_id = first_id.saturating_add(map.len() as PaneId);
+        map
+    }
+
+    /// Check a layout that came from outside (a saved workspace): the tree and the state
+    /// map must describe the same panes, and soft values (ratios, widths, focus) are
+    /// repaired. Never panics on hostile data.
+    pub fn validate(&mut self) -> Result<(), FmError> {
+        let panes = self.panes();
+        let bad = |what: &str| FmError::InvalidParams(format!("saved layout: {what}"));
+        if panes.is_empty() || panes.len() > MAX_PANES {
+            return Err(bad("pane count out of range"));
+        }
+        let unique: std::collections::BTreeSet<PaneId> = panes.iter().copied().collect();
+        if unique.len() != panes.len() {
+            return Err(bad("duplicate pane"));
+        }
+        if self.states.len() != panes.len() || !panes.iter().all(|p| self.states.contains_key(p)) {
+            return Err(bad("pane states do not match the tree"));
+        }
+        let f = |v: &mut f32| {
+            if !v.is_finite() || *v < 0.0 {
+                *v = 0.0;
+            }
+        };
+        for st in self.states.values_mut() {
+            f(&mut st.tree.scroll);
+            f(&mut st.listing.scroll);
+            if !st.tree_width.is_finite() {
+                st.tree_width = DEFAULT_TREE_WIDTH;
+            }
+            for ix in 0..3 {
+                let w = st.col_widths.get(ix).copied().unwrap_or(0.0);
+                st.set_col_width(ix, w);
+                if !w.is_finite() {
+                    st.reset_col_width(ix);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Split the pane `target`, returning the new pane's id. The new pane
@@ -136,6 +220,14 @@ impl Layout {
     }
 
     /// The equalised ratio of one split (by handle), for a double-click reset.
+    pub fn equal_ratio_at(&self, a_first: PaneId, b_first: PaneId) -> Option<f32> {
+        self.root.equal_ratio_at(a_first, b_first)
+    }
+
+    pub fn set_ratio_at(&mut self, a_first: PaneId, b_first: PaneId, ratio: f32) -> bool {
+        self.root.set_ratio_at(a_first, b_first, ratio)
+    }
+
     pub fn equal_ratio(&self, handle: PaneId) -> Option<f32> {
         self.root.equal_ratio(handle)
     }
@@ -434,6 +526,26 @@ mod tests {
     }
 
     #[test]
+    fn nested_splits_with_the_same_first_leaf_have_separate_handles() {
+        // (A | B) over C: both splits start at A.
+        let mut l = Layout::single(VfsUri::root_file());
+        let a = l.focused();
+        let c = l.split(a, Axis::Vertical, 0.5).expect("split");
+        let b = l.split(a, Axis::Horizontal, 0.5).expect("split");
+        let PaneNode::Split { ratio: outer, .. } = l.root else {
+            panic!("root is a split");
+        };
+        assert!(l.set_ratio_at(a, b, 0.8));
+        let PaneNode::Split { ratio, a: top, .. } = &l.root else {
+            panic!("root is a split");
+        };
+        assert_eq!(*ratio, outer, "the outer split is untouched");
+        assert!(matches!(&**top, PaneNode::Split { ratio, .. } if (*ratio - 0.8).abs() < 1e-6));
+        assert!(l.set_ratio_at(a, c, 0.3));
+        assert!(matches!(&l.root, PaneNode::Split { ratio, .. } if (*ratio - 0.3).abs() < 1e-6));
+    }
+
+    #[test]
     fn set_ratio_through_layout() {
         let mut l = layout();
         l.split(1, Axis::Horizontal, 0.5).expect("split");
@@ -708,5 +820,64 @@ mod tests {
         let mut l = Layout::single(VfsUri::root_file());
         l.state_mut(1).expect("state").kind = PaneKind::Preview;
         assert_eq!(l.preview_target(1), None);
+    }
+
+    #[test]
+    fn relabel_moves_every_id_and_keeps_pins() {
+        let mut l = Layout::single(VfsUri::root_file());
+        let b = l.split(1, Axis::Horizontal, 0.5).expect("split");
+        let c = l.split(b, Axis::Vertical, 0.5).expect("split");
+        l.state_mut(c).expect("state").preview_source = PreviewSource::Pane(1);
+        let map = l.relabel(1000);
+        assert_eq!(l.panes(), vec![1000, 1001, 1002]);
+        assert_eq!(map.get(&1), Some(&1000));
+        assert_eq!(
+            l.state(1002).expect("state").preview_source,
+            PreviewSource::Pane(1000)
+        );
+        assert!(l.states.keys().all(|k| *k >= 1000));
+        let d = l.split(1000, Axis::Vertical, 0.5).expect("split");
+        assert_eq!(d, 1003, "new ids continue after the range");
+        let single = Layout::single_at(VfsUri::root_file(), 5000);
+        assert_eq!(single.panes(), vec![5000]);
+        assert_eq!(single.focused(), 5000);
+    }
+
+    #[test]
+    fn serde_round_trip_and_validate_reject_hostile_layouts() {
+        let mut l = Layout::single(VfsUri::root_file());
+        l.split(1, Axis::Horizontal, 0.3).expect("split");
+        let json = serde_json::to_string(&l).expect("ser");
+        let mut back: Layout = serde_json::from_str(&json).expect("de");
+        back.validate().expect("valid");
+        back.focus.focused = 99;
+        back.relabel(1);
+        assert!(
+            back.state(back.focused()).is_some(),
+            "focus repaired by relabel"
+        );
+        assert_eq!(back.panes(), l.panes());
+
+        let mut dup = back.clone();
+        dup.root = PaneNode::Split {
+            axis: Axis::Horizontal,
+            ratio: f32::NAN,
+            a: Box::new(PaneNode::Leaf(1)),
+            b: Box::new(PaneNode::Leaf(1)),
+        };
+        assert!(dup.validate().is_err(), "duplicate leaf");
+
+        let mut orphan = back.clone();
+        orphan.states.remove(&2);
+        assert!(orphan.validate().is_err(), "leaf without state");
+
+        let mut nan = back.clone();
+        if let Some(st) = nan.state_mut(1) {
+            st.tree_width = f32::NAN;
+            st.listing.scroll = f32::INFINITY;
+        }
+        nan.validate().expect("soft values are repaired");
+        let st = nan.state(1).expect("state");
+        assert!(st.tree_width.is_finite() && st.listing.scroll == 0.0);
     }
 }

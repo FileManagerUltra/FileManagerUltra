@@ -961,6 +961,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fast_image_resize"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9c50201dc184ba6553da1695aac20a042efffbe2d84542cee31917c86c3ab1e"
+dependencies = [
+ "cfg-if",
+ "document-features",
+ "num-traits",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1055,6 +1067,8 @@ dependencies = [
  "fm-term",
  "fm-testkit",
  "fm-vfs",
+ "image",
+ "opener",
  "proptest",
  "serde",
  "serde_json",
@@ -1092,6 +1106,7 @@ version = "0.1.0"
 dependencies = [
  "fm-vfs",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1109,6 +1124,7 @@ dependencies = [
 name = "fm-preview"
 version = "0.1.0"
 dependencies = [
+ "fast_image_resize",
  "flate2",
  "fm-testkit",
  "fm-vfs",
@@ -2079,6 +2095,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "normpath"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b11ce00d2594068e8a27c9146fdc5cf9f3ac38eb42c7cd34d05fea618873ac9f"
+dependencies = [
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ntapi"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2481,6 +2506,17 @@ checksum = "8d8c8b8e725ad26404d6896eb2f064294a0a7b4f1d9120210d85544684c4ca95"
 dependencies = [
  "is-wsl",
  "libc",
+]
+
+[[package]]
+name = "opener"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c826edd923022c3907477383fc77708fa68807170754fe7be1fd3496c57a1f1c"
+dependencies = [
+ "normpath",
+ "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -523,6 +523,7 @@ impl Session {
             self.undo.push_report(kind, report);
         }
         for dir in touched {
+            self.dir_changed(&dir);
             if !matches!(self.dirs.state(&dir), DirState::Absent) {
                 let _ = self.refresh_read(dir);
             }

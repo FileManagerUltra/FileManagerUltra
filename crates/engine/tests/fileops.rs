@@ -491,3 +491,105 @@ fn credentials_never_surface_in_errors_or_job_reports() {
     }
     assert!(!text.contains("hunter2"), "credential leaked: {text}");
 }
+
+#[test]
+fn a_focused_thumbnail_grid_drives_the_file_commands() {
+    use fm_engine::file_cmds::{GridSelection, focused_dir, focused_selection, other_pane_dir};
+    let mut s = session_on(Arc::new(MemFs::new()));
+    s.dispatch("pane.split.horizontal", &json!(null))
+        .expect("split");
+    let panes = s.layout.panes();
+    let (files, grid) = (panes[0], panes[1]);
+    s.layout.state_mut(files).expect("pane").location = uri("/d");
+    s.layout.focus_pane(grid).expect("focus");
+    s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+        .expect("kind");
+    s.grid_selection = Some(GridSelection {
+        pane: grid,
+        dir: uri("/d/pics"),
+        items: vec![uri("/d/pics/a.png")],
+    });
+    assert_eq!(focused_selection(&s), vec![uri("/d/pics/a.png")]);
+    assert_eq!(focused_dir(&s), Some(uri("/d/pics")));
+    assert!(s.command_enabled("file.delete"));
+    assert!(s.command_enabled("file.mkdir"));
+    assert_eq!(
+        other_pane_dir(&s),
+        None,
+        "the grid's own source is not a destination"
+    );
+    s.grid_selection = None;
+    assert!(focused_selection(&s).is_empty());
+}
+
+#[test]
+fn clipboard_copy_cut_and_paste_run_the_pipelines() {
+    use fm_engine::file_cmds::GridSelection;
+    let fs = MemFs::new();
+    fs.put_str("/src/a.txt", b"hello").expect("put");
+    fs.put_str("/src/b.txt", b"bye").expect("put");
+    fs.mkdirs_str("/dst").expect("dst");
+    let mut s = session_on(Arc::new(fs.clone()));
+    s.dispatch("pane.split.horizontal", &json!(null))
+        .expect("split");
+    let grid = s.layout.panes()[1];
+    s.layout.focus_pane(grid).expect("focus");
+    s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+        .expect("kind");
+    let select = |s: &mut Session, name: &str, dir: &str| {
+        s.grid_selection = Some(GridSelection {
+            pane: grid,
+            dir: uri(dir),
+            items: vec![uri(&format!("/src/{name}"))],
+        });
+    };
+
+    select(&mut s, "a.txt", "/src");
+    assert!(!s.command_enabled("file.clip_paste"), "nothing copied yet");
+    dispatch(&mut s, "file.clip_copy", Params::Null).expect("copy");
+    assert_eq!(s.clipboard_outbox.as_deref(), Some("/src/a.txt"));
+    select(&mut s, "a.txt", "/dst");
+    dispatch(&mut s, "file.clip_paste", json!({"os_text": "/src/a.txt"})).expect("paste");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert_eq!(fs.get_str("/dst/a.txt").expect("copied"), b"hello");
+    assert!(fs.get_str("/src/a.txt").is_ok(), "copy keeps the source");
+
+    select(&mut s, "b.txt", "/src");
+    dispatch(&mut s, "file.clip_cut", Params::Null).expect("cut");
+    select(&mut s, "b.txt", "/dst");
+    dispatch(&mut s, "file.clip_paste", Params::Null).expect("paste");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert_eq!(fs.get_str("/dst/b.txt").expect("moved"), b"bye");
+    assert!(fs.get_str("/src/b.txt").is_err(), "cut removes the source");
+    assert!(s.clipboard.is_none(), "a cut is pasted once");
+}
+
+#[test]
+fn paste_refuses_when_the_os_clipboard_changed_or_params_are_bad() {
+    use fm_engine::file_cmds::GridSelection;
+    let mut s = session_on(Arc::new(MemFs::new()));
+    s.dispatch("pane.split.horizontal", &json!(null))
+        .expect("split");
+    let grid = s.layout.panes()[1];
+    s.layout.focus_pane(grid).expect("focus");
+    s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+        .expect("kind");
+    s.grid_selection = Some(GridSelection {
+        pane: grid,
+        dir: uri("/d"),
+        items: vec![uri("/d/a")],
+    });
+    dispatch(&mut s, "file.clip_copy", Params::Null).expect("copy");
+    assert!(
+        dispatch(
+            &mut s,
+            "file.clip_paste",
+            json!({"os_text": "something else"})
+        )
+        .is_err()
+    );
+    assert!(s.clipboard.is_none());
+    assert!(dispatch(&mut s, "file.clip_paste", json!({"os_text": 5})).is_err());
+}

@@ -23,6 +23,7 @@ struct App {
     /// Set once the native window title has been explicitly sent (see `ui`).
     title_sent: bool,
     dialogs: fm_ui::dialogs::Dialogs,
+    last_ws_tick: std::time::Instant,
 }
 
 impl App {
@@ -52,10 +53,21 @@ fn set_egui_theme_preference(ctx: &egui::Context, pref: ThemePreference) {
     });
 }
 
-/// Navigate a pane to `uri` through the engine (`nav.open`).
-fn open_uri(session: &mut Session, uri: &VfsUri) {
-    if let Err(err) = session.dispatch("nav.open", &Params::String(uri.path_str().to_string())) {
-        eprintln!("nav.open failed: {err}");
+/// Activate `uri` (double click / Enter): folders navigate, documents open in the default
+/// application, programs ask first. All through engine commands.
+fn open_uri(session: &mut Session, dialogs: &mut fm_ui::dialogs::Dialogs, uri: &VfsUri) {
+    use fm_engine::open_cmds::{OpenPlan, plan};
+    match plan(session, uri) {
+        OpenPlan::Navigate => {
+            session.dispatch_or_notice("nav.open", &Params::String(uri.path_str().to_string()));
+        }
+        OpenPlan::Launch => {
+            session.dispatch_or_notice("file.open", &serde_json::json!({ "uri": uri.path_str() }));
+        }
+        OpenPlan::ConfirmRun { name } => dialogs.request(fm_ui::dialogs::Dialog::ConfirmRun {
+            uri: uri.clone(),
+            name,
+        }),
     }
 }
 
@@ -64,7 +76,7 @@ fn open_uri(session: &mut Session, uri: &VfsUri) {
 fn divider(
     ui: &mut egui::Ui,
     session: &mut Session,
-    handle: Option<fm_layout::PaneId>,
+    handle: Option<(fm_layout::PaneId, fm_layout::PaneId)>,
     axis: Axis,
     ratio: f32,
     size: egui::Vec2,
@@ -84,12 +96,12 @@ fn divider(
         0.0,
         if active { tokens.accent } else { tokens.border },
     );
-    let Some(handle) = handle else {
+    let Some((first, second)) = handle else {
         return;
     };
     if resp.double_clicked() {
-        if let Some(r) = session.layout.equal_ratio(handle) {
-            session.layout.set_ratio(handle, r);
+        if let Some(r) = session.layout.equal_ratio_at(first, second) {
+            session.layout.set_ratio_at(first, second, r);
         }
     } else if resp.dragged() {
         let d = resp.drag_delta();
@@ -99,7 +111,7 @@ fn divider(
         };
         session
             .layout
-            .set_ratio(handle, ratio + delta / total.max(1.0));
+            .set_ratio_at(first, second, ratio + delta / total.max(1.0));
     }
 }
 
@@ -118,7 +130,7 @@ fn render_pane_node(
             fm_ui::pane::show(ui, session, zoomed, tokens)
         }
         PaneNode::Split { axis, ratio, a, b } => {
-            let handle = a.panes().first().copied();
+            let handle = a.panes().first().copied().zip(b.panes().first().copied());
             let mut open = None;
             match axis {
                 Axis::Horizontal => {
@@ -133,6 +145,7 @@ fn render_pane_node(
                             egui::vec2(a_w, ui.available_height()),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
+                                ui.set_min_size(ui.available_size());
                                 if let Some(target) = render_pane_node(ui, session, a, tokens) {
                                     open = Some(target);
                                 }
@@ -152,6 +165,7 @@ fn render_pane_node(
                             egui::vec2(ui.available_width(), ui.available_height()),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
+                                ui.set_min_size(ui.available_size());
                                 if let Some(target) = render_pane_node(ui, session, b, tokens) {
                                     open = Some(target);
                                 }
@@ -168,6 +182,7 @@ fn render_pane_node(
                             egui::vec2(ui.available_width(), a_h),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
+                                ui.set_min_size(ui.available_size());
                                 if let Some(target) = render_pane_node(ui, session, a, tokens) {
                                     open = Some(target);
                                 }
@@ -187,6 +202,7 @@ fn render_pane_node(
                             egui::vec2(ui.available_width(), ui.available_height()),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
+                                ui.set_min_size(ui.available_size());
                                 if let Some(target) = render_pane_node(ui, session, b, tokens) {
                                     open = Some(target);
                                 }
@@ -255,6 +271,28 @@ fn prefer_x11() -> Option<eframe::EventLoopBuilderHook> {
     None
 }
 
+impl App {
+    /// Write `workspaces.json` when the saved set changed (checked about once a second).
+    fn persist_workspaces(&mut self, ctx: &egui::Context, force: bool) {
+        let due = force || self.last_ws_tick.elapsed() >= std::time::Duration::from_secs(1);
+        if !due {
+            return;
+        }
+        self.last_ws_tick = std::time::Instant::now();
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        let Some(text) = self.session.workspace_tick() else {
+            return;
+        };
+        let Some(dir) = &self.config_dir else {
+            return;
+        };
+        if let Err(err) = fm_engine::workspace::save_file(dir, &text) {
+            eprintln!("failed to save workspaces: {err}");
+            self.session.workspace_retry();
+        }
+    }
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -288,6 +326,11 @@ impl eframe::App for App {
         egui::Panel::top("menu_bar").show(ui, |ui| {
             menu::menu_bar(ui, &mut self.session, &mut self.dialogs);
         });
+        let tab_tokens = theme::Tokens::resolve(self.session.prefs.theme, self.applied.1);
+        egui::Panel::top("workspace_tabs").show(ui, |ui| {
+            fm_ui::workspaces::tab_bar(ui, &mut self.session, &tab_tokens, &mut self.dialogs);
+        });
+        self.persist_workspaces(&ctx, false);
 
         let tokens = theme::Tokens::resolve(self.session.prefs.theme, self.applied.1);
         egui::Panel::bottom("status_bar").show(ui, |ui| {
@@ -355,7 +398,13 @@ impl eframe::App for App {
             .show(ui, |ui| {
                 let root = self.session.layout.root.clone();
                 if let Some(uri) = render_pane_node(ui, &mut self.session, &root, &tokens) {
-                    open_uri(&mut self.session, &uri);
+                    open_uri(&mut self.session, &mut self.dialogs, &uri);
+                }
+                if let Some(id) = fm_ui::context_menu::take_command(ui.ctx()) {
+                    menu::dispatch(&mut self.session, &mut self.dialogs, id);
+                }
+                if let Some(text) = self.session.clipboard_outbox.take() {
+                    ui.ctx().copy_text(text);
                 }
             });
 
@@ -381,10 +430,13 @@ impl eframe::App for App {
 
         if !self.session.running {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else if self.session.unsaved_prompt.is_some() {
+            ctx.request_repaint();
         }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.persist_workspaces(&egui::Context::default(), true);
         if let Some(dir) = &self.config_dir
             && let Err(err) = fm_engine::prefs::save(dir, &self.session.prefs)
         {
@@ -408,6 +460,15 @@ fn main() -> eframe::Result {
         }
     };
     session.prefs = prefs;
+    session
+        .thumbs
+        .set_cache_dir(fm_engine::prefs::default_cache_dir().map(|d| d.join("thumbs")));
+    if let Some(dir) = &config_dir
+        && let Some(text) = fm_engine::workspace::load_file(dir)
+        && let Some(notice) = session.workspace_startup(&text)
+    {
+        session.notice = Some(notice);
+    }
     // Kick off the first pane's read so the UI starts in the loading state
     // and the first paint never blocks on I/O.
     if let Some(state) = session.layout.state(session.layout.focused()) {
@@ -443,6 +504,7 @@ fn main() -> eframe::Result {
                 applied: (theme_pref, dark),
                 title_sent: false,
                 dialogs: fm_ui::dialogs::Dialogs::default(),
+                last_ws_tick: std::time::Instant::now(),
             }))
         }),
     )

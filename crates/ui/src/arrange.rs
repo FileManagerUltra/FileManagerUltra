@@ -98,19 +98,7 @@ pub fn finish(ctx: &Context, s: &mut Session, pane: PaneId, rect: Rect, tokens: 
         return;
     }
     let slot = slot_for(rect, pos);
-    let layer = LayerId::new(Order::Foreground, Id::NULL.with(("fm-pane-drop", pane)));
-    let painter = ctx.layer_painter(layer);
-    painter.rect_filled(
-        preview_rect(rect, slot).shrink(2.0),
-        tokens.corner_radius,
-        tokens.accent.gamma_multiply(0.28),
-    );
-    painter.rect_stroke(
-        preview_rect(rect, slot).shrink(2.0),
-        tokens.corner_radius,
-        egui::Stroke::new(tokens.border_width.max(2.0), tokens.accent),
-        egui::StrokeKind::Inside,
-    );
+    paint(ctx, pane, rect, slot, tokens);
     if ctx.input(|i| i.pointer.any_released())
         && DragAndDrop::take_payload::<PaneDrag>(ctx).is_some()
     {
@@ -119,6 +107,24 @@ pub fn finish(ctx: &Context, s: &mut Session, pane: PaneId, rect: Rect, tokens: 
             &json!({"pane": source, "target": pane, "edge": slot.edge_name()}),
         );
     }
+}
+
+/// Paint where the dragged pane would land over `rect`.
+fn paint(ctx: &Context, pane: PaneId, rect: Rect, slot: Slot, tokens: &Tokens) {
+    let layer = LayerId::new(Order::Foreground, Id::NULL.with(("fm-pane-drop", pane)));
+    let painter = ctx.layer_painter(layer);
+    let preview = preview_rect(rect, slot).shrink(2.0);
+    painter.rect_filled(
+        preview,
+        tokens.corner_radius,
+        tokens.accent.gamma_multiply(0.28),
+    );
+    painter.rect_stroke(
+        preview,
+        tokens.corner_radius,
+        egui::Stroke::new(tokens.border_width.max(2.0), tokens.accent),
+        egui::StrokeKind::Inside,
+    );
 }
 
 #[cfg(test)]
@@ -168,5 +174,51 @@ mod tests {
         let bottom = preview_rect(r, Slot::Edge(Edge::Bottom));
         assert_eq!(bottom.height(), r.height() / 2.0);
         assert!(r.contains_rect(preview_rect(r, Slot::Center)));
+    }
+
+    /// The drop overlay paints a filled + stroked preview in both palettes.
+    #[test]
+    fn overlay_paints_headless_in_both_palettes() {
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            let ctx = Context::default();
+            let r = rect();
+            let slot = Slot::Edge(Edge::Left);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                    ..Default::default()
+                },
+                |ctx| paint(ctx, 1, r, slot, &tokens),
+            );
+            output.textures_delta.clear();
+            let want = preview_rect(r, slot).shrink(2.0);
+            let mut filled = false;
+            let mut outlined = false;
+            for clipped in &output.shapes {
+                match &clipped.shape {
+                    egui::Shape::Rect(shape) => {
+                        if shape.rect == want && shape.fill.a() > 0 {
+                            filled = true;
+                        }
+                        if shape.rect == want && shape.stroke.width > 0.0 {
+                            outlined = true;
+                        }
+                    }
+                    egui::Shape::Vec(inner) => {
+                        for shape in inner {
+                            if let egui::Shape::Rect(shape) = shape
+                                && shape.rect == want
+                                && shape.fill.a() > 0
+                            {
+                                filled = true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            assert!(filled, "overlay fill painted");
+            assert!(outlined, "overlay outline painted");
+        }
     }
 }

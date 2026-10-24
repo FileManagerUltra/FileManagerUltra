@@ -99,3 +99,18 @@ fn terminals_follow_a_moved_pane() {
     assert!(s.terminal(a).is_some(), "the shell moved with its pane");
     assert_eq!(s.pane_kind(a), Some(fm_layout::PaneKind::Terminal));
 }
+
+#[test]
+fn close_takes_an_optional_pane_and_rejects_bad_ones() {
+    let (mut s, a, b, c) = three();
+    for bad in [json!({"pane": "x"}), json!({"pane": 99}), json!([1])] {
+        assert!(s.dispatch("pane.close", &bad).is_err(), "{bad}");
+    }
+    assert_eq!(s.layout.panes().len(), 3);
+    s.dispatch("pane.close", &json!({"pane": b}))
+        .expect("close b");
+    assert_eq!(s.layout.panes(), vec![a, c]);
+    s.dispatch("pane.close", &json!(null))
+        .expect("close focused");
+    assert_eq!(s.layout.panes().len(), 1);
+}
