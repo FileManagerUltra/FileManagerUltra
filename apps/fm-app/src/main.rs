@@ -454,9 +454,16 @@ impl eframe::App for App {
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .open(&mut open)
                 .show(ui, |ui| {
-                    ui.heading(fm_brand::APP_NAME);
-                    ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
-                    ui.label(fm_brand::ORG_NAME);
+                    ui.vertical_centered(|ui| {
+                        if let Some(logo) = logo_texture(&ctx) {
+                            ui.add(
+                                egui::Image::new(&logo).fit_to_exact_size(egui::vec2(96.0, 96.0)),
+                            );
+                        }
+                        ui.heading(fm_brand::APP_NAME);
+                        ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
+                        ui.label(fm_brand::ORG_NAME);
+                    });
                 });
             self.session.about_open = open;
         }
@@ -521,8 +528,12 @@ fn main() -> eframe::Result {
         }
     }
 
+    let mut viewport = egui::ViewportBuilder::default();
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(fm_brand::ICON_PNG) {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+        viewport: viewport
             .with_title(fm_brand::APP_NAME)
             .with_app_id(fm_brand::APP_ID)
             .with_inner_size(egui::vec2(1024.0, 700.0))
@@ -556,6 +567,20 @@ fn main() -> eframe::Result {
             }))
         }),
     )
+}
+
+/// The brand logo as a texture, decoded once and kept in egui's memory.
+fn logo_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    let id = egui::Id::NULL.with("fm-brand-logo");
+    if let Some(tex) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return Some(tex);
+    }
+    let icon = eframe::icon_data::from_png_bytes(fm_brand::ICON_PNG).ok()?;
+    let size = [icon.width as usize, icon.height as usize];
+    let image = egui::ColorImage::from_rgba_unmultiplied(size, &icon.rgba);
+    let tex = ctx.load_texture("fm-brand-logo", image, egui::TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, tex.clone()));
+    Some(tex)
 }
 
 #[cfg(test)]

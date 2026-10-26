@@ -24,6 +24,9 @@ pub const EXECUTABLE: &str = "filemanagerultra";
 /// Window class; equal to the slug so X11/Wayland matching is predictable.
 pub const WINDOW_CLASS: &str = APP_SLUG;
 
+/// Application icon (256 px PNG) for the window and installers; source art is `assets/logo.svg`.
+pub const ICON_PNG: &[u8] = include_bytes!("../assets/icon-256.png");
+
 /// Free-desktop entry template filled from the constants above.
 ///
 /// Packaging (change 5) writes this to `<slug>.desktop`; nothing may hard-code the

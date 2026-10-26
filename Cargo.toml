@@ -6,7 +6,9 @@ default-members = ["crates/*", "apps/*", "xtask"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "MIT"
+repository = "https://github.com/FileManagerUltra/FileManagerUltra"
+homepage = "https://github.com/FileManagerUltra/FileManagerUltra"
 rust-version = "1.95"
 
 [workspace.dependencies]
@@ -102,3 +104,8 @@ opt-level = 3
 [patch.crates-io]
 sspi = { path = "vendor/sspi" }
 smb-transport = { path = "vendor/smb-transport" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true

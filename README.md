@@ -1,3 +1,5 @@
+<p align="center"><img src="packaging/icon.png" width="128" alt="FileManagerUltra logo"></p>
+
 # FileManagerUltra
 
 A cross-platform (Linux · macOS · Windows), multi-pane file manager written in **Rust** with a native `eframe`/egui UI — no Electron, no webview.
@@ -20,4 +22,4 @@ cargo xtask layers       # layering enforcement
 
 ## License
 
-MIT OR Apache-2.0 (chosen when the scaffold change lands).
+MIT — see [LICENSE](LICENSE). Logo source: `packaging/logo.svg`.

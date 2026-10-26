@@ -35,8 +35,12 @@ fn dispatch() -> Result<String, String> {
             Some(name) => brand::rename(name),
             None => Err("usage: cargo xtask rename \"<NewName>\"".to_string()),
         },
+        Some("packager-config") => brand::packager_config(),
         Some("ci") => ci::run(),
         Some("--version") | Some("-V") => Ok(format!("xtask {}", env!("CARGO_PKG_VERSION"))),
-        _ => Err("usage: cargo xtask <layers|brand-check|rename <name>|ci|--version>".to_string()),
+        _ => Err(
+            "usage: cargo xtask <layers|brand-check|rename <name>|packager-config|ci|--version>"
+                .to_string(),
+        ),
     }
 }

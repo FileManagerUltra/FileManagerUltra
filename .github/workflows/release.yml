@@ -1,0 +1,73 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: package (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, formats: "deb,appimage" }
+          - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc, formats: "nsis" }
+          - { name: macos-arm64, os: macos-14, target: aarch64-apple-darwin, formats: "dmg" }
+          - { name: macos-x64, os: macos-13, target: x86_64-apple-darwin, formats: "dmg" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Linux packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfuse2 desktop-file-utils
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+      - name: Build
+        run: cargo build --release --locked -p fm-app --target ${{ matrix.target }}
+      - name: Stage binary where the packager expects it
+        shell: bash
+        run: |
+          mkdir -p target/release
+          cp target/${{ matrix.target }}/release/filemanagerultra* target/release/ || true
+          rm -f target/release/*.d target/release/*.pdb
+      - name: Package
+        run: |
+          cargo xtask packager-config
+          cargo packager --config target/Packager.toml --release --formats ${{ matrix.formats }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: filemanagerultra-${{ matrix.name }}
+          path: |
+            target/packager/*.deb
+            target/packager/*.AppImage
+            target/packager/*-setup.exe
+            target/packager/*.dmg
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

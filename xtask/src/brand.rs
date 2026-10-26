@@ -110,6 +110,35 @@ pub fn check() -> Result<String, String> {
     }
 }
 
+/// Write `target/Packager.toml` for `cargo-packager` from the brand constants, so installer
+/// labels and ids never hard-code the product name.
+pub fn packager_config() -> Result<String, String> {
+    let root = util::workspace_root()?;
+    let brand = read_brand(&root)?;
+    let lib = util::read(&root.join(BRAND_LIB))?;
+    let id = Regex::new(r#"APP_ID: &str = "([^"]+)""#)
+        .map_err(|e| e.to_string())?
+        .captures(&lib)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+        .ok_or("APP_ID not found in the brand crate")?;
+    let toml = format!(
+        "product-name = \"{name}\"\nidentifier = \"{id}\"\npublisher = \"{name}\"\n\
+description = \"A cross-platform multi-pane file manager\"\ncategory = \"Utility\"\n\
+icons = [\"{root}/packaging/icon.png\", \"{root}/packaging/icon.ico\", \"{root}/packaging/icon.icns\"]\nout-dir = \"{root}/target/packager\"\n\
+binaries-dir = \"{root}/target/release\"\nbinaries = [{{ path = \"{slug}\", main = true }}]\n",
+        name = brand.name,
+        slug = brand.slug,
+        root = root.display().to_string().replace('\\', "/"),
+    );
+    let out = root.join("target/Packager.toml");
+    if let Some(dir) = out.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(&out, toml).map_err(|e| e.to_string())?;
+    Ok(format!("wrote {}", util::rel(&root, &out).display()))
+}
+
 /// Cross-check `apps/fm-app/src/menu.rs` command-id literals against the ids
 /// registered in `crates/engine` (`id: "…"` in CommandSpec literals).
 fn check_command_ids(root: &Path, problems: &mut Vec<String>) -> Result<usize, String> {
