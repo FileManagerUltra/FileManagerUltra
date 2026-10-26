@@ -122,8 +122,15 @@ pub fn packager_config() -> Result<String, String> {
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
         .ok_or("APP_ID not found in the brand crate")?;
+    let manifest = util::read(&root.join("Cargo.toml"))?;
+    let version = Regex::new(r#"(?m)^version\s*=\s*"([^"]+)""#)
+        .map_err(|e| e.to_string())?
+        .captures(&manifest)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+        .ok_or("workspace version not found in Cargo.toml")?;
     let toml = format!(
-        "product-name = \"{name}\"\nidentifier = \"{id}\"\npublisher = \"{name}\"\n\
+        "name = \"{slug}\"\nversion = \"{version}\"\nproduct-name = \"{name}\"\nidentifier = \"{id}\"\npublisher = \"{name}\"\n\
 description = \"A cross-platform multi-pane file manager\"\ncategory = \"Utility\"\n\
 icons = [\"{root}/packaging/icon.png\", \"{root}/packaging/icon.ico\", \"{root}/packaging/icon.icns\"]\nout-dir = \"{root}/target/packager\"\n\
 binaries-dir = \"{root}/target/release\"\nbinaries = [{{ path = \"{slug}\", main = true }}]\n",
