@@ -112,24 +112,29 @@ fn form_id(pane: PaneId) -> Id {
     Id::NULL.with(("fm-connect-form", pane))
 }
 
-/// Drop a pane's connect form (and any typed secret) once it is no longer an SFTP pane.
+/// Drop a pane's connect form (and any typed secret) once it is no longer an SFTP/SMB pane.
 pub fn forget_form(ctx: &Context, pane: PaneId) {
     ctx.data_mut(|d| d.remove::<Form>(form_id(pane)));
 }
 
-/// Whether an SFTP pane still has to connect (so it shows the form, not a listing).
+/// Whether an SFTP/SMB pane still has to connect (so it shows the form, not a listing).
 pub fn needs_connect(s: &Session, pane: PaneId) -> bool {
     s.layout.state(pane).is_some_and(|st| {
-        st.kind == fm_layout::PaneKind::Sftp
-            && (st.location.scheme() != Scheme::Sftp || s.backends.require(&st.location).is_err())
+        let scheme = match st.kind {
+            fm_layout::PaneKind::Sftp => Scheme::Sftp,
+            _ => return false,
+        };
+        st.location.scheme() != scheme || s.backends.require(&st.location).is_err()
     })
 }
 
-/// The inline connect form of an SFTP pane that has no server yet.
+/// The inline connect form of an SFTP/SMB pane that has no server yet.
 pub fn connect_form(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
     let ctx = ui.ctx().clone();
     let form_id = form_id(pane);
-    let mut form: Form = ctx.data(|d| d.get_temp(form_id)).unwrap_or_default();
+    let mut form: Form = ctx
+        .data(|d| d.get_temp::<Form>(form_id))
+        .unwrap_or_default();
     // A restored workspace leaves the pane on its old server: prefill the form from it.
     let here = s
         .layout
@@ -306,6 +311,206 @@ pub fn host_key_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     }
 }
 
+/// Input of the Authentication Required popup, reseeded whenever the prompt changes.
+#[derive(Clone, Default)]
+struct LoginForm {
+    seed: Option<fm_engine::network::LoginPrompt>,
+    user: String,
+    domain: String,
+    password: String,
+    remember: bool,
+    focus_pending: bool,
+    host: String,
+    port: String,
+    share: String,
+    require_encryption: bool,
+}
+
+/// The "Authentication Required" popup for a Network-folder host; answers with
+/// `network.login` / `network.login.cancel`.
+pub fn login_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    let Some(prompt) = s.remote.login_prompt.clone() else {
+        return;
+    };
+    let id = Id::NULL.with("fm-login-dialog");
+    let mut form: LoginForm = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
+    if form.seed.as_ref() != Some(&prompt) {
+        form = LoginForm {
+            seed: Some(prompt.clone()),
+            user: prompt.user.clone(),
+            domain: prompt.domain.clone(),
+            password: String::new(),
+            remember: false,
+            focus_pending: true,
+            ..LoginForm::default()
+        };
+    }
+    let mut connect = false;
+    let mut cancel = ctx.input(|i| i.key_pressed(Key::Escape));
+    let title = if prompt.manual {
+        "Connect to SMB Server"
+    } else {
+        "Authentication Required"
+    };
+    egui::Window::new(title)
+        .id(id.with("window"))
+        .collapsible(false)
+        .movable(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .frame(frame(tokens))
+        .show(ctx, |ui| {
+            if !prompt.manual {
+                ui.label(format!("Enter your credentials for {}.", prompt.host));
+            }
+            if let Some(error) = &prompt.error {
+                ui.label(RichText::new(error).color(tokens.error));
+            }
+            ui.add_space(tokens.padding);
+            egui::Grid::new(id.with("grid"))
+                .num_columns(2)
+                .spacing([tokens.padding, tokens.padding / 2.0])
+                .show(ui, |ui| {
+                    if prompt.manual {
+                        let label = ui.label("Host");
+                        let host = ui
+                            .add(TextEdit::singleline(&mut form.host).desired_width(220.0))
+                            .labelled_by(label.id);
+                        if form.focus_pending {
+                            host.request_focus();
+                            form.focus_pending = false;
+                        }
+                        ui.end_row();
+                        let label = ui.label("Port");
+                        ui.add(
+                            TextEdit::singleline(&mut form.port)
+                                .hint_text("445")
+                                .desired_width(220.0),
+                        )
+                        .labelled_by(label.id);
+                        ui.end_row();
+                        let label = ui.label("Share");
+                        ui.add(
+                            TextEdit::singleline(&mut form.share)
+                                .hint_text("optional")
+                                .desired_width(220.0),
+                        )
+                        .labelled_by(label.id);
+                        ui.end_row();
+                    }
+                    let label = ui.label("Username");
+                    let user = ui
+                        .add(TextEdit::singleline(&mut form.user).desired_width(220.0))
+                        .labelled_by(label.id);
+                    if form.focus_pending {
+                        user.request_focus();
+                        form.focus_pending = false;
+                    }
+                    ui.end_row();
+                    let label = ui.label("Domain");
+                    ui.add(TextEdit::singleline(&mut form.domain).desired_width(220.0))
+                        .labelled_by(label.id);
+                    ui.end_row();
+                    let label = ui.label("Password");
+                    let pw = ui
+                        .add(
+                            TextEdit::singleline(&mut form.password)
+                                .password(true)
+                                .desired_width(220.0),
+                        )
+                        .labelled_by(label.id);
+                    if pw.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                        connect = true;
+                    }
+                    ui.end_row();
+                });
+            ui.add_space(tokens.padding);
+            ui.radio_value(&mut form.remember, false, "Forget password immediately");
+            ui.radio_value(&mut form.remember, true, "Remember password until you quit");
+            if prompt.manual {
+                ui.checkbox(&mut form.require_encryption, "Require encryption");
+            }
+            ui.add_space(tokens.padding);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+                let ready = !form.user.is_empty() && (!prompt.manual || !form.host.is_empty());
+                if ui
+                    .add_enabled(ready, egui::Button::new("Connect"))
+                    .clicked()
+                {
+                    connect = true;
+                }
+            });
+        });
+    if cancel {
+        ctx.data_mut(|d| d.remove::<LoginForm>(id));
+        s.dispatch_or_notice("network.login.cancel", &Value::Null);
+    } else if connect && !form.user.is_empty() && (!prompt.manual || !form.host.is_empty()) {
+        let mut params = json!({
+            "user": form.user,
+            "password": form.password,
+            "domain": form.domain,
+            "remember": if form.remember { "session" } else { "forget" },
+        });
+        if prompt.manual
+            && let Some(map) = params.as_object_mut()
+        {
+            map.insert("host".into(), json!(form.host.trim()));
+            map.insert("share".into(), json!(form.share.trim()));
+            map.insert("require_encryption".into(), json!(form.require_encryption));
+            if !form.port.trim().is_empty() {
+                // A non-number is passed through as a string so the command rejects it.
+                let port = form
+                    .port
+                    .trim()
+                    .parse::<u64>()
+                    .map_or(json!(form.port), |p| json!(p));
+                map.insert("port".into(), port);
+            }
+        }
+        ctx.data_mut(|d| d.remove::<LoginForm>(id));
+        s.dispatch_or_notice("network.login", &params);
+    } else {
+        ctx.data_mut(|d| d.insert_temp(id, form));
+    }
+}
+
+/// Short popup for an SFTP host opened from the Network folder.
+pub fn sftp_prompt_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    let Some(uri) = s.remote.sftp_prompt.clone() else {
+        return;
+    };
+    let mut open = ctx.input(|i| i.key_pressed(Key::Enter));
+    let mut cancel = ctx.input(|i| i.key_pressed(Key::Escape));
+    egui::Window::new("SFTP Server")
+        .id(Id::NULL.with("fm-sftp-prompt"))
+        .collapsible(false)
+        .movable(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .frame(frame(tokens))
+        .show(ctx, |ui| {
+            ui.label(format!("{} is an SSH (SFTP) server.", uri.authority().host));
+            ui.label("Connect to it from an SFTP pane.");
+            ui.add_space(tokens.padding);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+                if ui.button("Open SFTP Pane").clicked() {
+                    open = true;
+                }
+            });
+        });
+    if cancel {
+        s.dispatch_or_notice("network.sftp.cancel", &Value::Null);
+    } else if open {
+        s.dispatch_or_notice("network.sftp.open", &Value::Null);
+    }
+}
+
 /// A card for a refused, changed host key. Stays until dismissed.
 pub fn host_key_alert(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let Some(message) = s.remote.host_key_alert.clone() else {
@@ -345,11 +550,24 @@ pub fn host_key_alert(ctx: &Context, s: &mut Session, tokens: &Tokens) {
 /// The pane's remote authority and its state, if the pane shows a remote location.
 fn pane_state(s: &Session, pane: PaneId) -> Option<(String, ConnState)> {
     let loc = &s.layout.state(pane)?.location;
-    if loc.scheme() != Scheme::Sftp {
-        return None;
-    }
-    let state = s.remote.state(loc.authority())?.clone();
+    let state = s.remote.state(loc.scheme(), loc.authority())?.clone();
     Some((loc.authority().to_string(), state))
+}
+
+/// `" (encrypted)"` / `" (signed)"` for a ready SMB pane, otherwise empty.
+fn smb_security(s: &Session, pane: PaneId) -> &'static str {
+    let Some(loc) = s.layout.state(pane).map(|p| &p.location) else {
+        return "";
+    };
+    match s
+        .remote
+        .connection(loc.scheme(), loc.authority())
+        .and_then(|c| c.smb_encrypted())
+    {
+        Some(true) => " (encrypted)",
+        Some(false) => " (signed)",
+        None => "",
+    }
 }
 
 /// Connection badge for a pane header. `focused` headers sit on the accent colour.
@@ -357,9 +575,10 @@ pub fn badge(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focuse
     let Some((who, state)) = pane_state(s, pane) else {
         return;
     };
+    let security = smb_security(s, pane);
     let (tip, colour) = match &state {
         ConnState::Ready => (
-            format!("Connected to {who}. Click to disconnect"),
+            format!("Connected to {who}{security}. Click to disconnect"),
             tokens.success,
         ),
         ConnState::Connecting => (
@@ -397,7 +616,10 @@ pub fn stale_banner(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens)
     let can_reconnect = s
         .layout
         .state(pane)
-        .and_then(|p| s.remote.connection(p.location.authority()))
+        .and_then(|p| {
+            s.remote
+                .connection(p.location.scheme(), p.location.authority())
+        })
         .is_some_and(|c| c.can_reconnect());
     egui::Frame::NONE
         .fill(tokens.panel)

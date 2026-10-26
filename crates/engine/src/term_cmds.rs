@@ -222,9 +222,16 @@ pub fn paste() -> CommandSpec {
     }
 }
 
+/// Drop every control character except tab/newline/CR: a single `replace` of the bracket
+/// terminator can be rebuilt from surrounding text, letting the paste escape.
+fn sanitize_paste(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
+        .collect()
+}
+
 fn paste_text(term: &mut TermSession, text: &str) -> Result<(), FmError> {
-    // A stray bracket terminator would let pasted text escape the paste.
-    let clean = text.replace("\x1b[201~", "");
+    let clean = sanitize_paste(text);
     let mut bytes = Vec::with_capacity(clean.len() + 12);
     if term.snapshot().bracketed_paste {
         bytes.extend_from_slice(b"\x1b[200~");
@@ -401,4 +408,16 @@ pub fn specs() -> Vec<CommandSpec> {
         clear_scrollback(),
         restart(),
     ]
+}
+
+#[cfg(test)]
+mod paste_tests {
+    use super::sanitize_paste;
+
+    #[test]
+    fn a_rebuilt_bracket_terminator_cannot_survive() {
+        let out = sanitize_paste("\x1b[2\x1b[201~01~\nrm -rf ~\n");
+        assert!(!out.contains('\x1b'));
+        assert_eq!(sanitize_paste("a\tb\r\nc"), "a\tb\r\nc");
+    }
 }

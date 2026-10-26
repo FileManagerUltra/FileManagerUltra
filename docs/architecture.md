@@ -30,7 +30,7 @@ This document is the source of truth for the crate map, layering, data model, co
 These apply to every crate. They are checked in review and by CI (`cargo xtask layers`, `cargo clippy`).
 
 1. **Never crash.** Non-test code contains no `unwrap()`, `expect()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` — errors propagate as `FmError` with `?`. A malformed filename, a vanished file mid-copy, an unreachable SMB server, a full disk or a 0-byte write must produce a user-visible error, never a panic. Unimplemented backends return `FmError::Unsupported`.
-2. **No `unsafe` in our code.** `unsafe_code = "forbid"` workspace-wide. FFI (libsmbclient) exists only inside third-party crates.
+2. **No `unsafe` in our code.** `unsafe_code = "forbid"` workspace-wide. No FFI: the SMB backend is the pure-Rust `smb` crate.
 3. **Everything user-visible is a command.** New behaviour = a `CommandSpec` in `crates/engine/src/*_cmds.rs`, registered in `commands.rs`, with id, label, menu path, shortcut, params doc, `enabled` and `run`, plus tests. The UI never performs file operations directly.
 4. **The UI is thin.** `crates/ui` holds widgets and view state only. It reads `Session` state and dispatches commands; no `std::fs` calls, no job spawning.
 5. **The UI thread never blocks on I/O.** Every filesystem call runs on a worker (see §7). A 40 GiB copy across a slow SMB link must not drop a frame.
@@ -46,7 +46,8 @@ crates/
   brand        L0  the single place where the product name/ids live (rename story, §5)
   vfs          L0  VfsUri, Entry, Vfs trait, VfsError, VfsRegistry (pure data, no I/O impl)
   fs-local     L0  local + mounted-volume backend (std::fs, notify hooks)
-  fs-smb       L0  in-app SMB backend (pavao/libsmbclient; native UNC on Windows)
+  fs-smb       L0  in-app SMB backend (pure-Rust `smb` crate)
+  discovery    L0  LAN discovery (mDNS, WS-Discovery) + the virtual `network:///` folder
   fs-sftp      L0  SSH/SFTP backend (russh + russh-sftp, owns its tokio runtime)
   ops          L1  copy/move/delete/mkdir/rename pipelines: streaming, conflicts, progress
   layout       L2  pane tree (recursive splits), per-pane history/bookmarks/selection
@@ -128,10 +129,11 @@ pub trait Vfs: Send + Sync {
 | Backend | Implementation | Notes |
 |---|---|---|
 | `fs-local` | `std::fs` + `notify` | Linux `/`, `/media/$USER`, `/mnt`; macOS `/`, `/Volumes`; Windows `A:`–`Z:` + UNC |
-| `fs-smb` | Linux/macOS: `pavao` (libsmbclient, `vendored`); **Windows: native UNC via `WNetAddConnection2`, then the local backend** | avoids porting libsmbclient to Windows; SMB1 only on explicit opt-in |
+| `discovery` | `mdns-sd` (pure Rust, no async runtime); WS-Discovery is a hand-written UDP probe | `NetworkFs` lists hosts as `<name> (File Sharing)` → `smb://addr/` and `(Remote Login)` → `sftp://addr/`; discovery starts on the first listing and stops when the folder is dropped. An unconnected `smb://host/` raises the sign-in popup (`network.login`); logins live in memory only |
+| `fs-smb` | `smb` 0.12 (pure Rust, blocking mode, NTLM; signed always, encryption optional or required) | one `SmbFs` per host+user serves every share (tree-connect on demand); `smb://host/` lists the shares connected so far |
 | `fs-sftp` | `russh` + `russh-sftp` | one tokio runtime inside the crate; `Handle::block_on` satisfies the blocking `Vfs` contract |
 
-`pavao` serializes **all** SMB calls process-wide, so SMB jobs get their own scheduler lane (§7) — a slow share can never starve local work.
+SMB jobs get their own scheduler lane (§7) — a slow share can never starve local work.
 
 ### 4.5 Remote backends in a pane: the SFTP client
 
@@ -235,13 +237,13 @@ Splits are pure data: `Layout::split(pane, axis)` / `close(pane)` / `swap(a, b)`
 UI thread (eframe)                 engine workers                backends
 ┌────────────────────┐   commands   ┌──────────────────┐
 │ read Session state │─────────────▶│ local lane (4 t) │──▶ std::fs
-│ dispatch(command)  │              │ smb   lane (1 t) │──▶ pavao (process-wide lock)
+│ dispatch(command)  │              │ smb   lane (1 t) │──▶ smb (blocking, pure Rust)
 │ poll JobQueue ─────│◀── events ───│ sftp  lane (2 t) │──▶ russh (tokio inside)
 │ request_repaint()  │              └──────────────────┘
 └────────────────────┘
 ```
 
-- **Lanes, not a shared pool:** `local` (4 threads), `smb` (1 thread — matches pavao's global lock), `sftp` (2 threads). A hung share blocks only the `smb` lane.
+- **Lanes, not a shared pool:** `local` (4 threads), `smb` (2 threads), `sftp` (2 threads). A hung share blocks only the `smb` lane.
 - **Channels:** `crossbeam-channel` for job submission/events. The UI drains job events once per frame (`Session::poll()`), applies them to `Session`, then repaints if anything changed. Workers never touch egui.
 - **Read lane in use today:** directory reads (`ensure_read/submit_read/refresh_read`) run on the scheme's lane; the worker calls `Vfs::read_dir` and *stages* a `ReadOutcome` (entries or error) into the session inbox — only `poll()` writes the `DirCache`. One in-flight read per uri (dedup), `refresh_read` invalidates then re-reads.
 - **File jobs (landed, change 3):** `engine::fileops` holds a jobs table (`OpJob { id, label, state, progress, conflict, summary }`). `Session::submit_op(OpRequest)` queues a copy/move/trash/delete/mkdir/rename/undo job on the source's lane; the worker throttles progress (30 ms) into shared state and `poll()` copies it into the table — the UI never waits. Cancel is an `Arc<AtomicBool>` checked between chunks.
@@ -328,7 +330,7 @@ Dark mode is a v1 feature, not a later polish pass: **every widget is built agai
 |---|---|---|---|
 | Roots | `/` + `/media/$USER`, `/mnt`, `/run/user/$USER/gvfs` | `/`, `/Volumes` | `C:`–`Z:` (mounted only) |
 | Network discovery | none in v1 (type the path); gvfs mounts appear as local | none in v1 | none in v1 |
-| SMB | `pavao` (vendored libsmbclient) | `pavao` (vendored) | `WNetAddConnection2` → UNC → local backend |
+| SMB | `smb` crate | `smb` crate | `smb` crate |
 | Trash | XDG (`trash` crate) | `~/.Trash` (`trash`) | Recycle Bin (`trash`) |
 | Watch | inotify | FSEvents | ReadDirectoryChangesW |
 | Packaging | `.deb`, AppImage | `.dmg` (signed/notarized) | `.msi` / portable zip |

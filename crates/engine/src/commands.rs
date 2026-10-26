@@ -57,6 +57,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(dnd_cmds::specs());
     specs.extend(workspace_cmds::specs());
     specs.extend(crate::remote_cmds::specs());
+    specs.extend(crate::network::specs());
     specs.extend(crate::trash_cmds::specs());
     specs
 }

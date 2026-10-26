@@ -50,6 +50,8 @@ pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, f
         let loc = &p.location;
         if loc.scheme() == fm_vfs::Scheme::File {
             loc.path_str().to_string()
+        } else if loc.scheme() == fm_vfs::Scheme::Network {
+            loc.to_string()
         } else {
             format!("{}:{}", loc.authority(), loc.path_str())
         }

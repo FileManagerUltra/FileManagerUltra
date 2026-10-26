@@ -42,7 +42,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         crate::locationbar::type_to_go(ui.ctx(), s, pane);
     }
     crate::dnd::note_pane(ui.ctx(), pane, area);
-    if kind != PaneKind::Sftp {
+    if !matches!(kind, PaneKind::Sftp) {
         crate::remote::forget_form(ui.ctx(), pane);
     }
     if kind.is_files() {
@@ -78,6 +78,12 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             |ui| {
                                 close_button(ui, s, pane);
                                 kind_menu(ui, s, pane, kind);
+                                if kind == PaneKind::Network && ui.button("Connect…").clicked() {
+                                    s.dispatch_or_notice(
+                                        "network.connect.dialog",
+                                        &serde_json::Value::Null,
+                                    );
+                                }
                                 if kind.is_files() && !connect {
                                     crate::remote::badge(ui, s, pane, tokens, focused);
                                 }
@@ -215,6 +221,7 @@ fn kind_menu(ui: &mut Ui, s: &mut Session, pane: PaneId, current: PaneKind) {
                     | PaneKind::Terminal
                     | PaneKind::Preview
                     | PaneKind::Sftp
+                    | PaneKind::Network
                     | PaneKind::Trash
             );
             let label = if supported {

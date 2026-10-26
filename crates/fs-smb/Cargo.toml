@@ -1,6 +1,6 @@
 [package]
 name = "fm-fs-smb"
-description = "SMB/CIFS backend (pavao on Linux/macOS, native UNC on Windows)"
+description = "SMB/CIFS backend (pure-Rust `smb` crate: SMB2/3, signing, encryption)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,3 +12,9 @@ workspace = true
 
 [dependencies]
 fm-vfs.workspace = true
+smb.workspace = true
+secrecy.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

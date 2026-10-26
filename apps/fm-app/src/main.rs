@@ -67,7 +67,7 @@ fn open_uri(session: &mut Session, dialogs: &mut fm_ui::dialogs::Dialogs, uri: &
             session.dispatch_or_notice("nav.open", &Params::String(uri.to_string()));
         }
         OpenPlan::Launch => {
-            session.dispatch_or_notice("file.open", &serde_json::json!({ "uri": uri.path_str() }));
+            session.dispatch_or_notice("file.open", &serde_json::json!({ "uri": uri.to_string() }));
         }
         OpenPlan::ConfirmRun { name } => dialogs.request(fm_ui::dialogs::Dialog::ConfirmRun {
             uri: uri.clone(),
@@ -312,6 +312,10 @@ impl eframe::App for App {
         if self.session.is_busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
+        // Discovery results arrive without input: keep frames flowing while Network shows.
+        if self.session.shows_network() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
         // Remote panes refresh on a timer and when the window regains focus.
         if self.session.remote.has_ready() {
             ctx.request_repaint_after(self.session.prefs.sftp_poll());
@@ -449,6 +453,8 @@ impl eframe::App for App {
         fm_ui::jobs::show(&ctx, &mut self.session, &tokens);
         fm_ui::preferences::show(&ctx, &mut self.session, &tokens);
         fm_ui::remote::host_key_dialog(&ctx, &mut self.session, &tokens);
+        fm_ui::remote::login_dialog(&ctx, &mut self.session, &tokens);
+        fm_ui::remote::sftp_prompt_dialog(&ctx, &mut self.session, &tokens);
         fm_ui::remote::host_key_alert(&ctx, &mut self.session, &tokens);
 
         if self.session.about_open {

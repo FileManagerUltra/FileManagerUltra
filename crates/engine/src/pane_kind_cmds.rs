@@ -39,7 +39,7 @@ pub fn set_kind() -> CommandSpec {
         label: "Pane Type",
         menu: &["View", "Pane Type"],
         shortcut: None,
-        params: "{kind: \"files\"|\"terminal\"|\"sftp\"|\"trash\"|\"network\", pane?: number, confirm?: bool}",
+        params: "{kind: \"files\"|\"terminal\"|\"sftp\"|\"smb\"|\"trash\"|\"network\", pane?: number, confirm?: bool}",
         enabled: |_s| true,
         run: |s, p: &Params| {
             let (kind, pane, confirm) = parse(p)?;
@@ -48,11 +48,6 @@ pub fn set_kind() -> CommandSpec {
                 return Err(FmError::NotFound(format!("pane {pane}")));
             }
             s.pending_kind = None;
-            if kind == PaneKind::Network {
-                return Err(FmError::Unsupported(
-                    "this pane type arrives with the network backends",
-                ));
-            }
             let current = s.layout.state(pane).map(|st| st.kind);
             if current == Some(PaneKind::Terminal) && kind != PaneKind::Terminal {
                 if s.terminal_busy(pane) && !confirm {
@@ -61,25 +56,34 @@ pub fn set_kind() -> CommandSpec {
                 }
                 s.drop_terminal(pane);
             }
+            let leaving_network = matches!(kind, PaneKind::Files | PaneKind::Sftp)
+                && s.layout
+                    .state(pane)
+                    .is_some_and(|st| st.tree.root.scheme() == fm_vfs::Scheme::Network);
+            if leaving_network && let Some(state) = s.layout.state_mut(pane) {
+                // The Network tree has nothing to show for a local pane: back to home.
+                state.tree = fm_layout::TreeState::new(fm_vfs::VfsUri::root_file());
+                state.navigate(crate::workspace::home_location());
+            }
             match kind {
-                PaneKind::Files | PaneKind::Preview | PaneKind::Sftp => {}
+                PaneKind::Files | PaneKind::Preview | PaneKind::Sftp | PaneKind::Smb => {}
                 PaneKind::Trash => {
                     if !s.trash.busy {
                         s.trash_list()?;
                     }
                 }
                 PaneKind::Terminal => s.ensure_terminal(pane)?,
-                PaneKind::Network => {
-                    return Err(FmError::Unsupported(
-                        "this pane type arrives with the network backends",
-                    ));
-                }
+                PaneKind::Network => s.open_network(pane)?,
             }
             if let Some(state) = s.layout.state_mut(pane) {
                 state.kind = kind;
             }
             if s.path_edit.as_ref().is_some_and(|e| e.pane == pane) {
                 s.path_edit = None;
+            }
+            if leaving_network {
+                let home = crate::workspace::home_location();
+                s.ensure_read(home)?;
             }
             s.layout.focus_pane(pane)
         },

@@ -62,13 +62,18 @@ fn new_panes_are_files_and_unknown_kinds_are_rejected() {
 }
 
 #[test]
-fn network_placeholder_errors_and_leaves_the_pane_alone() {
+fn network_kind_roots_the_pane_at_the_network_folder() {
     let mut s = Session::new().expect("session");
-    let err = s
-        .dispatch("pane.kind.set", &json!({ "kind": "network" }))
-        .expect_err("placeholder");
-    assert!(err.to_string().contains("network backends"), "{err}");
-    assert_eq!(kind_of(&s), PaneKind::Files);
+    s.backends
+        .register(std::sync::Arc::new(fm_discovery::NetworkFs::fixed(
+            fm_discovery::HostList::new(),
+        )));
+    s.dispatch("pane.kind.set", &json!({ "kind": "network" }))
+        .expect("network");
+    assert_eq!(kind_of(&s), PaneKind::Network);
+    let pane = s.layout.focused();
+    let st = s.layout.state(pane).expect("pane");
+    assert_eq!(st.location, fm_vfs::VfsUri::network());
 }
 
 #[test]

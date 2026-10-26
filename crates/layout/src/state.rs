@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use fm_vfs::{Entry, EntryKind, VfsUri};
+use fm_vfs::{Entry, EntryKind, Scheme, VfsUri};
 
 use crate::PaneId;
 
@@ -435,6 +435,8 @@ pub enum PaneKind {
     Terminal,
     Preview,
     Sftp,
+    /// Legacy: SMB connects through the Network pane now. Kept so saved workspaces load.
+    Smb,
     Network,
     Trash,
 }
@@ -445,8 +447,8 @@ impl PaneKind {
         Self::Terminal,
         Self::Preview,
         Self::Sftp,
-        Self::Trash,
         Self::Network,
+        Self::Trash,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -455,6 +457,7 @@ impl PaneKind {
             Self::Terminal => "terminal",
             Self::Preview => "preview",
             Self::Sftp => "sftp",
+            Self::Smb => "smb",
             Self::Network => "network",
             Self::Trash => "trash",
         }
@@ -466,6 +469,7 @@ impl PaneKind {
             Self::Terminal => "Terminal",
             Self::Preview => "Preview",
             Self::Sftp => "SFTP",
+            Self::Smb => "SMB",
             Self::Network => "Network",
             Self::Trash => "Trash",
         }
@@ -475,9 +479,9 @@ impl PaneKind {
         Self::ALL.into_iter().find(|k| k.as_str() == s)
     }
 
-    /// Kinds that show a tree + listing (an `Sftp` pane is a Files pane on a server).
+    /// Kinds that show a tree + listing (an `Sftp`/`Smb` pane is a Files pane on a server).
     pub fn is_files(self) -> bool {
-        matches!(self, Self::Files | Self::Sftp)
+        matches!(self, Self::Files | Self::Sftp | Self::Smb | Self::Network)
     }
 }
 
@@ -529,16 +533,26 @@ pub const MAX_COL_WIDTH: f32 = 400.0;
 impl PaneState {
     /// A pane rooted at `location`: the tree starts expanded at the same uri.
     pub fn new(location: VfsUri) -> Self {
-        Self {
+        let root = location.clone();
+        Self::new_rooted(location, root)
+    }
+
+    /// A pane at `location` whose tree is rooted at `root` (an ancestor, e.g. `/`).
+    pub fn new_rooted(location: VfsUri, root: VfsUri) -> Self {
+        let mut pane = Self {
             kind: PaneKind::Files,
-            tree: TreeState::new(location.clone()),
+            tree: TreeState::new(root),
             history: History::new(location.clone()),
             location,
             listing: ListingState::default(),
             tree_width: DEFAULT_TREE_WIDTH,
             col_widths: DEFAULT_COL_WIDTHS,
             preview_source: PreviewSource::Follow,
+        };
+        if pane.location != pane.tree.root {
+            pane.reveal_location();
         }
+        pane
     }
 
     /// Resize detail column `ix` (0 Size, 1 Modified, 2 Type); non-finite widths and
@@ -592,6 +606,15 @@ impl PaneState {
                 return;
             }
             cur = p.parent();
+        }
+        // Hosts have no parent: under a Network tree they hang off its root.
+        if self.tree.root.scheme() == Scheme::Network && self.location.scheme() != Scheme::Network {
+            for uri in chain {
+                self.tree.expand(uri);
+            }
+            self.tree.focused = Some(self.location.clone());
+            self.tree.reveal = !self.tree.active;
+            return;
         }
         if self.location == self.tree.root {
             self.tree.focused = Some(self.location.clone());
@@ -657,6 +680,20 @@ pub struct Focus {
 mod tests {
     use super::*;
 
+    #[test]
+    fn rooted_pane_keeps_the_tree_at_the_root_and_reveals_the_location() {
+        let p = PaneState::new_rooted(VfsUri::parse("/home/u").expect("uri"), VfsUri::root_file());
+        assert_eq!(p.tree.root, VfsUri::root_file());
+        assert_eq!(p.location, VfsUri::parse("/home/u").expect("uri"));
+        assert!(p.tree.is_expanded(&VfsUri::parse("/home").expect("uri")));
+    }
+
+    #[test]
+    fn legacy_smb_kind_still_parses_from_saved_workspaces() {
+        let k: PaneKind = serde_json::from_str("\"Smb\"").expect("legacy kind");
+        assert_eq!(k, PaneKind::Smb);
+        assert!(!PaneKind::ALL.contains(&PaneKind::Smb));
+    }
     #[test]
     fn column_widths_clamp_reject_garbage_and_reset() {
         let mut p = PaneState::new(VfsUri::parse("/d").expect("uri"));

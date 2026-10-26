@@ -41,7 +41,35 @@ const UNIX_RUNNABLE: &[&str] = &[
     "out", "command",
 ];
 const WINDOWS_RUNNABLE: &[&str] = &[
-    "exe", "bat", "cmd", "com", "msi", "ps1", "vbs", "wsf", "scr", "lnk",
+    "exe",
+    "bat",
+    "cmd",
+    "com",
+    "msi",
+    "ps1",
+    "vbs",
+    "vbe",
+    "wsf",
+    "wsh",
+    "scr",
+    "lnk",
+    "hta",
+    "jar",
+    "reg",
+    "msc",
+    "cpl",
+    "url",
+    "pif",
+    "js",
+    "jse",
+    "appref-ms",
+    "msp",
+    "gadget",
+    "ps2",
+    "psc1",
+    "msh",
+    "inf",
+    "application",
 ];
 
 pub fn classify(entry: &Entry, os: Os) -> OpenKind {
@@ -208,12 +236,118 @@ pub fn open_file() -> CommandSpec {
                     "this file is a program: pass mode \"run\" with confirm: true, or confirm: true to open it with its default application".to_string(),
                 ));
             }
+            if uri.scheme() != Scheme::File {
+                if mode == Mode::Run {
+                    return Err(FmError::Unsupported(
+                        "remote programs are never run; copy it to a local folder first",
+                    ));
+                }
+                let name = safe_file_name(&entry.name);
+                s.submit_op(crate::fileops::OpRequest::OpenRemote {
+                    uri,
+                    name,
+                    size: entry.size,
+                })?;
+                return Ok(());
+            }
             let path = local_path(&uri)?;
             s.jobs
                 .submit(lane_for(uri.scheme()), move |_ctx| launch(&path, mode));
             Ok(())
         },
     }
+}
+
+/// Largest remote file fetched just to open it.
+const MAX_OPEN_DOWNLOAD: u64 = 1 << 30;
+
+/// A remote name reduced to one harmless path component.
+fn safe_file_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim_matches(|c| c == '.' || c == ' ').to_string();
+    if cleaned.is_empty() {
+        "file".to_string()
+    } else {
+        cleaned.chars().take(200).collect()
+    }
+}
+
+/// A new, uniquely named, owner-only folder in the system temp dir.
+fn private_temp_dir() -> Result<PathBuf, FmError> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let name = format!(
+        "fm-open-{}-{}-{nanos}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let dir = std::env::temp_dir().join(name);
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(&dir).map_err(FmError::Io)?;
+    Ok(dir)
+}
+
+/// Hand a downloaded copy to the default application.
+pub(crate) fn launch_default(path: &Path) -> Result<(), FmError> {
+    launch(path, Mode::Default)
+}
+
+/// Copy a remote file into a fresh private (0700) temp folder and return its path. The
+/// copy is not executable, so the OS hands it to a viewer rather than running it.
+pub(crate) fn download_to_temp(
+    vfs: &dyn fm_vfs::Vfs,
+    uri: &VfsUri,
+    name: &str,
+    size: Option<u64>,
+    cancelled: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<PathBuf, FmError> {
+    use std::io::{Read, Write};
+
+    if size.is_some_and(|n| n > MAX_OPEN_DOWNLOAD) {
+        return Err(FmError::Unsupported(
+            "file is too large to open directly; copy it to a local folder first",
+        ));
+    }
+    let dir = private_temp_dir()?;
+    let path = dir.join(name);
+    let mut reader = vfs.open_read(uri)?.take(MAX_OPEN_DOWNLOAD);
+    let mut out = std::fs::File::create(&path).map_err(FmError::Io)?;
+    let total = size.unwrap_or(0);
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut done = 0u64;
+    loop {
+        if cancelled() {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(FmError::Cancelled);
+        }
+        let n = reader.read(&mut buf).map_err(FmError::Io)?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(buf.get(..n).unwrap_or_default())
+            .map_err(FmError::Io)?;
+        done += n as u64;
+        progress(done, total);
+    }
+    out.flush().map_err(FmError::Io)?;
+    Ok(path)
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -232,6 +366,49 @@ mod tests {
     }
 
     #[test]
+    fn remote_names_become_one_safe_component() {
+        assert_eq!(safe_file_name("../../etc/passwd"), "_.._etc_passwd");
+        assert_eq!(safe_file_name(".."), "file");
+        assert_eq!(safe_file_name("a\x1bb\\c"), "a_b_c");
+    }
+
+    #[test]
+    fn a_remote_file_is_fetched_into_a_private_temp_folder() {
+        use std::sync::mpsc;
+        let mem = fm_testkit::MemFs::new();
+        mem.put_str("/r/doc.txt", b"remote bytes").expect("put");
+        let uri = VfsUri::parse("/r/doc.txt").expect("uri");
+        let (tx, rx) = mpsc::channel();
+        let jobs = crate::jobs::JobQueue::new();
+        jobs.submit(crate::jobs::JobLane::Local, move |ctx| {
+            let r = download_to_temp(
+                &mem,
+                &uri,
+                "doc.txt",
+                Some(12),
+                &|| ctx.is_cancelled(),
+                &mut |_, _| {},
+            );
+            let _ = tx.send(r);
+            Ok(())
+        });
+        let path = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("job ran")
+            .expect("download");
+        assert_eq!(std::fs::read(&path).expect("read"), b"remote bytes");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = path.parent().expect("dir");
+            let mode = |p: &Path| std::fs::metadata(p).expect("meta").permissions().mode();
+            assert_eq!(mode(dir) & 0o077, 0, "folder is owner-only");
+            assert_eq!(mode(&path) & 0o111, 0, "copy is not executable");
+        }
+        let _ = std::fs::remove_dir_all(path.parent().expect("dir"));
+    }
+
+    #[test]
     fn classification_per_os() {
         let f = |n, m| classify(&entry(n, EntryKind::File, m), Os::Unix);
         assert_eq!(f("run.sh", Some(0o755)), OpenKind::Executable);
@@ -243,6 +420,9 @@ mod tests {
         let w = |n| classify(&entry(n, EntryKind::File, None), Os::Windows);
         assert_eq!(w("Setup.EXE"), OpenKind::Executable);
         assert_eq!(w("a.ps1"), OpenKind::Executable);
+        assert_eq!(w("x.hta"), OpenKind::Executable);
+        assert_eq!(w("x.JAR"), OpenKind::Executable);
+        assert_eq!(w("x.url"), OpenKind::Executable);
         assert_eq!(w("a.txt"), OpenKind::Document);
         assert_eq!(
             classify(&entry("d", EntryKind::Dir, Some(0o755)), Os::Unix),

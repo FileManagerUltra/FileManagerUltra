@@ -51,11 +51,11 @@ fn authority(server: &TestServer) -> fm_vfs::Authority {
 }
 
 fn is_ready(s: &Session, server: &TestServer) -> bool {
-    s.remote.state(&authority(server)) == Some(&ConnState::Ready)
+    s.remote.state(Scheme::Sftp, &authority(server)) == Some(&ConnState::Ready)
 }
 
 fn failed_message(s: &Session, server: &TestServer) -> Option<String> {
-    match s.remote.state(&authority(server)) {
+    match s.remote.state(Scheme::Sftp, &authority(server)) {
         Some(ConnState::Failed(m)) => Some(m.clone()),
         _ => None,
     }
@@ -200,7 +200,7 @@ fn wrong_password_fails_without_leaking_it() {
     assert!(!msg.contains("canary-pw-123"));
     assert!(
         !s.remote
-            .connection(&authority(&server))
+            .connection(Scheme::Sftp, &authority(&server))
             .unwrap()
             .can_reconnect()
     );
@@ -266,7 +266,7 @@ fn disconnect_returns_panes_to_local_disk() {
     connect_and_trust(&mut s, &server);
     assert!(s.command_enabled("remote.disconnect"));
     s.dispatch("remote.disconnect", &json!(null)).unwrap();
-    assert!(s.remote.state(&authority(&server)).is_none());
+    assert!(s.remote.state(Scheme::Sftp, &authority(&server)).is_none());
     let loc = &s.layout.state(s.layout.focused()).unwrap().location;
     assert_eq!(loc.scheme(), Scheme::File);
 }
@@ -584,13 +584,9 @@ fn connect_command_makes_the_focused_pane_an_sftp_pane() {
         s.layout.state(pane).unwrap().kind,
         fm_layout::PaneKind::Sftp
     );
-    // Back to Files keeps working, and Network stays a placeholder.
+    // Back to Files keeps working.
     s.dispatch("pane.kind.set", &json!({"kind": "files"}))
         .unwrap();
-    assert!(
-        s.dispatch("pane.kind.set", &json!({"kind": "network"}))
-            .is_err()
-    );
 }
 
 #[test]
@@ -670,4 +666,57 @@ fn forgetting_a_host_key_persists_and_asks_again() {
     pump(&mut s, "prompt again", |s| {
         s.remote.pending_host_key().is_some()
     });
+}
+
+#[test]
+fn smb_connect_rejects_bad_params_without_connecting() {
+    let mut s = Session::new().unwrap();
+    for params in [
+        json!({}),
+        json!({"host": "nas", "user": "a", "password": "p"}),
+        json!({"host": "nas", "share": "s", "user": "a"}),
+        json!({"host": "nas", "share": "s", "user": "a", "password": "p", "port": 0}),
+        json!({"host": "nas", "share": "s", "user": "a", "password": "p", "require_encryption": "yes"}),
+        json!({"host": "bad host", "share": "s", "user": "a", "password": "p"}),
+        json!("nope"),
+    ] {
+        assert!(
+            s.dispatch("remote.connect.smb", &params).is_err(),
+            "{params}"
+        );
+    }
+    assert!(!s.remote.is_busy());
+}
+
+#[test]
+fn network_connect_dialog_opens_a_manual_prompt_and_validates() {
+    let mut s = Session::new().unwrap();
+    s.dispatch("network.connect.dialog", &json!(null))
+        .expect("dialog");
+    assert!(s.remote.login_prompt.as_ref().is_some_and(|p| p.manual));
+    for params in [
+        json!({"user": "a", "password": "p"}),
+        json!({"user": "a", "password": "p", "host": "bad host"}),
+        json!({"user": "a", "password": "p", "host": "h", "port": 0}),
+        json!({"user": "a", "password": "p", "host": "h", "port": "x"}),
+    ] {
+        assert!(s.dispatch("network.login", &params).is_err(), "{params}");
+        assert!(s.remote.login_prompt.is_some(), "{params}");
+    }
+    s.dispatch("network.login.cancel", &json!(null))
+        .expect("cancel");
+    assert!(s.remote.login_prompt.is_none());
+}
+
+#[test]
+fn sftp_and_smb_connections_to_one_host_do_not_collide() {
+    let mut s = Session::new().unwrap();
+    let uri = VfsUri::parse("smb://alice@nas.local/share").expect("uri");
+    s.remote
+        .set_state_for_tests(Scheme::Smb, uri.authority(), ConnState::Ready);
+    assert!(s.remote.state(Scheme::Smb, uri.authority()).is_some());
+    assert!(s.remote.state(Scheme::Sftp, uri.authority()).is_none());
+    assert!(s.disconnect(Scheme::Sftp, uri.authority()).is_err());
+    s.disconnect(Scheme::Smb, uri.authority())
+        .expect("disconnect");
 }

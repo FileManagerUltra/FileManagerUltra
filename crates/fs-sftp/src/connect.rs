@@ -245,6 +245,8 @@ async fn connect_async(
     let config = client::Config {
         keepalive_interval: Some(rt::keepalive_interval()),
         keepalive_max: 3,
+        // Request/reply traffic: Nagle + delayed ACK would add ~40 ms per round trip.
+        nodelay: true,
         ..Default::default()
     };
     let addr = (params.host.clone(), params.port);

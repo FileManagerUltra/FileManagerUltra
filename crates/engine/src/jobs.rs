@@ -14,8 +14,8 @@ use fm_vfs::FmError;
 /// Stable id of a submitted job.
 pub type JobId = u64;
 
-/// Which lane a job runs on. One dedicated thread per lane; SMB is process-wide
-/// serialized by `pavao`, so SMB work must never share the local lane.
+/// Which lane a job runs on. One dedicated thread per lane; SMB, SFTP and local
+/// work never share a lane, so a stalled share cannot starve local disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum JobLane {
     Local,
@@ -226,7 +226,7 @@ impl JobQueue {
         };
         let idx = match lane {
             JobLane::Local => 0,
-            JobLane::Smb => 1,
+            JobLane::Smb => 2,
             JobLane::Sftp => 2,
         };
         if self.lanes[idx].0.send(job).is_err() {

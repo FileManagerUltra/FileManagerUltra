@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use fm_fs_sftp::{ConnectParams, HostKeyInfo, HostKeyVerdict, HostKeyVerifier, SftpFs};
+use fm_fs_smb::{ConnectParams as SmbParams, SmbFs};
 use fm_vfs::{Authority, Entry, FmError, Scheme, SpaceInfo, VfsUri};
 use serde::{Deserialize, Serialize};
 
@@ -263,24 +264,91 @@ pub enum ConnState {
     Failed(String),
 }
 
-/// One remote authority: its state and the in-memory credentials for a reconnect.
+/// One remote connection: its state and the in-memory login for a reconnect.
 #[derive(Debug)]
 pub struct Connection {
+    pub scheme: Scheme,
     pub state: ConnState,
-    params: Option<ConnectParams>,
+    login: Option<Login>,
+    /// The live SMB session, kept so Disconnect can close it (the SFTP link closes with
+    /// its backend).
+    smb: Option<SmbFs>,
+}
+
+/// Credentials kept in memory only, per protocol.
+#[derive(Clone)]
+pub enum Login {
+    Sftp(ConnectParams),
+    Smb(SmbParams),
+}
+
+impl std::fmt::Debug for Login {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sftp(p) => p.fmt(f),
+            Self::Smb(p) => p.fmt(f),
+        }
+    }
+}
+
+impl Login {
+    pub fn scheme(&self) -> Scheme {
+        match self {
+            Self::Sftp(_) => Scheme::Sftp,
+            Self::Smb(_) => Scheme::Smb,
+        }
+    }
+
+    pub fn authority(&self) -> Authority {
+        match self {
+            Self::Sftp(p) => p.authority(),
+            Self::Smb(p) => Authority {
+                user: (!p.anonymous_uri).then(|| p.user.clone()),
+                host: p.host.clone(),
+                port: p.port,
+            },
+        }
+    }
+}
+
+/// The key of a connection: SFTP and SMB to the same host and user stay separate.
+pub fn conn_key(scheme: Scheme, authority: &Authority) -> String {
+    format!("{}://{authority}", scheme.as_str())
 }
 
 impl Connection {
     /// Whether a reconnect has credentials to reuse.
     pub fn can_reconnect(&self) -> bool {
-        self.params.is_some()
+        self.login.is_some()
+    }
+
+    /// The kept SMB login (for pre-filling the sign-in popup after a refusal).
+    pub(crate) fn smb_login(&self) -> Option<&SmbParams> {
+        match &self.login {
+            Some(Login::Smb(p)) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// For an SMB connection: whether the session is encrypted (otherwise it is signed).
+    pub fn smb_encrypted(&self) -> Option<bool> {
+        self.smb.as_ref().map(SmbFs::is_encrypted)
     }
 }
 
 struct ConnectJob {
     key: String,
+    scheme: Scheme,
     authority: Authority,
     navigate: bool,
+    /// Where a Network-folder sign-in was headed (and where a refused one asks again).
+    landing: Option<VfsUri>,
+}
+
+/// A freshly opened backend, staged by a connect job.
+enum Opened {
+    Sftp(SftpFs),
+    Smb(SmbFs),
 }
 
 struct SpaceSlot {
@@ -289,7 +357,7 @@ struct SpaceSlot {
     job: Option<JobId>,
 }
 
-type StagedConnect = Arc<Mutex<HashMap<JobId, Result<SftpFs, FmError>>>>;
+type StagedConnect = Arc<Mutex<HashMap<JobId, Result<Opened, FmError>>>>;
 type StagedEntries = Arc<Mutex<HashMap<JobId, Result<Arc<[Entry]>, FmError>>>>;
 type StagedSpace = Arc<Mutex<HashMap<JobId, Result<Option<SpaceInfo>, FmError>>>>;
 
@@ -308,8 +376,15 @@ pub struct RemoteHub {
     space_jobs: HashMap<JobId, VfsUri>,
     space: HashMap<VfsUri, SpaceSlot>,
     last_tick: Option<Instant>,
+    net_tick: Option<Instant>,
+    local_tick: Option<Instant>,
     /// A changed host key was refused; the UI shows a card until dismissed.
     pub host_key_alert: Option<String>,
+    /// The "Authentication Required" popup, when a Network-folder host wants a login.
+    pub login_prompt: Option<crate::network::LoginPrompt>,
+    /// An SFTP host opened from the Network folder, waiting for the user to open the SFTP pane.
+    pub sftp_prompt: Option<VfsUri>,
+    pub(crate) creds: crate::network::CredCache,
 }
 
 impl std::fmt::Debug for RemoteHub {
@@ -336,7 +411,12 @@ impl Default for RemoteHub {
             space_jobs: HashMap::new(),
             space: HashMap::new(),
             last_tick: None,
+            net_tick: None,
+            local_tick: None,
             host_key_alert: None,
+            login_prompt: None,
+            sftp_prompt: None,
+            creds: Default::default(),
         }
     }
 }
@@ -352,29 +432,38 @@ impl RemoteHub {
         lock(&self.known).clone()
     }
 
-    pub fn state(&self, authority: &Authority) -> Option<&ConnState> {
-        self.conns.get(&authority.to_string()).map(|c| &c.state)
+    pub fn state(&self, scheme: Scheme, authority: &Authority) -> Option<&ConnState> {
+        self.conns
+            .get(&conn_key(scheme, authority))
+            .map(|c| &c.state)
     }
 
-    pub fn connection(&self, authority: &Authority) -> Option<&Connection> {
-        self.conns.get(&authority.to_string())
+    pub fn connection(&self, scheme: Scheme, authority: &Authority) -> Option<&Connection> {
+        self.conns.get(&conn_key(scheme, authority))
     }
 
     /// Record a connection state without connecting; lets UI snapshots draw each state.
     #[doc(hidden)]
-    pub fn set_state_for_tests(&mut self, authority: &Authority, state: ConnState) {
+    pub fn set_state_for_tests(&mut self, scheme: Scheme, authority: &Authority, state: ConnState) {
         self.conns.insert(
-            authority.to_string(),
+            conn_key(scheme, authority),
             Connection {
+                scheme,
                 state,
-                params: None,
+                login: None,
+                smb: None,
             },
         );
     }
 
-    /// Every known connection, by authority text.
+    /// Every known connection, by `scheme://authority` text.
     pub fn connections(&self) -> impl Iterator<Item = (&str, &Connection)> {
         self.conns.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Whether a login for `host` is remembered until quit (the password is never exposed).
+    pub fn remembers_login(&self, host: &str, port: Option<u16>) -> bool {
+        self.creds.contains(host, port)
     }
 
     /// The unknown host key the user must answer, if any.
@@ -390,6 +479,31 @@ impl RemoteHub {
     /// Any connection is up, so the app must wake every [`POLL_INTERVAL`] to poll.
     pub fn has_ready(&self) -> bool {
         self.conns.values().any(|c| c.state == ConnState::Ready)
+    }
+}
+
+/// Schemes served by a connection (as opposed to local disk).
+pub fn is_remote(scheme: Scheme) -> bool {
+    matches!(scheme, Scheme::Sftp | Scheme::Smb)
+}
+
+/// Whether `err` means the link itself is gone, for `scheme`'s backend.
+pub fn is_transport_failure(scheme: Scheme, err: &FmError) -> bool {
+    match scheme {
+        Scheme::Sftp => fm_fs_sftp::is_transport_error(err),
+        Scheme::Smb => fm_fs_smb::is_transport_error(err),
+        Scheme::File | Scheme::Network => false,
+    }
+}
+
+/// Whether a failed connect was a refused login (so the stored credentials are useless).
+pub(crate) fn is_login_refused(scheme: Scheme, err: &FmError) -> bool {
+    match scheme {
+        Scheme::Smb => {
+            matches!(err, FmError::PermissionDenied(_))
+                || err.to_string().contains("authentication failed")
+        }
+        _ => matches!(err, FmError::PermissionDenied(_)),
     }
 }
 
@@ -433,17 +547,20 @@ impl Session {
         let Some(pane) = self.layout.state(self.layout.focused()) else {
             return true;
         };
-        if pane.location.scheme() != Scheme::Sftp {
+        if !is_remote(pane.location.scheme()) {
             return true;
         }
-        match self.remote.state(pane.location.authority()) {
+        match self
+            .remote
+            .state(pane.location.scheme(), pane.location.authority())
+        {
             Some(state) => *state == ConnState::Ready,
             None => true,
         }
     }
 
-    /// Start connecting on the `sftp` lane; returns at once. `navigate` opens the
-    /// server's start directory in the focused pane when the link comes up.
+    /// Start connecting an SFTP server on the `sftp` lane; returns at once. `navigate`
+    /// opens the server's start directory in the focused pane when the link comes up.
     pub fn start_connect(
         &mut self,
         params: ConnectParams,
@@ -455,23 +572,8 @@ impl Session {
         if let Some(dir) = &self.remote.config_dir {
             *lock(&self.remote.known) = KnownHosts::load(dir);
         }
-        let authority = params.authority();
-        let key = authority.to_string();
-        if matches!(
-            self.remote.conns.get(&key).map(|c| &c.state),
-            Some(ConnState::Connecting)
-        ) {
-            return Err(FmError::InvalidParams(format!(
-                "already connecting to {key}"
-            )));
-        }
-        self.remote.conns.insert(
-            key.clone(),
-            Connection {
-                state: ConnState::Connecting,
-                params: Some(params.clone()),
-            },
-        );
+        let login = Login::Sftp(params.clone());
+        let (key, authority) = self.begin_connect(login)?;
         let known = self.remote.known.clone();
         let pending = self.remote.pending.clone();
         let dir = self.remote.config_dir.clone();
@@ -483,7 +585,7 @@ impl Session {
                 dir,
                 ctx: ctx.clone(),
             });
-            let result = fm_fs_sftp::connect(&params, verifier);
+            let result = fm_fs_sftp::connect(&params, verifier).map(Opened::Sftp);
             lock(&inbox).insert(ctx.id(), result);
             Ok(())
         });
@@ -491,42 +593,111 @@ impl Session {
             job,
             ConnectJob {
                 key,
+                scheme: Scheme::Sftp,
                 authority,
                 navigate,
+                landing: None,
             },
         );
         Ok(job)
     }
 
+    /// Start connecting an SMB server on the `smb` lane; returns at once.
+    pub fn start_connect_smb(
+        &mut self,
+        params: SmbParams,
+        navigate: bool,
+    ) -> Result<JobId, FmError> {
+        self.connect_smb_to(params, navigate, None)
+    }
+
+    pub(crate) fn connect_smb_to(
+        &mut self,
+        params: SmbParams,
+        navigate: bool,
+        landing: Option<VfsUri>,
+    ) -> Result<JobId, FmError> {
+        let (key, authority) = self.begin_connect(Login::Smb(params.clone()))?;
+        let inbox = self.remote.connect_inbox.clone();
+        let job = self.jobs.submit(JobLane::Smb, move |ctx| {
+            let result = fm_fs_smb::connect(&params).map(Opened::Smb);
+            lock(&inbox).insert(ctx.id(), result);
+            Ok(())
+        });
+        self.remote.connects.insert(
+            job,
+            ConnectJob {
+                key,
+                scheme: Scheme::Smb,
+                authority,
+                navigate,
+                landing,
+            },
+        );
+        Ok(job)
+    }
+
+    /// Mark a connection as connecting and keep its login for a reconnect.
+    fn begin_connect(&mut self, login: Login) -> Result<(String, Authority), FmError> {
+        let scheme = login.scheme();
+        let authority = login.authority();
+        let key = conn_key(scheme, &authority);
+        if matches!(
+            self.remote.conns.get(&key).map(|c| &c.state),
+            Some(ConnState::Connecting)
+        ) {
+            return Err(FmError::InvalidParams(format!(
+                "already connecting to {key}"
+            )));
+        }
+        if let Some(old) = self.remote.conns.remove(&key).and_then(|c| c.smb) {
+            old.disconnect();
+        }
+        self.remote.conns.insert(
+            key.clone(),
+            Connection {
+                scheme,
+                state: ConnState::Connecting,
+                login: Some(login),
+                smb: None,
+            },
+        );
+        Ok((key, authority))
+    }
+
     /// Reconnect with the credentials kept in memory.
-    pub fn reconnect(&mut self, authority: &Authority) -> Result<JobId, FmError> {
-        let params = self
+    pub fn reconnect(&mut self, scheme: Scheme, authority: &Authority) -> Result<JobId, FmError> {
+        let login = self
             .remote
-            .connection(authority)
-            .and_then(|c| c.params.clone())
+            .connection(scheme, authority)
+            .and_then(|c| c.login.clone())
             .ok_or_else(|| {
                 FmError::InvalidParams(format!(
                     "no saved credentials for {authority}; use Connect to Server"
                 ))
             })?;
-        self.start_connect(params, false)
+        match login {
+            Login::Sftp(p) => self.start_connect(p, false),
+            Login::Smb(p) => self.start_connect_smb(p, false),
+        }
     }
 
     /// Close a connection and move its panes back to local disk.
-    pub fn disconnect(&mut self, authority: &Authority) -> Result<(), FmError> {
-        let key = authority.to_string();
-        if self.remote.conns.remove(&key).is_none() {
+    pub fn disconnect(&mut self, scheme: Scheme, authority: &Authority) -> Result<(), FmError> {
+        let key = conn_key(scheme, authority);
+        let Some(conn) = self.remote.conns.remove(&key) else {
             return Err(FmError::NotFound(format!("connection {key}")));
+        };
+        if let Some(smb) = conn.smb {
+            smb.disconnect();
         }
-        self.backends.unregister_at(Scheme::Sftp, authority);
+        self.backends.unregister_at(scheme, authority);
         let home = VfsUri::root_file();
         let panes: Vec<_> = self
             .layout
             .states
             .iter()
-            .filter(|(_, s)| {
-                s.location.scheme() == Scheme::Sftp && s.location.authority() == authority
-            })
+            .filter(|(_, s)| s.location.scheme() == scheme && s.location.authority() == authority)
             .map(|(id, _)| *id)
             .collect();
         for pane in panes {
@@ -562,7 +733,9 @@ impl Session {
                 // A folder that listed fine a moment ago and now fails for any reason other
                 // than "gone" or "denied" means the link is in trouble.
                 Some(Err(FmError::NotFound(_) | FmError::PermissionDenied(_))) => {}
-                Some(Err(_)) => lock(&self.remote.lost).push(uri.authority().to_string()),
+                Some(Err(_)) => {
+                    lock(&self.remote.lost).push(conn_key(uri.scheme(), uri.authority()))
+                }
                 None => {}
             }
             return true;
@@ -587,17 +760,35 @@ impl Session {
         false
     }
 
-    fn finish_connect(&mut self, job: ConnectJob, outcome: Result<SftpFs, FmError>) {
+    fn finish_connect(&mut self, job: ConnectJob, outcome: Result<Opened, FmError>) {
         match outcome {
-            Ok(fs) => {
-                let start = fs.start_uri();
-                self.backends
-                    .register_at(&job.authority, std::sync::Arc::new(fs));
+            Ok(opened) => {
+                let (start, smb) = match opened {
+                    Opened::Sftp(fs) => {
+                        let start = fs.start_uri();
+                        self.backends.register_at(&job.authority, Arc::new(fs));
+                        (start, None)
+                    }
+                    Opened::Smb(fs) => {
+                        let start = fs.start_uri();
+                        self.backends
+                            .register_at(&job.authority, Arc::new(fs.clone()));
+                        (start, Some(fs))
+                    }
+                };
                 if let Some(conn) = self.remote.conns.get_mut(&job.key) {
                     conn.state = ConnState::Ready;
+                    conn.smb = smb;
                 }
                 self.info = Some((format!("Connected to {}", job.key), Instant::now()));
-                if job.navigate
+                if let Some(landing) = job.landing {
+                    self.dirs.invalidate(&landing);
+                    if job.navigate {
+                        self.open_in_focused_files_pane(landing);
+                    } else if let Err(err) = self.ensure_read(landing) {
+                        self.notice = Some(err.to_string());
+                    }
+                } else if job.navigate
                     && let Ok(start) = start
                 {
                     self.open_in_focused_files_pane(start);
@@ -607,14 +798,19 @@ impl Session {
             }
             Err(err) => {
                 let message = err.to_string();
+                if let Some(landing) = job.landing.clone() {
+                    self.network_login_failed(landing, &err, job.navigate);
+                }
                 if let Some(conn) = self.remote.conns.get_mut(&job.key) {
                     conn.state = ConnState::Failed(message.clone());
                     // Only a refused login makes the stored credentials useless.
-                    if matches!(err, FmError::PermissionDenied(_)) {
-                        conn.params = None;
+                    if is_login_refused(job.scheme, &err) {
+                        conn.login = None;
                     }
                 }
-                self.notice = Some(message.clone());
+                if job.landing.is_none() || !is_login_refused(job.scheme, &err) {
+                    self.notice = Some(message.clone());
+                }
                 if is_changed_key_message(&message) {
                     self.remote.host_key_alert = Some(message);
                 }
@@ -638,8 +834,11 @@ impl Session {
             top
         };
         let tree_root = &pane.tree.root;
-        if tree_root.scheme() != root.scheme()
-            || tree_root.authority().to_string() != root.authority().to_string()
+        // A tree rooted at the Network folder keeps every host it reaches.
+        let in_network = tree_root.scheme() == Scheme::Network;
+        if !in_network
+            && (tree_root.scheme() != root.scheme()
+                || tree_root.authority().to_string() != root.authority().to_string())
         {
             pane.tree = fm_layout::TreeState::new(root);
         }
@@ -656,8 +855,8 @@ impl Session {
 
     /// A transport failure on `uri`'s connection flips it to `Failed` (once).
     pub(crate) fn note_transport(&mut self, uri: &VfsUri, err: &FmError) {
-        if uri.scheme() == Scheme::Sftp && fm_fs_sftp::is_transport_error(err) {
-            lock(&self.remote.lost).push(uri.authority().to_string());
+        if is_transport_failure(uri.scheme(), err) {
+            lock(&self.remote.lost).push(conn_key(uri.scheme(), uri.authority()));
         }
     }
 
@@ -679,6 +878,8 @@ impl Session {
 
     /// Background refresh of visible remote panes, every [`POLL_INTERVAL`].
     pub(crate) fn remote_tick(&mut self) {
+        self.network_tick();
+        self.local_tick();
         if !self.remote.has_ready() {
             return;
         }
@@ -691,6 +892,66 @@ impl Session {
         }
         self.remote.last_tick = Some(Instant::now());
         self.refresh_remote_panes();
+    }
+
+    /// Until a file watcher exists, changes made outside the app (or by a job on another
+    /// pane's folder) show up by re-reading the visible local folders every 2 s.
+    fn local_tick(&mut self) {
+        if self
+            .remote
+            .local_tick
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2))
+        {
+            return;
+        }
+        self.remote.local_tick = Some(Instant::now());
+        let panes = match self.layout.zoomed {
+            Some(p) => vec![p],
+            None => self.layout.panes(),
+        };
+        let mut uris: Vec<VfsUri> = Vec::new();
+        for id in panes {
+            let Some(state) = self.layout.state(id) else {
+                continue;
+            };
+            let loc = &state.location;
+            if state.kind.is_files() && loc.scheme() == Scheme::File && !uris.contains(loc) {
+                uris.push(loc.clone());
+            }
+        }
+        for uri in uris {
+            self.poll_location(uri);
+        }
+    }
+
+    /// Discovery keeps finding hosts after the first listing: re-read the Network folder
+    /// twice a second while a visible pane shows it.
+    fn network_tick(&mut self) {
+        if self
+            .remote
+            .net_tick
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(500))
+        {
+            return;
+        }
+        if self.shows_network() {
+            self.remote.net_tick = Some(Instant::now());
+            self.poll_location(VfsUri::network());
+        }
+    }
+
+    /// Whether a visible pane shows the Network folder (location or tree root).
+    pub fn shows_network(&self) -> bool {
+        let panes = match self.layout.zoomed {
+            Some(p) => vec![p],
+            None => self.layout.panes(),
+        };
+        let net = VfsUri::network();
+        panes.into_iter().any(|id| {
+            self.layout
+                .state(id)
+                .is_some_and(|st| st.location == net || st.tree.root == net)
+        })
     }
 
     /// Re-read the locations of visible Files panes on connected remotes. Hidden panes
@@ -707,8 +968,8 @@ impl Session {
             };
             let loc = &state.location;
             if !state.kind.is_files()
-                || loc.scheme() != Scheme::Sftp
-                || self.remote.state(loc.authority()) != Some(&ConnState::Ready)
+                || !is_remote(loc.scheme())
+                || self.remote.state(loc.scheme(), loc.authority()) != Some(&ConnState::Ready)
                 || uris.contains(loc)
             {
                 continue;
@@ -738,11 +999,13 @@ impl Session {
                 };
                 let inbox = self.remote.poll_inbox.clone();
                 let target = uri.clone();
-                let job = self.jobs.submit(JobLane::Sftp, move |ctx| {
-                    let result = backend.read_dir(&target).map(Arc::<[Entry]>::from);
-                    lock(&inbox).insert(ctx.id(), result);
-                    Ok(())
-                });
+                let job = self
+                    .jobs
+                    .submit(crate::backends::lane_for(uri.scheme()), move |ctx| {
+                        let result = backend.read_dir(&target).map(Arc::<[Entry]>::from);
+                        lock(&inbox).insert(ctx.id(), result);
+                        Ok(())
+                    });
                 self.remote.polls.insert(job, uri);
             }
         }

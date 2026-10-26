@@ -23,4 +23,5 @@ egui = { workspace = true, features = ["default_fonts"] }
 egui_kittest.workspace = true
 fm-testkit.workspace = true
 fm-fs-local.workspace = true
+fm-discovery.workspace = true
 tempfile.workspace = true

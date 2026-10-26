@@ -23,7 +23,7 @@ crates/
   brand        L0  product name/ids — the ONLY place branding strings live
   vfs          L0  VfsUri, Entry, Vfs trait (pure data, no I/O)
   fs-local     L0  local + mounted volumes
-  fs-smb       L0  SMB (pavao on Linux/macOS, native UNC on Windows)
+  fs-smb       L0  SMB (pure-Rust `smb` crate, same code on every OS)
   fs-sftp      L0  SSH/SFTP (russh + russh-sftp)
   testkit      L0  in-memory Vfs, temp-tree builders, command fuzzing
   ops          L1  copy/move/delete/mkdir/rename pipelines, conflicts, progress
@@ -40,7 +40,7 @@ xtask/                layers | brand-check | ci | bench
 ## 3. Golden rules
 
 1. **Never crash.** No `unwrap()`, `expect()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` in non-test code — return `FmError` and propagate with `?`. A vanished file, a dead share, a full disk or a 100 000-entry directory must produce an actionable error. Fix a crash before building on top of it.
-2. **No `unsafe`.** Workspace sets `unsafe_code = "forbid"`. FFI lives only in third-party crates (`pavao`).
+2. **No `unsafe`.** Workspace sets `unsafe_code = "forbid"`. There is no FFI; every backend is pure Rust.
 3. **Everything is a command.** New behaviour = `CommandSpec` in `crates/engine/src/<area>_cmds.rs` + a `specs()` list extended in `commands.rs`, with id, label, menu path, shortcut, params doc, `enabled`, `run` and tests. The UI, shortcuts and (later) the control channel all dispatch by id. Never call `fm-ops` or a backend from `fm-ui`/`fm-app`.
 4. **The UI thread never blocks.** All filesystem work goes through `engine`'s job lanes (`local`/`smb`/`sftp`). If your change makes a frame wait on I/O, it is wrong.
 5. **Thin, data-driven UI.** View state lives in `fm-layout`'s pane state; colours come from `fm-ui/src/theme.rs` semantic tokens (`Tokens::dark()` / `Tokens::light()`, both exhaustive), never hard-coded — no `Color32::` literals outside `theme.rs`, and every widget must render correctly in both dark and light.
@@ -79,7 +79,7 @@ If you added a command, also verify its shortcut/menu wiring and add a graceful-
 
 ## 7. Dependencies to know about
 
-- `pavao` (SMB) serializes **all** SMB calls process-wide → SMB work must stay on the `smb` lane; never call it from the UI thread.
+- `smb` (SMB) is used in its blocking mode and needs every opened handle closed explicitly → SMB work stays on the `smb` lane (2 workers); never call it from the UI thread. `sspi` is vendored in `vendor/` (rc crypto pins relaxed to coexist with `russh`).
 - `russh-sftp` is async → the `fs-sftp` crate owns a tokio runtime and blocks on it inside its `Vfs` impl; no other crate depends on tokio directly.
 - `trash` handles XDG/Recycle Bin/macOS trash — deletes must go through `ops::trash`, never `fs::remove_dir_all`.
 - `notify` events are debounced and only invalidate `DirCache`; they never call `read_dir` inline.

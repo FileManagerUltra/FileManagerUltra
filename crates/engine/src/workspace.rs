@@ -239,7 +239,12 @@ fn fingerprint(value: &Value) -> String {
     v.to_string()
 }
 
-fn home_location() -> VfsUri {
+/// One Files pane at home, with the tree rooted at the filesystem root.
+fn home_layout(base: u64) -> Layout {
+    Layout::single_rooted(home_location(), VfsUri::root_file(), base)
+}
+
+pub(crate) fn home_location() -> VfsUri {
     crate::goto_cmds::home_dir()
         .and_then(|h| VfsUri::parse(&h).ok())
         .unwrap_or_else(VfsUri::root_file)
@@ -405,6 +410,15 @@ impl Session {
             previews,
         } = snap;
         layout.validate()?;
+        for st in layout.states.values_mut() {
+            // SMB panes were folded into the Network pane.
+            if st.kind == PaneKind::Smb {
+                let net = VfsUri::network();
+                st.kind = PaneKind::Network;
+                st.tree = fm_layout::TreeState::new(net.clone());
+                st.navigate(net);
+            }
+        }
         let base = self.workspaces.alloc_base();
         let map = layout.relabel(base);
         for (old, settings) in previews {
@@ -439,7 +453,7 @@ impl Session {
             return (layout, Some(uid));
         }
         let base = self.workspaces.alloc_base();
-        (Layout::single_at(home_location(), base), None)
+        (home_layout(base), None)
     }
 
     fn push_tab(&mut self, layout: Layout, uid: Option<u64>, name: Option<String>) -> usize {
@@ -501,7 +515,7 @@ impl Session {
             return Err(FmError::InvalidParams(format!("name in use: {n}")));
         }
         let base = self.workspaces.alloc_base();
-        let layout = Layout::single_at(home_location(), base);
+        let layout = home_layout(base);
         let ix = self.push_tab(layout, None, name);
         self.activate(ix)
     }
@@ -911,4 +925,36 @@ pub(crate) fn background_panes(ws: &Workspaces) -> BTreeSet<PaneId> {
         .filter_map(|t| t.layout.as_ref())
         .flat_map(|l| l.states.keys().copied())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_layout_roots_the_tree_at_the_filesystem_root() {
+        let l = home_layout(10);
+        let st = l.state(l.focused()).expect("pane");
+        assert_eq!(st.tree.root, VfsUri::root_file());
+        assert_eq!(st.location, home_location());
+    }
+
+    #[test]
+    fn legacy_smb_pane_restores_as_a_network_pane() {
+        let mut s = crate::Session::new().expect("session");
+        let mut layout = home_layout(10);
+        let focused = layout.focused();
+        if let Some(st) = layout.state_mut(focused) {
+            st.kind = PaneKind::Smb;
+        }
+        let value = serde_json::to_value(Snapshot {
+            layout,
+            previews: BTreeMap::new(),
+        })
+        .expect("json");
+        let restored = s.restore(&value).expect("restore");
+        let st = restored.state(restored.focused()).expect("pane");
+        assert_eq!(st.kind, PaneKind::Network);
+        assert_eq!(st.location, VfsUri::network());
+    }
 }

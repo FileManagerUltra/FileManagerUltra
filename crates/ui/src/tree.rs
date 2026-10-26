@@ -37,6 +37,14 @@ struct Row {
 /// after the directory itself, so the flat list nests exactly like the tree.
 /// An explicit stack (never recursion) keeps deeply nested trees off the call
 /// stack and bounds the walk by [`MAX_ROWS`].
+fn root_label(root: &VfsUri) -> String {
+    if root.scheme() == fm_vfs::Scheme::Network {
+        "Network".to_string()
+    } else {
+        root.file_name().unwrap_or("/").to_string()
+    }
+}
+
 fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
     let expanded = |uri: &VfsUri| {
         s.layout
@@ -46,8 +54,7 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
     let mut rows: Vec<Row> = Vec::new();
     // Pending `(name, uri, depth)`. Children are pushed in reverse so the LIFO
     // pop visits siblings in sorted order, each one before its own children.
-    let mut stack: Vec<(String, VfsUri, usize)> =
-        vec![(root.file_name().unwrap_or("/").to_string(), root.clone(), 0)];
+    let mut stack: Vec<(String, VfsUri, usize)> = vec![(root_label(root), root.clone(), 0)];
     while let Some((name, uri, depth)) = stack.pop() {
         if rows.len() >= MAX_ROWS {
             break;
@@ -228,6 +235,14 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     if row.is_dir {
                         paint_chevron(ui, response.rect, row.expanded, selected, tokens);
                     }
+                    if is_connected_host(s, &row.uri) {
+                        // Beside the name, never over it.
+                        let d = tokens.font_size * 0.6;
+                        let (dot, _) =
+                            ui.allocate_exact_size(egui::vec2(d, d), egui::Sense::hover());
+                        ui.painter()
+                            .circle_filled(dot.center(), d * 0.5, tokens.success);
+                    }
                     if response.drag_started() {
                         response.dnd_set_drag_payload(crate::dnd::DragPayload {
                             sources: vec![row.uri.clone()],
@@ -383,6 +398,14 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
 }
 
 /// Disclosure triangle (right when collapsed, down when expanded) painted at the row's left.
+/// A server row (`smb://host/`, `sftp://host/`) with a live connection: shown with a green dot.
+fn is_connected_host(s: &Session, uri: &VfsUri) -> bool {
+    matches!(uri.scheme(), fm_vfs::Scheme::Smb | fm_vfs::Scheme::Sftp)
+        && uri.path_str() == "/"
+        && s.remote.state(uri.scheme(), uri.authority())
+            == Some(&fm_engine::remote::ConnState::Ready)
+}
+
 fn paint_chevron(ui: &Ui, rect: egui::Rect, expanded: bool, selected: bool, tokens: &Tokens) {
     let size = tokens.font_size * 0.35;
     let c = egui::pos2(rect.left() + tokens.padding + size, rect.center().y);

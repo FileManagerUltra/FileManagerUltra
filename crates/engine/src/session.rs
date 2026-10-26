@@ -192,7 +192,12 @@ impl Session {
     pub fn ensure_read(&mut self, uri: VfsUri) -> Result<Option<JobId>, FmError> {
         match self.dirs.state(&uri) {
             DirState::Ready { .. } | DirState::Loading { .. } => Ok(None),
-            DirState::Absent | DirState::Failed { .. } => self.submit_read(uri).map(Some),
+            DirState::Absent | DirState::Failed { .. } => {
+                if self.needs_login(&uri) || self.open_sftp_form(&uri) {
+                    return Ok(None);
+                }
+                self.submit_read(uri).map(Some)
+            }
         }
     }
 
@@ -202,6 +207,9 @@ impl Session {
     pub fn submit_read(&mut self, uri: VfsUri) -> Result<JobId, FmError> {
         if let Some(id) = self.inflight.get(&uri) {
             return Ok(*id);
+        }
+        if self.needs_login(&uri) {
+            return Err(FmError::PermissionDenied(uri.to_string()));
         }
         let backend = self.backends.require(&uri)?;
         let lane = lane_for(uri.scheme());
@@ -214,12 +222,10 @@ impl Session {
             let outcome = match backend.read_dir(&staged_uri) {
                 Ok(entries) => ReadOutcome::Ok(entries.into()),
                 Err(err) => {
-                    if staged_uri.scheme() == fm_vfs::Scheme::Sftp
-                        && fm_fs_sftp::is_transport_error(&err)
-                    {
-                        lost.lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .push(staged_uri.authority().to_string());
+                    if crate::remote::is_transport_failure(staged_uri.scheme(), &err) {
+                        lost.lock().unwrap_or_else(|p| p.into_inner()).push(
+                            crate::remote::conn_key(staged_uri.scheme(), staged_uri.authority()),
+                        );
                     }
                     ReadOutcome::Err(err.to_string())
                 }

@@ -66,6 +66,8 @@ pub const FILE_MKDIR: &str = "file.mkdir";
 pub const FILE_NEWFILE: &str = "file.newfile";
 pub const FILE_RENAME: &str = "file.rename";
 pub const REMOTE_CONNECT: &str = "remote.connect.dialog";
+pub const NETWORK_CONNECT: &str = "network.connect.dialog";
+pub const NETWORK_OPEN: &str = "network.open";
 pub const REMOTE_RECONNECT: &str = "remote.reconnect";
 pub const REMOTE_DISCONNECT: &str = "remote.disconnect";
 pub const FILE_DELETE: &str = "file.delete";
@@ -141,6 +143,8 @@ pub fn all_ids() -> &'static [&'static str] {
         FILE_NEWFILE,
         FILE_RENAME,
         REMOTE_CONNECT,
+        NETWORK_CONNECT,
+        NETWORK_OPEN,
         REMOTE_RECONNECT,
         REMOTE_DISCONNECT,
         FILE_DELETE,
@@ -503,6 +507,8 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, FILE_RENAME);
             ui.separator();
             item(ui, session, dialogs, REMOTE_CONNECT);
+            item(ui, session, dialogs, NETWORK_CONNECT);
+            item(ui, session, dialogs, NETWORK_OPEN);
             item(ui, session, dialogs, REMOTE_RECONNECT);
             item(ui, session, dialogs, REMOTE_DISCONNECT);
             ui.separator();
@@ -631,7 +637,9 @@ pub fn consume_shortcuts(
 ) -> Vec<&'static str> {
     let mut fired = Vec::new();
     // File and bare-key shortcuts (Backspace, Tab) must not fire while a dialog or text field owns the keyboard.
-    let typing = dialogs.is_open() || ctx.text_edit_focused();
+    // The inline connect form is a form too: Tab walks its fields instead of swapping panes.
+    let on_form = fm_ui::remote::needs_connect(session, session.layout.focused());
+    let typing = dialogs.is_open() || ctx.text_edit_focused() || on_form;
     // Most modifiers first, so Cmd+Backspace wins over plain Backspace.
     let mut table = shortcuts();
     table.sort_by_key(|(_, sc)| std::cmp::Reverse(modifier_count(&sc.modifiers)));

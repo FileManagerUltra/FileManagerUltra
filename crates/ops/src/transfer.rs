@@ -13,7 +13,7 @@ use crate::names::keep_both_name;
 use crate::plan::{Plan, PlanItem, PlanKind, Top};
 use crate::symlink::retarget;
 
-const BUF_BYTES: usize = 64 * 1024;
+const BUF_BYTES: usize = 1024 * 1024;
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Copy every top-level source in `plan`.

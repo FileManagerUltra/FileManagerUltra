@@ -35,8 +35,9 @@ See `AGENTS.md` §2. `docs/architecture.md` explains why each crate exists and h
 ## Platform notes
 
 - **Wayland**: window-wide file drops from other applications depend on winit's Wayland support and may be unavailable; in-app pane-to-pane drag & drop is unaffected, and pasting paths from the clipboard always works. See `docs/architecture.md` §11.
-- **Windows**: network shares are reached through native UNC paths (`WNetAddConnection2`), so no libsmbclient build is needed there.
-- **macOS**: local roots are `/` and `/Volumes`; SMB uses the same pavao path as Linux.
+- **Network discovery** (manual smoke; multicast cannot run in CI): File ▸ Network should list Samba/NAS hosts (mDNS) and Windows PCs (WS-Discovery) within ~5 s; opening one asks for credentials in a popup, a wrong password reopens it with an error, and `Remember until you quit` reconnects silently. VLANs/VPNs may hide hosts; use the Network pane's Connect… button (or File ▸ Connect to SMB Server…) as the fallback.
+- **SMB**: pure Rust on every OS, no system libraries. The `fm-fs-smb` integration tests start `dperson/samba` in Docker and skip themselves when Docker or the image is missing.
+- **macOS**: local roots are `/` and `/Volumes`.
 - **Trash**: only local paths can be trashed (SMB/SFTP report `Unsupported`; permanent delete is always an explicit command). Undoing a trash restores via `trash::os_limited`, available on Linux and Windows; on macOS the `trash` crate cannot restore, so undo-delete is unavailable there (undo of rename/move/create still works).
 
 ## Adding tests

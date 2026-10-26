@@ -476,6 +476,7 @@ fn ready_rows(
         Some(offset) => builder.vertical_scroll_offset(offset),
         None => builder.vertical_scroll_offset(saved_scroll),
     };
+    let mut focus_parent = false;
     let output = builder.show_rows(ui, row_height, total, |ui, row_range| {
         for row in row_range {
             if row == 0 {
@@ -490,6 +491,7 @@ fn ready_rows(
                     widths,
                     on_parent && pane_focused,
                     &mut open,
+                    &mut focus_parent,
                 );
                 continue;
             }
@@ -508,6 +510,9 @@ fn ready_rows(
     });
     if let Some(state) = s.layout.state_mut(pane) {
         state.listing.scroll = output.state.clamped_offset().y;
+        if focus_parent {
+            state.listing.focus_parent();
+        }
     }
     open
 }
@@ -562,6 +567,7 @@ fn parent_row(
     widths: [f32; 3],
     focused: bool,
     open: &mut Option<VfsUri>,
+    focus_parent: &mut bool,
 ) {
     let available = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
@@ -571,9 +577,13 @@ fn parent_row(
     if let Some(parent) = parent {
         crate::dnd::register_zone(ui.ctx(), rect, parent.clone(), crate::dnd::ZONE_ROW);
     }
-    let activated = response.clicked() || response.double_clicked();
-    if activated && let Some(parent) = parent {
+    // Like any folder: one click selects, a double click opens.
+    if response.double_clicked()
+        && let Some(parent) = parent
+    {
         *open = Some((*parent).clone());
+    } else if response.clicked() {
+        *focus_parent = true;
     }
     if focused {
         ui.painter().rect_filled(rect, 0.0, tokens.selection_bg);

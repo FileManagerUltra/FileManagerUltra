@@ -76,6 +76,12 @@ pub enum OpRequest {
         name: String,
     },
     Undo(UndoRecord),
+    /// Fetch a remote file to a private temp folder and hand it to the default application.
+    OpenRemote {
+        uri: VfsUri,
+        name: String,
+        size: Option<u64>,
+    },
 }
 
 fn items(n: usize) -> String {
@@ -101,6 +107,7 @@ impl OpRequest {
             Self::NewFile { .. } => OpKind::NewFile,
             Self::Rename { .. } => OpKind::Rename,
             Self::Undo(_) => return None,
+            Self::OpenRemote { .. } => return None,
         })
     }
 
@@ -118,6 +125,7 @@ impl OpRequest {
             Self::NewFile { name, .. } => format!("Create file {name}"),
             Self::Rename { uri, name } => format!("Rename {} to {name}", leaf(uri)),
             Self::Undo(_) => "Undo".to_string(),
+            Self::OpenRemote { name, .. } => format!("Open {name}"),
         }
     }
 
@@ -130,6 +138,7 @@ impl OpRequest {
             Self::Mkdir { parent, .. } | Self::NewFile { parent, .. } => Some(parent.clone()),
             Self::Rename { uri, .. } => Some(uri.clone()),
             Self::Undo(record) => undo_uris(record).into_iter().next(),
+            Self::OpenRemote { uri, .. } => Some(uri.clone()),
         }
     }
 
@@ -146,6 +155,7 @@ impl OpRequest {
             Self::Mkdir { parent, .. } | Self::NewFile { parent, .. } => vec![parent.clone()],
             Self::Rename { uri, .. } => vec![uri.clone()],
             Self::Undo(record) => undo_uris(record),
+            Self::OpenRemote { uri, .. } => vec![uri.clone()],
         }
     }
 
@@ -170,6 +180,7 @@ impl OpRequest {
             }
             Self::Mkdir { parent, .. } | Self::NewFile { parent, .. } => add(Some(parent.clone())),
             Self::Rename { uri, .. } => add(uri.parent()),
+            Self::OpenRemote { .. } => {}
             Self::Undo(record) => undo_uris(record).iter().for_each(|u| add(u.parent())),
         }
         dirs
@@ -354,6 +365,29 @@ fn run(
     retarget_links: bool,
 ) -> Result<(), FmError> {
     let cancel = CancelFlag::from_shared(ctx.cancel_shared());
+    if let OpRequest::OpenRemote { uri, name, size } = request {
+        let vfs = backends.require(uri)?;
+        let mut last_sent: Option<Instant> = None;
+        let path = crate::open_cmds::download_to_temp(
+            vfs.as_ref(),
+            uri,
+            name,
+            *size,
+            &|| ctx.is_cancelled(),
+            &mut |done, total| {
+                {
+                    let mut guard = lock(shared);
+                    guard.progress.bytes = fm_ops::TransferProgress { done, total };
+                    guard.progress.current = name.clone();
+                }
+                if last_sent.is_none_or(|t| t.elapsed() >= PROGRESS_EVERY) {
+                    last_sent = Some(Instant::now());
+                    ctx.report(done, total);
+                }
+            },
+        )?;
+        return crate::open_cmds::launch_default(&path);
+    }
     let mut last_sent: Option<Instant> = None;
     let mut on_progress = |p: &Progress| {
         lock(shared).progress = p.clone();
@@ -441,6 +475,7 @@ fn run(
                 ..OpReport::default()
             }
         }
+        OpRequest::OpenRemote { .. } => return Ok(()),
     };
     let cancelled = report.cancelled;
     lock(shared).report = Some(report);

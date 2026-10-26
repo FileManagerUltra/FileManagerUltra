@@ -21,6 +21,8 @@ pub enum Scheme {
     Smb,
     /// SSH/SFTP server (`sftp://[user@]host[:port]/…`).
     Sftp,
+    /// The virtual "Network" folder (`network:///`) listing discovered hosts.
+    Network,
 }
 
 impl Scheme {
@@ -29,6 +31,7 @@ impl Scheme {
             Self::File => "file",
             Self::Smb => "smb",
             Self::Sftp => "sftp",
+            Self::Network => "network",
         }
     }
 
@@ -37,6 +40,7 @@ impl Scheme {
             "file" => Some(Self::File),
             "smb" => Some(Self::Smb),
             "sftp" => Some(Self::Sftp),
+            "network" => Some(Self::Network),
             _ => None,
         }
     }
@@ -183,6 +187,13 @@ impl VfsUri {
                 }
             }
             Scheme::Smb | Scheme::Sftp => parse_authority(auth_part, scheme, original)?,
+            // `network:///` is the only location of this scheme.
+            Scheme::Network => {
+                if auth_part.is_empty() && matches!(path_part, "" | "/") {
+                    return Ok(Self::network());
+                }
+                return Err(FmError::invalid_uri(original));
+            }
         };
 
         let path = normalize_path(if path_part.is_empty() { "/" } else { path_part })?;
@@ -239,6 +250,15 @@ impl VfsUri {
     }
 
     /// The local filesystem root (`file:///`), available without parsing.
+    /// The virtual Network folder.
+    pub fn network() -> Self {
+        Self {
+            scheme: Scheme::Network,
+            authority: Authority::local(),
+            path: "/".to_string(),
+        }
+    }
+
     pub fn root_file() -> Self {
         Self {
             scheme: Scheme::File,
@@ -336,6 +356,7 @@ impl fmt::Display for VfsUri {
             Scheme::File => write!(f, "file://{}", self.path),
             Scheme::Smb => write!(f, "smb://{}{}", self.authority, self.path),
             Scheme::Sftp => write!(f, "sftp://{}{}", self.authority, self.path),
+            Scheme::Network => f.write_str("network:///"),
         }
     }
 }
@@ -464,6 +485,23 @@ mod tests {
         let uri = VfsUri::parse(r"\\nas\share\x").unwrap();
         assert_eq!(uri.scheme(), Scheme::File);
         assert_eq!(uri.path_str(), "/nas/share/x");
+    }
+
+    #[test]
+    fn network_uri_round_trips_and_rejects_everything_else() {
+        let uri = VfsUri::parse("network:///").unwrap();
+        assert_eq!(uri, VfsUri::network());
+        assert_eq!(VfsUri::parse(&uri.to_string()).unwrap(), uri);
+        assert_eq!(VfsUri::parse("network://").unwrap(), uri);
+        assert!(uri.parent().is_none());
+        for bad in [
+            "network://host/",
+            "network:///x",
+            "network:///../x",
+            "network://a@b/",
+        ] {
+            assert!(VfsUri::parse(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

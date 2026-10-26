@@ -1,0 +1,18 @@
+[package]
+name = "fm-discovery"
+description = "LAN host discovery (mDNS/DNS-SD, WS-Discovery) and the virtual Network folder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+fm-vfs.workspace = true
+mdns-sd.workspace = true
+if-addrs.workspace = true
+socket2.workspace = true
+log.workspace = true

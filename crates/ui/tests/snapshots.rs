@@ -499,6 +499,107 @@ fn connect_dialog_dark_light() {
 }
 
 #[test]
+fn login_dialog_dark_light() {
+    use fm_engine::network::LoginPrompt;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = fixture_session();
+        session.remote.login_prompt = Some(LoginPrompt {
+            uri: VfsUri::parse("smb://nas.local/").expect("uri"),
+            host: "nas.local".to_string(),
+            port: None,
+            error: Some("Login failed. Check the user name, domain and password.".to_string()),
+            user: "alice".to_string(),
+            domain: "WORKGROUP".to_string(),
+            navigate: false,
+            manual: false,
+        });
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            fm_ui::remote::login_dialog(ui.ctx(), &mut session, &tokens);
+        });
+        harness.set_size(egui::vec2(640.0, 400.0));
+        harness.run();
+        harness.snapshot(format!("login_dialog_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
+fn manual_connect_dialog_dark_light() {
+    use fm_engine::network::LoginPrompt;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = fixture_session();
+        session.remote.login_prompt = Some(LoginPrompt {
+            uri: VfsUri::parse("network:///").expect("uri"),
+            host: String::new(),
+            port: None,
+            error: None,
+            user: String::new(),
+            domain: "WORKGROUP".to_string(),
+            navigate: false,
+            manual: true,
+        });
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            fm_ui::remote::login_dialog(ui.ctx(), &mut session, &tokens);
+        });
+        harness.set_size(egui::vec2(640.0, 400.0));
+        harness.run();
+        harness.snapshot(format!("network_connect_dialog_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
+fn network_pane_dark_light() {
+    use fm_discovery::{HostList, NetworkFs, Service};
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let hosts = HostList::new();
+        for (name, ip, svc, port) in [
+            ("nas", "192.168.1.20", Service::Smb, 445),
+            ("nas", "192.168.1.20", Service::Sftp, 22),
+            ("media-pc", "192.168.1.31", Service::Smb, 445),
+        ] {
+            hosts.upsert(name, name, ip.parse().expect("ip"), svc, port);
+        }
+        let mut session = Session::default();
+        session.backends.register(Arc::new(NetworkFs::fixed(hosts)));
+        let net = VfsUri::network();
+        {
+            let st = session.layout.state_mut(1).expect("pane");
+            st.kind = fm_layout::PaneKind::Network;
+            st.tree = fm_layout::TreeState::new(net.clone());
+            st.navigate(net.clone());
+        }
+        session.submit_read(net.clone()).expect("submit");
+        wait_ready(&mut session, &net);
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            let _ = pane::show(ui, &mut session, 1, &tokens);
+        });
+        harness.set_size(egui::vec2(640.0, 360.0));
+        harness.run();
+        harness.snapshot(format!("pane_network_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
 fn trash_pane_dark_light() {
     use fm_engine::trash_cmds::{TrashEntry, TrashListing};
     let _gpu = lock_gpu();
@@ -573,7 +674,9 @@ fn sftp_pane_badge_and_stale_banner_dark_light() {
                 ConnState::Failed("connection reset by peer".to_string()),
             ];
             for state in states {
-                session.remote.set_state_for_tests(uri.authority(), state);
+                session
+                    .remote
+                    .set_state_for_tests(uri.scheme(), uri.authority(), state);
                 for focused in [true, false] {
                     egui::Frame::NONE
                         .fill(if focused { tokens.accent } else { tokens.panel })

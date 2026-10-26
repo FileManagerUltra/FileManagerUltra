@@ -203,7 +203,7 @@ impl Dialogs {
             }
             Dialog::ConfirmRun { uri, name } => {
                 let (choice, cancel) = confirm_run(ctx, tokens, name);
-                let uri_s = uri.path_str().to_string();
+                let uri_s = uri.to_string();
                 match choice {
                     Some(run) => {
                         s.dispatch_or_notice(

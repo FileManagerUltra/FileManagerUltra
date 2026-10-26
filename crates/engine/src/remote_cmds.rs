@@ -1,6 +1,7 @@
 //! Remote commands: connect, reconnect, disconnect, host-key answers and profiles.
 
 use fm_fs_sftp::{AuthMethod, ConnectParams, SecretString};
+use fm_fs_smb::ConnectParams as SmbParams;
 use fm_vfs::{Authority, FmError, Scheme};
 
 use crate::file_cmds::object;
@@ -37,10 +38,38 @@ fn port(map: Option<&serde_json::Map<String, Params>>) -> Result<Option<u16>, Fm
     }
 }
 
-/// The remote authority the focused Files pane shows, if any.
-fn focused_authority(s: &Session) -> Option<Authority> {
+/// The remote the focused Files pane shows, if any.
+fn focused_authority(s: &Session) -> Option<(Scheme, Authority)> {
     let pane = s.layout.state(s.layout.focused())?;
-    (pane.location.scheme() == Scheme::Sftp).then(|| pane.location.authority().clone())
+    let scheme = pane.location.scheme();
+    crate::remote::is_remote(scheme).then(|| (scheme, pane.location.authority().clone()))
+}
+
+fn parse_connect_smb(s: &Session, params: &Params) -> Result<SmbParams, FmError> {
+    let map = object(params)?;
+    let required = |key: &str| {
+        text(map, key)?.ok_or_else(|| FmError::InvalidParams(format!("{key} is required")))
+    };
+    let require_encryption = match map.and_then(|m| m.get("require_encryption")) {
+        None | Some(Params::Null) => false,
+        Some(v) => v.as_bool().ok_or_else(|| {
+            FmError::InvalidParams("require_encryption must be true or false".to_string())
+        })?,
+    };
+    let secs = s.prefs.sftp_timeout_secs.clamp(1, 600);
+    let params = SmbParams {
+        host: required("host")?,
+        port: port(map)?,
+        share: required("share")?,
+        user: required("user")?,
+        domain: text(map, "domain")?.filter(|d| !d.is_empty()),
+        password: fm_fs_smb::SecretString::from(required("password")?),
+        timeout: std::time::Duration::from_secs(secs),
+        require_encryption,
+        anonymous_uri: false,
+    };
+    params.validate()?;
+    Ok(params)
 }
 
 fn parse_connect(s: &Session, params: &Params) -> Result<ConnectParams, FmError> {
@@ -125,6 +154,22 @@ pub fn connect() -> CommandSpec {
     }
 }
 
+/// `remote.connect.smb` — connect to an SMB server on the `smb` lane.
+pub fn connect_smb() -> CommandSpec {
+    CommandSpec {
+        id: "remote.connect.smb",
+        label: "Connect to SMB",
+        menu: &["File", "Network", "Connect (SMB)"],
+        shortcut: None,
+        params: "host, share, user, password, domain?, port?, require_encryption?",
+        enabled: |_s| true,
+        run: |s, params: &Params| {
+            let connect = parse_connect_smb(s, params)?;
+            s.start_connect_smb(connect, true).map(|_| ())
+        },
+    }
+}
+
 /// `remote.reconnect` — reconnect the focused pane's server with the in-memory login.
 pub fn reconnect() -> CommandSpec {
     CommandSpec {
@@ -135,15 +180,15 @@ pub fn reconnect() -> CommandSpec {
         params: "none",
         enabled: |s| {
             focused_authority(s)
-                .and_then(|a| s.remote.connection(&a))
+                .and_then(|(sc, a)| s.remote.connection(sc, &a))
                 .is_some_and(|c| {
                     matches!(c.state, crate::remote::ConnState::Failed(_)) && c.can_reconnect()
                 })
         },
         run: |s, _p: &Params| {
-            let authority = focused_authority(s)
+            let (scheme, authority) = focused_authority(s)
                 .ok_or_else(|| FmError::NotFound("remote connection".to_string()))?;
-            s.reconnect(&authority).map(|_| ())
+            s.reconnect(scheme, &authority).map(|_| ())
         },
     }
 }
@@ -156,11 +201,13 @@ pub fn disconnect() -> CommandSpec {
         menu: &["File", "Disconnect"],
         shortcut: None,
         params: "none",
-        enabled: |s| focused_authority(s).is_some_and(|a| s.remote.connection(&a).is_some()),
+        enabled: |s| {
+            focused_authority(s).is_some_and(|(sc, a)| s.remote.connection(sc, &a).is_some())
+        },
         run: |s, _p: &Params| {
-            let authority = focused_authority(s)
+            let (scheme, authority) = focused_authority(s)
                 .ok_or_else(|| FmError::NotFound("remote connection".to_string()))?;
-            s.disconnect(&authority)
+            s.disconnect(scheme, &authority)
         },
     }
 }
@@ -272,6 +319,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         connect_dialog(),
         connect(),
+        connect_smb(),
         reconnect(),
         disconnect(),
         hostkey_answer(),

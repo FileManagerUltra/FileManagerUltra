@@ -17,6 +17,7 @@ const TABLE: &[(&str, u8)] = &[
     ("fm-fs-local", 0),
     ("fm-fs-smb", 0),
     ("fm-fs-sftp", 0),
+    ("fm-discovery", 0),
     ("fm-testkit", 0),
     ("fm-ops", 1),
     ("fm-term", 1),

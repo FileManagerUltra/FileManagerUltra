@@ -16,6 +16,7 @@ fm-vfs = { path = "crates/vfs" }
 fm-fs-local = { path = "crates/fs-local" }
 fm-fs-smb = { path = "crates/fs-smb" }
 fm-fs-sftp = { path = "crates/fs-sftp" }
+fm-discovery = { path = "crates/discovery" }
 fm-testkit = { path = "crates/testkit" }
 fm-ops = { path = "crates/ops" }
 fm-layout = { path = "crates/layout" }
@@ -64,6 +65,13 @@ tokio = { version = "1", default-features = false, features = ["rt-multi-thread"
 secrecy = "0.10"
 zeroize = "1"
 
+# external — SMB (fm-fs-smb only; pure Rust, sync mode, NTLM)
+smb = { version = "=0.12.1", default-features = false, features = ["sign", "encrypt", "multi_threaded"] }
+# external — LAN discovery (fm-discovery only; pure Rust mDNS, no async runtime)
+mdns-sd = { version = "0.21", default-features = false }
+if-addrs = "0.15"
+socket2 = "0.6"
+
 # external — xtask tooling
 regex = "1"
 
@@ -90,3 +98,7 @@ opt-level = 3
 # Decoding/resizing is generic and inlined into this crate, so it needs optimising too.
 [profile.dev.package.fm-preview]
 opt-level = 3
+
+[patch.crates-io]
+sspi = { path = "vendor/sspi" }
+smb-transport = { path = "vendor/smb-transport" }

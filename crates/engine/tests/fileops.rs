@@ -601,3 +601,37 @@ fn paste_refuses_when_the_os_clipboard_changed_or_params_are_bad() {
     assert!(s.clipboard.is_none());
     assert!(dispatch(&mut s, "file.clip_paste", json!({"os_text": 5})).is_err());
 }
+
+#[test]
+fn opening_a_remote_file_shows_up_as_a_job() {
+    let fs = MemFs::new();
+    fs.put_str("/r/big.bin", b"x").expect("put");
+    let mut s = session_on(Arc::new(fs));
+    let id = s
+        .submit_op(fm_engine::OpRequest::OpenRemote {
+            uri: uri("/r/big.bin"),
+            name: "big.bin".to_string(),
+            size: Some(u64::MAX),
+        })
+        .expect("submit");
+    assert_eq!(s.fileops.get(id).expect("job").label, "Open big.bin");
+    assert!(matches!(finish(&mut s, id), OpState::Failed(m) if m.contains("too large")));
+}
+
+#[test]
+fn visible_local_folders_pick_up_files_added_behind_the_apps_back() {
+    let fs = MemFs::new();
+    fs.mkdirs_str("/watched").expect("dir");
+    let mut s = session_on(Arc::new(fs.clone()));
+    s.dispatch("nav.open", &Params::String("file:///watched".to_string()))
+        .expect("open");
+    poll_until(&mut s, "first listing", |s| {
+        s.dirs.state(&uri("/watched")).is_ready()
+    });
+    fs.put_str("/watched/new.txt", b"hi").expect("put");
+    poll_until(&mut s, "periodic re-read", |s| {
+        s.dirs
+            .entries(&uri("/watched"))
+            .is_some_and(|e| e.iter().any(|x| x.name == "new.txt"))
+    });
+}

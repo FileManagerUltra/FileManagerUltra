@@ -18,6 +18,7 @@ pub mod goto_cmds;
 pub mod job_cmds;
 pub mod jobs;
 pub mod nav_cmds;
+pub mod network;
 pub mod open_cmds;
 pub mod pane_cmds;
 pub mod pane_kind_cmds;

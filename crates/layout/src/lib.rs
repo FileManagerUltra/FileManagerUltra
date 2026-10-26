@@ -33,6 +33,14 @@ pub struct Layout {
 }
 
 impl Layout {
+    /// A single pane at `location` whose tree is rooted at `root`.
+    pub fn single_rooted(location: VfsUri, root: VfsUri, first_id: PaneId) -> Self {
+        let mut l = Self::single(location.clone());
+        l.states.insert(1, PaneState::new_rooted(location, root));
+        l.relabel(first_id);
+        l
+    }
+
     /// A single pane at `location`.
     pub fn single(location: VfsUri) -> Self {
         let mut states = BTreeMap::new();
