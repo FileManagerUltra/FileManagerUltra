@@ -49,6 +49,31 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
     });
 }
 
+/// The menu of a saved-server row (Saved servers folder): connect, edit, delete. These act on
+/// the profile called `name`, so they dispatch straight away with that parameter.
+pub fn attach_server(
+    response: &Response,
+    s: &mut Session,
+    name: &str,
+    uri: &VfsUri,
+    open: &mut Option<VfsUri>,
+) {
+    response.context_menu(|ui| {
+        if ui.button("Connect").clicked() {
+            *open = Some(uri.clone());
+            ui.close();
+        }
+        if ui.button("Edit…").clicked() {
+            s.dispatch_or_notice("servers.edit", &serde_json::json!({"name": name}));
+            ui.close();
+        }
+        if ui.button("Delete").clicked() {
+            s.dispatch_or_notice("remote.profile.delete", &serde_json::json!({"name": name}));
+            ui.close();
+        }
+    });
+}
+
 fn command_item(ui: &mut Ui, s: &Session, id: &str) {
     let Some(spec) = s.registry.get(id) else {
         return;

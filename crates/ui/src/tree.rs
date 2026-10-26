@@ -40,6 +40,8 @@ struct Row {
 fn root_label(root: &VfsUri) -> String {
     if root.scheme() == fm_vfs::Scheme::Network {
         "Network".to_string()
+    } else if root.scheme() == fm_vfs::Scheme::Servers {
+        "Saved servers".to_string()
     } else {
         root.file_name().unwrap_or("/").to_string()
     }
@@ -206,6 +208,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let mut revealed = false;
     let mut scroll_focus_done = false;
     let scroll_focus = s.layout.state(pane).is_some_and(|p| p.tree.scroll_focus);
+    let saved_servers = rows
+        .first()
+        .is_some_and(|r| r.uri.scheme() == fm_vfs::Scheme::Servers);
     let max_chars = ((ui.available_width() / (tokens.font_size * 0.55)).max(8.0)) as usize;
     let output = egui::ScrollArea::vertical()
         .id_salt(format!("fm-tree-{pane}"))
@@ -346,6 +351,11 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     if response.double_clicked() {
                         open = Some(row.uri.clone());
                     }
+                    if saved_servers && row.depth == 1 {
+                        crate::context_menu::attach_server(
+                            &response, s, &row.name, &row.uri, &mut open,
+                        );
+                    }
                 });
             }
         });
@@ -353,7 +363,10 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     // Persist the scroll offset — but never the value egui clamped while the
     // rows were missing: a refresh shrinks the tree to the root for a few
     // frames, and saving that would pin the tree to the top afterwards.
-    if rows.iter().all(|r| r.state == RowState::Ready)
+    // A failed node (permission denied, gone) is settled and keeps its place, so it must not
+    // block persisting: otherwise the saved offset is forced back every frame.
+    // A reveal just scrolled the node into view: keep that offset even while other rows load.
+    if (revealed || rows.iter().all(|r| r.state != RowState::Loading))
         && let Some(state) = s.layout.state_mut(pane)
     {
         state.tree.scroll = output.state.clamped_offset().y;
@@ -731,6 +744,44 @@ mod tests {
             ctx.memory(|m| m.focused()).is_some(),
             "tree keyboard focus is restored"
         );
+    }
+
+    /// Navigating to a deep folder scrolls the tree to it, even while rows are still loading.
+    #[test]
+    fn navigating_scrolls_the_tree_to_the_folder() {
+        let mut s = Session::default();
+        let mem = MemFs::new();
+        for i in 0..60 {
+            mem.mkdirs_str(&format!("/d{i:02}")).expect("mkdirs");
+        }
+        for i in 0..30 {
+            mem.mkdirs_str(&format!("/zz/e{i:02}")).expect("mkdirs");
+        }
+        mem.mkdirs_str("/zz/target").expect("mkdirs");
+        s.backends.register(Arc::new(mem));
+        let root = VfsUri::parse("/").expect("uri");
+        {
+            let pane = s.layout.state_mut(1).expect("pane");
+            pane.tree = fm_layout::TreeState::new(root.clone());
+            pane.location = root.clone();
+        }
+        s.submit_read(root.clone()).expect("submit");
+        wait_ready(&mut s, &root);
+        let ctx = egui::Context::default();
+        run_tree_frame(&ctx, &mut s, 1);
+
+        let target = VfsUri::parse("/zz/target").expect("uri");
+        s.layout
+            .state_mut(1)
+            .expect("pane")
+            .navigate(target.clone());
+        for _ in 0..40 {
+            s.poll();
+            run_tree_frame(&ctx, &mut s, 1);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let scroll = s.layout.state(1).expect("pane").tree.scroll;
+        assert!(scroll > 100.0, "tree scrolled to the folder, got {scroll}");
     }
 
     /// `Right` expands a node; it must not hand egui focus to a widget beside the tree.

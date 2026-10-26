@@ -317,24 +317,18 @@ pub fn commit() -> CommandSpec {
                 .map(|p| p.location.clone())
                 .ok_or_else(|| FmError::NotFound("focused pane".to_string()))?;
             let target = resolve(&base, &raw)?;
-            // A typed `sftp://` address with no connection yet opens the connect form,
-            // prefilled from the address. An `smb://` one asks in the sign-in popup.
-            if target.scheme() == Scheme::Smb && s.backends.require(&target).is_err() {
+            // A typed `sftp://` or `smb://` address with no connection yet asks in the sign-in popup.
+            if matches!(target.scheme(), Scheme::Smb | Scheme::Sftp)
+                && s.backends.require(&target).is_err()
+            {
                 let focused = s.layout.focused();
                 if let Some(state) = s.layout.state_mut(focused)
                     && state.kind.is_files()
                 {
                     state.navigate(target.clone());
                 }
-                s.needs_login(&target);
-                s.path_edit = None;
-                return Ok(());
-            }
-            if target.scheme() == Scheme::Sftp && s.backends.require(&target).is_err() {
-                s.dispatch("pane.kind.set", &serde_json::json!({"kind": "sftp"}))?;
-                let focused = s.layout.focused();
-                if let Some(state) = s.layout.state_mut(focused) {
-                    state.navigate(target);
+                if !s.needs_login(&target) {
+                    s.needs_sftp_login(&target);
                 }
                 s.path_edit = None;
                 return Ok(());

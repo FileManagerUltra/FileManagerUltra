@@ -244,7 +244,7 @@ fn home_layout(base: u64) -> Layout {
     Layout::single_rooted(home_location(), VfsUri::root_file(), base)
 }
 
-pub(crate) fn home_location() -> VfsUri {
+pub fn home_location() -> VfsUri {
     crate::goto_cmds::home_dir()
         .and_then(|h| VfsUri::parse(&h).ok())
         .unwrap_or_else(VfsUri::root_file)
@@ -384,6 +384,8 @@ impl Session {
     }
 
     fn kick_reads(&mut self) {
+        // Unconnected SFTP panes fall back to Saved servers instead of asking to sign in.
+        self.normalize_sftp_panes();
         let locations: Vec<VfsUri> = self
             .layout
             .states

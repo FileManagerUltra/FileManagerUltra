@@ -42,14 +42,17 @@ pub struct Prefs {
     #[serde(default)]
     pub profiles: Vec<Profile>,
     /// Seconds between background refreshes of remote panes (also how fast a dead link shows).
-    #[serde(default = "default_sftp_poll")]
-    pub sftp_poll_secs: u64,
+    #[serde(default = "default_remote_poll", alias = "sftp_poll_secs")]
+    pub remote_poll_secs: u64,
     /// Seconds a remote call may stall before the link counts as lost.
-    #[serde(default = "default_sftp_timeout")]
-    pub sftp_timeout_secs: u64,
+    #[serde(default = "default_remote_timeout", alias = "sftp_timeout_secs")]
+    pub remote_timeout_secs: u64,
     /// Seconds between keepalive probes on an idle link (applies to new connections).
-    #[serde(default = "default_sftp_keepalive")]
-    pub sftp_keepalive_secs: u64,
+    #[serde(default = "default_remote_keepalive", alias = "sftp_keepalive_secs")]
+    pub remote_keepalive_secs: u64,
+    /// Refuse SMB connections that are not encrypted (applies to new connections).
+    #[serde(default)]
+    pub smb_require_encryption: bool,
     /// UI zoom factor (Ctrl+Shift+Plus / Minus), restored on start.
     #[serde(default = "default_zoom")]
     pub zoom: f32,
@@ -63,17 +66,17 @@ fn default_zoom() -> f32 {
     1.0
 }
 /// Allowed ranges (seconds) for the SFTP timing preferences.
-pub const SFTP_POLL_RANGE: std::ops::RangeInclusive<u64> = 1..=60;
-pub const SFTP_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 2..=120;
-pub const SFTP_KEEPALIVE_RANGE: std::ops::RangeInclusive<u64> = 1..=60;
+pub const REMOTE_POLL_RANGE: std::ops::RangeInclusive<u64> = 1..=60;
+pub const REMOTE_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 2..=120;
+pub const REMOTE_KEEPALIVE_RANGE: std::ops::RangeInclusive<u64> = 1..=60;
 
-fn default_sftp_poll() -> u64 {
+fn default_remote_poll() -> u64 {
     5
 }
-fn default_sftp_timeout() -> u64 {
+fn default_remote_timeout() -> u64 {
     fm_fs_sftp::DEFAULT_OP_TIMEOUT_SECS
 }
-fn default_sftp_keepalive() -> u64 {
+fn default_remote_keepalive() -> u64 {
     fm_fs_sftp::DEFAULT_KEEPALIVE_SECS
 }
 
@@ -81,18 +84,20 @@ impl Prefs {
     /// Push the SFTP timeouts to the backend (call after load and after every change).
     pub fn apply_sftp(&self) {
         fm_fs_sftp::set_timeouts(
-            self.sftp_timeout_secs
-                .clamp(*SFTP_TIMEOUT_RANGE.start(), *SFTP_TIMEOUT_RANGE.end()),
-            self.sftp_keepalive_secs
-                .clamp(*SFTP_KEEPALIVE_RANGE.start(), *SFTP_KEEPALIVE_RANGE.end()),
+            self.remote_timeout_secs
+                .clamp(*REMOTE_TIMEOUT_RANGE.start(), *REMOTE_TIMEOUT_RANGE.end()),
+            self.remote_keepalive_secs.clamp(
+                *REMOTE_KEEPALIVE_RANGE.start(),
+                *REMOTE_KEEPALIVE_RANGE.end(),
+            ),
         );
     }
 
     /// The remote-pane refresh interval, clamped to the allowed range.
-    pub fn sftp_poll(&self) -> std::time::Duration {
+    pub fn remote_poll(&self) -> std::time::Duration {
         std::time::Duration::from_secs(
-            self.sftp_poll_secs
-                .clamp(*SFTP_POLL_RANGE.start(), *SFTP_POLL_RANGE.end()),
+            self.remote_poll_secs
+                .clamp(*REMOTE_POLL_RANGE.start(), *REMOTE_POLL_RANGE.end()),
         )
     }
 }
@@ -104,6 +109,9 @@ const MAX_PROFILE_FIELD: usize = 1024;
 /// A saved SFTP connection: where to connect, never how to authenticate secretly.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
+    /// Absent in old files, which are all SFTP.
+    #[serde(default, skip_serializing_if = "Protocol::is_default")]
+    pub protocol: Protocol,
     pub name: String,
     pub host: String,
     #[serde(default = "default_port")]
@@ -114,6 +122,27 @@ pub struct Profile {
     pub key_path: Option<String>,
     #[serde(default)]
     pub start_dir: Option<String>,
+    /// SMB only: authentication domain / workgroup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    /// SMB only: share to open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<String>,
+}
+
+/// Which backend a saved profile connects with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    #[default]
+    Sftp,
+    Smb,
+}
+
+impl Protocol {
+    fn is_default(&self) -> bool {
+        *self == Self::Sftp
+    }
 }
 
 fn default_port() -> u16 {
@@ -146,6 +175,17 @@ impl Profile {
         if !ok_opt(&self.start_dir) {
             return Err(bad("start directory"));
         }
+        if !ok_opt(&self.domain) {
+            return Err(bad("domain"));
+        }
+        if !ok_opt(&self.share)
+            || self
+                .share
+                .as_deref()
+                .is_some_and(|s| s.contains(['/', '\\']))
+        {
+            return Err(bad("share"));
+        }
         Ok(())
     }
 }
@@ -163,9 +203,10 @@ impl Default for Prefs {
             retarget_links: true,
             recursive_preview: false,
             profiles: Vec::new(),
-            sftp_poll_secs: default_sftp_poll(),
-            sftp_timeout_secs: default_sftp_timeout(),
-            sftp_keepalive_secs: default_sftp_keepalive(),
+            remote_poll_secs: default_remote_poll(),
+            remote_timeout_secs: default_remote_timeout(),
+            remote_keepalive_secs: default_remote_keepalive(),
+            smb_require_encryption: false,
             zoom: default_zoom(),
         }
     }
@@ -307,14 +348,30 @@ mod tests {
             last_dir: Some("/home/alice".to_string()),
             retarget_links: false,
             recursive_preview: true,
-            profiles: vec![Profile {
-                name: "nas".to_string(),
-                host: "nas.local".to_string(),
-                port: 2222,
-                user: "alice".to_string(),
-                key_path: Some("/home/alice/.ssh/id_ed25519".to_string()),
-                start_dir: None,
-            }],
+            profiles: vec![
+                Profile {
+                    name: "nas".to_string(),
+                    host: "nas.local".to_string(),
+                    port: 2222,
+                    user: "alice".to_string(),
+                    key_path: Some("/home/alice/.ssh/id_ed25519".to_string()),
+                    start_dir: None,
+                    protocol: Protocol::Sftp,
+                    domain: None,
+                    share: None,
+                },
+                Profile {
+                    protocol: Protocol::Smb,
+                    name: "pc".to_string(),
+                    host: "pc.local".to_string(),
+                    port: 445,
+                    user: "bob".to_string(),
+                    key_path: None,
+                    start_dir: None,
+                    domain: Some("WORKGROUP".to_string()),
+                    share: Some("Public".to_string()),
+                },
+            ],
             ..Prefs::default()
         };
         save(&dir, &prefs).expect("save");
@@ -377,10 +434,11 @@ mod tests {
                 "last_dir",
                 "profiles",
                 "recursive_preview",
+                "remote_keepalive_secs",
+                "remote_poll_secs",
+                "remote_timeout_secs",
                 "retarget_links",
-                "sftp_keepalive_secs",
-                "sftp_poll_secs",
-                "sftp_timeout_secs",
+                "smb_require_encryption",
                 "theme",
                 "window_maximized",
                 "zoom"
@@ -407,6 +465,9 @@ mod tests {
             user: "alice".to_string(),
             key_path: None,
             start_dir: Some("/srv".to_string()),
+            protocol: Protocol::Sftp,
+            domain: None,
+            share: None,
         };
         assert!(profile.validate().is_ok());
         let text = toml::to_string(&Prefs {
@@ -439,6 +500,55 @@ mod tests {
         ] {
             assert!(bad.validate().is_err());
         }
+    }
+
+    #[test]
+    fn old_files_load_with_legacy_timing_keys_and_sftp_profiles() {
+        let dir = temp_dir();
+        let path = dir.join(PREFS_FILE);
+        std::fs::write(
+            &path,
+            "sftp_poll_secs = 7\nsftp_timeout_secs = 9\nsftp_keepalive_secs = 11\n\
+             [[profiles]]\nname = \"nas\"\nhost = \"nas.local\"\nuser = \"alice\"\n",
+        )
+        .expect("write");
+        let prefs = load(&path);
+        assert_eq!(prefs.remote_poll_secs, 7);
+        assert_eq!(prefs.remote_timeout_secs, 9);
+        assert_eq!(prefs.remote_keepalive_secs, 11);
+        assert_eq!(prefs.profiles.len(), 1);
+        assert_eq!(prefs.profiles[0].protocol, Protocol::Sftp);
+        assert_eq!(prefs.profiles[0].port, 22);
+        assert!(prefs.profiles[0].share.is_none());
+    }
+
+    #[test]
+    fn smb_profiles_round_trip_without_secrets() {
+        let profile = Profile {
+            protocol: Protocol::Smb,
+            name: "pc".into(),
+            host: "pc.local".into(),
+            port: 445,
+            user: "bob".into(),
+            key_path: None,
+            start_dir: None,
+            domain: Some("WORKGROUP".into()),
+            share: Some("Public".into()),
+        };
+        assert!(profile.validate().is_ok());
+        let text = toml::to_string(&Prefs {
+            profiles: vec![profile.clone()],
+            ..Prefs::default()
+        })
+        .expect("serialize");
+        assert!(!text.to_ascii_lowercase().contains("pass"));
+        let back: Prefs = toml::from_str(&text).expect("parse");
+        assert_eq!(back.profiles, vec![profile.clone()]);
+        let bad = Profile {
+            share: Some("a/b".into()),
+            ..profile
+        };
+        assert!(bad.validate().is_err());
     }
 
     #[test]

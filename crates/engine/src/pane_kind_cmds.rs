@@ -56,17 +56,29 @@ pub fn set_kind() -> CommandSpec {
                 }
                 s.drop_terminal(pane);
             }
-            let leaving_network = matches!(kind, PaneKind::Files | PaneKind::Sftp)
-                && s.layout
-                    .state(pane)
-                    .is_some_and(|st| st.tree.root.scheme() == fm_vfs::Scheme::Network);
+            let root = s.layout.state(pane).map(|st| st.tree.root.scheme());
+            let virtual_root = matches!(
+                root,
+                Some(fm_vfs::Scheme::Network | fm_vfs::Scheme::Servers)
+            );
+            let leaving_network = kind == PaneKind::Files && virtual_root;
             if leaving_network && let Some(state) = s.layout.state_mut(pane) {
                 // The Network tree has nothing to show for a local pane: back to home.
                 state.tree = fm_layout::TreeState::new(fm_vfs::VfsUri::root_file());
                 state.navigate(crate::workspace::home_location());
             }
             match kind {
-                PaneKind::Files | PaneKind::Preview | PaneKind::Sftp | PaneKind::Smb => {}
+                PaneKind::Files | PaneKind::Preview | PaneKind::Smb => {}
+                PaneKind::Sftp => {
+                    let live = s.layout.state(pane).is_some_and(|st| {
+                        st.tree.root.scheme() != fm_vfs::Scheme::Servers
+                            && s.backends.get_for(&st.location).is_some()
+                            && st.location.scheme() == fm_vfs::Scheme::Sftp
+                    });
+                    if !live {
+                        s.open_servers(pane)?;
+                    }
+                }
                 PaneKind::Trash => {
                     if !s.trash.busy {
                         s.trash_list()?;

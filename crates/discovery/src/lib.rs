@@ -2,6 +2,7 @@
 
 mod hosts;
 mod mdns;
+mod netbios;
 mod network_fs;
 mod wsd;
 

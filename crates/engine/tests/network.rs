@@ -166,24 +166,75 @@ fn urls_with_a_user_open_the_popup_prefilled() {
 }
 
 #[test]
-fn an_sftp_host_asks_first_then_opens_the_sftp_pane() {
+fn an_sftp_address_asks_in_the_popup_and_cancel_goes_back() {
     let mut s = session();
     s.dispatch("network.open", &json!(null)).unwrap();
     let host = VfsUri::parse("sftp://10.9.9.8/").unwrap();
     s.ensure_read(host.clone()).unwrap();
     let pane = s.layout.focused();
     assert_ne!(s.layout.state(pane).unwrap().kind, PaneKind::Sftp);
-    assert_eq!(s.remote.sftp_prompt, Some(host.clone()));
-    s.dispatch("network.sftp.cancel", &json!(null)).unwrap();
+    let prompt = s.remote.sftp_prompt.clone().expect("popup");
+    assert_eq!(prompt.host, "10.9.9.8");
+    assert_eq!(prompt.landing, Some(host));
+    s.dispatch("remote.connect.cancel", &json!(null)).unwrap();
     assert!(s.remote.sftp_prompt.is_none());
-    assert_ne!(s.layout.state(pane).unwrap().kind, PaneKind::Sftp);
-    s.ensure_read(host.clone()).unwrap();
-    s.dispatch("network.sftp.open", &json!(null)).unwrap();
+    assert_eq!(s.layout.state(pane).unwrap().location, VfsUri::network());
+}
+
+fn saved_server(s: &mut Session) {
+    s.dispatch(
+        "remote.profile.save",
+        &json!({"name": "nas", "host": "10.9.9.7", "user": "bob", "port": 2222, "start_dir": "/data"}),
+    )
+    .unwrap();
+}
+
+#[test]
+fn an_sftp_pane_without_a_connection_lists_the_saved_servers() {
+    let mut s = session();
+    saved_server(&mut s);
+    let pane = s.layout.focused();
+    s.dispatch("pane.kind.set", &json!({"kind": "sftp"}))
+        .unwrap();
     let st = s.layout.state(pane).unwrap();
     assert_eq!(st.kind, PaneKind::Sftp);
-    assert_eq!(st.location, host);
-    assert!(s.remote.login_prompt.is_none());
-    assert!(s.dispatch("network.sftp.open", &json!(null)).is_err());
+    assert_eq!(st.location, VfsUri::servers());
+    assert_eq!(st.tree.root, VfsUri::servers());
+    for _ in 0..200 {
+        s.poll();
+        if matches!(s.dirs.state(&VfsUri::servers()), DirState::Ready { .. }) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let entries = s.dirs.entries(&VfsUri::servers()).expect("listed");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "nas");
+    assert_eq!(entries[0].uri.to_string(), "sftp://bob@10.9.9.7:2222/");
+}
+
+#[test]
+fn opening_a_saved_server_prefills_the_popup_and_edit_never_carries_a_password() {
+    let mut s = session();
+    saved_server(&mut s);
+    s.ensure_read(VfsUri::parse("sftp://bob@10.9.9.7:2222/").unwrap())
+        .ok();
+    let p = s.remote.sftp_prompt.clone().expect("popup");
+    assert_eq!(
+        (p.user.as_str(), p.start_dir.as_str(), p.save_as.as_str()),
+        ("bob", "/data", "nas")
+    );
+    s.dispatch("remote.connect.cancel", &json!(null)).unwrap();
+    s.dispatch("servers.edit", &json!({"name": "nas"})).unwrap();
+    let p = s.remote.sftp_prompt.clone().expect("popup");
+    assert!(p.editing && p.landing.is_none());
+    assert_eq!(p.port, Some(2222));
+    assert!(
+        s.dispatch("servers.edit", &json!({"name": "nope"}))
+            .is_err()
+    );
+    assert!(s.dispatch("servers.edit", &json!({})).is_err());
+    assert!(s.dispatch("servers.edit", &json!(null)).is_err());
 }
 
 #[test]
@@ -213,4 +264,26 @@ fn network_folder_refreshes_when_hosts_appear_later() {
         matches!(s.dirs.state(&VfsUri::network()),
             DirState::Ready { entries, .. } if entries.len() == 1)
     });
+}
+
+#[test]
+fn a_failed_sftp_connect_keeps_the_popup_open_with_the_error() {
+    let mut s = session();
+    s.ensure_read(VfsUri::parse("sftp://127.0.0.1:1/").unwrap())
+        .unwrap();
+    assert!(s.remote.sftp_prompt.is_some());
+    s.dispatch(
+        "remote.connect",
+        &json!({"host": "127.0.0.1", "port": 1, "user": "alice", "password": "s3cret"}),
+    )
+    .unwrap();
+    pump(&mut s, "failed connect", |s| {
+        s.remote
+            .sftp_prompt
+            .as_ref()
+            .is_some_and(|p| p.error.is_some())
+    });
+    let error = s.remote.sftp_prompt.clone().and_then(|p| p.error).unwrap();
+    assert!(!error.contains("s3cret"), "{error}");
+    assert!(s.notice.is_none(), "the error lives in the popup");
 }

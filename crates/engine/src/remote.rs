@@ -11,7 +11,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use fm_fs_sftp::{ConnectParams, HostKeyInfo, HostKeyVerdict, HostKeyVerifier, SftpFs};
+use fm_fs_sftp::{
+    ConnectParams, HostKeyInfo, HostKeyVerdict, HostKeyVerifier, SecretString, SftpFs,
+};
 use fm_fs_smb::{ConnectParams as SmbParams, SmbFs};
 use fm_vfs::{Authority, Entry, FmError, Scheme, SpaceInfo, VfsUri};
 use serde::{Deserialize, Serialize};
@@ -382,9 +384,32 @@ pub struct RemoteHub {
     pub host_key_alert: Option<String>,
     /// The "Authentication Required" popup, when a Network-folder host wants a login.
     pub login_prompt: Option<crate::network::LoginPrompt>,
-    /// An SFTP host opened from the Network folder, waiting for the user to open the SFTP pane.
-    pub sftp_prompt: Option<VfsUri>,
+    /// The SFTP connect popup (Connect…, a saved server, a typed `sftp://` address).
+    pub sftp_prompt: Option<SftpPrompt>,
+    /// Saved SFTP servers as `servers:///` lists them (kept in step with `Prefs.profiles`).
+    pub servers: crate::servers::ServerList,
+    /// Passwords kept for this run only, per `user@host:port` ("Remember until you quit").
+    pub(crate) sftp_creds: HashMap<String, SecretString>,
     pub(crate) creds: crate::network::CredCache,
+}
+
+/// What the SFTP connect popup starts with.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SftpPrompt {
+    /// The folder whose read asked for the login, opened once connected.
+    pub landing: Option<VfsUri>,
+    /// Open the server in the focused pane when connected.
+    pub navigate: bool,
+    pub host: String,
+    pub port: Option<u16>,
+    pub user: String,
+    pub key_path: String,
+    pub start_dir: String,
+    /// Name of the saved profile (the one being edited, or the one opened).
+    pub save_as: String,
+    pub editing: bool,
+    /// Why the last attempt failed; the popup stays open and shows it.
+    pub error: Option<String>,
 }
 
 impl std::fmt::Debug for RemoteHub {
@@ -416,6 +441,8 @@ impl Default for RemoteHub {
             host_key_alert: None,
             login_prompt: None,
             sftp_prompt: None,
+            servers: Arc::default(),
+            sftp_creds: HashMap::new(),
             creds: Default::default(),
         }
     }
@@ -476,6 +503,11 @@ impl RemoteHub {
         !self.connects.is_empty() || !self.polls.is_empty() || !self.space_jobs.is_empty()
     }
 
+    /// A connect job is in flight (background polls do not count).
+    pub fn is_connecting(&self) -> bool {
+        !self.connects.is_empty()
+    }
+
     /// Any connection is up, so the app must wake every [`POLL_INTERVAL`] to poll.
     pub fn has_ready(&self) -> bool {
         self.conns.values().any(|c| c.state == ConnState::Ready)
@@ -492,7 +524,7 @@ pub fn is_transport_failure(scheme: Scheme, err: &FmError) -> bool {
     match scheme {
         Scheme::Sftp => fm_fs_sftp::is_transport_error(err),
         Scheme::Smb => fm_fs_smb::is_transport_error(err),
-        Scheme::File | Scheme::Network => false,
+        Scheme::File | Scheme::Network | Scheme::Servers => false,
     }
 }
 
@@ -566,6 +598,16 @@ impl Session {
         params: ConnectParams,
         navigate: bool,
     ) -> Result<JobId, FmError> {
+        self.connect_sftp_to(params, navigate, None)
+    }
+
+    /// Like [`Self::start_connect`]; `landing` is the folder whose read triggered it.
+    pub(crate) fn connect_sftp_to(
+        &mut self,
+        params: ConnectParams,
+        navigate: bool,
+        landing: Option<VfsUri>,
+    ) -> Result<JobId, FmError> {
         params.validate()?;
         self.prefs.apply_sftp();
         // The file can change under a running app (edited by hand, or by another instance).
@@ -596,7 +638,7 @@ impl Session {
                 scheme: Scheme::Sftp,
                 authority,
                 navigate,
-                landing: None,
+                landing,
             },
         );
         Ok(job)
@@ -613,10 +655,11 @@ impl Session {
 
     pub(crate) fn connect_smb_to(
         &mut self,
-        params: SmbParams,
+        mut params: SmbParams,
         navigate: bool,
         landing: Option<VfsUri>,
     ) -> Result<JobId, FmError> {
+        params.require_encryption |= self.prefs.smb_require_encryption;
         let (key, authority) = self.begin_connect(Login::Smb(params.clone()))?;
         let inbox = self.remote.connect_inbox.clone();
         let job = self.jobs.submit(JobLane::Smb, move |ctx| {
@@ -692,18 +735,45 @@ impl Session {
             smb.disconnect();
         }
         self.backends.unregister_at(scheme, authority);
-        let home = VfsUri::root_file();
-        let panes: Vec<_> = self
-            .layout
-            .states
-            .iter()
-            .filter(|(_, s)| s.location.scheme() == scheme && s.location.authority() == authority)
-            .map(|(id, _)| *id)
-            .collect();
-        for pane in panes {
+        let ours = |u: &VfsUri| u.scheme() == scheme && u.authority() == authority;
+        // Forget everything listed from the server, so a reconnect starts from a clean slate.
+        self.dirs.invalidate_where(ours);
+        let home = crate::workspace::home_location();
+        let mut sftp_panes = Vec::new();
+        let mut virtual_roots = Vec::new();
+        let mut local_panes = Vec::new();
+        for (id, st) in self.layout.states.iter_mut() {
+            let on_server = ours(&st.location) || ours(&st.tree.root);
+            let expanded: Vec<VfsUri> = st.tree.expanded().filter(|u| ours(u)).cloned().collect();
+            if !on_server && expanded.is_empty() {
+                continue;
+            }
+            for uri in &expanded {
+                st.tree.collapse(uri);
+            }
+            if st.kind == fm_layout::PaneKind::Sftp {
+                sftp_panes.push(*id);
+            } else if matches!(st.tree.root.scheme(), Scheme::Network | Scheme::Servers) {
+                if ours(&st.location) {
+                    let root = st.tree.root.clone();
+                    st.navigate(root.clone());
+                    virtual_roots.push(root);
+                }
+            } else if on_server {
+                local_panes.push(*id);
+            }
+        }
+        for pane in sftp_panes {
+            self.open_servers(pane)?;
+        }
+        for pane in local_panes {
             if let Some(state) = self.layout.state_mut(pane) {
+                state.tree = fm_layout::TreeState::new(VfsUri::root_file());
                 state.navigate(home.clone());
             }
+        }
+        for root in virtual_roots {
+            self.ensure_read(root)?;
         }
         self.ensure_read(home)?;
         Ok(())
@@ -781,9 +851,27 @@ impl Session {
                     conn.smb = smb;
                 }
                 self.info = Some((format!("Connected to {}", job.key), Instant::now()));
-                if let Some(landing) = job.landing {
+                if job.scheme == Scheme::Sftp {
+                    self.remote.sftp_prompt = None;
+                }
+                // A saved server opens at `sftp://user@host/`; land in the start folder (home).
+                let mut to_start = false;
+                let landing = job.landing.map(|l| match &start {
+                    Ok(start) if job.scheme == Scheme::Sftp && l.path_str() == "/" => {
+                        to_start = true;
+                        start.clone()
+                    }
+                    _ => l,
+                });
+                // Connecting from a server row in the tree opens its start folder in the pane.
+                let from_servers = to_start
+                    && self
+                        .layout
+                        .state(self.layout.focused())
+                        .is_some_and(|st| st.location.scheme() == Scheme::Servers);
+                if let Some(landing) = landing {
                     self.dirs.invalidate(&landing);
-                    if job.navigate {
+                    if job.navigate || from_servers {
                         self.open_in_focused_files_pane(landing);
                     } else if let Err(err) = self.ensure_read(landing) {
                         self.notice = Some(err.to_string());
@@ -798,7 +886,12 @@ impl Session {
             }
             Err(err) => {
                 let message = err.to_string();
-                if let Some(landing) = job.landing.clone() {
+                let in_popup = job.scheme == Scheme::Sftp && self.remote.sftp_prompt.is_some();
+                if in_popup {
+                    if let Some(prompt) = self.remote.sftp_prompt.as_mut() {
+                        prompt.error = Some(message.clone());
+                    }
+                } else if let Some(landing) = job.landing.clone() {
                     self.network_login_failed(landing, &err, job.navigate);
                 }
                 if let Some(conn) = self.remote.conns.get_mut(&job.key) {
@@ -808,7 +901,11 @@ impl Session {
                         conn.login = None;
                     }
                 }
-                if job.landing.is_none() || !is_login_refused(job.scheme, &err) {
+                if !in_popup
+                    && (job.landing.is_none()
+                        || job.scheme != Scheme::Smb
+                        || !is_login_refused(job.scheme, &err))
+                {
                     self.notice = Some(message.clone());
                 }
                 if is_changed_key_message(&message) {
@@ -835,7 +932,7 @@ impl Session {
         };
         let tree_root = &pane.tree.root;
         // A tree rooted at the Network folder keeps every host it reaches.
-        let in_network = tree_root.scheme() == Scheme::Network;
+        let in_network = matches!(tree_root.scheme(), Scheme::Network | Scheme::Servers);
         if !in_network
             && (tree_root.scheme() != root.scheme()
                 || tree_root.authority().to_string() != root.authority().to_string())
@@ -843,6 +940,9 @@ impl Session {
             pane.tree = fm_layout::TreeState::new(root);
         }
         pane.navigate(uri.clone());
+        // Connecting is not a tree keystroke: scroll the tree to the landing folder even
+        // when the tree had keyboard focus (e.g. the connect came from clicking its row).
+        pane.tree.reveal = pane.location != pane.tree.root;
         if !pane.tree.active && pane.location != pane.tree.root {
             let loc = pane.location.clone();
             pane.tree.expand(loc);
@@ -886,7 +986,7 @@ impl Session {
         if self
             .remote
             .last_tick
-            .is_some_and(|t| t.elapsed() < self.prefs.sftp_poll())
+            .is_some_and(|t| t.elapsed() < self.prefs.remote_poll())
         {
             return;
         }

@@ -170,8 +170,15 @@ impl SmbFs {
     }
 
     fn need(&self, uri: &VfsUri) -> Result<Loc, FmError> {
-        self.locate(uri)?
-            .ok_or_else(|| FmError::PermissionDenied(uri.path_str().to_string()))
+        self.locate(uri)?.ok_or_else(|| {
+            FmError::backend(
+                "smb",
+                format!(
+                    "open a share first, e.g. smb://{}/<share>",
+                    self.inner.authority
+                ),
+            )
+        })
     }
 
     fn mark<T>(&self, r: Result<T, FmError>) -> Result<T, FmError> {

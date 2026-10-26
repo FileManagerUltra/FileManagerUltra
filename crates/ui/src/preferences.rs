@@ -63,31 +63,41 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 s.dispatch_or_notice("prefs.preview.recursive", &json!({"value": recursive}));
             }
             ui.add_space(tokens.padding);
-            ui.label(RichText::new("SFTP").color(tokens.accent).strong());
-            let mut poll = s.prefs.sftp_poll_secs;
-            let mut timeout = s.prefs.sftp_timeout_secs;
-            let mut keepalive = s.prefs.sftp_keepalive_secs;
+            ui.label(RichText::new("SMB").color(tokens.accent).strong());
+            let mut encrypt = s.prefs.smb_require_encryption;
+            if ui
+                .checkbox(&mut encrypt, "Require encryption")
+                .on_hover_text("Refuse SMB connections whose session is not encrypted.")
+                .changed()
+            {
+                s.dispatch_or_notice("prefs.smb.encryption", &json!({"value": encrypt}));
+            }
+            ui.add_space(tokens.padding);
+            ui.label(RichText::new("Remote connections").color(tokens.accent).strong());
+            let mut poll = s.prefs.remote_poll_secs;
+            let mut timeout = s.prefs.remote_timeout_secs;
+            let mut keepalive = s.prefs.remote_keepalive_secs;
             let mut changed = false;
             egui::Grid::new("fm-prefs-sftp").num_columns(2).show(ui, |ui| {
                 for (label, value, range, tip) in [
                     (
                         "Refresh interval (s)",
                         &mut poll,
-                        fm_engine::SFTP_POLL_RANGE,
+                        fm_engine::REMOTE_POLL_RANGE,
                         "How often connected remote panes re-read their folder; a dead link \
                          is noticed at the next refresh.",
                     ),
                     (
                         "Stalled call timeout (s)",
                         &mut timeout,
-                        fm_engine::SFTP_TIMEOUT_RANGE,
+                        fm_engine::REMOTE_TIMEOUT_RANGE,
                         "A remote call that makes no progress for this long marks the \
                          connection offline.",
                     ),
                     (
                         "Keepalive interval (s)",
                         &mut keepalive,
-                        fm_engine::SFTP_KEEPALIVE_RANGE,
+                        fm_engine::REMOTE_KEEPALIVE_RANGE,
                         "Idle links are probed this often; three misses drop the link. \
                          Applies to new connections.",
                     ),
@@ -103,7 +113,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             });
             if changed {
                 s.dispatch_or_notice(
-                    "prefs.sftp.timing",
+                    "prefs.remote.timing",
                     &json!({"poll_secs": poll, "timeout_secs": timeout, "keepalive_secs": keepalive}),
                 );
             }

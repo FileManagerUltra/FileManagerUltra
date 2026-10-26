@@ -8,10 +8,10 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 | 2 | `multi-pane-ui` | Recursive split panes, per-pane file tree + virtualized listing, selection, navigation/history, commander shortcuts (F5–F8, Tab), **dark/light/system theme from day one** (tokens only, no hard-coded colours); pane code works against any `VfsUri`, so remote backends plug in without UI rework | done, archived |
 | 3 | `dnd-and-file-ops` | Cross-pane drag & drop (tree node + listing targets, Ctrl=copy/Shift=move), external file drop, `ops` pipelines, job queue with progress/cancel, conflict dialogs, trash + undo | done, archived |
 | 4 | `sftp-backend` | **SFTP client that fills a pane** (`sftp://user@host/…` → tree + listing, connect dialog, in-memory passwords, TOFU host keys, profiles without secrets, cross-backend ops, free space in the status bar) | archived |
-| 4b | `smb-backend` | SMB via the pure-Rust `smb` crate (NTLM, no system library, one code path on all platforms), reusing the connection model from change 4 | proposed |
+| 4b | `smb-backend` | SMB via the pure-Rust `smb` crate (NTLM, no system library, one code path on all platforms), reusing the connection model from change 4 | done (archived) |
 | 5 | `live-watch-and-packaging` | `notify`-driven directory refresh, session persistence (panes/sizes/locations), `.deb`/AppImage, `.msi`, `.dmg` | next |
 
-**Current focus:** 4b (`smb-backend`).
+**Current focus:** 5 (`live-watch-and-packaging`).
 
 **Security is a standing concern, not a change.** The `security` OpenSpec capability starts in change 1 (hostile input, secrets, state-file permissions, symlink policy, no `unsafe`) and each change that adds a behaviour area extends it in the same change: change 3 adds drag & drop / `ops` containment and overwrite rules; change 4 adds credentials, host keys and remote listing caps. A change that adds security-relevant behaviour without a spec + failing-test proof is not done.
 
@@ -19,7 +19,7 @@ Out of scope until after these five: archives, previews, tabs, full-text search,
 
 ## Current focus
 
-`pane-preview`, `pane-arrange`, `thumbnails-and-open`, `current-folder-row` and `workspaces` are implemented, smoke-tested in a real window and archived (their specs live in `openspec/specs/`). Change 4 (`sftp-backend`) is implemented and archived; next up: 4b (`smb-backend`) and change 5 (`live-watch-and-packaging`).
+`pane-preview`, `pane-arrange`, `thumbnails-and-open`, `current-folder-row` and `workspaces` are implemented, smoke-tested in a real window and archived (their specs live in `openspec/specs/`). Change 4 (`sftp-backend`) is implemented and archived; 4b (`smb-backend`, with Network discovery) is implemented and archived; next up: change 5 (`live-watch-and-packaging`).
 
 ## Ideas for future changes
 

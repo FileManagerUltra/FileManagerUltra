@@ -318,7 +318,7 @@ impl eframe::App for App {
         }
         // Remote panes refresh on a timer and when the window regains focus.
         if self.session.remote.has_ready() {
-            ctx.request_repaint_after(self.session.prefs.sftp_poll());
+            ctx.request_repaint_after(self.session.prefs.remote_poll());
             let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
             if focused && !self.was_focused {
                 self.session.refresh_remote_panes();
@@ -353,12 +353,6 @@ impl eframe::App for App {
         let tokens = theme::Tokens::resolve(self.session.prefs.theme, self.applied.1);
         egui::Panel::bottom("status_bar").show(ui, |ui| {
             let focused = self.session.layout.focused();
-            let location = self
-                .session
-                .layout
-                .state(focused)
-                .map(|p| p.location.path_str().to_string())
-                .unwrap_or_default();
             let (count, selected) = {
                 let state = self.session.layout.state(focused);
                 let selected = state.map(|p| p.listing.selected_count()).unwrap_or(0);
@@ -377,10 +371,14 @@ impl eframe::App for App {
                 .and_then(|uri| fm_ui::remote::free_space_label(&mut self.session, &uri));
             ui.horizontal(|ui| {
                 if let Some(notice) = self.session.notice.clone() {
-                    let text = egui::RichText::new(notice)
+                    let text = egui::RichText::new(notice.clone())
                         .color(tokens.error)
                         .font(tokens.font());
-                    if ui.add(egui::Button::new(text).frame(false)).clicked() {
+                    if ui
+                        .add(egui::Button::new(text).frame(false).truncate())
+                        .on_hover_text(notice)
+                        .clicked()
+                    {
                         self.session.notice = None;
                     }
                 }
@@ -399,7 +397,6 @@ impl eframe::App for App {
                     }
                 }
                 fm_ui::jobs::indicator(ui, &self.session, &tokens);
-                ui.label(tokens.muted(location));
                 ui.label(tokens.muted(format!("{count} items")));
                 if let Some(space) = space {
                     ui.label(tokens.muted(space));
@@ -421,15 +418,6 @@ impl eframe::App for App {
                         self.session
                             .dispatch_or_notice("view.hidden.toggle", &fm_engine::Params::Null);
                     }
-                    ui.label(tokens.muted(fm_brand::APP_NAME));
-                    ui.label(tokens.muted(format!(
-                        "Theme: {}",
-                        match self.session.prefs.theme {
-                            ThemePreference::System => "system",
-                            ThemePreference::Dark => "dark",
-                            ThemePreference::Light => "light",
-                        }
-                    )));
                 });
             });
         });
@@ -454,7 +442,7 @@ impl eframe::App for App {
         fm_ui::preferences::show(&ctx, &mut self.session, &tokens);
         fm_ui::remote::host_key_dialog(&ctx, &mut self.session, &tokens);
         fm_ui::remote::login_dialog(&ctx, &mut self.session, &tokens);
-        fm_ui::remote::sftp_prompt_dialog(&ctx, &mut self.session, &tokens);
+        fm_ui::sftp_popup::sftp_prompt_dialog(&ctx, &mut self.session, &tokens);
         fm_ui::remote::host_key_alert(&ctx, &mut self.session, &tokens);
 
         if self.session.about_open {
@@ -481,6 +469,7 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        fm_engine::open_cmds::sweep_open_temp(true);
         self.persist_workspaces(&egui::Context::default(), true);
         if let Some(dir) = &self.config_dir
             && let Err(err) = fm_engine::prefs::save(dir, &self.session.prefs)
@@ -505,6 +494,7 @@ fn main() -> eframe::Result {
         }
     };
     session.prefs = prefs;
+    fm_engine::open_cmds::sweep_open_temp(false);
     if let Some(dir) = &config_dir {
         session.remote.set_config_dir(dir.clone());
     }
@@ -519,10 +509,12 @@ fn main() -> eframe::Result {
     }
     // Kick off the first pane's read so the UI starts in the loading state
     // and the first paint never blocks on I/O.
-    // A restored SFTP pane has no connection yet: it shows its connect form instead.
-    if let Some(state) = session.layout.state(session.layout.focused()).filter(|st| {
-        !fm_ui::remote::needs_connect(&session, session.layout.focused()) && st.kind.is_files()
-    }) {
+    // A restored SFTP pane has no connection yet: it falls back to the Saved servers folder.
+    if let Some(state) = session
+        .layout
+        .state(session.layout.focused())
+        .filter(|st| st.kind.is_files() && st.kind != fm_layout::PaneKind::Sftp)
+    {
         let location = state.location.clone();
         if let Err(err) = session.ensure_read(location) {
             eprintln!("startup read failed: {err}");

@@ -6,11 +6,12 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use fm_fs_sftp::{AuthMethod, ConnectParams};
 use fm_fs_smb::{ConnectParams as SmbParams, SecretString};
-use fm_layout::{PaneId, PaneKind, TreeState};
+use fm_layout::{PaneId, TreeState};
 use fm_vfs::{FmError, Scheme, VfsUri};
 
-use crate::remote::{ConnState, conn_key, is_login_refused};
+use crate::remote::{ConnState, SftpPrompt, conn_key, is_login_refused};
 use crate::session::Session;
 
 pub const DEFAULT_DOMAIN: &str = "WORKGROUP";
@@ -123,7 +124,7 @@ impl CredCache {
 
 impl Session {
     fn smb_timeout(&self) -> Duration {
-        Duration::from_secs(self.prefs.sftp_timeout_secs.clamp(1, 600))
+        Duration::from_secs(self.prefs.remote_timeout_secs.clamp(1, 600))
     }
 
     /// Point `pane` at the Network folder (tree rooted there).
@@ -138,42 +139,109 @@ impl Session {
         self.refresh_read(net).map(|_| ())
     }
 
-    /// An unconnected SFTP host opened from the Network folder asks first (popup) before the
-    /// pane turns into an SFTP pane. `true` when it took over.
-    pub(crate) fn open_sftp_form(&mut self, uri: &VfsUri) -> bool {
-        let in_network = self.layout.state(self.layout.focused()).is_some_and(|st| {
-            st.tree.root.scheme() == Scheme::Network && st.kind != PaneKind::Sftp
-        });
-        if uri.scheme() != Scheme::Sftp
-            || uri.authority().user.is_some()
-            || self.backends.get_for(uri).is_some()
-            || !in_network
-        {
+    /// A read of an unconnected `sftp://` address signs in: silently with a password kept for
+    /// this run, otherwise through the connect popup. `true` when handled.
+    pub(crate) fn needs_sftp_login(&mut self, uri: &VfsUri) -> bool {
+        if uri.scheme() != Scheme::Sftp || self.backends.get_for(uri).is_some() {
             return false;
         }
-        self.remote.sftp_prompt = Some(uri.clone());
+        let auth = uri.authority();
+        if self.remote.sftp_prompt.is_some()
+            || matches!(
+                self.remote.state(Scheme::Sftp, auth),
+                Some(ConnState::Connecting)
+            )
+        {
+            return true;
+        }
+        let navigate = self
+            .layout
+            .state(self.layout.focused())
+            .is_some_and(|st| st.location == *uri);
+        let port = auth.port.unwrap_or(22);
+        let user = auth.user.clone().unwrap_or_default();
+        let profile = self
+            .prefs
+            .profiles
+            .iter()
+            .find(|p| {
+                p.protocol == crate::prefs::Protocol::Sftp
+                    && p.host == auth.host
+                    && p.port == port
+                    && (user.is_empty() || p.user == user)
+            })
+            .cloned();
+        let user = profile.as_ref().map_or(user, |p| p.user.clone());
+        let start_dir = profile.as_ref().and_then(|p| p.start_dir.clone());
+        let key_path = profile.as_ref().and_then(|p| p.key_path.clone());
+        if let Some(password) = self
+            .remote
+            .sftp_creds
+            .get(&sftp_cred_key(&user, &auth.host, port))
+        {
+            let params = ConnectParams {
+                host: auth.host.clone(),
+                port,
+                user,
+                auth: AuthMethod::Password(password.clone()),
+                start_dir,
+            };
+            if let Err(err) = self.connect_sftp_to(params, navigate, Some(uri.clone())) {
+                self.notice = Some(err.to_string());
+            }
+            return true;
+        }
+        self.remote.sftp_prompt = Some(SftpPrompt {
+            landing: Some(uri.clone()),
+            navigate,
+            host: auth.host.clone(),
+            port: auth.port,
+            user,
+            key_path: key_path.unwrap_or_default(),
+            start_dir: start_dir.unwrap_or_default(),
+            save_as: profile.map(|p| p.name).unwrap_or_default(),
+            editing: false,
+            error: None,
+        });
         true
     }
 
-    /// Popup answer "Open SFTP Pane": the focused pane becomes an SFTP pane on the host.
-    pub fn accept_sftp_prompt(&mut self) -> Result<(), FmError> {
-        let uri = self
-            .remote
-            .sftp_prompt
-            .take()
-            .ok_or_else(|| FmError::NotFound("SFTP prompt".to_string()))?;
-        let focused = self.layout.focused();
-        self.dispatch("pane.kind.set", &serde_json::json!({"kind": "sftp"}))?;
-        if let Some(state) = self.layout.state_mut(focused) {
-            state.navigate(uri);
-        }
+    /// Open the SFTP connect popup empty (Connect…).
+    pub fn open_sftp_connect(&mut self) {
+        self.remote.sftp_prompt = Some(SftpPrompt {
+            navigate: true,
+            ..SftpPrompt::default()
+        });
+    }
+
+    /// Open the popup filled from the saved server `name` (Edit).
+    pub fn edit_server(&mut self, name: &str) -> Result<(), FmError> {
+        let p = self
+            .prefs
+            .profiles
+            .iter()
+            .find(|p| p.name == name && p.protocol == crate::prefs::Protocol::Sftp)
+            .cloned()
+            .ok_or_else(|| FmError::NotFound(format!("saved server {name}")))?;
+        self.remote.sftp_prompt = Some(SftpPrompt {
+            landing: None,
+            navigate: true,
+            host: p.host,
+            port: (p.port != 22).then_some(p.port),
+            user: p.user,
+            key_path: p.key_path.unwrap_or_default(),
+            start_dir: p.start_dir.unwrap_or_default(),
+            save_as: p.name,
+            editing: true,
+            error: None,
+        });
         Ok(())
     }
 
-    /// Popup answer "Cancel": the node goes back to closed.
+    /// Popup answer "Cancel": a folder that asked for the login goes back to closed.
     pub fn cancel_sftp_prompt(&mut self) {
-        if let Some(uri) = self.remote.sftp_prompt.take() {
-            self.abandon(&uri);
+        if let Some(landing) = self.remote.sftp_prompt.take().and_then(|p| p.landing) {
+            self.abandon(&landing);
         }
     }
 
@@ -292,25 +360,33 @@ impl Session {
     }
 
     fn abandon(&mut self, uri: &VfsUri) {
-        let net = VfsUri::network();
+        let mut roots = Vec::new();
         for state in self.layout.states.values_mut() {
             state.tree.collapse(uri);
             if state.location == *uri {
-                if state.tree.root.scheme() == Scheme::Network {
-                    state.navigate(net.clone());
+                let root = state.tree.root.clone();
+                if matches!(root.scheme(), Scheme::Network | Scheme::Servers) {
+                    state.navigate(root.clone());
+                    roots.push(root);
                 } else {
                     state.go_back();
                 }
             }
         }
-        if let Err(err) = self.ensure_read(net) {
-            self.notice = Some(err.to_string());
+        for root in roots {
+            if let Err(err) = self.ensure_read(root) {
+                self.notice = Some(err.to_string());
+            }
         }
     }
 
     /// A Network-folder connect failed: a refused login asks again (with the reason),
     /// anything else gives the node up and lets the caller show the error.
     pub(crate) fn network_login_failed(&mut self, landing: VfsUri, err: &FmError, navigate: bool) {
+        if landing.scheme() != Scheme::Smb {
+            self.abandon(&landing);
+            return;
+        }
         let auth = landing.authority().clone();
         let key = conn_key(Scheme::Smb, &auth);
         let (user, domain) = self
@@ -336,6 +412,11 @@ impl Session {
             self.abandon(&landing);
         }
     }
+}
+
+/// Key of the run-only SFTP password cache.
+pub(crate) fn sftp_cred_key(user: &str, host: &str, port: u16) -> String {
+    format!("{user}@{host}:{port}")
 }
 
 use crate::file_cmds::object;
@@ -434,35 +515,6 @@ pub fn login() -> CommandSpec {
     }
 }
 
-/// `network.sftp.open` — answer the SFTP popup by opening the SFTP pane.
-pub fn sftp_open() -> CommandSpec {
-    CommandSpec {
-        id: "network.sftp.open",
-        label: "Open SFTP Pane",
-        menu: &["File", "Network", "Open SFTP Pane"],
-        shortcut: None,
-        params: "none",
-        enabled: |s| s.remote.sftp_prompt.is_some(),
-        run: |s, _p: &Params| s.accept_sftp_prompt(),
-    }
-}
-
-/// `network.sftp.cancel` — dismiss the SFTP popup.
-pub fn sftp_cancel() -> CommandSpec {
-    CommandSpec {
-        id: "network.sftp.cancel",
-        label: "Cancel SFTP",
-        menu: &["File", "Network", "Cancel SFTP"],
-        shortcut: None,
-        params: "none",
-        enabled: |s| s.remote.sftp_prompt.is_some(),
-        run: |s, _p: &Params| {
-            s.cancel_sftp_prompt();
-            Ok(())
-        },
-    }
-}
-
 /// `network.login.cancel` — dismiss the popup.
 pub fn cancel() -> CommandSpec {
     CommandSpec {
@@ -480,12 +532,5 @@ pub fn cancel() -> CommandSpec {
 }
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![
-        open(),
-        connect_dialog(),
-        login(),
-        cancel(),
-        sftp_open(),
-        sftp_cancel(),
-    ]
+    vec![open(), connect_dialog(), login(), cancel()]
 }

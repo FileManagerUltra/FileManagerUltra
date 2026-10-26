@@ -12,7 +12,7 @@ use crate::jobs::JobLane;
 /// Which lane serves each scheme (architecture §7: lanes, not a shared pool).
 pub fn lane_for(scheme: Scheme) -> JobLane {
     match scheme {
-        Scheme::File | Scheme::Network => JobLane::Local,
+        Scheme::File | Scheme::Network | Scheme::Servers => JobLane::Local,
         Scheme::Smb => JobLane::Smb,
         Scheme::Sftp => JobLane::Sftp,
     }

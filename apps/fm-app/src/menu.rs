@@ -637,8 +637,8 @@ pub fn consume_shortcuts(
 ) -> Vec<&'static str> {
     let mut fired = Vec::new();
     // File and bare-key shortcuts (Backspace, Tab) must not fire while a dialog or text field owns the keyboard.
-    // The inline connect form is a form too: Tab walks its fields instead of swapping panes.
-    let on_form = fm_ui::remote::needs_connect(session, session.layout.focused());
+    // The SFTP connect popup is a form too: Tab walks its fields instead of swapping panes.
+    let on_form = session.remote.sftp_prompt.is_some();
     let typing = dialogs.is_open() || ctx.text_edit_focused() || on_form;
     // Most modifiers first, so Cmd+Backspace wins over plain Backspace.
     let mut table = shortcuts();

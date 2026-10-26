@@ -136,6 +136,10 @@ fn probe_once(hosts: &HostList) -> std::io::Result<()> {
                 // mDNS knows the real name; only add hosts it has not already named.
                 if !hosts.contains_addr(&ip) {
                     hosts.upsert(&format!("ws:{ip}"), &ip.to_string(), ip, Service::Smb, 445);
+                    // Windows PCs answer WS-Discovery without a name: ask NetBIOS for it.
+                    if let Some(name) = crate::netbios::lookup(ip) {
+                        hosts.upsert(&format!("ws:{ip}"), &name, ip, Service::Smb, 445);
+                    }
                 }
             }
         }

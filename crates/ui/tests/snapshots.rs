@@ -468,7 +468,7 @@ fn preview_toolbar_collapses_into_a_menu_when_narrow() {
 }
 
 #[test]
-fn connect_dialog_dark_light() {
+fn saved_servers_pane_dark_light() {
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();
     for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
@@ -483,17 +483,58 @@ fn connect_dialog_dark_light() {
             user: "alice".into(),
             key_path: None,
             start_dir: None,
+            protocol: fm_engine::prefs::Protocol::Sftp,
+            domain: None,
+            share: None,
+        });
+        session.prefs.profiles.push(fm_engine::prefs::Profile {
+            name: "build box".into(),
+            host: "10.0.0.5".into(),
+            port: 2222,
+            user: "ci".into(),
+            key_path: Some("/home/alice/.ssh/id_ed25519".into()),
+            start_dir: None,
+            protocol: fm_engine::prefs::Protocol::Sftp,
+            domain: None,
+            share: None,
         });
         session.layout.state_mut(1).expect("pane").kind = fm_layout::PaneKind::Sftp;
-        session.layout.state_mut(1).expect("pane").location =
-            VfsUri::parse("/home/alice").expect("uri");
+        session.open_servers(1).expect("servers");
+        wait_ready(&mut session, &VfsUri::servers());
         let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
             theme::apply_to(ui.ctx(), &tokens);
             let _ = pane::show(ui, &mut session, 1, &tokens);
         });
         harness.set_size(egui::vec2(640.0, 460.0));
         harness.run();
-        harness.snapshot(format!("pane_sftp_connect_{theme}"));
+        harness.snapshot(format!("pane_saved_servers_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
+fn sftp_popup_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = fixture_session();
+        session.remote.sftp_prompt = Some(fm_engine::remote::SftpPrompt {
+            navigate: true,
+            host: "nas.local".into(),
+            user: "alice".into(),
+            key_path: "~/.ssh/id_rsa".into(),
+            ..Default::default()
+        });
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            fm_ui::sftp_popup::sftp_prompt_dialog(ui.ctx(), &mut session, &tokens);
+        });
+        harness.set_size(egui::vec2(480.0, 420.0));
+        harness.run();
+        harness.snapshot(format!("sftp_popup_{theme}"));
         results.extend_harness(&mut harness);
     }
 }

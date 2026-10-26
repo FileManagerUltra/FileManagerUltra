@@ -608,7 +608,9 @@ impl PaneState {
             cur = p.parent();
         }
         // Hosts have no parent: under a Network tree they hang off its root.
-        if self.tree.root.scheme() == Scheme::Network && self.location.scheme() != Scheme::Network {
+        if matches!(self.tree.root.scheme(), Scheme::Network | Scheme::Servers)
+            && self.location.scheme() != self.tree.root.scheme()
+        {
             for uri in chain {
                 self.tree.expand(uri);
             }

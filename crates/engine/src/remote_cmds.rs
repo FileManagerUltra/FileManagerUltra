@@ -56,7 +56,7 @@ fn parse_connect_smb(s: &Session, params: &Params) -> Result<SmbParams, FmError>
             FmError::InvalidParams("require_encryption must be true or false".to_string())
         })?,
     };
-    let secs = s.prefs.sftp_timeout_secs.clamp(1, 600);
+    let secs = s.prefs.remote_timeout_secs.clamp(1, 600);
     let params = SmbParams {
         host: required("host")?,
         port: port(map)?,
@@ -119,7 +119,7 @@ fn parse_connect(s: &Session, params: &Params) -> Result<ConnectParams, FmError>
     Ok(params)
 }
 
-/// `remote.connect.dialog` — turn the focused pane into an SFTP pane (inline connect form).
+/// `remote.connect.dialog` — open the SFTP connect popup.
 pub fn connect_dialog() -> CommandSpec {
     CommandSpec {
         id: "remote.connect.dialog",
@@ -129,11 +129,47 @@ pub fn connect_dialog() -> CommandSpec {
         params: "none",
         enabled: |s| s.focused_kind().is_some_and(|k| k.is_files()),
         run: |s, _p: &Params| {
-            let pane = s.layout.focused();
-            s.dispatch(
-                "pane.kind.set",
-                &serde_json::json!({"kind": "sftp", "pane": pane}),
-            )
+            s.open_sftp_connect();
+            Ok(())
+        },
+    }
+}
+
+/// `remote.connect.cancel` — dismiss the SFTP connect popup.
+pub fn connect_cancel() -> CommandSpec {
+    CommandSpec {
+        id: "remote.connect.cancel",
+        label: "Cancel Connect",
+        menu: &["File", "Connect to Server…", "Cancel"],
+        shortcut: None,
+        params: "none",
+        enabled: |s| s.remote.sftp_prompt.is_some(),
+        run: |s, _p: &Params| {
+            s.cancel_sftp_prompt();
+            Ok(())
+        },
+    }
+}
+
+/// `servers.edit` — open the connect popup filled from a saved server.
+pub fn servers_edit() -> CommandSpec {
+    CommandSpec {
+        id: "servers.edit",
+        label: "Edit Saved Server",
+        menu: &["File", "Connect to Server…", "Edit saved server"],
+        shortcut: None,
+        params: "{name: string}",
+        enabled: |s| {
+            s.prefs
+                .profiles
+                .iter()
+                .any(|p| p.protocol == crate::prefs::Protocol::Sftp)
+        },
+        run: |s, params: &Params| {
+            let map = object(params)?;
+            let name = text(map, "name")?
+                .ok_or_else(|| FmError::InvalidParams("name is required".to_string()))?;
+            s.edit_server(&name)
         },
     }
 }
@@ -145,11 +181,45 @@ pub fn connect() -> CommandSpec {
         label: "Connect",
         menu: &["File", "Connect to Server…", "Connect"],
         shortcut: None,
-        params: "host, user, password | key_path (+ passphrase?), port?, start_dir?, profile?",
+        params: "host, user, password | key_path (+ passphrase?), port?, start_dir?, profile?, save_as?, remember?",
         enabled: |_s| true,
         run: |s, params: &Params| {
+            let map = object(params)?;
             let connect = parse_connect(s, params)?;
-            s.start_connect(connect, true).map(|_| ())
+            let remember = map
+                .and_then(|m| m.get("remember"))
+                .and_then(Params::as_bool)
+                .unwrap_or(false);
+            let save_as = text(map, "save_as")?.filter(|n| !n.is_empty());
+            if let Some(name) = save_as {
+                let mut profile = serde_json::Map::new();
+                profile.insert("name".into(), name.into());
+                profile.insert("host".into(), connect.host.clone().into());
+                profile.insert("user".into(), connect.user.clone().into());
+                profile.insert("port".into(), connect.port.into());
+                if let AuthMethod::Key { path, .. } = &connect.auth {
+                    profile.insert(
+                        "key_path".into(),
+                        path.to_string_lossy().into_owned().into(),
+                    );
+                }
+                if let Some(dir) = &connect.start_dir {
+                    profile.insert("start_dir".into(), dir.clone().into());
+                }
+                s.dispatch("remote.profile.save", &Params::Object(profile))?;
+            }
+            if remember && let AuthMethod::Password(pw) = &connect.auth {
+                s.remote.sftp_creds.insert(
+                    crate::network::sftp_cred_key(&connect.user, &connect.host, connect.port),
+                    pw.clone(),
+                );
+            }
+            // The popup stays open until the connect succeeds, so a failure can show its error.
+            let (landing, navigate) = s.remote.sftp_prompt.as_mut().map_or((None, true), |p| {
+                p.error = None;
+                (p.landing.clone(), p.navigate)
+            });
+            s.connect_sftp_to(connect, navigate, landing).map(|_| ())
         },
     }
 }
@@ -261,20 +331,36 @@ pub fn profile_save() -> CommandSpec {
         label: "Save Connection Profile",
         menu: &["File", "Connect to Server…", "Save profile"],
         shortcut: None,
-        params: "name, host, user, port?, key_path?, start_dir?",
+        params: "name, host, user, protocol? (sftp|smb), port?, key_path?, start_dir?, domain?, share?",
         enabled: |_s| true,
         run: |s, params: &Params| {
             let map = object(params)?;
             let need = |key: &str| {
                 text(map, key)?.ok_or_else(|| FmError::InvalidParams(format!("{key} is required")))
             };
+            let protocol = match text(map, "protocol")?.as_deref() {
+                None | Some("sftp") => crate::prefs::Protocol::Sftp,
+                Some("smb") => crate::prefs::Protocol::Smb,
+                Some(_) => {
+                    return Err(FmError::InvalidParams(
+                        "protocol must be sftp or smb".to_string(),
+                    ));
+                }
+            };
+            let default_port = match protocol {
+                crate::prefs::Protocol::Sftp => 22,
+                crate::prefs::Protocol::Smb => 445,
+            };
             let profile = crate::prefs::Profile {
+                protocol,
                 name: need("name")?,
                 host: need("host")?,
                 user: need("user")?,
-                port: port(map)?.unwrap_or(22),
+                port: port(map)?.unwrap_or(default_port),
                 key_path: text(map, "key_path")?,
                 start_dir: text(map, "start_dir")?,
+                domain: text(map, "domain")?.filter(|d| !d.is_empty()),
+                share: text(map, "share")?.filter(|d| !d.is_empty()),
             };
             profile.validate()?;
             let existing = s.prefs.profiles.iter().position(|p| p.name == profile.name);
@@ -318,6 +404,8 @@ pub fn profile_delete() -> CommandSpec {
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         connect_dialog(),
+        connect_cancel(),
+        servers_edit(),
         connect(),
         connect_smb(),
         reconnect(),

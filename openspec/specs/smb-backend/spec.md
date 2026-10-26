@@ -1,5 +1,8 @@
-## ADDED Requirements
+# smb-backend Specification
 
+## Purpose
+TBD - created by archiving change smb-backend. Update Purpose after archive.
+## Requirements
 ### Requirement: SMB implements the whole Vfs contract
 `fm-smb` SHALL implement every `Vfs` method for `smb://[user@]host[:port]/share/path` URIs using the pure-Rust `smb` crate: `read_dir`, `stat`, `open_read`, `open_read_at`, `open_write`, `create_dir`, `remove`, `rename`, `same_device` and `space`. The first path segment is the share. Entries SHALL carry kind, size and modified time with the same semantics as the local backend. A method the server or protocol cannot do (symlink creation) SHALL return `FmError::Unsupported` naming the operation, never panic.
 
@@ -18,12 +21,12 @@ The SMB backend SHALL need no system library and SHALL behave identically on Lin
 - **WHEN** the workspace is built on a machine without Samba libraries
 - **THEN** it builds and the SMB backend works
 
-### Requirement: A share is required
-Operations on `smb://host/` without a share SHALL return a typed error with a hint to enter a share name; share enumeration is not part of this capability.
+### Requirement: Server root lists shares
+`smb://host/` SHALL list the server's disk shares (no `$` admin shares) as folders, falling back to the shares connected so far when the server will not enumerate. Write operations on the server root SHALL fail with a typed error that tells the user to open a share first.
 
 #### Scenario: Bare host
 - **WHEN** the user navigates to `smb://nas/`
-- **THEN** the pane shows "Enter a share name, e.g. smb://nas/media" and no request is sent as a listing
+- **THEN** the pane lists the shares of `nas`, and creating a folder there reports "open a share first, e.g. smb://nas/<share>"
 
 ### Requirement: Remote data is bounded
 A directory listing SHALL obey the local entry cap and fail with an actionable error past it, enforced while directory chunks arrive; entry names SHALL pass `validate_name` (a hostile name is dropped); a reported size SHALL never be used to pre-allocate; reads and writes SHALL stream in fixed-size chunks with an idle timeout and cancellation between chunks.
@@ -45,3 +48,4 @@ After connecting, the backend SHALL expose whether the session is signed and/or 
 #### Scenario: Unsigned session
 - **WHEN** the server negotiates neither signing nor encryption
 - **THEN** the tooltip reads "NOT signed"
+

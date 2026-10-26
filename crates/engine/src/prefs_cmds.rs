@@ -99,29 +99,51 @@ fn secs(
     }
 }
 
-/// `prefs.sftp.timing` — how fast a dead SFTP link is noticed.
+/// `prefs.smb.encryption` — require encrypted SMB sessions for new connections.
+pub fn smb_encryption() -> CommandSpec {
+    CommandSpec {
+        id: "prefs.smb.encryption",
+        label: "Require Encrypted SMB",
+        menu: &["File", "Preferences", "Require encrypted SMB"],
+        shortcut: None,
+        params: "value?: bool",
+        enabled: |_session| true,
+        run: |session, params| {
+            session.prefs.smb_require_encryption =
+                match object(params)?.and_then(|m| m.get("value")) {
+                    None => !session.prefs.smb_require_encryption,
+                    Some(v) => v.as_bool().ok_or_else(|| {
+                        FmError::InvalidParams("value must be true or false".to_string())
+                    })?,
+                };
+            Ok(())
+        },
+    }
+}
+
+/// `prefs.remote.timing` — how fast a dead remote link is noticed.
 pub fn sftp_timing() -> CommandSpec {
     CommandSpec {
-        id: "prefs.sftp.timing",
-        label: "SFTP Timing",
-        menu: &["File", "Preferences", "SFTP timing"],
+        id: "prefs.remote.timing",
+        label: "Remote Timing",
+        menu: &["File", "Preferences", "Remote timing"],
         shortcut: None,
         params: "poll_secs?: 1-60, timeout_secs?: 2-120, keepalive_secs?: 1-60",
         enabled: |_session| true,
         run: |session, params| {
             let empty = serde_json::Map::new();
             let map = object(params)?.unwrap_or(&empty);
-            let poll = secs(map, "poll_secs", &crate::prefs::SFTP_POLL_RANGE)?;
-            let timeout = secs(map, "timeout_secs", &crate::prefs::SFTP_TIMEOUT_RANGE)?;
-            let keepalive = secs(map, "keepalive_secs", &crate::prefs::SFTP_KEEPALIVE_RANGE)?;
+            let poll = secs(map, "poll_secs", &crate::prefs::REMOTE_POLL_RANGE)?;
+            let timeout = secs(map, "timeout_secs", &crate::prefs::REMOTE_TIMEOUT_RANGE)?;
+            let keepalive = secs(map, "keepalive_secs", &crate::prefs::REMOTE_KEEPALIVE_RANGE)?;
             if let Some(v) = poll {
-                session.prefs.sftp_poll_secs = v;
+                session.prefs.remote_poll_secs = v;
             }
             if let Some(v) = timeout {
-                session.prefs.sftp_timeout_secs = v;
+                session.prefs.remote_timeout_secs = v;
             }
             if let Some(v) = keepalive {
-                session.prefs.sftp_keepalive_secs = v;
+                session.prefs.remote_keepalive_secs = v;
             }
             session.prefs.apply_sftp();
             Ok(())
@@ -221,7 +243,10 @@ mod tests {
     fn sftp_timing_sets_valid_values_and_rejects_bad_ones() {
         let mut s = Session::default();
         (sftp_timing().run)(&mut s, &json!({"poll_secs": 2, "timeout_secs": 6})).expect("set");
-        assert_eq!((s.prefs.sftp_poll_secs, s.prefs.sftp_timeout_secs), (2, 6));
+        assert_eq!(
+            (s.prefs.remote_poll_secs, s.prefs.remote_timeout_secs),
+            (2, 6)
+        );
         for bad in [
             json!({"poll_secs": 0}),
             json!({"timeout_secs": 1}),
@@ -231,7 +256,10 @@ mod tests {
         ] {
             assert!((sftp_timing().run)(&mut s, &bad).is_err(), "{bad}");
         }
-        assert_eq!((s.prefs.sftp_poll_secs, s.prefs.sftp_timeout_secs), (2, 6));
+        assert_eq!(
+            (s.prefs.remote_poll_secs, s.prefs.remote_timeout_secs),
+            (2, 6)
+        );
         fm_fs_sftp::set_timeouts(10, 5);
     }
 
@@ -245,6 +273,16 @@ mod tests {
         assert!(!s.prefs.recursive_preview);
         assert!((recursive_preview().run)(&mut s, &json!({"value": 3})).is_err());
         assert!(!s.prefs.recursive_preview, "unchanged on error");
+    }
+
+    #[test]
+    fn smb_encryption_toggles_and_rejects_bad_values() {
+        let mut s = Session::default();
+        assert!(!s.prefs.smb_require_encryption);
+        (smb_encryption().run)(&mut s, &Params::Null).expect("toggle");
+        assert!(s.prefs.smb_require_encryption);
+        assert!((smb_encryption().run)(&mut s, &json!({"value": "x"})).is_err());
+        assert!(s.prefs.smb_require_encryption, "unchanged on error");
     }
 
     #[test]

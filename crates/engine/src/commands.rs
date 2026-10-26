@@ -31,6 +31,7 @@ pub fn specs() -> Vec<CommandSpec> {
         prefs_cmds::retarget_links(),
         prefs_cmds::recursive_preview(),
         prefs_cmds::sftp_timing(),
+        prefs_cmds::smb_encryption(),
         prefs_cmds::zoom_in(),
         prefs_cmds::zoom_out(),
         prefs_cmds::zoom_reset(),

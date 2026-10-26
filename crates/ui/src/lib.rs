@@ -13,6 +13,7 @@ pub mod pane;
 pub mod preferences;
 pub mod preview;
 pub mod remote;
+pub mod sftp_popup;
 pub mod terminal;
 pub mod theme;
 pub mod trash;

@@ -22,4 +22,4 @@
 
 ## 5. Wrap-up
 - [x] 5.1 Docs (architecture, development smoke checklist), devlog
-- [ ] 5.2 `cargo xtask ci`, `openspec validate --all`, audit of `mdns-sd` tree
+- [x] 5.2 `cargo xtask ci`, `openspec validate --all`, audit of `mdns-sd` tree

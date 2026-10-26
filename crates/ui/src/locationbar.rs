@@ -50,7 +50,10 @@ pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, f
         let loc = &p.location;
         if loc.scheme() == fm_vfs::Scheme::File {
             loc.path_str().to_string()
-        } else if loc.scheme() == fm_vfs::Scheme::Network {
+        } else if matches!(
+            loc.scheme(),
+            fm_vfs::Scheme::Network | fm_vfs::Scheme::Servers
+        ) {
             loc.to_string()
         } else {
             format!("{}:{}", loc.authority(), loc.path_str())
@@ -58,15 +61,19 @@ pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, f
     }) else {
         return;
     };
-    let text = RichText::new(path).font(tokens.font());
+    let text = RichText::new(&path).font(tokens.font());
     let text = if focused {
-        text.color(tokens.bg).strong()
+        text.color(tokens.accent).strong()
     } else {
         text.color(tokens.text_muted)
     };
     let response = ui
-        .add(egui::Label::new(text).sense(egui::Sense::click()))
-        .on_hover_text("Click or Ctrl+L to type a path");
+        .add(
+            egui::Label::new(text)
+                .truncate()
+                .sense(egui::Sense::click()),
+        )
+        .on_hover_text(format!("{path}\nClick or Ctrl+L to type a path"));
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
     }

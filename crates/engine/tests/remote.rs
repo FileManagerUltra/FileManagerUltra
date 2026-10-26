@@ -265,10 +265,28 @@ fn disconnect_returns_panes_to_local_disk() {
     let mut s = session(config.path());
     connect_and_trust(&mut s, &server);
     assert!(s.command_enabled("remote.disconnect"));
+    let listed = s.layout.state(s.layout.focused()).unwrap().location.clone();
+    let wait = listed.clone();
+    pump(&mut s, "listing", move |s| s.dirs.entries(&wait).is_some());
     s.dispatch("remote.disconnect", &json!(null)).unwrap();
     assert!(s.remote.state(Scheme::Sftp, &authority(&server)).is_none());
-    let loc = &s.layout.state(s.layout.focused()).unwrap().location;
-    assert_eq!(loc.scheme(), Scheme::File);
+    let st = s.layout.state(s.layout.focused()).unwrap();
+    assert_eq!(st.location.scheme(), Scheme::File);
+    assert_eq!(st.tree.root.scheme(), Scheme::File);
+    assert!(s.dirs.entries(&listed).is_none(), "server listing dropped");
+}
+
+#[test]
+fn disconnect_sends_an_sftp_pane_back_to_saved_servers() {
+    let (_root, config, server) = start();
+    let mut s = session(config.path());
+    connect_and_trust(&mut s, &server);
+    let pane = s.layout.focused();
+    s.layout.state_mut(pane).unwrap().kind = fm_layout::PaneKind::Sftp;
+    s.dispatch("remote.disconnect", &json!(null)).unwrap();
+    let st = s.layout.state(pane).unwrap();
+    assert_eq!(st.location, fm_vfs::VfsUri::servers());
+    assert_eq!(st.tree.root, fm_vfs::VfsUri::servers());
 }
 
 #[test]
@@ -576,17 +594,13 @@ mod transfers {
 }
 
 #[test]
-fn connect_command_makes_the_focused_pane_an_sftp_pane() {
+fn connect_command_opens_the_popup() {
     let mut s = Session::new().unwrap();
     s.dispatch("remote.connect.dialog", &json!(null)).unwrap();
-    let pane = s.layout.focused();
-    assert_eq!(
-        s.layout.state(pane).unwrap().kind,
-        fm_layout::PaneKind::Sftp
-    );
-    // Back to Files keeps working.
-    s.dispatch("pane.kind.set", &json!({"kind": "files"}))
-        .unwrap();
+    let prompt = s.remote.sftp_prompt.clone().expect("popup");
+    assert!(prompt.navigate && prompt.landing.is_none() && !prompt.editing);
+    s.dispatch("remote.connect.cancel", &json!(null)).unwrap();
+    assert!(s.remote.sftp_prompt.is_none());
 }
 
 #[test]
@@ -629,7 +643,7 @@ fn remote_delete_is_permanent_only() {
 }
 
 #[test]
-fn typed_sftp_address_opens_the_connect_form_for_that_server() {
+fn typed_sftp_address_opens_the_popup_for_that_server() {
     let mut s = Session::new().unwrap();
     s.dispatch("nav.goto", &json!(null)).unwrap();
     s.dispatch(
@@ -637,10 +651,12 @@ fn typed_sftp_address_opens_the_connect_form_for_that_server() {
         &json!({"path": "sftp://bob@example.test:2222/srv/data"}),
     )
     .unwrap();
-    let st = s.layout.state(s.layout.focused()).unwrap();
-    assert_eq!(st.kind, fm_layout::PaneKind::Sftp);
-    assert_eq!(st.location.authority().host, "example.test");
-    assert_eq!(st.location.path_str(), "/srv/data");
+    let prompt = s.remote.sftp_prompt.clone().expect("popup");
+    assert_eq!(
+        (prompt.host.as_str(), prompt.port),
+        ("example.test", Some(2222))
+    );
+    assert_eq!(prompt.user, "bob");
     assert!(s.path_edit.is_none());
 }
 

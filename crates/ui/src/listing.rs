@@ -670,7 +670,14 @@ fn entry_row_ui(
     } else {
         None
     };
-    crate::context_menu::attach(&response, s, &entry.uri, &mut open);
+    if s.layout
+        .state(pane)
+        .is_some_and(|st| st.location.scheme() == fm_vfs::Scheme::Servers)
+    {
+        crate::context_menu::attach_server(&response, s, &entry.name, &entry.uri, &mut open);
+    } else {
+        crate::context_menu::attach(&response, s, &entry.uri, &mut open);
+    }
 
     let bg = if selected || (focused && pane_focused) {
         Some(tokens.selection_bg)

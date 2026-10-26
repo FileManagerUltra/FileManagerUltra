@@ -23,6 +23,8 @@ pub enum Scheme {
     Sftp,
     /// The virtual "Network" folder (`network:///`) listing discovered hosts.
     Network,
+    /// The virtual "Saved servers" folder (`servers:///`) listing saved SFTP profiles.
+    Servers,
 }
 
 impl Scheme {
@@ -32,6 +34,7 @@ impl Scheme {
             Self::Smb => "smb",
             Self::Sftp => "sftp",
             Self::Network => "network",
+            Self::Servers => "servers",
         }
     }
 
@@ -41,6 +44,7 @@ impl Scheme {
             "smb" => Some(Self::Smb),
             "sftp" => Some(Self::Sftp),
             "network" => Some(Self::Network),
+            "servers" => Some(Self::Servers),
             _ => None,
         }
     }
@@ -194,6 +198,12 @@ impl VfsUri {
                 }
                 return Err(FmError::invalid_uri(original));
             }
+            Scheme::Servers => {
+                if auth_part.is_empty() && matches!(path_part, "" | "/") {
+                    return Ok(Self::servers());
+                }
+                return Err(FmError::invalid_uri(original));
+            }
         };
 
         let path = normalize_path(if path_part.is_empty() { "/" } else { path_part })?;
@@ -254,6 +264,15 @@ impl VfsUri {
     pub fn network() -> Self {
         Self {
             scheme: Scheme::Network,
+            authority: Authority::local(),
+            path: "/".to_string(),
+        }
+    }
+
+    /// The virtual Saved servers folder.
+    pub fn servers() -> Self {
+        Self {
+            scheme: Scheme::Servers,
             authority: Authority::local(),
             path: "/".to_string(),
         }
@@ -357,6 +376,7 @@ impl fmt::Display for VfsUri {
             Scheme::Smb => write!(f, "smb://{}{}", self.authority, self.path),
             Scheme::Sftp => write!(f, "sftp://{}{}", self.authority, self.path),
             Scheme::Network => f.write_str("network:///"),
+            Scheme::Servers => f.write_str("servers:///"),
         }
     }
 }
@@ -499,6 +519,22 @@ mod tests {
             "network:///x",
             "network:///../x",
             "network://a@b/",
+        ] {
+            assert!(VfsUri::parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn servers_uri_round_trips_and_rejects_everything_else() {
+        let uri = VfsUri::parse("servers:///").unwrap();
+        assert_eq!(uri, VfsUri::servers());
+        assert_eq!(VfsUri::parse(&uri.to_string()).unwrap(), uri);
+        assert!(uri.parent().is_none());
+        for bad in [
+            "servers://host/",
+            "servers:///x",
+            "servers:///../x",
+            "servers://a@b/",
         ] {
             assert!(VfsUri::parse(bad).is_err(), "{bad}");
         }

@@ -3,6 +3,7 @@
 //! Directories navigate instead. Nothing here goes through a shell.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use fm_vfs::{Entry, EntryKind, FmError, Scheme, VfsUri};
 
@@ -301,6 +302,32 @@ fn private_temp_dir() -> Result<PathBuf, FmError> {
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
     builder.create(&dir).map_err(FmError::Io)?;
     Ok(dir)
+}
+
+/// Remove the temp folders made by `file.open` on remote files. `own_only` (on quit) removes
+/// only this process's; at startup everything older than a day goes, so crashes and viewers
+/// still open from a recent session are left alone.
+pub fn sweep_open_temp(own_only: bool) {
+    let own = format!("fm-open-{}-", std::process::id());
+    let Ok(rd) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with("fm-open-") {
+            continue;
+        }
+        let stale = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > Duration::from_secs(24 * 3600));
+        if (own_only && name.starts_with(&own)) || (!own_only && stale) {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
 }
 
 /// Hand a downloaded copy to the default application.

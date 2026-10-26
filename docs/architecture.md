@@ -141,7 +141,7 @@ SMB jobs get their own scheduler lane (§7) — a slow share can never starve lo
 
 **Connect flow** (all steps are commands; nothing blocks the UI thread):
 
-1. `remote.connect.dialog` (File ▸ Connect to Server…, or the pane-type selector ▸ SFTP) turns the pane into an `Sftp` pane, which shows an inline connect form (host, port, user, auth: *password* | *private key* + optional passphrase, starting directory, profile picker) until connected. `PaneKind::Sftp` is a Files pane on a server (`PaneKind::is_files`).
+1. An `Sftp` pane without a connection shows the **Saved servers** folder (`servers:///`, `ServersFs` over the SFTP profiles). `remote.connect.dialog` (File ▸ Connect to Server…, the pane's Connect… button) or opening a saved server / typed `sftp://` address raises the connect popup (host, port, user, *password* | *key file*, start folder, save-as, remember); `servers.edit` prefills it from a profile. `PaneKind::Sftp` is a Files pane on a server (`PaneKind::is_files`).
 2. `engine` opens the connection on the **`sftp` lane** (`russh` handshake + `sftp` subsystem, host-key check), emitting `JobEvent`s; the dialog shows a spinner and stays responsive.
 3. On success the backend is registered in `VfsRegistry` under its authority (`user@host:port`) and the focused pane's `location` becomes `sftp://user@host/<start-dir>`; tree root and listing fill through the normal `ReadDir` → `DirCache` path. On failure: `FmError::Backend` → dialog shows the reason + Retry; the pane is untouched.
 

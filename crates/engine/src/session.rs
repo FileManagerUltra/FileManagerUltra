@@ -107,6 +107,11 @@ pub struct Session {
 impl Default for Session {
     fn default() -> Self {
         let first_layout = Layout::single(VfsUri::root_file());
+        let remote = crate::remote::RemoteHub::default();
+        let mut backends = VfsRegistry::with_local();
+        backends.register(Arc::new(crate::servers::ServersFs::new(
+            remote.servers.clone(),
+        )));
         Self {
             registry: Registry::new(),
             prefs: Prefs::default(),
@@ -133,9 +138,9 @@ impl Default for Session {
             about_open: false,
             preferences_open: false,
             dirs: DirCache::new(),
-            backends: VfsRegistry::with_local(),
+            backends,
             fileops: FileOps::default(),
-            remote: Default::default(),
+            remote,
             trash: Default::default(),
             undo: UndoStack::new(),
             devices: DeviceCache::default(),
@@ -193,7 +198,7 @@ impl Session {
         match self.dirs.state(&uri) {
             DirState::Ready { .. } | DirState::Loading { .. } => Ok(None),
             DirState::Absent | DirState::Failed { .. } => {
-                if self.needs_login(&uri) || self.open_sftp_form(&uri) {
+                if self.needs_login(&uri) || self.needs_sftp_login(&uri) {
                     return Ok(None);
                 }
                 self.submit_read(uri).map(Some)
@@ -208,7 +213,7 @@ impl Session {
         if let Some(id) = self.inflight.get(&uri) {
             return Ok(*id);
         }
-        if self.needs_login(&uri) {
+        if self.needs_login(&uri) || self.needs_sftp_login(&uri) {
             return Err(FmError::PermissionDenied(uri.to_string()));
         }
         let backend = self.backends.require(&uri)?;
@@ -270,6 +275,8 @@ impl Session {
         let mut changed = !events.is_empty() || term_changed;
         changed |= self.pump_remote_lost();
         changed |= self.pump_trash();
+        self.sync_servers();
+        self.normalize_sftp_panes();
         self.remote_tick();
         changed |= self.refresh_previews();
         for ev in &events {
@@ -795,7 +802,9 @@ mod tests {
         assert!(s.backends.get(Scheme::Sftp).is_none());
         let mut s = s;
         let err = mut_session_sftp_read(&mut s);
-        assert!(matches!(err, FmError::Unsupported(_)), "{err:?}");
+        // The read asks for a login instead of failing outright.
+        assert!(matches!(err, FmError::PermissionDenied(_)), "{err:?}");
+        assert!(s.remote.sftp_prompt.is_some());
     }
 
     fn mut_session_sftp_read(s: &mut Session) -> FmError {

@@ -187,6 +187,24 @@ impl Handler {
 }
 
 /// Open a connection (blocking; run on the `sftp` lane).
+/// `~` and `~/…` mean the home folder, as in a shell.
+fn expand_home(path: &std::path::Path) -> PathBuf {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    match (path.strip_prefix("~"), home) {
+        (Ok(rest), Some(home)) => PathBuf::from(home).join(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// `~` / `~/x` against the remote home; any other path is used as given.
+fn expand_remote_home(dir: &str, home: &str) -> String {
+    match dir.strip_prefix('~') {
+        Some("") => home.to_string(),
+        Some(rest) if rest.starts_with('/') => format!("{}{rest}", home.trim_end_matches('/')),
+        _ => dir.to_string(),
+    }
+}
+
 pub fn connect(
     params: &ConnectParams,
     verifier: Arc<dyn HostKeyVerifier>,
@@ -204,8 +222,9 @@ pub fn connect(
                     "PuTTY .ppk keys are not supported; in PuTTYgen use Conversions > Export OpenSSH key",
                 ));
             }
+            let path = expand_home(path);
             let loaded = russh::keys::load_secret_key(
-                path,
+                &path,
                 passphrase.as_ref().map(|p| p.expose_secret()),
             )
             .map_err(|_| {
@@ -303,12 +322,17 @@ async fn connect_async(
         .await
         .map_err(|_| fail("sftp handshake failed"))?;
 
-    let start = params.start_dir.as_deref().unwrap_or(".");
-    let home = sftp
-        .canonicalize(start)
+    // The server's default folder is the home folder; `~` and `~/x` are resolved against it
+    // because the SFTP protocol knows no tilde.
+    let default = sftp
+        .canonicalize(".")
         .await
-        .or(sftp.canonicalize(".").await)
         .map_err(|_| fail("cannot resolve the start directory"))?;
+    let start = match params.start_dir.as_deref().map(str::trim) {
+        None | Some("") => default.clone(),
+        Some(dir) => expand_remote_home(dir, &default),
+    };
+    let home = sftp.canonicalize(&start).await.unwrap_or(default);
 
     Ok(SftpFs::from_parts(
         session,
@@ -332,4 +356,30 @@ async fn open_sftp(
         .await
         .map_err(|_| fail("the server refused the sftp subsystem"))?;
     Ok(channel.into_stream())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_tilde_resolves_against_the_remote_home() {
+        assert_eq!(expand_remote_home("~", "/home/a"), "/home/a");
+        assert_eq!(expand_remote_home("~/src", "/home/a"), "/home/a/src");
+        assert_eq!(expand_remote_home("~/src", "/"), "/src");
+        assert_eq!(expand_remote_home("/srv", "/home/a"), "/srv");
+        assert_eq!(expand_remote_home("~bob", "/home/a"), "~bob");
+        assert_eq!(expand_remote_home("rel", "/home/a"), "rel");
+    }
+
+    #[test]
+    fn tilde_means_home_and_other_paths_are_untouched() {
+        let abs = std::path::Path::new("/etc/key");
+        assert_eq!(expand_home(abs), abs);
+        let expanded = expand_home(std::path::Path::new("~/.ssh/id_rsa"));
+        assert!(expanded.ends_with(".ssh/id_rsa"));
+        if std::env::var_os("HOME").is_some() {
+            assert!(!expanded.starts_with("~"));
+        }
+    }
 }

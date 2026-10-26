@@ -19,23 +19,23 @@
 - [x] 3.1 Separate `remote.connect.smb` command (the dialog is now `network.connect.dialog`) (instead of a `protocol` param); connections keyed by scheme+authority; bad-params test
 - [x] 3.2 SMB connect job on the `smb` lane; no host-key step; auth failure drops credentials
 - [x] 3.3 `smb` lane has 2 workers (concurrent two-connection test still open)
-- [ ] 3.4 Profiles gain `protocol`, `domain`, `share` (no secret fields); old profiles load as sftp; round-trip test
-- [ ] 3.5 Neutral `remote_*` timing prefs reading the old `sftp_*` keys; closed-schema test updated
-- [ ] 3.6 "Require signed or encrypted SMB" preference, enforced at connect
+- [x] 3.4 Profiles gain `protocol`, `domain`, `share` (no secret fields); old profiles load as sftp; round-trip test
+- [x] 3.5 Neutral `remote_*` timing prefs reading the old `sftp_*` keys; closed-schema test updated
+- [x] 3.6 "Require signed or encrypted SMB" preference, enforced at connect
 - [x] 3.7 Workspace restore: legacy `Smb` panes restore as Network panes
 
 ## 4. UI and app
 
 - [x] 4.1 Folded into the Network pane: Connect… button + File ▸ Connect to SMB Server…; `PaneKind::Smb` is deserialize-only
-- [x] 4.2 Manual popup (host, port, share, user, domain, password, require encryption); profile picker still open (3.4)
+- [x] 4.2 Manual popup (host, port, share, user, domain, password, require encryption); profile picker and save-as in the popup
 - [x] 4.3 Badge/Disconnect/stale banner shared; tooltip shows encrypted or signed
-- [ ] 4.4 Location label and delete label ("Delete Permanently") for SMB; bare `smb://host/` hint
+- [x] 4.4 Location label and delete label ("Delete Permanently") for SMB; bare `smb://host/` hint
 - [x] 4.5 Typed `smb://` address opens the popup
 - [x] 4.6 Snapshots: manual connect popup (dark + light); badge states covered by the shared SFTP snapshot
 
 ## 5. Docs and gates
 
 - [x] 5.1 Update `AGENTS.md`, `docs/architecture.md` (§4.4, lanes, platform table), `docs/development.md` (smoke checklist: Samba, Windows share, NAS), roadmap; remove pavao and native-UNC mentions
-- [ ] 5.2 Spec deltas validated (`openspec validate --all`); devlog entry
-- [ ] 5.3 `cargo xtask ci` green; `cargo deny`/audit reviewed for new dependencies
-- [ ] 5.4 Real-share smoke (Samba, Windows, NAS), then archive
+- [x] 5.2 Spec deltas validated (`openspec validate --all`); devlog entry
+- [x] 5.3 (cargo-deny unavailable: dependency tree reviewed by hand, no RustSec advisories) `cargo xtask ci` green; `cargo deny`/audit reviewed for new dependencies
+- [x] 5.4 Real-share smoke (Samba, Windows PC, NAS): user-verified speed and discovery

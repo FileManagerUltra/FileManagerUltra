@@ -30,7 +30,6 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let tree_width = state.tree_width;
     let kind = state.kind;
     let tree_active = state.tree.active;
-    let connect = crate::remote::needs_connect(s, pane);
 
     let stroke = if focused {
         egui::Stroke::new(tokens.border_width.max(2.5), tokens.accent)
@@ -38,13 +37,10 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         egui::Stroke::new(tokens.border_width, tokens.border)
     };
     let mut open = None;
-    if kind.is_files() && focused && !tree_active && !crate::remote::needs_connect(s, pane) {
+    if kind.is_files() && focused && !tree_active {
         crate::locationbar::type_to_go(ui.ctx(), s, pane);
     }
     crate::dnd::note_pane(ui.ctx(), pane, area);
-    if !matches!(kind, PaneKind::Sftp) {
-        crate::remote::forget_form(ui.ctx(), pane);
-    }
     if kind.is_files() {
         crate::dnd::register_zone(
             ui.ctx(),
@@ -66,7 +62,12 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 crate::locationbar::show_editor(ui, s, pane, tokens);
             } else {
                 egui::Frame::NONE
-                    .fill(if focused { tokens.accent } else { tokens.panel })
+                    .fill(tokens.panel)
+                    .stroke(if focused {
+                        egui::Stroke::new(1.5, tokens.accent)
+                    } else {
+                        egui::Stroke::NONE
+                    })
                     .corner_radius(tokens.corner_radius)
                     .inner_margin(egui::Margin::symmetric(tokens.padding as i8, 2))
                     .show(ui, |ui| {
@@ -78,17 +79,23 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             |ui| {
                                 close_button(ui, s, pane);
                                 kind_menu(ui, s, pane, kind);
+                                if kind == PaneKind::Sftp && ui.button("Connect…").clicked() {
+                                    s.dispatch_or_notice(
+                                        "remote.connect.dialog",
+                                        &serde_json::Value::Null,
+                                    );
+                                }
                                 if kind == PaneKind::Network && ui.button("Connect…").clicked() {
                                     s.dispatch_or_notice(
                                         "network.connect.dialog",
                                         &serde_json::Value::Null,
                                     );
                                 }
-                                if kind.is_files() && !connect {
+                                if kind.is_files() {
                                     crate::remote::badge(ui, s, pane, tokens, focused);
                                 }
                                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                    if kind.is_files() && !connect {
+                                    if kind.is_files() {
                                         crate::locationbar::show_label(
                                             ui, s, pane, tokens, focused,
                                         );
@@ -102,12 +109,8 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
             }
             ui.separator();
 
-            if kind.is_files() && !connect {
+            if kind.is_files() {
                 crate::remote::stale_banner(ui, s, pane, tokens);
-            }
-            if connect {
-                crate::remote::connect_form(ui, s, pane, tokens);
-                return;
             }
             if kind == PaneKind::Terminal {
                 crate::terminal::show(ui, s, pane, tokens, focused);

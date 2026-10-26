@@ -153,6 +153,11 @@ impl DirCache {
         self.slots.remove(uri);
     }
 
+    /// Drop every slot whose uri matches (a server went away).
+    pub fn invalidate_where(&mut self, mut pred: impl FnMut(&VfsUri) -> bool) {
+        self.slots.retain(|uri, _| !pred(uri));
+    }
+
     pub fn clear(&mut self) {
         self.slots.clear();
     }
