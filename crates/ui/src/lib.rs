@@ -12,8 +12,10 @@ pub mod locationbar;
 pub mod pane;
 pub mod preferences;
 pub mod preview;
+pub mod remote;
 pub mod terminal;
 pub mod theme;
+pub mod trash;
 pub mod tree;
 pub mod workspaces;
 

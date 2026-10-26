@@ -22,6 +22,7 @@ struct App {
     applied: (ThemePreference, bool),
     /// Set once the native window title has been explicitly sent (see `ui`).
     title_sent: bool,
+    was_focused: bool,
     dialogs: fm_ui::dialogs::Dialogs,
     last_ws_tick: std::time::Instant,
 }
@@ -36,6 +37,10 @@ impl App {
         // resolution, or the panels (styled by egui visuals) and the pane bodies
         // (painted from tokens) drift apart.
         set_egui_theme_preference(ctx, pref);
+        let zoom = self.session.prefs.zoom_factor();
+        if (ctx.zoom_factor() - zoom).abs() > f32::EPSILON {
+            ctx.set_zoom_factor(zoom);
+        }
         let dark = ctx.theme() == egui::Theme::Dark;
         if (pref, dark) == self.applied {
             return;
@@ -59,7 +64,7 @@ fn open_uri(session: &mut Session, dialogs: &mut fm_ui::dialogs::Dialogs, uri: &
     use fm_engine::open_cmds::{OpenPlan, plan};
     match plan(session, uri) {
         OpenPlan::Navigate => {
-            session.dispatch_or_notice("nav.open", &Params::String(uri.path_str().to_string()));
+            session.dispatch_or_notice("nav.open", &Params::String(uri.to_string()));
         }
         OpenPlan::Launch => {
             session.dispatch_or_notice("file.open", &serde_json::json!({ "uri": uri.path_str() }));
@@ -307,6 +312,15 @@ impl eframe::App for App {
         if self.session.is_busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
+        // Remote panes refresh on a timer and when the window regains focus.
+        if self.session.remote.has_ready() {
+            ctx.request_repaint_after(self.session.prefs.sftp_poll());
+            let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
+            if focused && !self.was_focused {
+                self.session.refresh_remote_panes();
+            }
+            self.was_focused = focused;
+        }
         // Shell output arrives without any input event; poll terminals at ~60 Hz while any exist.
         if self.session.has_terminals() {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
@@ -351,6 +365,12 @@ impl eframe::App for App {
                     .unwrap_or(0);
                 (count, selected)
             };
+            let space = self
+                .session
+                .layout
+                .state(focused)
+                .map(|p| p.location.clone())
+                .and_then(|uri| fm_ui::remote::free_space_label(&mut self.session, &uri));
             ui.horizontal(|ui| {
                 if let Some(notice) = self.session.notice.clone() {
                     let text = egui::RichText::new(notice)
@@ -377,6 +397,9 @@ impl eframe::App for App {
                 fm_ui::jobs::indicator(ui, &self.session, &tokens);
                 ui.label(tokens.muted(location));
                 ui.label(tokens.muted(format!("{count} items")));
+                if let Some(space) = space {
+                    ui.label(tokens.muted(space));
+                }
                 if selected > 0 {
                     ui.label(tokens.muted(format!("{selected} selected")));
                 }
@@ -425,6 +448,8 @@ impl eframe::App for App {
         self.dialogs.show(&ctx, &mut self.session, &tokens);
         fm_ui::jobs::show(&ctx, &mut self.session, &tokens);
         fm_ui::preferences::show(&ctx, &mut self.session, &tokens);
+        fm_ui::remote::host_key_dialog(&ctx, &mut self.session, &tokens);
+        fm_ui::remote::host_key_alert(&ctx, &mut self.session, &tokens);
 
         if self.session.about_open {
             let mut open = self.session.about_open;
@@ -474,6 +499,9 @@ fn main() -> eframe::Result {
         }
     };
     session.prefs = prefs;
+    if let Some(dir) = &config_dir {
+        session.remote.set_config_dir(dir.clone());
+    }
     session
         .thumbs
         .set_cache_dir(fm_engine::prefs::default_cache_dir().map(|d| d.join("thumbs")));
@@ -485,7 +513,10 @@ fn main() -> eframe::Result {
     }
     // Kick off the first pane's read so the UI starts in the loading state
     // and the first paint never blocks on I/O.
-    if let Some(state) = session.layout.state(session.layout.focused()) {
+    // A restored SFTP pane has no connection yet: it shows its connect form instead.
+    if let Some(state) = session.layout.state(session.layout.focused()).filter(|st| {
+        !fm_ui::remote::needs_connect(&session, session.layout.focused()) && st.kind.is_files()
+    }) {
         let location = state.location.clone();
         if let Err(err) = session.ensure_read(location) {
             eprintln!("startup read failed: {err}");
@@ -510,6 +541,10 @@ fn main() -> eframe::Result {
             // Seed the theme before the first frame; `sync_theme` keeps it current.
             let theme_pref = session.prefs.theme;
             set_egui_theme_preference(&cc.egui_ctx, theme_pref);
+            // Zoom is a command (View menu, shortcuts) persisted in prefs; egui's own keys
+            // would change it behind the preference's back.
+            cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
+            cc.egui_ctx.set_zoom_factor(session.prefs.zoom_factor());
             let dark = cc.egui_ctx.theme() == egui::Theme::Dark;
             theme::apply_to(&cc.egui_ctx, &theme::Tokens::resolve(theme_pref, dark));
             Ok(Box::new(App {
@@ -517,6 +552,7 @@ fn main() -> eframe::Result {
                 config_dir,
                 applied: (theme_pref, dark),
                 title_sent: false,
+                was_focused: true,
                 dialogs: fm_ui::dialogs::Dialogs::default(),
                 last_ws_tick: std::time::Instant::now(),
             }))

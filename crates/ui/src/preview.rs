@@ -7,7 +7,7 @@ use egui::text::LayoutJob;
 use egui::{FontId, Id, RichText, ScrollArea, Sense, TextFormat, Ui, vec2};
 use fm_engine::Session;
 use fm_engine::preview_cmds::{Body, LogView, Zoom};
-use fm_layout::{PaneId, PaneKind, PreviewSource};
+use fm_layout::{PaneId, PreviewSource};
 use fm_preview::log::{Level, LogDoc, LogRecord};
 use fm_preview::markdown::{Inline, MdBlock};
 use fm_preview::{DirDoc, HexDoc, ImageDoc, MetaDoc, Preview, Span, StructDoc, TextDoc};
@@ -99,14 +99,9 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
     let Some(slot) = s.preview_slot(pane) else {
         return;
     };
-    ui.horizontal(|ui| {
-        source_picker(ui, s, pane, actions);
-        if let Some(e) = &slot.subject {
-            ui.label(RichText::new(&e.name).strong());
-        }
-        // Right-aligned, framed buttons so view options stand apart from the title.
-        ui.add_space(ui.available_width().min(12.0));
-        ui.separator();
+    // The view options go in a closure so they can be measured, then shown inline or, when the
+    // pane is too narrow, behind a menu button on the right.
+    let options = |ui: &mut Ui, actions: &mut Vec<Action>| {
         ui.spacing_mut().item_spacing.x = 8.0;
         ui.spacing_mut().button_padding = vec2(10.0, 3.0);
         let wrap_pretty = |ui: &mut Ui, actions: &mut Vec<Action>| {
@@ -156,6 +151,44 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
             Body::Log(v) => log_toolbar(ui, pane, v, actions),
             _ => {}
         }
+    };
+    ui.horizontal(|ui| {
+        source_picker(ui, s, pane, actions);
+        if let Some(e) = &slot.subject {
+            ui.label(RichText::new(&e.name).strong());
+        }
+        let needed = {
+            let rect =
+                egui::Rect::from_min_size(ui.cursor().min, vec2(10_000.0, ui.available_height()));
+            let mut sizing = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .sizing_pass()
+                    .invisible(),
+            );
+            options(&mut sizing, &mut Vec::new());
+            sizing.min_rect().width() + 24.0
+        };
+        if needed <= ui.available_width() {
+            // Framed buttons so view options stand apart from the title.
+            ui.add_space(12.0);
+            ui.separator();
+            options(ui, actions);
+        } else if needed > 24.0 {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let button = egui::Button::new("").min_size(vec2(28.0, 0.0));
+                let (response, _) = egui::containers::menu::MenuButton::from_button(button)
+                    .ui(ui, |ui| options(ui, actions));
+                // The bundled fonts have no hamburger glyph: draw it.
+                let stroke = ui.style().interact(&response).fg_stroke;
+                let c = response.rect.center();
+                for dy in [-4.0, 0.0, 4.0] {
+                    ui.painter().hline(c.x - 7.0..=c.x + 7.0, c.y + dy, stroke);
+                }
+                response.on_hover_text("View options");
+            });
+        }
     });
 }
 
@@ -167,11 +200,7 @@ fn source_picker(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Actio
         .layout
         .panes()
         .into_iter()
-        .filter(|p| {
-            s.layout
-                .state(*p)
-                .is_some_and(|st| st.kind == PaneKind::Files)
-        })
+        .filter(|p| s.layout.state(*p).is_some_and(|st| st.kind.is_files()))
         .collect();
     let current = match state.preview_source {
         PreviewSource::Follow => "Active pane".to_string(),
@@ -211,7 +240,7 @@ fn static_body(
     match &**p {
         Preview::Text(d) => text_view(ui, pane, tokens, d, wrap),
         Preview::Structured(d) => structured(ui, pane, tokens, d, pretty, wrap),
-        Preview::Markdown(m) => markdown(ui, tokens, &m.blocks, m.truncated),
+        Preview::Markdown(m) => markdown(ui, tokens, &m.blocks, m.truncated, wrap),
         Preview::Image(i) => image(ui, pane, tokens, p, i, zoom),
         Preview::Hex(h) => hex(ui, tokens, h),
         Preview::Dir(d) => scrolled(ui, pane, "dir", |ui| dir_card(ui, tokens, d)),
@@ -241,14 +270,24 @@ fn scrolled(ui: &mut Ui, pane: PaneId, what: &str, add: impl FnOnce(&mut Ui)) {
 fn spans_job(tokens: &Tokens, spans: &[Span], wrap: bool, width: f32) -> LayoutJob {
     let mut job = LayoutJob::default();
     for sp in spans {
-        job.append(
-            &sp.text,
-            0.0,
-            TextFormat::simple(mono(tokens), tokens.syntax(sp.class)),
-        );
+        let mut format = TextFormat::simple(mono(tokens), tokens.syntax(sp.class));
+        format.line_height = Some(line_height(tokens));
+        job.append(&sp.text, 0.0, format);
     }
     job.wrap.max_width = if wrap { width } else { f32::INFINITY };
     job
+}
+
+/// Row height of the text preview: the font plus some air, built into each line's galley.
+fn line_height(tokens: &Tokens) -> f32 {
+    (tokens.font_size * 1.45).round()
+}
+
+/// Lines sit flush against each other: egui's copy inserts a blank line wherever the gap
+/// between two labels exceeds half a row.
+fn tight_rows(ui: &mut Ui) {
+    ui.spacing_mut().item_spacing.y = 0.0;
+    ui.spacing_mut().interact_size.y = 0.0;
 }
 
 fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool) {
@@ -260,7 +299,10 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
         )));
     }
     let gutter = d.lines.len().to_string().len();
-    let row_h = ui.fonts_mut(|f| f.row_height(&mono(tokens))) + 2.0;
+    let row_h = line_height(tokens);
+    // `show_rows` sizes the scrollable height from the spacing of the Ui it is called on, so the
+    // tight spacing must be set here, not only inside the rows.
+    tight_rows(ui);
     let area = if wrap {
         ScrollArea::vertical()
     } else {
@@ -270,12 +312,17 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
     .auto_shrink(false);
     if wrap {
         area.show(ui, |ui| {
+            tight_rows(ui);
             for (i, line) in d.lines.iter().enumerate() {
                 ui.horizontal_top(|ui| {
-                    ui.label(
-                        RichText::new(format!("{:>gutter$}", i + 1))
-                            .font(mono(tokens))
-                            .color(tokens.text_muted),
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("{:>gutter$}", i + 1))
+                                .font(mono(tokens))
+                                .line_height(Some(row_h))
+                                .color(tokens.text_muted),
+                        )
+                        .selectable(false),
                     );
                     ui.add(egui::Label::new(spans_job(tokens, line, true, 0.0)).wrap());
                 });
@@ -283,13 +330,18 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
         });
     } else {
         area.show_rows(ui, row_h, d.lines.len(), |ui, range| {
+            tight_rows(ui);
             for i in range {
                 let Some(line) = d.lines.get(i) else { continue };
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("{:>gutter$}", i + 1))
-                            .font(mono(tokens))
-                            .color(tokens.text_muted),
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("{:>gutter$}", i + 1))
+                                .font(mono(tokens))
+                                .line_height(Some(row_h))
+                                .color(tokens.text_muted),
+                        )
+                        .selectable(false),
                     );
                     ui.add(egui::Label::new(spans_job(tokens, line, false, 0.0)).extend());
                 });
@@ -339,12 +391,12 @@ fn inline_job(tokens: &Tokens, parts: &[Inline], base: f32) -> LayoutJob {
     job
 }
 
-fn markdown(ui: &mut Ui, tokens: &Tokens, blocks: &[MdBlock], truncated: bool) {
+fn markdown(ui: &mut Ui, tokens: &Tokens, blocks: &[MdBlock], truncated: bool, wrap: bool) {
     ScrollArea::vertical()
         .id_salt("pv-md")
         .auto_shrink(false)
         .show(ui, |ui| {
-            for b in blocks {
+            for (i, b) in blocks.iter().enumerate() {
                 match b {
                     MdBlock::Heading(l, parts) => {
                         ui.add_space(6.0);
@@ -361,7 +413,17 @@ fn markdown(ui: &mut Ui, tokens: &Tokens, blocks: &[MdBlock], truncated: bool) {
                             .inner_margin(6.0)
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                ui.label(RichText::new(c.trim_end()).font(mono(tokens)));
+                                let text = RichText::new(c.trim_end()).font(mono(tokens));
+                                if wrap {
+                                    ui.add(egui::Label::new(text).wrap());
+                                } else {
+                                    ScrollArea::horizontal().id_salt(("pv-md-code", i)).show(
+                                        ui,
+                                        |ui| {
+                                            ui.add(egui::Label::new(text).extend());
+                                        },
+                                    );
+                                }
                             });
                     }
                     MdBlock::Item(depth, marker, parts) => {
@@ -1416,6 +1478,7 @@ pub fn grid_has_keyboard(ctx: &egui::Context) -> bool {
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use fm_layout::PaneKind;
     #[test]
     fn thumb_selection_follows_the_listing_click_rules() {
         use fm_vfs::{Entry, EntryKind, VfsUri};

@@ -125,6 +125,20 @@ impl DirCache {
     /// Record a read that failed before it reached a job (e.g. no backend for
     /// the scheme), so views show the error affordance instead of a spinner.
     /// Never overwrites an in-flight or fresh slot — those belong to the job.
+    /// Swap in fresh entries for a `Ready` slot without passing through `Loading`
+    /// (background polls must not blank the listing). `None` when the slot is not
+    /// `Ready` or nothing changed.
+    pub fn refresh(&mut self, uri: &VfsUri, entries: Arc<[Entry]>) -> Option<u64> {
+        match self.slots.get(uri) {
+            Some(Slot::Ready { entries: old, .. }) if **old != *entries => {}
+            _ => return None,
+        }
+        let revision = self.take_revision();
+        self.slots
+            .insert(uri.clone(), Slot::Ready { revision, entries });
+        Some(revision)
+    }
+
     pub fn set_failed(&mut self, uri: &VfsUri, message: String) {
         if !matches!(self.slots.get(uri), None | Some(Slot::Failed { .. })) {
             return;

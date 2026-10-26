@@ -113,12 +113,12 @@ pub fn focused_dir(s: &Session) -> Option<VfsUri> {
     }
     s.layout
         .state(s.layout.focused())
-        .filter(|p| p.kind == fm_layout::PaneKind::Files)
+        .filter(|p| p.kind.is_files())
         .map(|p| p.location.clone())
 }
 
 fn can_create_here(s: &Session) -> bool {
-    s.focused_is_files() || focused_grid(s).is_some()
+    s.focused_remote_ready() && (s.focused_is_files() || focused_grid(s).is_some())
 }
 
 /// Uris of the focused pane's selected rows.
@@ -129,7 +129,7 @@ pub fn focused_selection(s: &Session) -> Vec<VfsUri> {
     let Some(pane) = s
         .layout
         .state(s.layout.focused())
-        .filter(|p| p.kind == fm_layout::PaneKind::Files)
+        .filter(|p| p.kind.is_files())
     else {
         return Vec::new();
     };
@@ -150,9 +150,7 @@ pub fn focused_selection(s: &Session) -> Vec<VfsUri> {
 }
 
 fn is_files(s: &Session, pane: fm_layout::PaneId) -> bool {
-    s.layout
-        .state(pane)
-        .is_some_and(|p| p.kind == fm_layout::PaneKind::Files)
+    s.layout.state(pane).is_some_and(|p| p.kind.is_files())
 }
 
 /// Directory of the most-recently-focused other pane (the copy/move destination).
@@ -178,7 +176,7 @@ fn sources_or_selection(s: &Session, map: Option<&Obj>) -> Result<Vec<VfsUri>, F
 }
 
 fn has_selection(s: &Session) -> bool {
-    !focused_selection(s).is_empty()
+    s.focused_remote_ready() && !focused_selection(s).is_empty()
 }
 
 fn transfer(s: &mut Session, params: &Params, is_move: bool) -> Result<(), FmError> {
@@ -328,6 +326,11 @@ pub fn delete() -> CommandSpec {
             let sources = sources_or_selection(s, map)?;
             if sources.is_empty() {
                 return Ok(());
+            }
+            if sources.iter().any(|u| u.scheme() != fm_vfs::Scheme::File) {
+                return Err(FmError::Unsupported(
+                    "remote locations have no trash; use Delete Permanently",
+                ));
             }
             s.submit_op(OpRequest::Trash { sources }).map(|_| ())
         },

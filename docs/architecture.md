@@ -139,7 +139,7 @@ pub trait Vfs: Send + Sync {
 
 **Connect flow** (all steps are commands; nothing blocks the UI thread):
 
-1. `remote.connect` opens the Connect dialog (scheme `SFTP` | `SMB`, host, port, user, auth: *password* | *private key* + optional passphrase, starting directory).
+1. `remote.connect.dialog` (File ▸ Connect to Server…, or the pane-type selector ▸ SFTP) turns the pane into an `Sftp` pane, which shows an inline connect form (host, port, user, auth: *password* | *private key* + optional passphrase, starting directory, profile picker) until connected. `PaneKind::Sftp` is a Files pane on a server (`PaneKind::is_files`).
 2. `engine` opens the connection on the **`sftp` lane** (`russh` handshake + `sftp` subsystem, host-key check), emitting `JobEvent`s; the dialog shows a spinner and stays responsive.
 3. On success the backend is registered in `VfsRegistry` under its authority (`user@host:port`) and the focused pane's `location` becomes `sftp://user@host/<start-dir>`; tree root and listing fill through the normal `ReadDir` → `DirCache` path. On failure: `FmError::Backend` → dialog shows the reason + Retry; the pane is untouched.
 
@@ -155,7 +155,9 @@ pub trait Vfs: Send + Sync {
 
 **Operations across the boundary:** `ops` streams `open_read`/`open_write` for every local↔SFTP pair (progress + cancel work the same); same-authority moves use `Vfs::rename`. Dragging files from a local pane onto the SFTP pane's tree or listing is exactly the §8 flow — the payload carries `VfsUri`s, so nothing in the UI knows which side is remote.
 
-**Sequencing:** `fs-sftp` lands in change 4 (`network-backends`), but pane code is written against the `Vfs` trait from change 2 on — tests use `fm-testkit`'s in-memory remote backend, so "remote fills a pane" is provable before the real SSH code exists.
+**Implementation notes (change 4):** connections are keyed by authority (`user@host[:port]`) in `RemoteHub` (`engine/src/remote.rs`); `VfsRegistry` registers one `fm-fs-sftp` backend per authority, so two servers coexist. Host keys live in owner-only `known_hosts.json` (TOFU: an unknown key parks in a pending confirm dialog, a changed key is a hard refusal plus a `host_key_alert` card; there is no in-app replace path yet). Profiles are `Prefs.profiles` (no secrets). Transport loss flips the connection to `Failed`, panes keep their last listing (stale banner, mutating commands disabled), and `remote.reconnect` reuses the in-memory credentials. A 5 s poll (`DirCache::refresh`, no blanking) and window-focus regain refresh visible remote panes; free space is cached 30 s per location.
+
+**Sequencing:** `fs-sftp` lands in change 4 (`sftp-backend`), but pane code is written against the `Vfs` trait from change 2 on — tests use `fm-testkit`'s in-memory remote backend, so "remote fills a pane" is provable before the real SSH code exists.
 
 ---
 

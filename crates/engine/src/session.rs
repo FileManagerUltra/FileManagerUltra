@@ -88,6 +88,10 @@ pub struct Session {
     pub backends: VfsRegistry,
     /// Running and recently finished file jobs (capability `job-progress`).
     pub fileops: FileOps,
+    /// SFTP connections, host keys and remote polling (capability `sftp-backend`).
+    pub remote: crate::remote::RemoteHub,
+    /// Trash manager panel state (capability `trash-and-undo`).
+    pub trash: crate::trash_cmds::TrashState,
     /// Inverse records of finished jobs, newest last (capability `trash-and-undo`).
     pub undo: UndoStack,
     pub(crate) devices: DeviceCache,
@@ -131,6 +135,8 @@ impl Default for Session {
             dirs: DirCache::new(),
             backends: VfsRegistry::with_local(),
             fileops: FileOps::default(),
+            remote: Default::default(),
+            trash: Default::default(),
             undo: UndoStack::new(),
             devices: DeviceCache::default(),
             inbox: Arc::new(Mutex::new(HashMap::new())),
@@ -200,13 +206,23 @@ impl Session {
         let backend = self.backends.require(&uri)?;
         let lane = lane_for(uri.scheme());
         let inbox = self.inbox.clone();
+        let lost = self.remote.lost.clone();
         let staged_uri = uri.clone();
         let job = self.jobs.submit(lane, move |_ctx| {
             // One blocking call on the lane; cancellation is checked by the
             // lane itself around the job, not inside std::fs.
             let outcome = match backend.read_dir(&staged_uri) {
                 Ok(entries) => ReadOutcome::Ok(entries.into()),
-                Err(err) => ReadOutcome::Err(err.to_string()),
+                Err(err) => {
+                    if staged_uri.scheme() == fm_vfs::Scheme::Sftp
+                        && fm_fs_sftp::is_transport_error(&err)
+                    {
+                        lost.lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .push(staged_uri.authority().to_string());
+                    }
+                    ReadOutcome::Err(err.to_string())
+                }
             };
             if let Ok(mut guard) = inbox.lock() {
                 guard.insert(staged_uri.clone(), outcome);
@@ -232,6 +248,7 @@ impl Session {
     /// Whether background work is in flight, so the app must keep polling without user input.
     pub fn is_busy(&self) -> bool {
         !self.inflight.is_empty()
+            || self.remote.is_busy()
             || self.previews.is_busy()
             || self.thumbs.is_busy()
             || self.fileops.jobs().iter().any(|j| j.state.is_running())
@@ -243,10 +260,14 @@ impl Session {
     pub fn poll(&mut self) -> bool {
         let events = self.jobs.poll();
         let (term_changed, _) = self.pump_terminals();
+        let term_changed = self.close_exited_terminals() || term_changed;
         let mut changed = !events.is_empty() || term_changed;
+        changed |= self.pump_remote_lost();
+        changed |= self.pump_trash();
+        self.remote_tick();
         changed |= self.refresh_previews();
         for ev in &events {
-            if ev.is_terminal() && self.finish_op(ev) {
+            if ev.is_terminal() && (self.finish_op(ev) || self.finish_remote(ev)) {
                 continue;
             }
             let job = match ev {
@@ -279,7 +300,7 @@ impl Session {
     }
 
     /// Selections prune against fresh entries; indexes for panes on `uri` drop.
-    fn after_read(&mut self, uri: &VfsUri) {
+    pub(crate) fn after_read(&mut self, uri: &VfsUri) {
         let entries = self.dirs.entries(uri);
         let panes: Vec<PaneId> = self
             .layout

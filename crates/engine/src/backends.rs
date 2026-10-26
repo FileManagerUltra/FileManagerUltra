@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fm_fs_local::LocalFs;
-use fm_vfs::{FmError, Scheme, Vfs, VfsUri};
+use fm_vfs::{Authority, FmError, Scheme, Vfs, VfsUri};
 
 use crate::jobs::JobLane;
 
@@ -18,15 +18,20 @@ pub fn lane_for(scheme: Scheme) -> JobLane {
     }
 }
 
-/// Registered backends, one per scheme.
+/// Registered backends, keyed by `(scheme, authority)`; the authority is `""` for
+/// scheme-wide backends (local disk, in-memory test filesystems).
 #[derive(Clone, Default)]
 pub struct VfsRegistry {
-    map: HashMap<Scheme, Arc<dyn Vfs>>,
+    map: HashMap<(Scheme, String), Arc<dyn Vfs>>,
 }
 
 impl std::fmt::Debug for VfsRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut schemes: Vec<&str> = self.map.keys().map(|s| s.as_str()).collect();
+        let mut schemes: Vec<String> = self
+            .map
+            .keys()
+            .map(|(s, a)| format!("{}://{a}", s.as_str()))
+            .collect();
         schemes.sort_unstable();
         f.debug_struct("VfsRegistry")
             .field("schemes", &schemes)
@@ -48,16 +53,36 @@ impl VfsRegistry {
 
     /// Register (or replace) the backend for its scheme.
     pub fn register(&mut self, backend: Arc<dyn Vfs>) {
-        self.map.insert(backend.scheme(), backend);
+        self.map.insert((backend.scheme(), String::new()), backend);
     }
 
+    /// Register (or replace) the backend serving one `authority` (`user@host:port`).
+    pub fn register_at(&mut self, authority: &Authority, backend: Arc<dyn Vfs>) {
+        self.map
+            .insert((backend.scheme(), authority.to_string()), backend);
+    }
+
+    /// Drop the backend for one authority; returns whether one was registered.
+    pub fn unregister_at(&mut self, scheme: Scheme, authority: &Authority) -> bool {
+        self.map.remove(&(scheme, authority.to_string())).is_some()
+    }
+
+    /// The scheme-wide backend.
     pub fn get(&self, scheme: Scheme) -> Option<Arc<dyn Vfs>> {
-        self.map.get(&scheme).cloned()
+        self.map.get(&(scheme, String::new())).cloned()
+    }
+
+    /// Backend for a uri: the exact authority first, then the scheme-wide one.
+    pub fn get_for(&self, uri: &VfsUri) -> Option<Arc<dyn Vfs>> {
+        self.map
+            .get(&(uri.scheme(), uri.authority().to_string()))
+            .or_else(|| self.map.get(&(uri.scheme(), String::new())))
+            .cloned()
     }
 
     pub fn require(&self, uri: &VfsUri) -> Result<Arc<dyn Vfs>, FmError> {
-        self.get(uri.scheme()).ok_or(FmError::Unsupported(
-            "no backend registered for this scheme",
+        self.get_for(uri).ok_or(FmError::Unsupported(
+            "no backend registered for this location",
         ))
     }
 }
@@ -75,6 +100,25 @@ mod tests {
             r.require(&VfsUri::parse("sftp://h/").expect("uri")),
             Err(FmError::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn authority_keyed_backends_are_isolated() {
+        let mut r = VfsRegistry::with_local();
+        let local = VfsUri::parse("file:///x").expect("uri");
+        let h1 = VfsUri::parse("sftp://u@h1/x").expect("uri");
+        let h2 = VfsUri::parse("sftp://u@h2/x").expect("uri");
+        // A MemFs reports the `file` scheme, so key it as an sftp backend by hand.
+        let mem: Arc<dyn Vfs> = Arc::new(fm_testkit::MemFs::new());
+        r.map
+            .insert((Scheme::Sftp, h1.authority().to_string()), mem);
+        assert!(r.require(&local).is_ok());
+        assert!(r.require(&h1).is_ok());
+        assert!(r.require(&h2).is_err());
+        assert!(r.get(Scheme::Sftp).is_none());
+        assert!(r.unregister_at(Scheme::Sftp, h1.authority()));
+        assert!(!r.unregister_at(Scheme::Sftp, h1.authority()));
+        assert!(r.require(&h1).is_err());
     }
 
     #[test]

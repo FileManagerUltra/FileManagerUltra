@@ -47,3 +47,10 @@ Refreshing SHALL preserve the tree's expanded nodes, remembered focused node and
 - **WHEN** the tree collapses to its loading root while the pane's directory re-reads
 - **THEN** the stored scroll offset is left untouched (the clamped display offset of the gap is never persisted)
 
+### Requirement: Collapse all from the root
+Pressing Left on the tree root SHALL collapse every expanded directory.
+
+#### Scenario: Left on root
+- **WHEN** the root node is focused and Left is pressed
+- **THEN** all directories are collapsed
+

@@ -35,10 +35,14 @@ Switching a pane away from `Files` and back SHALL restore its location, history,
 - **THEN** it shows `/a/b` with the same selection and history
 
 ### Requirement: Placeholder kinds
-`Sftp` and `Network` SHALL appear in the selector and command but be disabled until `network-backends` lands; running the command for them returns an actionable error and never changes the pane.
+`Network` SHALL appear in the selector and command but be disabled until its backend lands; running the command for it returns an actionable error and never changes the pane. `Sftp` SHALL be a working kind: a pane of kind `Sftp` that has no server yet shows an inline connect form (profile picker, host, port, user, auth, start folder) instead of a listing, and once connected behaves as a Files pane on the server (tree, listing, history, file commands). `remote.connect.dialog` (File ▸ Connect to Server…) switches the focused pane to `Sftp`.
 
 #### Scenario: Selecting Sftp
 - **WHEN** `pane.kind.set {"kind":"sftp"}` runs
+- **THEN** the pane's kind is `Sftp` and it shows the connect form until a connection is made
+
+#### Scenario: Selecting Network
+- **WHEN** `pane.kind.set {"kind":"network"}` runs
 - **THEN** it returns an error naming the missing backend and the pane keeps its kind
 
 ### Requirement: Kind selector
@@ -61,4 +65,11 @@ File commands (`file.*`, `nav.*`, drag & drop) SHALL be disabled when the focuse
 #### Scenario: Switch to preview
 - **WHEN** `pane.kind.set {kind: "preview"}` runs on a Files pane
 - **THEN** the pane becomes a Preview following the most recently focused other Files pane
+
+### Requirement: Remote pane controls
+A remote pane SHALL show a Disconnect button left of the pane-type dropdown, and its location label SHALL include the host. Delete on a remote pane SHALL be labelled "Delete Permanently".
+
+#### Scenario: Disconnect
+- **WHEN** the user presses Disconnect
+- **THEN** the pane returns to the local home folder
 

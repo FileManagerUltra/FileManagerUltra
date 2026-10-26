@@ -239,6 +239,46 @@ fn lock(shared: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
     shared.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// Smoothed transfer rate of a running job, sampled from its byte progress.
+#[derive(Debug, Clone, Default)]
+pub struct SpeedMeter {
+    last: Option<(Instant, u64)>,
+    bytes_per_sec: Option<f64>,
+}
+
+impl SpeedMeter {
+    const MIN_WINDOW: Duration = Duration::from_millis(500);
+    const SMOOTHING: f64 = 0.3;
+
+    /// Feed the bytes done so far at `now`; cheap enough to call every frame.
+    pub fn sample(&mut self, now: Instant, done: u64) {
+        let Some((at, was)) = self.last else {
+            self.last = Some((now, done));
+            return;
+        };
+        let dt = now.saturating_duration_since(at);
+        if dt < Self::MIN_WINDOW {
+            return;
+        }
+        let rate = done.saturating_sub(was) as f64 / dt.as_secs_f64();
+        self.bytes_per_sec = Some(match self.bytes_per_sec {
+            Some(old) => old + Self::SMOOTHING * (rate - old),
+            None => rate,
+        });
+        self.last = Some((now, done));
+    }
+
+    /// Bytes per second, once a first window has elapsed.
+    pub fn bytes_per_sec(&self) -> Option<f64> {
+        self.bytes_per_sec
+    }
+
+    /// Seconds left for `remaining` bytes at the current rate.
+    pub fn eta_secs(&self, remaining: u64) -> Option<u64> {
+        let rate = self.bytes_per_sec.filter(|r| *r >= 1.0)?;
+        Some((remaining as f64 / rate).ceil() as u64)
+    }
+}
 /// One row of the jobs table.
 #[derive(Debug)]
 pub struct OpJob {
@@ -246,6 +286,7 @@ pub struct OpJob {
     pub label: String,
     pub state: OpState,
     pub progress: Progress,
+    pub speed: SpeedMeter,
     /// Set while the worker is parked waiting for `job.resolve_conflict`.
     pub conflict: Option<Conflict>,
     pub summary: Option<OpSummary>,
@@ -450,6 +491,7 @@ impl Session {
             label,
             state: OpState::Running,
             progress: Progress::default(),
+            speed: SpeedMeter::default(),
             conflict: None,
             summary: None,
             kind,
@@ -498,6 +540,7 @@ impl Session {
             .filter(|j| j.state.is_running())
         {
             let guard = lock(&job.shared);
+            job.speed.sample(Instant::now(), guard.progress.bytes.done);
             if guard.progress != job.progress {
                 job.progress = guard.progress.clone();
                 changed = true;
@@ -545,5 +588,29 @@ impl Session {
         }
         self.fileops.trim();
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn speed_meter_smooths_and_estimates_eta() {
+        let t0 = Instant::now();
+        let mut m = SpeedMeter::default();
+        m.sample(t0, 0);
+        assert_eq!(m.bytes_per_sec(), None);
+        m.sample(t0 + Duration::from_millis(100), 999);
+        assert_eq!(m.bytes_per_sec(), None, "window too short");
+        m.sample(t0 + Duration::from_secs(1), 1_000_000);
+        assert_eq!(m.bytes_per_sec().map(|r| r.round()), Some(1_000_000.0));
+        assert_eq!(m.eta_secs(3_000_000), Some(3));
+        // A stall pulls the rate down without jumping straight to zero.
+        m.sample(t0 + Duration::from_secs(2), 1_000_000);
+        let slowed = m.bytes_per_sec().unwrap_or_default();
+        assert!(slowed > 0.0 && slowed < 1_000_000.0);
+        // Progress going backwards (a new item) never underflows.
+        m.sample(t0 + Duration::from_secs(3), 10);
     }
 }

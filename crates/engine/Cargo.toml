@@ -14,6 +14,7 @@ workspace = true
 fm-brand.workspace = true
 fm-vfs.workspace = true
 fm-fs-local.workspace = true
+fm-fs-sftp.workspace = true
 fm-layout.workspace = true
 fm-ops.workspace = true
 fm-term.workspace = true
@@ -31,3 +32,4 @@ proptest.workspace = true
 tempfile.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
 fm-testkit.workspace = true
+fm-fs-sftp = { workspace = true, features = ["test-server"] }

@@ -52,7 +52,7 @@ impl Session {
 
     /// The focused pane shows files (the default for every file/nav command).
     pub fn focused_is_files(&self) -> bool {
-        self.focused_kind() == Some(PaneKind::Files)
+        self.focused_kind().is_some_and(PaneKind::is_files)
     }
 
     pub fn terminal(&self, pane: PaneId) -> Option<&TermSession> {
@@ -126,6 +126,25 @@ impl Session {
             total.backlog |= p.backlog;
         }
         (total.changed, total.backlog)
+    }
+
+    /// Close the panes whose shell has exited (`exit`, Ctrl-D). The last pane stays, showing
+    /// the restart banner. Returns true when a pane was closed.
+    pub(crate) fn close_exited_terminals(&mut self) -> bool {
+        let exited: Vec<PaneId> = self
+            .terminals
+            .iter()
+            .filter(|(_, t)| matches!(t.status(), Status::Exited(_)))
+            .map(|(&pane, _)| pane)
+            .collect();
+        let mut closed = false;
+        for pane in exited {
+            if self.layout.panes().len() > 1 && self.layout.close(pane).is_ok() {
+                self.drop_terminal(pane);
+                closed = true;
+            }
+        }
+        closed
     }
 
     /// Whether any terminal exists (the app keeps repainting to show output).

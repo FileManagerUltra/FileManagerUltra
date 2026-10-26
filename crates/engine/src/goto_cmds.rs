@@ -317,6 +317,17 @@ pub fn commit() -> CommandSpec {
                 .map(|p| p.location.clone())
                 .ok_or_else(|| FmError::NotFound("focused pane".to_string()))?;
             let target = resolve(&base, &raw)?;
+            // A typed `sftp://` address with no connection yet opens the connect form,
+            // prefilled from the address.
+            if target.scheme() == Scheme::Sftp && s.backends.require(&target).is_err() {
+                s.dispatch("pane.kind.set", &serde_json::json!({"kind": "sftp"}))?;
+                let focused = s.layout.focused();
+                if let Some(state) = s.layout.state_mut(focused) {
+                    state.navigate(target);
+                }
+                s.path_edit = None;
+                return Ok(());
+            }
             s.dispatch("nav.open", &Params::String(display_of(&target)))?;
             s.path_edit = None;
             Ok(())

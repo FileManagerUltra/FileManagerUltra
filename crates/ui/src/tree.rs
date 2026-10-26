@@ -106,6 +106,7 @@ fn handle_key(row: &Row, key: Key) -> KeyOutcome {
             KeyOutcome::Expand(row.uri.clone())
         }
         // Collapse the node (when open) and move the cursor to its parent.
+        Key::ArrowLeft if row.depth == 0 => KeyOutcome::CollapseAll,
         Key::ArrowLeft => {
             let collapse = (row.is_dir && row.expanded).then(|| row.uri.clone());
             let focus = if row.depth > 0 {
@@ -146,6 +147,8 @@ enum KeyOutcome {
         focus: Option<VfsUri>,
     },
     Open(VfsUri),
+    /// `Left` on the root folds every directory below it.
+    CollapseAll,
 }
 
 /// Render the tree for one pane. Returns the uri to open (`nav.open`), if the
@@ -190,6 +193,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let mut expand: Vec<VfsUri> = Vec::new();
     let mut collapse: Vec<VfsUri> = Vec::new();
     let mut open_key: Option<VfsUri> = None;
+    let mut collapse_all = false;
     let mut move_focus_to: Option<VfsUri> = None;
 
     let mut revealed = false;
@@ -305,6 +309,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                                         }
                                     }
                                     KeyOutcome::Open(uri) => open_key = Some(uri),
+                                    KeyOutcome::CollapseAll => collapse_all = true,
                                 }
                             }
                         });
@@ -355,6 +360,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     }
     for uri in expand {
         expand_node(s, pane, &uri);
+    }
+    if let Some(state) = s.layout.state_mut(pane).filter(|_| collapse_all) {
+        state.tree.collapse_all();
     }
     for uri in &collapse {
         if let Some(state) = s.layout.state_mut(pane) {
@@ -521,6 +529,9 @@ mod tests {
             }
         );
         assert_eq!(handle_key(&row, Key::Enter), KeyOutcome::Open(uri));
+        let mut root = row.clone();
+        root.depth = 0;
+        assert_eq!(handle_key(&root, Key::ArrowLeft), KeyOutcome::CollapseAll);
         // Left on a collapsed child only moves the cursor to its parent.
         let child = Row {
             uri: VfsUri::parse("/home/alice/docs/a.txt").expect("uri"),

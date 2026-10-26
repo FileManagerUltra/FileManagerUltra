@@ -25,12 +25,15 @@ pub mod prefs;
 pub mod prefs_cmds;
 pub mod preview_cmds;
 pub mod registry;
+pub mod remote;
+pub mod remote_cmds;
 pub mod session;
 pub mod sort_cmds;
 pub mod term_cmds;
 pub mod theme_cmds;
 pub mod thumb_cmds;
 pub mod thumbs;
+pub mod trash_cmds;
 pub mod video_cmds;
 pub mod view_cmds;
 pub mod workspace;
@@ -39,8 +42,10 @@ pub mod workspace_cmds;
 pub use backends::{VfsRegistry, lane_for};
 pub use dircache::{DirCache, DirState, ReadOutcome};
 pub use dnd_cmds::{DropAction, DropModifiers, DropOrigin, DropResolution, resolve_drop};
-pub use fileops::{FileOps, OpJob, OpRequest, OpState, OpSummary};
+pub use fileops::{FileOps, OpJob, OpRequest, OpState, OpSummary, SpeedMeter};
 pub use jobs::{JobCtx, JobEvent, JobId, JobLane, JobQueue};
-pub use prefs::{Prefs, ThemePreference};
+pub use prefs::{
+    Prefs, SFTP_KEEPALIVE_RANGE, SFTP_POLL_RANGE, SFTP_TIMEOUT_RANGE, ThemePreference,
+};
 pub use registry::{CommandSpec, Params, Registry};
 pub use session::{Session, ViewIndex, is_hidden};

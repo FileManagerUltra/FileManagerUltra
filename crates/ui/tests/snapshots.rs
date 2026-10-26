@@ -421,3 +421,203 @@ fn preview_cards_dark_light() {
         }
     }
 }
+
+/// A file longer than the pane must fill it down to the bottom edge.
+#[test]
+fn preview_long_text_fills_the_pane() {
+    let _gpu = lock_gpu();
+    let Some(renderer) = renderer_or_skip() else {
+        return;
+    };
+    let tokens = Tokens::dark();
+    let body: String = (1..=200).map(|i| format!("line {i}\n")).collect();
+    let (mut session, pane) = preview_fixture("long.txt", body.as_bytes(), false);
+    let mut harness = Harness::builder()
+        .renderer(renderer)
+        .with_accessibility_check(false)
+        .build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            fm_ui::preview::show(ui, &mut session, pane, &tokens);
+        });
+    harness.set_size(egui::vec2(400.0, 300.0));
+    harness.run();
+    harness.snapshot("preview_text_long_dark");
+}
+
+#[test]
+fn preview_toolbar_collapses_into_a_menu_when_narrow() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let (mut session, pane) = preview_fixture("main.rs", b"fn main() {}\n", false);
+        let mut harness = Harness::builder()
+            .renderer(renderer)
+            .with_accessibility_check(false)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                fm_ui::preview::show(ui, &mut session, pane, &tokens);
+            });
+        harness.set_size(egui::vec2(220.0, 200.0));
+        harness.run();
+        harness.snapshot(format!("preview_narrow_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
+fn connect_dialog_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = fixture_session();
+        session.prefs.profiles.push(fm_engine::prefs::Profile {
+            name: "nas".into(),
+            host: "nas.local".into(),
+            port: 22,
+            user: "alice".into(),
+            key_path: None,
+            start_dir: None,
+        });
+        session.layout.state_mut(1).expect("pane").kind = fm_layout::PaneKind::Sftp;
+        session.layout.state_mut(1).expect("pane").location =
+            VfsUri::parse("/home/alice").expect("uri");
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            let _ = pane::show(ui, &mut session, 1, &tokens);
+        });
+        harness.set_size(egui::vec2(640.0, 460.0));
+        harness.run();
+        harness.snapshot(format!("pane_sftp_connect_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
+fn trash_pane_dark_light() {
+    use fm_engine::trash_cmds::{TrashEntry, TrashListing};
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = Session::default();
+        session.trash.loaded = true;
+        session.trash.listing = TrashListing {
+            entries: ["report.pdf", "old-notes.txt", "backup"]
+                .iter()
+                .enumerate()
+                .map(|(i, name)| TrashEntry {
+                    id: format!("id{i}"),
+                    name: (*name).to_string(),
+                    original_parent: "/home/alice/Documents".to_string(),
+                    deleted: 1_782_393_780 - i as i64 * 86_400,
+                    is_dir: *name == "backup",
+                })
+                .collect(),
+            truncated: false,
+        };
+        session
+            .trash
+            .selected_children
+            .insert(("id2".to_string(), vec!["notes.txt".to_string()]));
+        let child = |name: &str, is_dir: bool| fm_engine::trash_cmds::TrashChild {
+            name: name.to_string(),
+            is_dir,
+            size: 2048,
+        };
+        session.trash.expanded.insert(
+            fm_engine::trash_cmds::child_key("id2", &[]),
+            fm_engine::trash_cmds::Children::Ready(fm_engine::trash_cmds::TrashChildren {
+                entries: vec![child("photos", true), child("notes.txt", false)],
+                truncated: false,
+            }),
+        );
+        let mut harness = Harness::builder()
+            .renderer(renderer)
+            .with_accessibility_check(false)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                fm_ui::trash::show(ui, &mut session, 1, &tokens);
+            });
+        harness.set_size(egui::vec2(560.0, 300.0));
+        harness.run();
+        harness.snapshot(format!("pane_trash_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
+fn sftp_pane_badge_and_stale_banner_dark_light() {
+    use fm_engine::remote::ConnState;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = Session::default();
+        let uri = VfsUri::parse("sftp://alice@nas.local/home/alice").expect("uri");
+        session.layout.state_mut(1).expect("pane").location = uri.clone();
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            let states = [
+                ConnState::Ready,
+                ConnState::Connecting,
+                ConnState::Failed("connection reset by peer".to_string()),
+            ];
+            for state in states {
+                session.remote.set_state_for_tests(uri.authority(), state);
+                for focused in [true, false] {
+                    egui::Frame::NONE
+                        .fill(if focused { tokens.accent } else { tokens.panel })
+                        .inner_margin(4.0)
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label("pane");
+                                fm_ui::remote::badge(ui, &mut session, 1, &tokens, focused);
+                            });
+                        });
+                }
+                fm_ui::remote::stale_banner(ui, &mut session, 1, &tokens);
+                ui.add_space(8.0);
+            }
+        });
+        harness.set_size(egui::vec2(480.0, 360.0));
+        harness.run();
+        harness.snapshot(format!("pane_sftp_badge_stale_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
+fn changed_host_key_card_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = fixture_session();
+        session.remote.host_key_alert = Some(
+            "the host key of nas.local:22 changed (trusted SHA256:aaaa, presented SHA256:bbbb); \
+             refusing to connect — this may be an attack"
+                .to_string(),
+        );
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            fm_ui::remote::host_key_alert(ui.ctx(), &mut session, &tokens);
+        });
+        harness.set_size(egui::vec2(560.0, 300.0));
+        harness.run();
+        harness.snapshot(format!("dialog_hostkey_changed_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}

@@ -46,11 +46,14 @@ pub fn type_to_go(ctx: &egui::Context, s: &mut Session, pane: PaneId) {
 
 /// The path as a header label. Clicking it starts editing.
 pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused: bool) {
-    let Some(path) = s
-        .layout
-        .state(pane)
-        .map(|p| p.location.path_str().to_string())
-    else {
+    let Some(path) = s.layout.state(pane).map(|p| {
+        let loc = &p.location;
+        if loc.scheme() == fm_vfs::Scheme::File {
+            loc.path_str().to_string()
+        } else {
+            format!("{}:{}", loc.authority(), loc.path_str())
+        }
+    }) else {
         return;
     };
     let text = RichText::new(path).font(tokens.font());

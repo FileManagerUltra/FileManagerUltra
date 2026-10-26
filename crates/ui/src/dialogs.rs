@@ -5,7 +5,7 @@
 
 use egui::{Context, Id, Key, RichText};
 use fm_engine::{Session, file_cmds};
-use fm_vfs::VfsUri;
+use fm_vfs::{Scheme, VfsUri};
 use serde_json::json;
 
 use crate::theme::Tokens;
@@ -83,6 +83,10 @@ pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
             })
         }
         "file.delete_permanent" if !selection.is_empty() => {
+            Some(Dialog::ConfirmDelete { sources: selection })
+        }
+        // Remote locations have no trash: Delete asks for a permanent delete instead.
+        "file.delete" if selection.iter().any(|u| u.scheme() != Scheme::File) => {
             Some(Dialog::ConfirmDelete { sources: selection })
         }
         "file.copy" | "file.move" if !selection.is_empty() => {

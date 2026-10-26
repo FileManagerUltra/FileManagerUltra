@@ -436,14 +436,16 @@ pub enum PaneKind {
     Preview,
     Sftp,
     Network,
+    Trash,
 }
 
 impl PaneKind {
-    pub const ALL: [PaneKind; 5] = [
+    pub const ALL: [PaneKind; 6] = [
         Self::Files,
         Self::Terminal,
         Self::Preview,
         Self::Sftp,
+        Self::Trash,
         Self::Network,
     ];
 
@@ -454,6 +456,7 @@ impl PaneKind {
             Self::Preview => "preview",
             Self::Sftp => "sftp",
             Self::Network => "network",
+            Self::Trash => "trash",
         }
     }
 
@@ -464,11 +467,17 @@ impl PaneKind {
             Self::Preview => "Preview",
             Self::Sftp => "SFTP",
             Self::Network => "Network",
+            Self::Trash => "Trash",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+
+    /// Kinds that show a tree + listing (an `Sftp` pane is a Files pane on a server).
+    pub fn is_files(self) -> bool {
+        matches!(self, Self::Files | Self::Sftp)
     }
 }
 

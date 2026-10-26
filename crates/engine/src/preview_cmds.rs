@@ -815,10 +815,7 @@ pub fn source() -> CommandSpec {
             let src = match (value.as_u64(), value.as_str()) {
                 (_, Some("focus")) => PreviewSource::Follow,
                 (Some(id), _) => {
-                    if s.layout
-                        .state(id)
-                        .is_none_or(|st| st.kind != PaneKind::Files)
-                    {
+                    if s.layout.state(id).is_none_or(|st| !st.kind.is_files()) {
                         return Err(FmError::InvalidParams(format!(
                             "pane {id} is not a Files pane"
                         )));

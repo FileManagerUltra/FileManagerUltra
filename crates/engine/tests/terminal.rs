@@ -62,14 +62,12 @@ fn new_panes_are_files_and_unknown_kinds_are_rejected() {
 }
 
 #[test]
-fn placeholder_kinds_error_and_leave_the_pane_alone() {
+fn network_placeholder_errors_and_leaves_the_pane_alone() {
     let mut s = Session::new().expect("session");
-    for kind in ["sftp", "network"] {
-        let err = s
-            .dispatch("pane.kind.set", &json!({ "kind": kind }))
-            .expect_err("placeholder");
-        assert!(err.to_string().contains("network backends"), "{err}");
-    }
+    let err = s
+        .dispatch("pane.kind.set", &json!({ "kind": "network" }))
+        .expect_err("placeholder");
+    assert!(err.to_string().contains("network backends"), "{err}");
     assert_eq!(kind_of(&s), PaneKind::Files);
 }
 
@@ -257,6 +255,27 @@ fn restart_replaces_an_exited_shell() {
     assert_eq!(fm_engine::term_cmds::exit_code(&s, pane), Some(3));
     s.dispatch("term.restart", &json!(null)).expect("restart");
     assert_eq!(fm_engine::term_cmds::exit_code(&s, pane), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn exiting_the_shell_closes_the_pane_unless_it_is_the_last() {
+    let mut s = Session::new().expect("session");
+    s.dispatch("pane.split.horizontal", &json!(null))
+        .expect("split");
+    if !has_pty(&mut s) {
+        return;
+    }
+    let pane = s.layout.focused();
+    s.dispatch("term.input", &json!({"data": "exit\r"}))
+        .expect("input");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while s.layout.panes().contains(&pane) && Instant::now() < deadline {
+        s.poll();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!s.layout.panes().contains(&pane), "pane closed");
+    assert!(!s.has_terminals());
 }
 
 #[test]

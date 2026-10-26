@@ -36,3 +36,12 @@ The session SHALL keep a bounded (100) stack of inverse records for trash, move,
 - **WHEN** a permanent delete completes
 - **THEN** no undo record is pushed
 
+### Requirement: Browse trashed folders
+The Trash pane SHALL let the user view the contents of a trashed folder, either expanded inline under its row or by opening it (Back returns). Contents are read-only; restore and delete act on top-level entries.
+
+#### Scenario: Expand a trashed folder
+- **WHEN** the user expands a trashed folder
+- **THEN** its files and sub-folders are listed beneath it
+
+The user SHALL be able to select individual items inside a trashed folder, at any depth, and restore them to their original location; existing files are never overwritten.
+

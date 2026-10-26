@@ -39,7 +39,7 @@ pub fn set_kind() -> CommandSpec {
         label: "Pane Type",
         menu: &["View", "Pane Type"],
         shortcut: None,
-        params: "{kind: \"files\"|\"terminal\"|\"sftp\"|\"network\", pane?: number, confirm?: bool}",
+        params: "{kind: \"files\"|\"terminal\"|\"sftp\"|\"trash\"|\"network\", pane?: number, confirm?: bool}",
         enabled: |_s| true,
         run: |s, p: &Params| {
             let (kind, pane, confirm) = parse(p)?;
@@ -48,7 +48,7 @@ pub fn set_kind() -> CommandSpec {
                 return Err(FmError::NotFound(format!("pane {pane}")));
             }
             s.pending_kind = None;
-            if matches!(kind, PaneKind::Sftp | PaneKind::Network) {
+            if kind == PaneKind::Network {
                 return Err(FmError::Unsupported(
                     "this pane type arrives with the network backends",
                 ));
@@ -62,9 +62,14 @@ pub fn set_kind() -> CommandSpec {
                 s.drop_terminal(pane);
             }
             match kind {
-                PaneKind::Files | PaneKind::Preview => {}
+                PaneKind::Files | PaneKind::Preview | PaneKind::Sftp => {}
+                PaneKind::Trash => {
+                    if !s.trash.busy {
+                        s.trash_list()?;
+                    }
+                }
                 PaneKind::Terminal => s.ensure_terminal(pane)?,
-                PaneKind::Sftp | PaneKind::Network => {
+                PaneKind::Network => {
                     return Err(FmError::Unsupported(
                         "this pane type arrives with the network backends",
                     ));

@@ -57,6 +57,13 @@ opener = { version = "0.9", default-features = false }
 portable-pty = "0.9"
 vt100 = "0.18"
 
+# external — SFTP (fm-fs-sftp only; tokio never leaks to other crates)
+russh = "0.64"
+russh-sftp = "3"
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
+secrecy = "0.10"
+zeroize = "1"
+
 # external — xtask tooling
 regex = "1"
 

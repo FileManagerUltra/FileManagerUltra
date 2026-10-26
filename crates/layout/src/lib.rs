@@ -254,24 +254,15 @@ impl Layout {
     /// Remember the focused pane as the latest Files pane. Call once per frame/poll.
     pub fn touch_files_focus(&mut self) {
         let f = self.focus.focused;
-        if self
-            .states
-            .get(&f)
-            .is_some_and(|s| s.kind == PaneKind::Files)
-        {
+        if self.states.get(&f).is_some_and(|s| s.kind.is_files()) {
             self.focus.last_files = Some(f);
         }
     }
 
     /// The Files pane a Preview pane shows, or `None` when the layout has no Files pane.
     pub fn preview_target(&self, preview: PaneId) -> Option<PaneId> {
-        let is_files = |id: &PaneId| {
-            *id != preview
-                && self
-                    .states
-                    .get(id)
-                    .is_some_and(|s| s.kind == PaneKind::Files)
-        };
+        let is_files =
+            |id: &PaneId| *id != preview && self.states.get(id).is_some_and(|s| s.kind.is_files());
         let pinned = match self.states.get(&preview).map(|s| s.preview_source) {
             Some(PreviewSource::Pane(id)) => Some(id),
             _ => None,

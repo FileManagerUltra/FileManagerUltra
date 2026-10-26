@@ -24,6 +24,10 @@ pub use delete::{delete_permanent, trash_items};
 pub use names::validate_name;
 pub use plan::{Plan, PlanLimits, plan_duplicating, plan_transfer};
 pub use symlink::SymlinkPolicy;
+pub use trash::{
+    MAX_TRASH_CHILDREN, MAX_TRASH_ENTRIES, TrashChild, TrashChildren, TrashEntry, TrashListing,
+    empty_trash, list_trash, list_trash_dir, purge_trash, restore_trash, restore_trash_child,
+};
 pub use undo::{UndoRecord, UndoStack};
 
 /// What to do when the destination already exists.

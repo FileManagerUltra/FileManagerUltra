@@ -191,7 +191,7 @@ pub fn open_file() -> CommandSpec {
             let entry = vfs.stat(&uri)?;
             let kind = classify(&entry, Os::current());
             if kind == OpenKind::Dir {
-                return s.dispatch("nav.open", &Params::String(uri.path_str().to_string()));
+                return s.dispatch("nav.open", &Params::String(uri.to_string()));
             }
             if matches!(entry.kind, EntryKind::Other) {
                 return Err(FmError::Unsupported("special files are never opened"));

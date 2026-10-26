@@ -23,6 +23,9 @@ pub const PANE_CLOSE: &str = "pane.close";
 pub const PANE_SWAP: &str = "pane.swap";
 pub const PANE_EQUALIZE: &str = "pane.equalize";
 pub const PANE_ZOOM: &str = "pane.zoom";
+pub const ZOOM_IN: &str = "view.zoom.in";
+pub const ZOOM_OUT: &str = "view.zoom.out";
+pub const ZOOM_RESET: &str = "view.zoom.reset";
 pub const PANE_ROTATE: &str = "pane.rotate";
 pub const PANE_RESIZE_LEFT: &str = "pane.resize.left";
 pub const PANE_RESIZE_RIGHT: &str = "pane.resize.right";
@@ -62,8 +65,12 @@ pub const FILE_MOVE: &str = "file.move";
 pub const FILE_MKDIR: &str = "file.mkdir";
 pub const FILE_NEWFILE: &str = "file.newfile";
 pub const FILE_RENAME: &str = "file.rename";
+pub const REMOTE_CONNECT: &str = "remote.connect.dialog";
+pub const REMOTE_RECONNECT: &str = "remote.reconnect";
+pub const REMOTE_DISCONNECT: &str = "remote.disconnect";
 pub const FILE_DELETE: &str = "file.delete";
 pub const FILE_DELETE_PERMANENT: &str = "file.delete_permanent";
+pub const TRASH_OPEN: &str = "trash.open";
 pub const EDIT_UNDO: &str = "edit.undo";
 pub const FILE_CLIP_COPY: &str = "file.clip_copy";
 pub const FILE_CLIP_CUT: &str = "file.clip_cut";
@@ -91,6 +98,9 @@ pub fn all_ids() -> &'static [&'static str] {
         PANE_SWAP,
         PANE_EQUALIZE,
         PANE_ZOOM,
+        ZOOM_IN,
+        ZOOM_OUT,
+        ZOOM_RESET,
         PANE_ROTATE,
         PANE_RESIZE_LEFT,
         PANE_RESIZE_RIGHT,
@@ -130,8 +140,12 @@ pub fn all_ids() -> &'static [&'static str] {
         FILE_MKDIR,
         FILE_NEWFILE,
         FILE_RENAME,
+        REMOTE_CONNECT,
+        REMOTE_RECONNECT,
+        REMOTE_DISCONNECT,
         FILE_DELETE,
         FILE_DELETE_PERMANENT,
+        TRASH_OPEN,
         EDIT_UNDO,
         FILE_CLIP_COPY,
         FILE_CLIP_CUT,
@@ -191,6 +205,22 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
         (
             PANE_ZOOM,
             egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::X),
+        ),
+        (
+            ZOOM_IN,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Plus),
+        ),
+        (
+            ZOOM_IN,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Equals),
+        ),
+        (
+            ZOOM_OUT,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Minus),
+        ),
+        (
+            ZOOM_RESET,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Num0),
         ),
         (
             PANE_ROTATE,
@@ -404,7 +434,16 @@ fn item(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs, id: &st
     let Some(spec) = session.registry.get(id) else {
         return;
     };
-    let label = spec.label.to_string();
+    let mut label = spec.label.to_string();
+    // Remote locations have no trash: the same command deletes permanently there.
+    if id == FILE_DELETE
+        && session
+            .layout
+            .state(session.layout.focused())
+            .is_some_and(|p| p.location.scheme() != fm_vfs::Scheme::File)
+    {
+        label = "Delete Permanently".to_string();
+    }
     let enabled = (spec.enabled)(session);
     let mut button = egui::Button::new(label);
     if let Some(shortcut) = spec.shortcut {
@@ -463,8 +502,13 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, FILE_NEWFILE);
             item(ui, session, dialogs, FILE_RENAME);
             ui.separator();
+            item(ui, session, dialogs, REMOTE_CONNECT);
+            item(ui, session, dialogs, REMOTE_RECONNECT);
+            item(ui, session, dialogs, REMOTE_DISCONNECT);
+            ui.separator();
             item(ui, session, dialogs, FILE_DELETE);
             item(ui, session, dialogs, FILE_DELETE_PERMANENT);
+            item(ui, session, dialogs, TRASH_OPEN);
             ui.separator();
             item(ui, session, dialogs, PREFERENCES);
             ui.separator();
@@ -522,6 +566,10 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
         ui.menu_button("View", |ui| {
             check_item(ui, session, dialogs, VIEW_HIDDEN, session.show_hidden);
             check_item(ui, session, dialogs, VIEW_LINKS, session.show_link_targets);
+            ui.separator();
+            item(ui, session, dialogs, ZOOM_IN);
+            item(ui, session, dialogs, ZOOM_OUT);
+            item(ui, session, dialogs, ZOOM_RESET);
             ui.separator();
             item(ui, session, dialogs, VIEW_PREVIEW);
             ui.menu_button("Preview", |ui| {
@@ -590,11 +638,15 @@ pub fn consume_shortcuts(
     // A focused terminal owns the keyboard: Ctrl+<key>, Backspace, Tab, F-keys and friends
     // belong to the shell. Only Cmd/Ctrl+Shift chords (and macOS Cmd) stay app shortcuts.
     let terminal = !dialogs.is_open() && session.focused_kind() == Some(PaneKind::Terminal);
+    let files_focused = session.focused_kind().is_none_or(|k| k.is_files());
     for (id, shortcut) in table {
         if terminal && !terminal_shortcut(&shortcut) {
             continue;
         }
         if typing && (id.starts_with("term.") || id.starts_with("pane.resize.")) {
+            continue;
+        }
+        if !files_focused && id.starts_with("file.clip_") {
             continue;
         }
         if typing && (id.starts_with("file.") || id == EDIT_UNDO || shortcut.modifiers.is_none()) {
@@ -610,7 +662,8 @@ pub fn consume_shortcuts(
             }
         }
     }
-    if !terminal && !typing {
+    // Preview, trash and other non-file panes leave Ctrl+C to egui so selected text is copied.
+    if !terminal && !typing && files_focused {
         for (id, os_text) in clipboard_events(ctx) {
             match os_text {
                 Some(text) => {
@@ -694,8 +747,9 @@ mod tests {
             let spec = session.registry.get(id).expect("registered");
             let display = spec.shortcut.unwrap_or("(none)");
             let expected = format_shortcut(&shortcut);
-            let is_alias =
-                id == FILE_DELETE && (expected == "Delete" || expected == "Ctrl+Backspace");
+            let is_alias = (id == FILE_DELETE
+                && (expected == "Delete" || expected == "Ctrl+Backspace"))
+                || (id == ZOOM_IN && expected == "Ctrl+Shift+=");
             assert!(
                 is_alias || display == expected,
                 "shortcut display mismatch for {id}"
@@ -755,6 +809,10 @@ mod tests {
             Key::O => "O",
             Key::X => "X",
             Key::W => "W",
+            Key::Plus => "+",
+            Key::Equals => "=",
+            Key::Minus => "-",
+            Key::Num0 => "0",
             _ => "?",
         }
     }

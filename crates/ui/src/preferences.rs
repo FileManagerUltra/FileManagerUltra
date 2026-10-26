@@ -63,6 +63,70 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 s.dispatch_or_notice("prefs.preview.recursive", &json!({"value": recursive}));
             }
             ui.add_space(tokens.padding);
+            ui.label(RichText::new("SFTP").color(tokens.accent).strong());
+            let mut poll = s.prefs.sftp_poll_secs;
+            let mut timeout = s.prefs.sftp_timeout_secs;
+            let mut keepalive = s.prefs.sftp_keepalive_secs;
+            let mut changed = false;
+            egui::Grid::new("fm-prefs-sftp").num_columns(2).show(ui, |ui| {
+                for (label, value, range, tip) in [
+                    (
+                        "Refresh interval (s)",
+                        &mut poll,
+                        fm_engine::SFTP_POLL_RANGE,
+                        "How often connected remote panes re-read their folder; a dead link \
+                         is noticed at the next refresh.",
+                    ),
+                    (
+                        "Stalled call timeout (s)",
+                        &mut timeout,
+                        fm_engine::SFTP_TIMEOUT_RANGE,
+                        "A remote call that makes no progress for this long marks the \
+                         connection offline.",
+                    ),
+                    (
+                        "Keepalive interval (s)",
+                        &mut keepalive,
+                        fm_engine::SFTP_KEEPALIVE_RANGE,
+                        "Idle links are probed this often; three misses drop the link. \
+                         Applies to new connections.",
+                    ),
+                ] {
+                    let caption = ui.label(label);
+                    changed |= ui
+                        .add(egui::DragValue::new(value).range(range).speed(0.2))
+                        .on_hover_text(tip)
+                        .labelled_by(caption.id)
+                        .changed();
+                    ui.end_row();
+                }
+            });
+            if changed {
+                s.dispatch_or_notice(
+                    "prefs.sftp.timing",
+                    &json!({"poll_secs": poll, "timeout_secs": timeout, "keepalive_secs": keepalive}),
+                );
+            }
+            let hosts: Vec<String> = s
+                .remote
+                .known_hosts()
+                .entries()
+                .iter()
+                .map(|h| h.host.clone())
+                .collect();
+            if !hosts.is_empty() {
+                ui.add_space(tokens.padding);
+                ui.label(tokens.muted("Trusted hosts (asked again after forgetting)"));
+                for host in hosts {
+                    ui.horizontal(|ui| {
+                        ui.label(&host);
+                        if ui.button("Forget").clicked() {
+                            s.dispatch_or_notice("remote.hostkey.forget", &json!({"host": host}));
+                        }
+                    });
+                }
+            }
+            ui.add_space(tokens.padding);
             crate::workspaces::prefs_section(ui, s, tokens);
             ui.add_space(tokens.padding);
             ui.label(

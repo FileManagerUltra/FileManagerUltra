@@ -383,7 +383,12 @@ impl Session {
             .layout
             .states
             .values()
-            .filter(|st| st.kind != PaneKind::Terminal && st.kind != PaneKind::Preview)
+            .filter(|st| {
+                !matches!(
+                    st.kind,
+                    PaneKind::Terminal | PaneKind::Preview | PaneKind::Trash
+                )
+            })
             .map(|st| st.location.clone())
             .collect();
         for uri in locations {

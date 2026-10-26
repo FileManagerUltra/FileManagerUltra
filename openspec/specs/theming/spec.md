@@ -3,9 +3,7 @@
 ## Purpose
 
 Dark/light/system theming from semantic tokens, switched at runtime through commands and persisted in prefs.
-
 ## Requirements
-
 ### Requirement: Theme follows the system by default
 On first run the application SHALL render in the theme the operating system reports (dark or light), with no user action required.
 
@@ -55,3 +53,11 @@ Every widget SHALL derive its colours from the `fm-ui` theme token set; colour l
 #### Scenario: Both themes are verified
 - **WHEN** UI snapshot tests run
 - **THEN** each captured state exists in both dark and light variants
+
+### Requirement: Interface zoom
+The View menu SHALL offer Zoom In, Zoom Out and Reset Zoom (`view.zoom.in|out|reset`, Ctrl+Shift +/-/0). The factor SHALL stay within 0.5-3.0 and be stored in preferences and restored at start-up.
+
+#### Scenario: Zoom persists
+- **WHEN** the user zooms in and restarts the app
+- **THEN** the interface opens at the same zoom
+

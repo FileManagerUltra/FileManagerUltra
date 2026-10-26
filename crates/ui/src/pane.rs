@@ -30,6 +30,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let tree_width = state.tree_width;
     let kind = state.kind;
     let tree_active = state.tree.active;
+    let connect = crate::remote::needs_connect(s, pane);
 
     let stroke = if focused {
         egui::Stroke::new(tokens.border_width.max(2.5), tokens.accent)
@@ -37,11 +38,14 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         egui::Stroke::new(tokens.border_width, tokens.border)
     };
     let mut open = None;
-    if kind == PaneKind::Files && focused && !tree_active {
+    if kind.is_files() && focused && !tree_active && !crate::remote::needs_connect(s, pane) {
         crate::locationbar::type_to_go(ui.ctx(), s, pane);
     }
     crate::dnd::note_pane(ui.ctx(), pane, area);
-    if kind == PaneKind::Files {
+    if kind != PaneKind::Sftp {
+        crate::remote::forget_form(ui.ctx(), pane);
+    }
+    if kind.is_files() {
         crate::dnd::register_zone(
             ui.ctx(),
             area,
@@ -58,7 +62,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
             // window was resized.
             ui.set_min_size(ui.available_size());
             // The active pane gets a solid accent header bar; inactive ones stay muted.
-            if kind == PaneKind::Files && crate::locationbar::is_editing(s, pane) {
+            if kind.is_files() && crate::locationbar::is_editing(s, pane) {
                 crate::locationbar::show_editor(ui, s, pane, tokens);
             } else {
                 egui::Frame::NONE
@@ -74,8 +78,11 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             |ui| {
                                 close_button(ui, s, pane);
                                 kind_menu(ui, s, pane, kind);
+                                if kind.is_files() && !connect {
+                                    crate::remote::badge(ui, s, pane, tokens, focused);
+                                }
                                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                    if kind == PaneKind::Files {
+                                    if kind.is_files() && !connect {
                                         crate::locationbar::show_label(
                                             ui, s, pane, tokens, focused,
                                         );
@@ -89,8 +96,19 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
             }
             ui.separator();
 
+            if kind.is_files() && !connect {
+                crate::remote::stale_banner(ui, s, pane, tokens);
+            }
+            if connect {
+                crate::remote::connect_form(ui, s, pane, tokens);
+                return;
+            }
             if kind == PaneKind::Terminal {
                 crate::terminal::show(ui, s, pane, tokens, focused);
+                return;
+            }
+            if kind == PaneKind::Trash {
+                crate::trash::show(ui, s, pane, tokens);
                 return;
             }
             if kind == PaneKind::Preview {
@@ -193,7 +211,11 @@ fn kind_menu(ui: &mut Ui, s: &mut Session, pane: PaneId, current: PaneKind) {
         for kind in PaneKind::ALL {
             let supported = matches!(
                 kind,
-                PaneKind::Files | PaneKind::Terminal | PaneKind::Preview
+                PaneKind::Files
+                    | PaneKind::Terminal
+                    | PaneKind::Preview
+                    | PaneKind::Sftp
+                    | PaneKind::Trash
             );
             let label = if supported {
                 kind.label().to_string()

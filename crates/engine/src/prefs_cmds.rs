@@ -78,12 +78,162 @@ pub fn recursive_preview() -> CommandSpec {
     }
 }
 
+fn secs(
+    map: &serde_json::Map<String, Params>,
+    key: &str,
+    range: &std::ops::RangeInclusive<u64>,
+) -> Result<Option<u64>, FmError> {
+    match map.get(key) {
+        None | Some(Params::Null) => Ok(None),
+        Some(v) => v
+            .as_u64()
+            .filter(|n| range.contains(n))
+            .map(Some)
+            .ok_or_else(|| {
+                FmError::InvalidParams(format!(
+                    "{key} must be {}-{} seconds",
+                    range.start(),
+                    range.end()
+                ))
+            }),
+    }
+}
+
+/// `prefs.sftp.timing` — how fast a dead SFTP link is noticed.
+pub fn sftp_timing() -> CommandSpec {
+    CommandSpec {
+        id: "prefs.sftp.timing",
+        label: "SFTP Timing",
+        menu: &["File", "Preferences", "SFTP timing"],
+        shortcut: None,
+        params: "poll_secs?: 1-60, timeout_secs?: 2-120, keepalive_secs?: 1-60",
+        enabled: |_session| true,
+        run: |session, params| {
+            let empty = serde_json::Map::new();
+            let map = object(params)?.unwrap_or(&empty);
+            let poll = secs(map, "poll_secs", &crate::prefs::SFTP_POLL_RANGE)?;
+            let timeout = secs(map, "timeout_secs", &crate::prefs::SFTP_TIMEOUT_RANGE)?;
+            let keepalive = secs(map, "keepalive_secs", &crate::prefs::SFTP_KEEPALIVE_RANGE)?;
+            if let Some(v) = poll {
+                session.prefs.sftp_poll_secs = v;
+            }
+            if let Some(v) = timeout {
+                session.prefs.sftp_timeout_secs = v;
+            }
+            if let Some(v) = keepalive {
+                session.prefs.sftp_keepalive_secs = v;
+            }
+            session.prefs.apply_sftp();
+            Ok(())
+        },
+    }
+}
+
+/// Shared body of the three zoom commands: `step` is `None` to reset.
+fn zoom_by(session: &mut crate::session::Session, step: Option<f32>) {
+    let next = match step {
+        Some(step) => session.prefs.zoom_factor() + step,
+        None => 1.0,
+    };
+    // Round to one decimal so repeated steps never drift (1.0000001).
+    let next = (next * 10.0).round() / 10.0;
+    session.prefs.zoom = next.clamp(
+        *crate::prefs::ZOOM_RANGE.start(),
+        *crate::prefs::ZOOM_RANGE.end(),
+    );
+}
+
+/// `view.zoom.in` — enlarge the whole UI one step.
+pub fn zoom_in() -> CommandSpec {
+    CommandSpec {
+        id: "view.zoom.in",
+        label: "Zoom In",
+        menu: &["View", "Zoom In"],
+        shortcut: Some("Ctrl+Shift++"),
+        params: "none",
+        enabled: |s| s.prefs.zoom_factor() < *crate::prefs::ZOOM_RANGE.end(),
+        run: |s, _p| {
+            zoom_by(s, Some(crate::prefs::ZOOM_STEP));
+            Ok(())
+        },
+    }
+}
+
+/// `view.zoom.out` — shrink the whole UI one step.
+pub fn zoom_out() -> CommandSpec {
+    CommandSpec {
+        id: "view.zoom.out",
+        label: "Zoom Out",
+        menu: &["View", "Zoom Out"],
+        shortcut: Some("Ctrl+Shift+-"),
+        params: "none",
+        enabled: |s| s.prefs.zoom_factor() > *crate::prefs::ZOOM_RANGE.start(),
+        run: |s, _p| {
+            zoom_by(s, Some(-crate::prefs::ZOOM_STEP));
+            Ok(())
+        },
+    }
+}
+
+/// `view.zoom.reset` — back to 100%.
+pub fn zoom_reset() -> CommandSpec {
+    CommandSpec {
+        id: "view.zoom.reset",
+        label: "Reset Zoom",
+        menu: &["View", "Reset Zoom"],
+        shortcut: Some("Ctrl+Shift+0"),
+        params: "none",
+        enabled: |s| (s.prefs.zoom_factor() - 1.0).abs() > f32::EPSILON,
+        run: |s, _p| {
+            zoom_by(s, None);
+            Ok(())
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
     use crate::session::Session;
+
+    #[test]
+    fn zoom_steps_clamp_and_reset() {
+        let mut s = Session::new().expect("session");
+        (zoom_in().run)(&mut s, &json!(null)).expect("in");
+        assert!((s.prefs.zoom - 1.1).abs() < 1e-6);
+        for _ in 0..40 {
+            (zoom_in().run)(&mut s, &json!(null)).expect("in");
+        }
+        assert!((s.prefs.zoom - 3.0).abs() < 1e-6);
+        for _ in 0..60 {
+            (zoom_out().run)(&mut s, &json!(null)).expect("out");
+        }
+        assert!((s.prefs.zoom - 0.5).abs() < 1e-6);
+        (zoom_reset().run)(&mut s, &json!(null)).expect("reset");
+        assert!((s.prefs.zoom - 1.0).abs() < 1e-6);
+        s.prefs.zoom = f32::NAN;
+        assert!((s.prefs.zoom_factor() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sftp_timing_sets_valid_values_and_rejects_bad_ones() {
+        let mut s = Session::default();
+        (sftp_timing().run)(&mut s, &json!({"poll_secs": 2, "timeout_secs": 6})).expect("set");
+        assert_eq!((s.prefs.sftp_poll_secs, s.prefs.sftp_timeout_secs), (2, 6));
+        for bad in [
+            json!({"poll_secs": 0}),
+            json!({"timeout_secs": 1}),
+            json!({"keepalive_secs": 9999}),
+            json!({"poll_secs": "5"}),
+            json!([1]),
+        ] {
+            assert!((sftp_timing().run)(&mut s, &bad).is_err(), "{bad}");
+        }
+        assert_eq!((s.prefs.sftp_poll_secs, s.prefs.sftp_timeout_secs), (2, 6));
+        fm_fs_sftp::set_timeouts(10, 5);
+    }
 
     #[test]
     fn recursive_preview_toggles_and_rejects_bad_values() {

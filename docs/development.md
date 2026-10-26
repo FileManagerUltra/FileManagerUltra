@@ -133,6 +133,19 @@ Use a scratch directory with a few files, a subfolder and one name that exists i
 5. Double-click an executable script: a "Run program?" dialog offers *Run* / *Open as document* / *Cancel*; nothing starts until chosen. Cancel leaves the app untouched.
 6. A folder still navigates on Enter/double-click. Layout keys in the listing: PageUp/PageDown move a screenful, Shift extends the selection, the view scrolls to the focused row.
 
+### SFTP connections (change `sftp-backend`)
+
+Needs a real OpenSSH server (e.g. `sudo systemctl start sshd`, or `docker run -p 2222:2222 lscr.io/linuxserver/openssh-server`).
+
+1. Pane type selector ▸ SFTP (or File ▸ Connect to Server…): the pane shows the connect form; enter host/port/user/password, Connect. A "Trust this host?" dialog shows the fingerprint (compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`); Trust, and the same pane lists the remote folder, with a badge in its header and free space in the status bar.
+2. Reconnect: the second connect does not prompt. Wrong password shows an error and keeps the form; the password is never written to disk (`grep -r` the config dir).
+3. Copy/move between a local and the remote pane (F5/F6, drag & drop); cancel a large transfer and confirm no `.fmpart` file remains. Delete/rename/mkdir on the remote.
+4. Stop sshd: within ~5 s the pane shows the offline banner, keeps its listing, mutating commands are disabled; restart sshd and click Reconnect.
+5. Change the server host key: the connect refuses with the "identity changed" card (remove the entry from `known_hosts.json` by hand to trust the new key).
+6. Save a profile ("Save as"), restart the app: it appears in the Profile picker (no password stored). `known_hosts.json` and `prefs.toml` are `0600`.
+7. Disconnect (button left of the pane-type dropdown) returns the pane to the home folder. Preferences ▸ SFTP sets poll/timeout/keepalive; Preferences ▸ Trusted hosts forgets a host key (next connect asks again). Typing `sftp://user@host/path` in the location bar opens the connect form. A `.ppk` key shows an "Export OpenSSH key" hint.
+8. Also worth a look: View ▸ Zoom In/Out/Reset (Ctrl+Shift +/-/0, remembered), Left on a tree root collapses all, `exit`/Ctrl-D closes a terminal pane, narrow Preview toolbar folds into a hamburger, text preview copies without line numbers, Trash pane: expand/open trashed folders and restore inner items.
+
 ### Current folder row (change `current-folder-row`)
 
 1. Select folders in the tree: each time the listing opens, its cursor is on the `.` row (nothing selected) and a Preview pane following that Files pane shows the folder itself (summary card, or the thumbnail grid with thumbnails on).

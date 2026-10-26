@@ -10,5 +10,19 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+# In-process SFTP server over a temp directory, for tests (here and in fm-engine).
+test-server = []
+
 [dependencies]
 fm-vfs.workspace = true
+russh.workspace = true
+russh-sftp.workspace = true
+tokio.workspace = true
+secrecy.workspace = true
+zeroize.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+fm-fs-sftp = { path = ".", features = ["test-server"] }
+tempfile.workspace = true

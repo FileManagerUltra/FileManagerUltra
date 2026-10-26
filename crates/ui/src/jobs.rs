@@ -23,6 +23,20 @@ pub fn panel_visible(ctx: &Context, s: &Session) -> bool {
         })
 }
 
+/// `12.3 MiB/s · 45 s left`; empty until a rate is known.
+pub fn rate_text(bytes_per_sec: Option<f64>, eta_secs: Option<u64>) -> String {
+    let Some(rate) = bytes_per_sec else {
+        return String::new();
+    };
+    let speed = format!("{}/s", crate::listing::human_size(rate.max(0.0) as u64));
+    match eta_secs {
+        Some(s) if s >= 3600 => format!("{speed} · {}h {}m left", s / 3600, (s % 3600) / 60),
+        Some(s) if s >= 60 => format!("{speed} · {}m {}s left", s / 60, s % 60),
+        Some(s) => format!("{speed} · {s} s left"),
+        None => speed,
+    }
+}
+
 /// Status-bar text for running jobs, e.g. `2 jobs · 41%`; empty when idle.
 pub fn indicator_text(s: &Session) -> String {
     let running: Vec<_> = s
@@ -71,6 +85,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         running: bool,
         fraction: Option<f64>,
         current: String,
+        rate: String,
         status: String,
         failures: Vec<(String, String)>,
     }
@@ -97,6 +112,15 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 running: j.state.is_running(),
                 fraction: j.progress.bytes.fraction().or(j.progress.items.fraction()),
                 current: j.progress.current.clone(),
+                rate: if j.state.is_running() {
+                    rate_text(
+                        j.speed.bytes_per_sec(),
+                        j.speed
+                            .eta_secs(j.progress.bytes.total.saturating_sub(j.progress.bytes.done)),
+                    )
+                } else {
+                    String::new()
+                },
                 status,
                 failures,
             }
@@ -131,6 +155,9 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     let bar = egui::ProgressBar::new(row.fraction.unwrap_or(0.0) as f32)
                         .fill(tokens.accent);
                     ui.add(bar);
+                    if !row.rate.is_empty() {
+                        ui.label(tokens.muted(&row.rate));
+                    }
                     ui.label(tokens.muted(&row.current));
                     if ui.button("Cancel").clicked() {
                         cancel.push(row.id);
@@ -168,5 +195,17 @@ mod tests {
         let s = Session::default();
         assert!(indicator_text(&s).is_empty());
         assert!(!panel_visible(&Context::default(), &s));
+    }
+
+    #[test]
+    fn rate_text_formats_speed_and_eta() {
+        assert_eq!(rate_text(None, Some(5)), "");
+        assert_eq!(rate_text(Some(2_097_152.0), None), "2.0 MiB/s");
+        assert_eq!(rate_text(Some(1024.0), Some(45)), "1.0 KiB/s · 45 s left");
+        assert_eq!(rate_text(Some(1024.0), Some(125)), "1.0 KiB/s · 2m 5s left");
+        assert_eq!(
+            rate_text(Some(1024.0), Some(7300)),
+            "1.0 KiB/s · 2h 1m left"
+        );
     }
 }

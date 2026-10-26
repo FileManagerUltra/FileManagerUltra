@@ -67,3 +67,10 @@ Escape sequences are untrusted. The parser MUST bound line width, title/OSC leng
 - **WHEN** the other pane is `/tmp/a b'c`
 - **THEN** the shell receives a correctly quoted `cd` and the name cannot inject commands
 
+### Requirement: Close on shell exit
+A terminal pane whose shell exits (exit, Ctrl-D) SHALL close. The last remaining pane stays and shows the restart banner.
+
+#### Scenario: Exit closes the pane
+- **WHEN** the shell in a terminal pane exits and other panes exist
+- **THEN** the pane is closed
+
