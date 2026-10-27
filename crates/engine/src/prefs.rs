@@ -21,6 +21,27 @@ pub enum ThemePreference {
     Light,
 }
 
+/// Which shell terminal panes start (capability `terminal-pane`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TerminalShell {
+    /// PowerShell on Windows, the login shell elsewhere.
+    #[default]
+    Default,
+    PowerShell,
+    Cmd,
+}
+
+impl TerminalShell {
+    pub fn to_term(self) -> fm_term::Shell {
+        match self {
+            TerminalShell::Default => fm_term::Shell::Default,
+            TerminalShell::PowerShell => fm_term::Shell::PowerShell,
+            TerminalShell::Cmd => fm_term::Shell::Cmd,
+        }
+    }
+}
+
 /// Last normal window geometry; only non-secret numeric values.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WindowGeometry {
@@ -86,6 +107,9 @@ pub struct Prefs {
     /// User bookmarks shown under Places (capability `places`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bookmarks: Vec<Bookmark>,
+    /// Shell for new terminal panes.
+    #[serde(default)]
+    pub terminal_shell: TerminalShell,
 }
 
 /// Most bookmarks kept; longest bookmark name / uri.
@@ -265,6 +289,7 @@ impl Default for Prefs {
             smb_require_encryption: false,
             zoom: default_zoom(),
             bookmarks: Vec::new(),
+            terminal_shell: TerminalShell::default(),
         }
     }
 }
@@ -516,6 +541,7 @@ mod tests {
                 "remote_timeout_secs",
                 "retarget_links",
                 "smb_require_encryption",
+                "terminal_shell",
                 "theme",
                 "window_geometry",
                 "window_maximized",

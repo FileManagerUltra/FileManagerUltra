@@ -3,9 +3,11 @@ use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use fm_vfs::FmError;
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{Child, MasterPty, PtySize, native_pty_system};
 
 use crate::emulator::{Emulator, MAX_COLS, MAX_ROWS, MIN_SIZE, Snapshot};
+use crate::quote::Dialect;
+use crate::shell::Shell;
 
 /// Largest single write accepted from the UI (keystrokes, pastes).
 pub const MAX_INPUT: usize = 1024 * 1024;
@@ -49,11 +51,13 @@ pub struct TermSession {
     input: Sender<Vec<u8>>,
     status: Status,
     reader: Option<JoinHandle<()>>,
+    dialect: Dialect,
 }
 
 impl TermSession {
-    /// Start the user's default shell in `cwd` (or the shell's default directory).
-    pub fn spawn(cwd: Option<&str>, rows: u16, cols: u16) -> Result<Self, FmError> {
+    /// Start `shell` in `cwd` (or the shell's default directory).
+    pub fn spawn(shell: Shell, cwd: Option<&str>, rows: u16, cols: u16) -> Result<Self, FmError> {
+        let (program, dialect) = shell.resolve()?;
         let rows = rows.clamp(MIN_SIZE, MAX_ROWS);
         let cols = cols.clamp(MIN_SIZE, MAX_COLS);
         let pair = native_pty_system()
@@ -65,7 +69,7 @@ impl TermSession {
             })
             .map_err(io_err)?;
 
-        let mut cmd = CommandBuilder::new_default_prog();
+        let mut cmd = program.command();
         for (name, _) in std::env::vars_os() {
             if name.to_str().is_none_or(|n| !spawn_env_allowed(n)) {
                 cmd.env_remove(name);
@@ -124,6 +128,7 @@ impl TermSession {
             input,
             status: Status::Running,
             reader: Some(reader),
+            dialect,
         })
     }
 
@@ -174,6 +179,11 @@ impl TermSession {
             changed: used > 0 || was != self.status,
             backlog,
         }
+    }
+
+    /// The command language of the running shell, for quoting paths sent to it.
+    pub fn dialect(&self) -> Dialect {
+        self.dialect
     }
 
     pub fn status(&self) -> Status {
@@ -253,7 +263,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn spawn() -> Option<TermSession> {
-        TermSession::spawn(Some("/tmp"), 24, 80).ok()
+        TermSession::spawn(Shell::Default, Some("/tmp"), 24, 80).ok()
     }
 
     fn wait_for(s: &mut TermSession, needle: &str) -> bool {

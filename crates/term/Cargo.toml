@@ -18,3 +18,4 @@ crossbeam-channel.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+tempfile.workspace = true

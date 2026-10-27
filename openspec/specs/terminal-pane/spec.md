@@ -4,11 +4,15 @@
 TBD - created by archiving change pane-types. Update Purpose after archive.
 ## Requirements
 ### Requirement: Terminal session lifecycle
-A Terminal pane SHALL own one pty-backed shell session, started on first show in the pane's directory when that is a local path, otherwise in the user's home directory. The shell is the user's default shell (the platform default program: `$SHELL`, `%COMSPEC%` on Windows) with `TERM=xterm-256color`. Closing the pane or quitting SHALL terminate the child; no orphan process remains.
+A Terminal pane SHALL own one pty-backed shell session, started on first show in the pane's directory when that is a local path, otherwise in the user's home directory. The shell follows the `terminal_shell` preference (`prefs.terminal.shell`, applied to new sessions): `default` is PowerShell on Windows (PowerShell 7 `pwsh` from `PATH`, else the built-in Windows PowerShell, else `%COMSPEC%`) and the login shell (`$SHELL`) elsewhere; `powershell` and `cmd` select those explicitly and fail with an error where they do not exist. It runs with `TERM=xterm-256color`. Closing the pane or quitting SHALL terminate the child; no orphan process remains.
 
 #### Scenario: Start in pane directory
 - **WHEN** a Files pane at a local directory `/tmp/x` switches to Terminal
 - **THEN** the shell's working directory is `/tmp/x`
+
+#### Scenario: PowerShell on Windows
+- **WHEN** a Windows user opens a Terminal pane with the default shell setting
+- **THEN** PowerShell starts; choosing `cmd` in Preferences makes new terminals start cmd.exe
 
 #### Scenario: Close terminates child
 - **WHEN** a Terminal pane is closed
@@ -72,7 +76,11 @@ Escape sequences are untrusted. The parser MUST bound line width, title/OSC leng
 - **THEN** the session stays alive, memory stays bounded and no panic occurs
 
 ### Requirement: Terminal commands
-`term.copy`, `term.paste`, `term.cd_here`, `term.clear_scrollback` and `term.restart` SHALL be registered commands, enabled only when the focused pane is a Terminal, with bad params returning `Err`. `term.cd_here` sends `cd` to the other Files pane's local directory, shell-quoted.
+`term.copy`, `term.paste`, `term.cd_here`, `term.clear_scrollback` and `term.restart` SHALL be registered commands, enabled only when the focused pane is a Terminal, with bad params returning `Err`. `term.cd_here` sends `cd` to the other Files pane's local directory, quoted for the running shell's dialect (POSIX `cd -- '…'`, cmd `cd /d "…"`, PowerShell `Set-Location -LiteralPath '…'` with every single-quote form doubled), after clearing the typed line; dropped paths use the same quoting.
+
+#### Scenario: PowerShell quoting
+- **WHEN** `term.cd_here` targets `C:\it's $(calc)` in a PowerShell terminal
+- **THEN** the shell receives `Set-Location -LiteralPath 'C:\it''s $(calc)'` and nothing is evaluated
 
 #### Scenario: cd_here quoting
 - **WHEN** the other pane is `/tmp/a b'c`

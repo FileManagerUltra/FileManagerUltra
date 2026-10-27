@@ -74,7 +74,12 @@ impl Session {
             .map(|p| p.location.clone())
             .ok_or_else(|| FmError::NotFound(format!("pane {pane}")))?;
         let cwd = local_dir(&location).or_else(home_dir);
-        let session = TermSession::spawn(cwd.as_deref(), DEFAULT_ROWS, DEFAULT_COLS)?;
+        let session = TermSession::spawn(
+            self.prefs.terminal_shell.to_term(),
+            cwd.as_deref(),
+            DEFAULT_ROWS,
+            DEFAULT_COLS,
+        )?;
         self.terminals.insert(pane, session);
         Ok(())
     }
@@ -266,12 +271,13 @@ pub fn drop_paths() -> CommandSpec {
                     "more than {MAX_DROP_PATHS} paths"
                 )));
             }
+            let dialect = live_terminal(s, pane)?.dialect();
             let words: Vec<String> = list
                 .iter()
                 .filter_map(Params::as_str)
                 .filter_map(|raw| VfsUri::parse(raw).ok())
                 .filter_map(|uri| local_path(&uri))
-                .filter_map(|path| fm_term::path_arg(&path).ok())
+                .filter_map(|path| fm_term::path_arg(dialect, &path).ok())
                 .collect();
             if words.is_empty() {
                 return Err(FmError::Unsupported(
@@ -334,8 +340,9 @@ pub fn cd_here() -> CommandSpec {
             }
             let dir = other_files_dir(s)
                 .ok_or(FmError::Unsupported("no local folder in another pane"))?;
-            let bytes = fm_term::cd_command(&dir)?;
-            live_terminal(s, pane)?.write(&bytes)
+            let term = live_terminal(s, pane)?;
+            let bytes = fm_term::cd_command(term.dialect(), &dir)?;
+            term.write(&bytes)
         },
     }
 }

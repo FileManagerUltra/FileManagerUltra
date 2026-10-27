@@ -60,7 +60,8 @@ pub use dnd_cmds::{DropAction, DropModifiers, DropOrigin, DropResolution, resolv
 pub use fileops::{FileOps, OpJob, OpRequest, OpState, OpSummary, SpeedMeter};
 pub use jobs::{JobCtx, JobEvent, JobId, JobLane, JobQueue};
 pub use prefs::{
-    Prefs, REMOTE_KEEPALIVE_RANGE, REMOTE_POLL_RANGE, REMOTE_TIMEOUT_RANGE, ThemePreference,
+    Prefs, REMOTE_KEEPALIVE_RANGE, REMOTE_POLL_RANGE, REMOTE_TIMEOUT_RANGE, TerminalShell,
+    ThemePreference,
 };
 pub use registry::{CommandSpec, Params, Registry};
 pub use session::{Session, ViewIndex, is_hidden};

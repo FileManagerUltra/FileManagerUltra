@@ -4,7 +4,7 @@
 use egui::{Context, Id, Key, RichText};
 use serde_json::json;
 
-use fm_engine::{Params, Session, ThemePreference};
+use fm_engine::{Params, Session, TerminalShell, ThemePreference};
 
 use crate::dialogs::frame;
 use crate::theme::Tokens;
@@ -67,6 +67,35 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             if response.changed() {
                 s.dispatch_or_notice("prefs.preview.recursive", &json!({"value": recursive}));
             }
+            ui.add_space(tokens.padding);
+            ui.label(RichText::new("Terminal").color(tokens.accent).strong());
+            ui.horizontal(|ui| {
+                ui.label("Shell");
+                let choices: &[(&str, &str, TerminalShell)] = if cfg!(windows) {
+                    &[
+                        ("PowerShell", "default", TerminalShell::Default),
+                        ("cmd", "cmd", TerminalShell::Cmd),
+                    ]
+                } else {
+                    &[
+                        ("Login shell", "default", TerminalShell::Default),
+                        ("PowerShell", "powershell", TerminalShell::PowerShell),
+                    ]
+                };
+                for (label, value, shell) in choices {
+                    let current = s.prefs.terminal_shell == *shell
+                        || (cfg!(windows)
+                            && *shell == TerminalShell::Default
+                            && s.prefs.terminal_shell == TerminalShell::PowerShell);
+                    if ui
+                        .selectable_label(current, *label)
+                        .on_hover_text("Used by new terminals; restart a running one to switch.")
+                        .clicked()
+                    {
+                        s.dispatch_or_notice("prefs.terminal.shell", &json!({"value": value}));
+                    }
+                }
+            });
             ui.add_space(tokens.padding);
             ui.label(RichText::new("SMB").color(tokens.accent).strong());
             let mut encrypt = s.prefs.smb_require_encryption;

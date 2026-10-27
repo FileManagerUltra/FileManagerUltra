@@ -44,6 +44,41 @@ pub fn retarget_links() -> CommandSpec {
     }
 }
 
+/// `prefs.terminal.shell` — the shell new terminal panes start: `default` (PowerShell on
+/// Windows, the login shell elsewhere), `powershell` or `cmd`. Running terminals keep
+/// theirs until restarted.
+pub fn terminal_shell() -> CommandSpec {
+    CommandSpec {
+        id: "prefs.terminal.shell",
+        label: "Terminal Shell",
+        menu: &["File", "Preferences", "Terminal shell"],
+        shortcut: None,
+        params: "{value: \"default\"|\"powershell\"|\"cmd\"}",
+        enabled: |_session| true,
+        run: |session, params| {
+            let value = object(params)?
+                .and_then(|m| m.get("value"))
+                .and_then(Params::as_str)
+                .ok_or_else(|| {
+                    FmError::InvalidParams(
+                        "value: \"default\", \"powershell\" or \"cmd\"".to_string(),
+                    )
+                })?;
+            session.prefs.terminal_shell = match value {
+                "default" => crate::prefs::TerminalShell::Default,
+                "powershell" => crate::prefs::TerminalShell::PowerShell,
+                "cmd" => crate::prefs::TerminalShell::Cmd,
+                _ => {
+                    return Err(FmError::InvalidParams(
+                        "value must be default, powershell or cmd".to_string(),
+                    ));
+                }
+            };
+            Ok(())
+        },
+    }
+}
+
 /// `prefs.preview.recursive` — whether a folder in the preview pane counts and thumbnails
 /// every file below it. Without `value` the setting is toggled.
 pub fn recursive_preview() -> CommandSpec {
@@ -273,6 +308,31 @@ mod tests {
         assert!(!s.prefs.recursive_preview);
         assert!((recursive_preview().run)(&mut s, &json!({"value": 3})).is_err());
         assert!(!s.prefs.recursive_preview, "unchanged on error");
+    }
+
+    #[test]
+    fn terminal_shell_sets_and_rejects_bad_values() {
+        use crate::prefs::TerminalShell;
+        let mut s = Session::default();
+        assert_eq!(s.prefs.terminal_shell, TerminalShell::Default);
+        (terminal_shell().run)(&mut s, &json!({"value": "powershell"})).expect("set");
+        assert_eq!(s.prefs.terminal_shell, TerminalShell::PowerShell);
+        for bad in [
+            Params::Null,
+            json!({}),
+            json!({"value": "bash"}),
+            json!({"value": 1}),
+            json!(["cmd"]),
+        ] {
+            assert!((terminal_shell().run)(&mut s, &bad).is_err(), "{bad}");
+        }
+        assert_eq!(
+            s.prefs.terminal_shell,
+            TerminalShell::PowerShell,
+            "unchanged"
+        );
+        (terminal_shell().run)(&mut s, &json!({"value": "default"})).expect("set");
+        assert_eq!(s.prefs.terminal_shell, TerminalShell::Default);
     }
 
     #[test]
