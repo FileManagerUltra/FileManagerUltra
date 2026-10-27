@@ -21,6 +21,29 @@ pub enum ThemePreference {
     Light,
 }
 
+/// Last normal window geometry; only non-secret numeric values.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WindowGeometry {
+    /// Native logical pixels, independent of application zoom.
+    pub size: [f32; 2],
+    /// Outer position in physical desktop pixels (unavailable on native Wayland).
+    pub position: Option<[f32; 2]>,
+    pub scale_factor: f32,
+}
+
+impl WindowGeometry {
+    pub fn is_valid(&self) -> bool {
+        self.size
+            .iter()
+            .all(|v| v.is_finite() && (1.0..=32768.0).contains(v))
+            && self
+                .position
+                .is_none_or(|pos| pos.iter().all(|v| v.is_finite() && v.abs() <= 1_000_000.0))
+            && self.scale_factor.is_finite()
+            && (0.25..=16.0).contains(&self.scale_factor)
+    }
+}
+
 /// The complete preferences schema. **Closed**: only non-secret, UI-level settings
 /// may ever live here — the closed-schema test asserts the exact key set.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -31,6 +54,8 @@ pub struct Prefs {
     pub theme: ThemePreference,
     #[serde(default)]
     pub window_maximized: bool,
+    #[serde(default)]
+    pub window_geometry: Option<WindowGeometry>,
     #[serde(default)]
     pub last_dir: Option<String>,
     /// Copying a tree points absolute symlinks that lie inside it at the copy, not the
@@ -58,6 +83,33 @@ pub struct Prefs {
     /// UI zoom factor (Ctrl+Shift+Plus / Minus), restored on start.
     #[serde(default = "default_zoom")]
     pub zoom: f32,
+    /// User bookmarks shown under Places (capability `places`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bookmarks: Vec<Bookmark>,
+}
+
+/// Most bookmarks kept; longest bookmark name / uri.
+pub const MAX_BOOKMARKS: usize = 200;
+pub const MAX_BOOKMARK_NAME: usize = 100;
+const MAX_BOOKMARK_URI: usize = 4096;
+
+/// A folder pinned under Places.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bookmark {
+    pub name: String,
+    pub uri: String,
+}
+
+impl Bookmark {
+    /// A non-empty, single-line name and a parseable uri, both within their caps.
+    pub fn is_valid(&self) -> bool {
+        let name = self.name.trim();
+        !name.is_empty()
+            && self.name.chars().count() <= MAX_BOOKMARK_NAME
+            && !self.name.chars().any(char::is_control)
+            && self.uri.len() <= MAX_BOOKMARK_URI
+            && fm_vfs::VfsUri::parse(&self.uri).is_ok()
+    }
 }
 
 /// Allowed UI zoom range and the step of one zoom command.
@@ -202,6 +254,7 @@ impl Default for Prefs {
             check_updates: true,
             theme: ThemePreference::default(),
             window_maximized: false,
+            window_geometry: None,
             last_dir: None,
             retarget_links: true,
             recursive_preview: false,
@@ -211,6 +264,7 @@ impl Default for Prefs {
             remote_keepalive_secs: default_remote_keepalive(),
             smb_require_encryption: false,
             zoom: default_zoom(),
+            bookmarks: Vec::new(),
         }
     }
 }
@@ -259,7 +313,11 @@ pub fn load(path: &Path) -> Prefs {
         Ok(text) => text,
         Err(_) => return Prefs::default(),
     };
-    toml::from_str(&text).unwrap_or_default()
+    let mut prefs: Prefs = toml::from_str(&text).unwrap_or_default();
+    // A hand-edited file may hold junk bookmarks: drop them rather than the whole file.
+    prefs.bookmarks.retain(Bookmark::is_valid);
+    prefs.bookmarks.truncate(MAX_BOOKMARKS);
+    prefs
 }
 
 /// Save preferences into `dir`/`prefs.toml` (creating the directory, owner-only).
@@ -348,6 +406,11 @@ mod tests {
         let prefs = Prefs {
             theme: ThemePreference::Dark,
             window_maximized: true,
+            window_geometry: Some(WindowGeometry {
+                size: [1200.0, 800.0],
+                position: Some([-900.0, 75.0]),
+                scale_factor: 2.0,
+            }),
             last_dir: Some("/home/alice".to_string()),
             retarget_links: false,
             recursive_preview: true,
@@ -421,10 +484,19 @@ mod tests {
         let prefs = Prefs {
             theme: ThemePreference::Dark,
             window_maximized: false,
+            window_geometry: Some(WindowGeometry {
+                size: [1200.0, 800.0],
+                position: Some([100.0, 75.0]),
+                scale_factor: 1.0,
+            }),
             last_dir: Some("/tmp".to_string()),
             retarget_links: true,
             recursive_preview: false,
             profiles: Vec::new(),
+            bookmarks: vec![Bookmark {
+                name: "Photos".into(),
+                uri: "/home/u/Photos".into(),
+            }],
             ..Prefs::default()
         };
         let text = toml::to_string(&prefs).expect("serialize");
@@ -434,6 +506,7 @@ mod tests {
         assert_eq!(
             keys,
             [
+                "bookmarks",
                 "check_updates",
                 "last_dir",
                 "profiles",
@@ -444,10 +517,18 @@ mod tests {
                 "retarget_links",
                 "smb_require_encryption",
                 "theme",
+                "window_geometry",
                 "window_maximized",
                 "zoom"
             ]
         );
+        let geometry = parsed
+            .get("window_geometry")
+            .and_then(toml::Value::as_table)
+            .expect("geometry table");
+        let mut geometry_keys: Vec<_> = geometry.keys().map(String::as_str).collect();
+        geometry_keys.sort();
+        assert_eq!(geometry_keys, ["position", "scale_factor", "size"]);
         // No secret-ish key can appear.
         for key in &keys {
             let lower = key.to_ascii_lowercase();
@@ -458,6 +539,76 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn junk_bookmarks_are_dropped_on_load_and_the_rest_kept() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join(PREFS_FILE);
+        let long = "n".repeat(MAX_BOOKMARK_NAME + 1);
+        let mut text = String::from("theme = \"dark\"\n");
+        for (name, uri) in [
+            ("Photos", "/home/u/Photos"),
+            ("", "/x"),
+            ("bad\\u0007", "/x"),
+            (long.as_str(), "/x"),
+            ("NoUri", "not a uri at all"),
+        ] {
+            text.push_str(&format!(
+                "[[bookmarks]]\nname = \"{name}\"\nuri = \"{uri}\"\n"
+            ));
+        }
+        for i in 0..MAX_BOOKMARKS + 5 {
+            text.push_str(&format!(
+                "[[bookmarks]]\nname = \"b{i}\"\nuri = \"/b/{i}\"\n"
+            ));
+        }
+        std::fs::write(&path, text).expect("write");
+        let prefs = load(&path);
+        assert_eq!(prefs.theme, ThemePreference::Dark);
+        assert_eq!(prefs.bookmarks.len(), MAX_BOOKMARKS);
+        assert_eq!(prefs.bookmarks[0].name, "Photos");
+        assert!(prefs.bookmarks.iter().all(Bookmark::is_valid));
+    }
+
+    #[test]
+    fn window_geometry_rejects_nonfinite_and_absurd_values() {
+        let valid = WindowGeometry {
+            size: [1200.0, 800.0],
+            position: Some([-900.0, 75.0]),
+            scale_factor: 2.0,
+        };
+        assert!(valid.is_valid());
+        for value in [f32::NAN, f32::INFINITY, -1.0, 0.0, 32769.0] {
+            assert!(
+                !WindowGeometry {
+                    size: [value, 800.0],
+                    ..valid
+                }
+                .is_valid()
+            );
+        }
+        assert!(
+            !WindowGeometry {
+                position: Some([f32::INFINITY, 0.0]),
+                ..valid
+            }
+            .is_valid()
+        );
+        assert!(
+            !WindowGeometry {
+                scale_factor: 0.0,
+                ..valid
+            }
+            .is_valid()
+        );
+        assert!(
+            WindowGeometry {
+                position: None,
+                ..valid
+            }
+            .is_valid()
+        );
     }
 
     #[test]

@@ -287,3 +287,93 @@ fn a_failed_sftp_connect_keeps_the_popup_open_with_the_error() {
     assert!(!error.contains("s3cret"), "{error}");
     assert!(s.notice.is_none(), "the error lives in the popup");
 }
+
+#[test]
+fn a_failed_remembered_sftp_connect_opens_a_prefilled_retry_dialog() {
+    let mut s = session();
+    s.dispatch(
+        "remote.profile.save",
+        &json!({
+            "name": "local nas", "host": "127.0.0.1", "port": 1,
+            "user": "alice", "start_dir": "/data"
+        }),
+    )
+    .unwrap();
+    s.dispatch("remote.connect.dialog", &json!(null)).unwrap();
+    s.dispatch(
+        "remote.connect",
+        &json!({
+            "host": "127.0.0.1", "port": 1, "user": "alice",
+            "password": "private-password", "remember": true
+        }),
+    )
+    .unwrap();
+    pump(&mut s, "first failure", |s| !s.remote.is_connecting());
+    s.dispatch("remote.connect.cancel", &json!(null)).unwrap();
+    s.notice = None;
+    let uri = VfsUri::parse("sftp://alice@127.0.0.1:1/").unwrap();
+    assert!(s.dispatch_or_notice("nav.open", &json!(uri.to_string())));
+    assert!(
+        s.notice.is_none(),
+        "opening a disconnected server is not unsupported"
+    );
+    assert!(
+        s.remote.sftp_prompt.is_none(),
+        "remembered connect starts silently"
+    );
+    pump(&mut s, "retry dialog", |s| s.remote.sftp_prompt.is_some());
+    let prompt = s.remote.sftp_prompt.as_ref().unwrap();
+    assert_eq!(prompt.host, "127.0.0.1");
+    assert_eq!(prompt.port, Some(1));
+    assert_eq!(prompt.user, "alice");
+    assert_eq!(prompt.start_dir, "/data");
+    assert_eq!(prompt.save_as, "local nas");
+    assert_eq!(prompt.landing.as_ref(), Some(&uri));
+    assert!(prompt.navigate);
+    let error = prompt.error.as_ref().expect("error in dialog");
+    assert!(error.contains("network or VPN"), "{error}");
+    assert!(!error.contains("private-password"));
+    assert!(
+        s.notice.is_none(),
+        "connection failure is not status-bar-only"
+    );
+}
+
+#[test]
+fn opening_a_saved_server_row_opens_login_without_a_backend_error() {
+    let mut s = session();
+    saved_server(&mut s);
+    s.dispatch("pane.kind.set", &json!({"kind": "sftp"}))
+        .unwrap();
+    let before = s.layout.state(s.layout.focused()).unwrap().location.clone();
+    let uri = VfsUri::parse("sftp://bob@10.9.9.7:2222/").unwrap();
+    assert!(s.dispatch_or_notice("nav.open", &json!(uri.to_string())));
+    assert!(s.notice.is_none());
+    let prompt = s.remote.sftp_prompt.as_ref().expect("login dialog");
+    assert_eq!(prompt.save_as, "nas");
+    assert_eq!(prompt.start_dir, "/data");
+    assert!(prompt.navigate);
+    assert_eq!(s.layout.state(s.layout.focused()).unwrap().location, before);
+}
+
+#[test]
+fn cancelling_an_explicit_sftp_connect_does_not_reopen_the_dialog_on_failure() {
+    let mut s = session();
+    s.dispatch("remote.connect.dialog", &json!(null)).unwrap();
+    s.dispatch(
+        "remote.connect",
+        &json!({
+            "host": "127.0.0.1", "port": 1, "user": "alice", "password": "secret"
+        }),
+    )
+    .unwrap();
+    s.dispatch("remote.connect.cancel", &json!(null)).unwrap();
+    pump(&mut s, "cancelled dialog failure", |s| {
+        !s.remote.is_connecting()
+    });
+    assert!(s.remote.sftp_prompt.is_none());
+    assert!(
+        s.notice.is_some(),
+        "cancelled attempts still report failure"
+    );
+}

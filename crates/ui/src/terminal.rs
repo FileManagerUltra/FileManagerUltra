@@ -390,6 +390,9 @@ fn paint(
             }
             if cell.text.is_empty() {
                 run.push(' ');
+            } else if let Some(arms) = box_arms(&cell.text) {
+                paint_box(&painter, cell_rect, arms, fg);
+                run.push(' ');
             } else {
                 run.push_str(&cell.text);
             }
@@ -427,6 +430,77 @@ fn banner(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, rect: Rec
     );
     if restart {
         s.dispatch_or_notice("term.restart", &serde_json::json!({ "pane": pane }));
+    }
+}
+
+/// Which arms (up, down, left, right) a light box-drawing character has.
+fn box_arms(text: &str) -> Option<[bool; 4]> {
+    let mut chars = text.chars();
+    let c = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    Some(match c {
+        '─' => [false, false, true, true],
+        '│' => [true, true, false, false],
+        '┌' => [false, true, false, true],
+        '┐' => [false, true, true, false],
+        '└' => [true, false, false, true],
+        '┘' => [true, false, true, false],
+        '├' => [true, true, false, true],
+        '┤' => [true, true, true, false],
+        '┬' => [false, true, true, true],
+        '┴' => [true, false, true, true],
+        '┼' => [true, true, true, true],
+        _ => return None,
+    })
+}
+
+/// Paint a box-drawing cell edge to edge so borders join without font gaps.
+fn paint_box(
+    painter: &egui::Painter,
+    rect: Rect,
+    [up, down, left, right]: [bool; 4],
+    color: Color32,
+) {
+    let c = rect.center().round();
+    let stroke = Stroke::new(1.0, color);
+    let half = 0.5;
+    if up {
+        painter.line_segment(
+            [
+                Pos2::new(c.x + half, rect.top()),
+                Pos2::new(c.x + half, c.y + half),
+            ],
+            stroke,
+        );
+    }
+    if down {
+        painter.line_segment(
+            [
+                Pos2::new(c.x + half, c.y + half),
+                Pos2::new(c.x + half, rect.bottom()),
+            ],
+            stroke,
+        );
+    }
+    if left {
+        painter.line_segment(
+            [
+                Pos2::new(rect.left(), c.y + half),
+                Pos2::new(c.x + half, c.y + half),
+            ],
+            stroke,
+        );
+    }
+    if right {
+        painter.line_segment(
+            [
+                Pos2::new(c.x + half, c.y + half),
+                Pos2::new(rect.right(), c.y + half),
+            ],
+            stroke,
+        );
     }
 }
 
@@ -601,5 +675,14 @@ mod tests {
     fn alt_letters_send_escape_prefix() {
         assert_eq!(bytes(Key::B, Modifiers::ALT).as_deref(), Some("\x1bb"));
         assert_eq!(bytes(Key::F, Modifiers::ALT).as_deref(), Some("\x1bf"));
+    }
+
+    #[test]
+    fn box_characters_map_to_arms_and_others_do_not() {
+        assert_eq!(super::box_arms("┌"), Some([false, true, false, true]));
+        assert_eq!(super::box_arms("┼"), Some([true; 4]));
+        assert_eq!(super::box_arms("x"), None);
+        assert_eq!(super::box_arms("──"), None);
+        assert_eq!(super::box_arms(""), None);
     }
 }

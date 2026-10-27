@@ -64,6 +64,29 @@ fn rig(files: &[(&str, &[u8])]) -> Rig {
 }
 
 impl Rig {
+    fn select(&mut self, names: &[&str]) {
+        self.s
+            .layout
+            .state_mut(self.files)
+            .expect("pane")
+            .listing
+            .clear_selection();
+        for name in names {
+            let (entries, ix) = self.s.pane_view(self.files).expect("view");
+            let row = ix
+                .order
+                .iter()
+                .position(|i| entries[*i as usize].name == *name)
+                .expect("row");
+            self.s
+                .layout
+                .state_mut(self.files)
+                .expect("pane")
+                .listing
+                .toggle(name, row);
+        }
+    }
+
     fn cursor(&mut self, name: &str) {
         let (entries, ix) = self.s.pane_view(self.files).expect("view");
         let row = ix
@@ -105,6 +128,361 @@ fn toggle_opens_a_following_preview_and_keeps_focus() {
     r.s.dispatch("view.preview.toggle", &json!({}))
         .expect("close");
     assert_eq!(r.s.layout.panes().len(), 1);
+}
+
+fn wait_multi(rig: &mut Rig, sources: usize) {
+    let pane = rig.preview;
+    assert!(pump(&mut rig.s, |s| s
+        .preview_slot(pane)
+        .and_then(|s| s.log())
+        .is_some_and(|v| v.sources.len() == sources)));
+}
+
+fn visible_text(s: &Session, pane: PaneId) -> Vec<String> {
+    let view = s.preview_slot(pane).expect("slot").log().expect("log");
+    let doc = view.doc.read().expect("doc");
+    let indices: Vec<_> = view
+        .filtered
+        .as_ref()
+        .map(|f| f.as_ref().clone())
+        .unwrap_or_else(|| (0..doc.records.len() as u32).collect());
+    indices
+        .into_iter()
+        .map(|i| doc.records[i as usize].text.clone())
+        .collect()
+}
+
+#[test]
+fn selected_logs_share_filters_and_both_orders_without_losing_sources() {
+    let mut r = rig(&[
+        (
+            "a.log",
+            b"2024-05-01 11:00:00 ERROR alpha\n2024-05-01 12:00:00 INFO same-a\nunknown alpha\n",
+        ),
+        (
+            "b.log",
+            b"2024-05-01 10:00:00 ERROR beta\n2024-05-01 12:00:00 INFO same-b\nunknown beta\n",
+        ),
+        ("c.log", b"2024-05-01 09:00:00 ERROR gamma\n"),
+    ]);
+    r.select(&["b.log", "a.log"]);
+    wait_multi(&mut r, 2);
+    let pane = r.preview;
+    let lines = visible_text(&r.s, pane);
+    assert!(lines[0].contains("alpha"));
+    assert!(
+        lines[3].contains("beta"),
+        "concatenate in display order, not click order"
+    );
+    let view = r.s.preview_slot(pane).expect("slot").log().expect("log");
+    assert_eq!(
+        view.sources
+            .iter()
+            .map(|s| s.entry.name.as_str())
+            .collect::<Vec<_>>(),
+        ["a.log", "b.log"]
+    );
+    assert_eq!(view.sources[0].records, 0..3);
+    assert_eq!(view.sources[1].records, 3..6);
+    for bad in [
+        json!({"mode": null}),
+        json!({"mode": "bad"}),
+        json!({"mode": 1}),
+    ] {
+        assert!(r.s.dispatch("preview.log.order", &bad).is_err());
+    }
+    r.s.dispatch("preview.log.order", &json!({}))
+        .expect("order");
+    assert!(pump(&mut r.s, |s| visible_text(s, pane)[0].contains("beta")));
+    let ordered = visible_text(&r.s, pane);
+    assert!(ordered[2].contains("same-a"));
+    assert!(ordered[3].contains("same-b"), "equal timestamps are stable");
+    assert_eq!(&ordered[4..], &["unknown alpha", "unknown beta"]);
+    r.s.dispatch(
+        "preview.log.search",
+        &json!({"query": "alpha|beta", "regex": true}),
+    )
+    .expect("regex");
+    r.s.dispatch("preview.log.level", &json!({"level": "error"}))
+        .expect("severity");
+    assert!(pump(&mut r.s, |s| visible_text(s, pane).len() == 2));
+    r.s.dispatch(
+        "preview.log.time_range",
+        &json!({"from": "2024-05-01 10:30:00"}),
+    )
+    .expect("time");
+    assert!(pump(&mut r.s, |s| visible_text(s, pane).len() == 1));
+    assert!(visible_text(&r.s, pane)[0].contains("alpha"));
+    r.s.dispatch("preview.log.order", &json!({"mode": "concatenate"}))
+        .expect("concat");
+    assert!(pump(&mut r.s, |s| s
+        .preview_slot(pane)
+        .and_then(|s| s.log())
+        .is_some_and(|v| !v.chronological)));
+    assert_eq!(visible_text(&r.s, pane).len(), 1);
+    assert!(
+        r.s.dispatch("preview.log.follow", &json!({"on": true}))
+            .is_err()
+    );
+    r.select(&["a.log", "c.log"]);
+    assert!(pump(&mut r.s, |s| s
+        .preview_slot(pane)
+        .and_then(|s| s.log())
+        .is_some_and(|v| v
+            .sources
+            .get(1)
+            .is_some_and(|s| s.entry.name == "c.log"))));
+    assert_eq!(
+        r.s.preview_slot(pane)
+            .expect("slot")
+            .log()
+            .expect("log")
+            .filter
+            .query,
+        "alpha|beta"
+    );
+    r.select(&["c.log"]);
+    assert!(pump(&mut r.s, |s| s.preview_slot(pane).is_some_and(
+        |slot| slot.subjects.len() == 1 && slot.log().is_some_and(|v| v.sources.is_empty())
+    )));
+}
+
+#[test]
+fn clearing_filters_restores_records_and_preserves_order_and_display_settings() {
+    let mut r = rig(&[
+        ("a.log", b"2024-05-01 11:00:00 ERROR alpha\n"),
+        ("b.log", b"2024-05-01 10:00:00 INFO beta\n"),
+    ]);
+    r.select(&["a.log", "b.log"]);
+    wait_multi(&mut r, 2);
+    let pane = r.preview;
+    for (command, params) in [
+        ("preview.log.order", json!({"mode": "chronological"})),
+        ("preview.log.fold", json!({"mode": "expand"})),
+        (
+            "preview.log.search",
+            json!({"query": "alpha", "regex": true}),
+        ),
+        ("preview.log.level", json!({"level": "error"})),
+        (
+            "preview.log.time_range",
+            json!({"from": "2024-05-01 10:30:00", "to": "2024-05-01 12:00:00"}),
+        ),
+    ] {
+        r.s.dispatch(command, &params).expect("configure");
+    }
+    assert!(pump(&mut r.s, |s| visible_text(s, pane).len() == 1));
+    for bad in [
+        json!([]),
+        json!({"pane": "bad"}),
+        json!({"pane": -1}),
+        json!({"pane": 9999}),
+    ] {
+        assert!(r.s.dispatch("preview.log.clear_filters", &bad).is_err());
+    }
+    r.s.dispatch("preview.log.clear_filters", &json!({"pane": pane}))
+        .expect("clear");
+    assert!(pump(&mut r.s, |s| visible_text(s, pane).len() == 2));
+    let view = r.s.preview_slot(pane).expect("slot").log().expect("log");
+    assert!(view.filter.is_empty());
+    assert!(view.filter_error.is_none());
+    assert!(view.chronological && view.expand_all && view.columns);
+    assert!(visible_text(&r.s, pane)[0].contains("beta"));
+    r.s.dispatch("preview.log.search", &json!({"query": "[", "regex": true}))
+        .expect("bad regex");
+    assert!(pump(&mut r.s, |s| s
+        .preview_slot(pane)
+        .and_then(|s| s.log())
+        .is_some_and(|v| v.filter_error.is_some())));
+    r.s.dispatch("preview.log.clear_filters", &json!({"pane": pane}))
+        .expect("clear error");
+    assert!(pump(&mut r.s, |s| s
+        .preview_slot(pane)
+        .and_then(|s| s.log())
+        .is_some_and(
+            |v| v.filter.is_empty() && v.filter_error.is_none()
+        )));
+}
+
+#[test]
+fn selected_files_stay_loaded_until_explicit_reload_after_changes() {
+    let mut r = rig(&[
+        ("a.log", b"2024-05-01 11:00:00 ERROR alpha\n"),
+        ("b.log", b"2024-05-01 10:00:00 INFO beta-longer\n"),
+    ]);
+    r.s.layout.focus_pane(r.files).expect("files");
+    r.s.dispatch("view.sort.size", &json!({}))
+        .expect("sort by size");
+    r.select(&["a.log", "b.log"]);
+    wait_multi(&mut r, 2);
+    let pane = r.preview;
+    r.s.dispatch("preview.log.order", &json!({"mode": "chronological"}))
+        .expect("order");
+    r.s.dispatch("preview.log.search", &json!({"query": "alpha"}))
+        .expect("search");
+    assert!(pump(&mut r.s, |s| visible_text(s, pane).len() == 1));
+    let doc =
+        r.s.preview_slot(pane)
+            .expect("slot")
+            .log()
+            .expect("log")
+            .doc
+            .clone();
+    std::fs::write(
+        r._dir.path().join("a.log"),
+        b"2024-05-01 11:00:00 ERROR alpha\n2024-05-01 12:00:00 ERROR alpha-new\n",
+    )
+    .expect("append");
+    let location = r.s.layout.state(r.files).expect("pane").location.clone();
+    r.s.refresh_read(location).expect("refresh listing");
+    assert!(pump(&mut r.s, |s| s
+        .preview_slot(pane)
+        .is_some_and(|slot| slot.updates_available)));
+    let view = r.s.preview_slot(pane).expect("slot").log().expect("log");
+    assert_eq!(
+        view.sources[0].entry.name, "a.log",
+        "metadata-driven sorting does not reload"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&doc, &view.doc),
+        "keep the loaded document"
+    );
+    assert_eq!(visible_text(&r.s, pane).len(), 1);
+    for bad in [
+        json!([]),
+        json!({"pane": "bad"}),
+        json!({"pane": -1}),
+        json!({"pane": 9999}),
+    ] {
+        assert!(r.s.dispatch("preview.reload", &bad).is_err());
+    }
+    r.s.dispatch("preview.reload", &json!({"pane": pane}))
+        .expect("reload");
+    assert!(pump(&mut r.s, |s| visible_text(s, pane).len() == 2));
+    let slot = r.s.preview_slot(pane).expect("slot");
+    assert!(!slot.updates_available);
+    let view = slot.log().expect("log");
+    assert_eq!(
+        view.sources[0].entry.name, "b.log",
+        "explicit reload uses current listing order"
+    );
+    assert!(view.chronological);
+    assert_eq!(view.filter.query, "alpha");
+    assert!(!std::sync::Arc::ptr_eq(&doc, &view.doc));
+    r.select(&["b.log"]);
+    assert!(pump(&mut r.s, |s| s
+        .preview_slot(pane)
+        .is_some_and(|slot| slot.subjects.len() == 1)));
+    assert!(
+        r.s.dispatch("preview.reload", &json!({"pane": pane}))
+            .is_err()
+    );
+}
+
+#[test]
+fn selection_changes_even_with_an_unchanged_cursor_and_sort_order() {
+    let mut r = rig(&[
+        ("a.txt", b"alpha\n"),
+        ("b.txt", b"beta\n"),
+        ("c.txt", b"gamma\n"),
+    ]);
+    r.select(&["a.txt", "b.txt"]);
+    wait_multi(&mut r, 2);
+    let pane = r.preview;
+    let cursor = r.s.layout.state(r.files).expect("pane").listing.focused_row;
+    r.s.layout
+        .state_mut(r.files)
+        .expect("pane")
+        .listing
+        .toggle("c.txt", cursor);
+    wait_multi(&mut r, 3);
+    assert_eq!(
+        r.s.layout.state(r.files).expect("pane").listing.focused_row,
+        cursor
+    );
+    r.s.layout
+        .state_mut(r.files)
+        .expect("pane")
+        .listing
+        .sort
+        .dir = fm_layout::SortDir::Desc;
+    r.s.invalidate_view(r.files);
+    assert!(pump(&mut r.s, |s| s
+        .preview_slot(pane)
+        .and_then(|s| s.log())
+        .is_some_and(|v| v
+            .sources
+            .first()
+            .is_some_and(|source| source.entry.name == "c.txt"))));
+    r.s.dispatch("preview.log.search", &json!({"query": "beta"}))
+        .expect("search");
+    assert!(pump(&mut r.s, |s| visible_text(s, pane) == ["beta"]));
+    r.s.layout
+        .state_mut(r.files)
+        .expect("pane")
+        .listing
+        .clear_selection();
+    r.cursor("a.txt");
+    assert!(pump(&mut r.s, |s| s.preview_slot(pane).is_some_and(
+        |slot| slot.subjects.len() == 1 && matches!(slot.body, Body::Static(_))
+    )));
+}
+
+#[test]
+fn gzip_rotations_and_missing_sources_are_not_silently_dropped() {
+    use std::io::Write;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(b"update-alternatives 2024-05-01 09:00:00: ERROR beta\n")
+        .expect("compress");
+    let compressed = gz.finish().expect("gz");
+    let mut r = rig(&[
+        ("a.log", b"2024-05-01 10:00:00 ERROR alpha\n"),
+        ("b.log.1.gz", &compressed),
+        ("gone.log", b"x"),
+    ]);
+    std::fs::remove_file(r._dir.path().join("gone.log")).expect("remove");
+    r.select(&["a.log", "b.log.1.gz", "gone.log"]);
+    wait_multi(&mut r, 3);
+    let pane = r.preview;
+    let view = r.s.preview_slot(pane).expect("slot").log().expect("log");
+    assert!(
+        view.sources[2]
+            .note
+            .as_ref()
+            .expect("error")
+            .contains("Cannot preview:")
+    );
+    assert_eq!(view.doc.read().expect("doc").records.len(), 2);
+    r.s.dispatch("preview.log.order", &json!({"mode": "chronological"}))
+        .expect("sort");
+    assert!(pump(&mut r.s, |s| visible_text(s, pane)[0].contains("beta")));
+}
+
+#[test]
+fn images_and_mixed_formats_use_cards_and_source_count_is_bounded() {
+    let mut r = rig(&[("a.txt", b"text"), ("b.bin", &[0, 1, 2, 3])]);
+    r.select(&["a.txt", "b.bin"]);
+    let pane = r.preview;
+    assert!(pump(
+        &mut r.s,
+        |s| matches!(s.preview_slot(pane).map(|s| &s.body), Some(Body::Grid(items)) if items.len() == 2)
+    ));
+    assert!(!r.s.command_enabled("preview.log.order"));
+    let files: Vec<_> = (0..=fm_engine::preview_multi::MAX_SOURCES)
+        .map(|i| (format!("{i:02}.txt"), vec![b'x']))
+        .collect();
+    let refs: Vec<_> = files
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_slice()))
+        .collect();
+    let mut r = rig(&refs);
+    let names: Vec<_> = refs.iter().map(|(n, _)| *n).collect();
+    r.select(&names);
+    let pane = r.preview;
+    assert!(pump(
+        &mut r.s,
+        |s| matches!(s.preview_slot(pane).map(|s| &s.body), Some(Body::Static(p)) if matches!(&**p, Preview::Error(e) if e.contains("at most 64")))
+    ));
 }
 
 #[test]
@@ -278,6 +656,49 @@ fn log_mode_filters_and_follows() {
 }
 
 #[test]
+fn combined_load_earlier_expands_all_sources_and_preserves_filters() {
+    let payload: String = (0..30_000)
+        .map(|i| {
+            format!(
+                "2024-05-01 10:00:00 INFO record{i:05} {}\n",
+                "x".repeat(180)
+            )
+        })
+        .collect();
+    assert!(payload.len() > 4 << 20 && payload.len() < 8 << 20);
+    let mut r = rig(&[("a.log", payload.as_bytes()), ("b.log", payload.as_bytes())]);
+    r.select(&["a.log", "b.log"]);
+    wait_multi(&mut r, 2);
+    let pane = r.preview;
+    let view = r.s.preview_slot(pane).expect("slot").log().expect("log");
+    assert!(view.doc.read().expect("doc").more_before);
+    assert!(view.doc.read().expect("doc").records.len() < 60_000);
+    r.s.dispatch("preview.log.search", &json!({"query": "record00000"}))
+        .expect("search");
+    assert!(pump(&mut r.s, |s| visible_text(s, pane).is_empty()));
+    r.s.dispatch("preview.log.order", &json!({"mode": "chronological"}))
+        .expect("order");
+    r.s.dispatch("preview.log.earlier", &json!({}))
+        .expect("earlier");
+    assert!(pump(&mut r.s, |s| {
+        s.preview_slot(pane).and_then(|s| s.log()).is_some_and(|v| {
+            v.window_bytes == 16 << 20
+                && !v.doc.read().expect("doc").more_before
+                && v.filtered.as_ref().is_some_and(|f| f.len() == 2)
+        })
+    }));
+    let view = r.s.preview_slot(pane).expect("slot").log().expect("log");
+    assert!(view.chronological);
+    assert_eq!(view.filter.query, "record00000");
+    let doc = view.doc.read().expect("doc");
+    assert_eq!(doc.records.len(), 60_000);
+    assert_ne!(
+        view.record_key(0, &doc.records[0]),
+        view.record_key(30_000, &doc.records[30_000])
+    );
+}
+
+#[test]
 fn log_marker_command_sets_and_clears() {
     let mut r = rig(&[("app.log", &monolog(5))]);
     r.cursor("app.log");
@@ -330,6 +751,7 @@ fn preview_commands_without_a_preview_pane_fail_gracefully() {
         "preview.log.follow",
         "preview.log.mark",
         "preview.log.earlier",
+        "preview.log.order",
     ] {
         assert!(!s.command_enabled(id), "{id}");
         assert!(s.dispatch(id, &json!({"mode": "in"})).is_err(), "{id}");

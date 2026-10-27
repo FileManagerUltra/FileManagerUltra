@@ -3,6 +3,7 @@
 //! No UI types and no filesystem access: the engine owns sessions, the UI paints
 //! [`Snapshot`]s and sends bytes back. All pty I/O runs on helper threads.
 
+mod charset;
 mod emulator;
 mod quote;
 mod session;

@@ -3,6 +3,28 @@
 ## Purpose
 TBD - created by archiving change sftp-backend. Update Purpose after archive.
 ## Requirements
+### Requirement: SFTP failures are actionable in the connect dialog
+Failed SFTP connections initiated by opening a server SHALL show an error in
+the connection dialog, including silent attempts with remembered credentials.
+The dialog SHALL preserve non-secret server/profile fields and allow retrying.
+Unreachable-server and timeout errors SHALL suggest checking the address,
+network or VPN, and firewall without claiming a particular network cause.
+Form validation errors SHALL also remain in the dialog.
+
+#### Scenario: Remembered login cannot reach the NAS
+- **WHEN** a remembered-password connection fails because the server is unreachable
+- **THEN** a prefilled connection dialog opens with the error and a Connect button
+- **AND** the error is not shown only in the status bar
+
+#### Scenario: Opening an unconnected saved server
+- **WHEN** a user opens an SFTP server row without an existing backend
+- **THEN** navigation starts the connection flow without an unsupported-backend error
+- **AND** the current pane location is preserved until the connection succeeds
+
+#### Scenario: User cancelled an explicit connection dialog
+- **WHEN** an in-flight connection fails after its explicit dialog was cancelled
+- **THEN** the cancelled dialog is not reopened and the error is reported in the status bar
+
 ### Requirement: Typed addresses, forgetting hosts and key formats
 Typing an `sftp://` address with no registered connection SHALL switch the pane to the SFTP type and show the connect form for that server. Trusted host keys SHALL be listed in Preferences and be removable through `remote.hostkey.forget`; the next connect SHALL ask again. `known_hosts.json` SHALL be re-read on every connect. PuTTY `.ppk` keys SHALL be refused with a message explaining how to export an OpenSSH key. Poll/keepalive/operation timeouts SHALL be configurable in Preferences.
 
@@ -38,4 +60,3 @@ Remote timeouts and poll interval SHALL apply to both protocols under `remote_*`
 #### Scenario: Old preferences
 - **WHEN** `prefs.toml` has `sftp_poll_secs = 10`
 - **THEN** the remote poll interval is 10 s
-

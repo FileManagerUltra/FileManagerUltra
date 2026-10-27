@@ -128,13 +128,15 @@ pub fn plan(s: &mut Session, uri: &VfsUri) -> OpenPlan {
     }
 }
 
-fn local_path(uri: &VfsUri) -> Result<PathBuf, FmError> {
+pub(crate) fn local_path(uri: &VfsUri) -> Result<PathBuf, FmError> {
     if uri.scheme() != Scheme::File {
         return Err(FmError::Unsupported(
             "only local files can be opened; copy it to a local folder first",
         ));
     }
-    let path = PathBuf::from(uri.path_str());
+    let path = uri
+        .local_path()
+        .ok_or_else(|| FmError::invalid_uri(uri.to_string()))?;
     if !path.is_absolute() {
         return Err(FmError::invalid_uri(uri.to_string()));
     }

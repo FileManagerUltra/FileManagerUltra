@@ -20,7 +20,7 @@ This document is the source of truth for the crate map, layering, data model, co
 
 **Non-goals (v1)**
 
-- Archive browse/extract, image preview, tabs, dual-pane-only mode, plugins, file content search.
+- Archive browse/extract, dual-pane-only mode, plugins. (Image preview, workspace tabs and Find Files with content search have since landed.)
 - CLI, JSON control channel and MCP — *the command registry exists from day one* (the UI dispatches through it), but the automation crates are a later change. Nothing else may bypass the registry.
 
 ---
@@ -84,7 +84,7 @@ pub struct VfsUri {           // serializable, hashable, ordered
 
 - `VfsUri::join`, `.parent()`, `.file_name()`, `.is_ancestor_of()` — all pure and total (return `Option`/`Result`, never panic).
 - Display form doubles as the address bar: `file:///home/x`, `smb://server/share/dir`, `sftp://user@host:22/abs/path`.
-- Windows drive letters normalize to `file:///C:/...` internally and display as `C:\` in the UI (`fm-vfs/src/windows_path.rs`).
+- Windows drive letters normalize to `file:///C:/...` internally and display as `C:\` in the UI; UNC paths are `file:///server/share/...`. `VfsUri::local_path()` (`fm_vfs::native_path`) is the only uri → OS-path conversion. On Windows `file:///` is **This PC**: `fs-local` lists the existing drive roots there (A:–Z:), it has no OS path, and Up from a drive root returns to it.
 
 ### 4.2 `Entry`
 
@@ -144,6 +144,12 @@ SMB jobs get their own scheduler lane (§7) — a slow share can never starve lo
 1. An `Sftp` pane without a connection shows the **Saved servers** folder (`servers:///`, `ServersFs` over the SFTP profiles). `remote.connect.dialog` (File ▸ Connect to Server…, the pane's Connect… button) or opening a saved server / typed `sftp://` address raises the connect popup (host, port, user, *password* | *key file*, start folder, save-as, remember); `servers.edit` prefills it from a profile. `PaneKind::Sftp` is a Files pane on a server (`PaneKind::is_files`).
 2. `engine` opens the connection on the **`sftp` lane** (`russh` handshake + `sftp` subsystem, host-key check), emitting `JobEvent`s; the dialog shows a spinner and stays responsive.
 3. On success the backend is registered in `VfsRegistry` under its authority (`user@host:port`) and the focused pane's `location` becomes `sftp://user@host/<start-dir>`; tree root and listing fill through the normal `ReadDir` → `DirCache` path. On failure: `FmError::Backend` → dialog shows the reason + Retry; the pane is untouched.
+
+Silent saved-server attempts using remembered passwords retain a non-secret
+retry prompt. If unreachable or refused, they open that prompt with the error
+instead of reporting only in the status bar. Network failures suggest checking
+the address, VPN/network and firewall; cancelling an explicit popup does not
+reopen it when its in-flight attempt fails. Form errors also stay in the popup.
 
 **Pane behaviour while remote — identical to local, with three differences:**
 
@@ -275,6 +281,8 @@ UI thread (eframe)                 engine workers                backends
 - **UI contract:** dialogs and the jobs panel (`fm-ui::dialogs`, `fm-ui::jobs`) only dispatch command ids; dispatch failures surface as `Session::notice` in the status bar.
 - **Thumbnails (`thumbnails-and-open`):** `engine::thumbs::ThumbService` owns its own pool (≤ 4 workers, *not* a job lane — a folder of images must not queue behind file copies) and a per-pane generation counter. The grid reports the visible window (`preview.thumbs.visible`); the engine queues visible entries, then one screenful after and one before, and drops results whose generation is stale. Decoded RGBA lives in a 192 MiB LRU; PNGs go to `<cache>/thumbs` (256 MiB cap, `0600`/`0700`, temp + rename). Only `file://` entries are thumbnailed.
 
+- **Walkers outside the lanes:** Properties folder sizes (`props_cmds`, thread `fm-props`), Find Files (`search_cmds`, `fm-search`) and the Open With application scan (`openwith_cmds`, `fm-apps`) run on their own short-lived threads so a long walk never queues behind file jobs. Each publishes into a `Mutex` the UI reads every frame and stops on an `AtomicBool` set by its owner's `Drop` (closing the window cancels the walk). Walks never follow symlinks, are capped (5 M entries / depth 256 for sizes; 10 k results, depth 64 and 64 MiB read per file for search) and skip SMB, which must stay on its lane.
+
 ### Watching
 
 `DirCache::invalidate(uri)` (revision bump) is the only mutation path — the cache is invalidated, never patched. The `notify`-based watcher (non-recursive, per watched directory, 100 ms debounce) lands with the ops change; until then panes refresh via `nav.refresh` (`Ctrl+R`), and remotes will refresh on focus regain + a 5 s poll while visible.
@@ -333,6 +341,7 @@ Dark mode is a v1 feature, not a later polish pass: **every widget is built agai
 - **Preference model.** `Session::prefs.theme: egui::ThemePreference` = `System` (default) | `Light` | `Dark`. At startup and on change, `fm-app` calls `ctx.set_theme(pref)`; `ctx.system_theme()` supplies the resolved theme when `System` is selected. egui's `Theme`/`ThemePreference` types are used directly rather than a home-grown enum, so system-following works for free on all three platforms.
 - **Commands** (so the switch is scriptable later): `view.theme.dark`, `view.theme.light`, `view.theme.system`, `view.theme.toggle` — registered in the engine like every other behaviour, menu path `View ▸ Theme`, shortcut `Ctrl+Shift+T` for toggle. They mutate `Prefs` only; the next frame re-renders.
 - **Persistence:** `engine::prefs` reads/writes `prefs.toml` under the platform config dir (`$XDG_CONFIG_HOME/<slug>`, `~/Library/Application Support/<slug>`, `%APPDATA%\<slug>`) — written on change, loaded before the first frame. Session/pane persistence is a separate (later) concern; only prefs live here in v1.
+- **Native window geometry:** the shell captures the last non-minimized normal size (native logical pixels), outer position (physical desktop pixels) and native scale in `Prefs`, alongside maximized state. The existing atomic, owner-only preferences writer saves these once they have been stable for a second and again on exit, so killed processes keep the geometry. A window manager that places the new window itself is corrected by re-sending the position for 1.5 s after launch (saving is suspended meanwhile). Startup restores them during native window creation, rejects invalid geometry, bounds size to available monitors and avoids positioning on a disconnected monitor. Native Wayland retains compositor-controlled placement.
 - **Derived egui visuals:** `fm-app` maps the resolved theme to `Theme::default_visuals()` and then overrides only the tokens egui needs (panel fill, selection, hyperlink, faint grid), so egui's built-in widgets (scrollbars, tooltips, menus) match without hand-tuning 40 fields.
 - **Testing:** `egui_kittest` snapshots run **twice** (dark and light) for the pane/tree/listing/dialog states; a token-coverage test asserts `Tokens::dark()` and `Tokens::light()` have identical field sets (struct-of-fields, destructured exhaustively in both constructors), and a CI grep forbids literal `Color32::` outside `theme.rs`.
 
@@ -394,7 +403,19 @@ Change 3 extends `security` with drag & drop and `ops` rules (destination contai
 
 ### Preview pane (`pane-preview`)
 
-`fm-preview` (L1) turns a `Vfs` entry into a pure `Preview` model (text/structured/markdown/image/hex/dir/log/meta/error): magic-byte sniffing, syntect highlighting mapped to semantic `Class`es, capped reads, `catch_unwind` containment. `engine::preview_cmds` owns a `PreviewHub` of per-pane `PreviewSlot`s: the target is the Files pane's cursor entry (or a pinned pane), changes are debounced (120 ms), rendered on the pane's lane with a 3 s budget, and results come back through an inbox tagged with a token so stale renders are dropped. Log files become a `LogView` over `Arc<RwLock<LogDoc>>`: tail-first 8 MiB window, "Load earlier" chunks (64 MiB cap), filters run as jobs and are accepted only for the matching `rev`, Follow polls every 500 ms and survives truncate/rotation. `fm-ui::preview` only draws; colours come from `Tokens::{syntax, level, status}`. Commands: `view.preview.toggle`, `pane.preview.source`, `preview.{zoom,toggle_wrap,toggle_pretty}`, `preview.log.*`.
+`fm-preview` (L1) turns a `Vfs` entry into a pure `Preview` model (text/structured/markdown/image/hex/dir/log/meta/error): magic-byte sniffing, syntect highlighting mapped to semantic `Class`es, capped reads, `catch_unwind` containment. `engine::preview_cmds` owns a `PreviewHub` of per-pane `PreviewSlot`s: the target is the Files pane's selected entries in display order, falling back to its cursor (or a pinned pane). Changes are debounced (120 ms), rendered on the pane's lane with a 15 s budget, and results come back through an inbox tagged with a token so stale renders are dropped. Single log files become a `LogView` over `Arc<RwLock<LogDoc>>`: tail-first 8 MiB window, "Load earlier" chunks (64 MiB cap), filters run as jobs and are accepted only for the matching `rev`, Follow polls every 500 ms and survives truncate/rotation. `fm-ui::preview` only draws; colours come from `Tokens::{syntax, level, status}`. Commands: `view.preview.toggle`, `pane.preview.source`, `preview.{zoom,toggle_wrap,toggle_pretty}`, `preview.log.*`.
+
+`engine::preview_multi` combines up to 64 selected text/log sources into one
+document with source-record ranges; images and mixed formats become a grid of
+labelled preview cards. The total initial log read window is 8 MiB, expanded by
+Load earlier up to 32 MiB, shared across sources; gzip decompression and record
+counts are separately bounded (100,000 records across the selection). Source
+failures and truncation remain visible. `preview.log.order` switches concatenation
+to a stable chronological index (unknown timestamps last) on the filter worker,
+so search/severity/time filters span all loaded sources without duplicating
+their contents. Live tail is single-file only. Source filenames and fold controls
+are excluded from text selection; log bodies use selectable labels and a
+virtualized cumulative row index for multiline expansion.
 
 ### Thumbnails and file activation (`thumbnails-and-open`)
 

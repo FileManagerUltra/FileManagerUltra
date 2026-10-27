@@ -102,6 +102,20 @@ fn is_anchored(text: &str) -> bool {
 
 /// Resolve what the user typed into a uri: `~` is the home directory, relative paths are
 /// relative to `base`, `.` and `..` segments are applied, local and remote forms both work.
+/// Windows-only forms: a bare drive (`D:`) is its root, `This PC` is the drive list.
+fn windows_shortcut(text: &str, windows: bool) -> Option<VfsUri> {
+    if !windows {
+        return None;
+    }
+    if text.eq_ignore_ascii_case("this pc") {
+        return Some(VfsUri::root_file());
+    }
+    match text.as_bytes() {
+        [d, b':'] if d.is_ascii_alphabetic() => VfsUri::parse(&format!("{text}\\")).ok(),
+        _ => None,
+    }
+}
+
 pub fn resolve(base: &VfsUri, text: &str) -> Result<VfsUri, FmError> {
     let text = text.trim();
     if text.is_empty() || text.len() > MAX_EDIT_BYTES {
@@ -115,6 +129,9 @@ pub fn resolve(base: &VfsUri, text: &str) -> Result<VfsUri, FmError> {
     } else {
         text
     };
+    if let Some(uri) = windows_shortcut(text, cfg!(windows)) {
+        return Ok(uri);
+    }
     if is_anchored(text) {
         return VfsUri::parse(text);
     }
@@ -140,7 +157,7 @@ fn split_typed(text: &str) -> (&str, &str) {
 
 fn display_of(uri: &VfsUri) -> String {
     if uri.scheme() == Scheme::File {
-        uri.path_str().to_string()
+        crate::item_cmds::display_path(uri)
     } else {
         uri.as_str()
     }
@@ -408,6 +425,16 @@ mod tests {
             .as_ref()
             .map(|e| e.suggestions.iter().map(|x| x.text.clone()).collect())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn windows_drive_and_this_pc_shortcuts() {
+        let d = windows_shortcut("d:", true).expect("drive");
+        assert_eq!(d.path_str(), "/d:");
+        assert_eq!(windows_shortcut("This PC", true), Some(VfsUri::root_file()));
+        assert_eq!(windows_shortcut("d:", false), None);
+        assert_eq!(windows_shortcut("dd:", true), None);
+        assert_eq!(windows_shortcut("1:", true), None);
     }
 
     #[test]

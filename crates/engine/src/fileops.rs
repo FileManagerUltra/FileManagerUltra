@@ -76,6 +76,11 @@ pub enum OpRequest {
         name: String,
     },
     Undo(UndoRecord),
+    /// Set the permission bits of each item (not recursive, not undoable).
+    Chmod {
+        sources: Vec<VfsUri>,
+        mode: u32,
+    },
     /// Fetch a remote file to a private temp folder and hand it to the default application.
     OpenRemote {
         uri: VfsUri,
@@ -106,7 +111,7 @@ impl OpRequest {
             Self::Mkdir { .. } => OpKind::Mkdir,
             Self::NewFile { .. } => OpKind::NewFile,
             Self::Rename { .. } => OpKind::Rename,
-            Self::Undo(_) => return None,
+            Self::Undo(_) | Self::Chmod { .. } => return None,
             Self::OpenRemote { .. } => return None,
         })
     }
@@ -125,6 +130,9 @@ impl OpRequest {
             Self::NewFile { name, .. } => format!("Create file {name}"),
             Self::Rename { uri, name } => format!("Rename {} to {name}", leaf(uri)),
             Self::Undo(_) => "Undo".to_string(),
+            Self::Chmod { sources, mode } => {
+                format!("Set permissions {mode:o} on {}", items(sources.len()))
+            }
             Self::OpenRemote { name, .. } => format!("Open {name}"),
         }
     }
@@ -134,7 +142,9 @@ impl OpRequest {
             Self::Copy { dest, .. } | Self::Move { dest, .. } | Self::Duplicate { dest, .. } => {
                 Some(dest.clone())
             }
-            Self::Trash { sources } | Self::DeletePermanent { sources } => sources.first().cloned(),
+            Self::Trash { sources }
+            | Self::DeletePermanent { sources }
+            | Self::Chmod { sources, .. } => sources.first().cloned(),
             Self::Mkdir { parent, .. } | Self::NewFile { parent, .. } => Some(parent.clone()),
             Self::Rename { uri, .. } => Some(uri.clone()),
             Self::Undo(record) => undo_uris(record).into_iter().next(),
@@ -151,7 +161,9 @@ impl OpRequest {
                 all.push(dest.clone());
                 all
             }
-            Self::Trash { sources } | Self::DeletePermanent { sources } => sources.clone(),
+            Self::Trash { sources }
+            | Self::DeletePermanent { sources }
+            | Self::Chmod { sources, .. } => sources.clone(),
             Self::Mkdir { parent, .. } | Self::NewFile { parent, .. } => vec![parent.clone()],
             Self::Rename { uri, .. } => vec![uri.clone()],
             Self::Undo(record) => undo_uris(record),
@@ -175,7 +187,9 @@ impl OpRequest {
                 add(Some(dest.clone()));
                 sources.iter().for_each(|s| add(s.parent()));
             }
-            Self::Trash { sources } | Self::DeletePermanent { sources } => {
+            Self::Trash { sources }
+            | Self::DeletePermanent { sources }
+            | Self::Chmod { sources, .. } => {
                 sources.iter().for_each(|s| add(s.parent()));
             }
             Self::Mkdir { parent, .. } | Self::NewFile { parent, .. } => add(Some(parent.clone())),
@@ -474,6 +488,9 @@ fn run(
                 done: 1,
                 ..OpReport::default()
             }
+        }
+        OpRequest::Chmod { sources, mode } => {
+            fm_ops::set_permissions(backends, sources, *mode, &octx)
         }
         OpRequest::OpenRemote { .. } => return Ok(()),
     };

@@ -49,7 +49,7 @@ pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, f
     let Some(path) = s.layout.state(pane).map(|p| {
         let loc = &p.location;
         if loc.scheme() == fm_vfs::Scheme::File {
-            loc.path_str().to_string()
+            fm_engine::item_cmds::display_path(loc)
         } else if matches!(
             loc.scheme(),
             fm_vfs::Scheme::Network | fm_vfs::Scheme::Servers

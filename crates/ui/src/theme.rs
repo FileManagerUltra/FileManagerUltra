@@ -86,14 +86,16 @@ impl Tokens {
             term_cursor: Color32::from_rgb(0x5c, 0xb2, 0xff),
             term_selection: Color32::from_rgb(0x2b, 0x4a, 0x6e),
             ansi: [
-                Color32::from_rgb(0x1d, 0x1f, 0x21),
-                Color32::from_rgb(0xcc, 0x66, 0x66),
-                Color32::from_rgb(0xb5, 0xbd, 0x68),
-                Color32::from_rgb(0xf0, 0xc6, 0x74),
-                Color32::from_rgb(0x81, 0xa2, 0xbe),
-                Color32::from_rgb(0xb2, 0x94, 0xbb),
-                Color32::from_rgb(0x8a, 0xbe, 0xb7),
-                Color32::from_rgb(0xc5, 0xc8, 0xc6),
+                // Normal colours follow the Tango palette (GNOME Terminal's default) so
+                // curses/dialog backgrounds look as they do elsewhere.
+                Color32::from_rgb(0x2e, 0x34, 0x36),
+                Color32::from_rgb(0xcc, 0x00, 0x00),
+                Color32::from_rgb(0x4e, 0x9a, 0x06),
+                Color32::from_rgb(0xc4, 0xa0, 0x00),
+                Color32::from_rgb(0x34, 0x65, 0xa4),
+                Color32::from_rgb(0x75, 0x50, 0x7b),
+                Color32::from_rgb(0x06, 0x98, 0x9a),
+                Color32::from_rgb(0xd3, 0xd7, 0xcf),
                 Color32::from_rgb(0x66, 0x69, 0x6d),
                 Color32::from_rgb(0xff, 0x6b, 0x6b),
                 Color32::from_rgb(0xa5, 0xe0, 0x75),
@@ -285,6 +287,7 @@ pub fn apply_to(ctx: &Context, tokens: &Tokens) {
 
     let padding = tokens.padding;
     ctx.style_mut_of(theme, |style| {
+        style.always_scroll_the_only_direction = false;
         style.spacing.item_spacing = Vec2::new(padding, padding);
         for font in style.text_styles.values_mut() {
             font.family = egui::FontFamily::Monospace;
@@ -296,6 +299,83 @@ pub fn apply_to(ctx: &Context, tokens: &Tokens) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shift_wheel_scrolls_only_the_hovered_area_horizontally() {
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            for (shift, horizontal, delta) in [
+                (true, true, Vec2::new(0.0, -80.0)),
+                (true, true, Vec2::new(-80.0, 0.0)),
+                (true, false, Vec2::new(0.0, -80.0)),
+                (false, true, Vec2::new(0.0, -80.0)),
+            ] {
+                let ctx = Context::default();
+                apply_to(&ctx, &tokens);
+                ctx.set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                let mut offsets = [Vec2::ZERO; 2];
+                for frame in 0..30 {
+                    let mut events = vec![egui::Event::PointerMoved(egui::pos2(100.0, 100.0))];
+                    if frame == 3 {
+                        events.push(egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta,
+                            phase: egui::TouchPhase::Move,
+                            source: egui::MouseWheelSource::Unknown,
+                            modifiers: if shift {
+                                egui::Modifiers::SHIFT
+                            } else {
+                                egui::Modifiers::NONE
+                            },
+                        });
+                    }
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                Vec2::new(700.0, 300.0),
+                            )),
+                            time: Some(frame as f64 / 60.0),
+                            events,
+                            ..Default::default()
+                        },
+                        |ctx| {
+                            egui::CentralPanel::default().show(ctx, |ui| {
+                                ui.columns(2, |uis| {
+                                    for (index, ui) in uis.iter_mut().enumerate() {
+                                        let area = if horizontal {
+                                            egui::ScrollArea::both()
+                                        } else {
+                                            egui::ScrollArea::vertical()
+                                        };
+                                        let out =
+                                            area.id_salt(index).auto_shrink(false).show(ui, |ui| {
+                                                ui.allocate_space(Vec2::new(1200.0, 1200.0));
+                                            });
+                                        offsets[index] = out.state.clamped_offset();
+                                    }
+                                });
+                            });
+                        },
+                    );
+                    output.textures_delta.clear();
+                }
+                assert_eq!(offsets[1], Vec2::ZERO, "unhovered area does not scroll");
+                if shift {
+                    assert_eq!(offsets[0].y, 0.0, "Shift-wheel never becomes vertical");
+                    if horizontal {
+                        assert!(offsets[0].x > 20.0, "Shift-wheel scrolls horizontally");
+                    }
+                } else {
+                    assert_eq!(offsets[0].x, 0.0);
+                    assert!(offsets[0].y > 20.0, "ordinary wheel remains vertical");
+                }
+            }
+        }
+    }
 
     /// Destructuring without `..` is exhaustive at compile time: adding a field to
     /// `Tokens` fails this test until both palettes cover it.

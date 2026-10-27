@@ -33,6 +33,7 @@ The scaffolded preferences file SHALL contain only non-secret settings (theme, w
 #### Scenario: Prefs schema has no secret slots
 - **WHEN** the `Prefs` type and its serialized form are inspected by test
 - **THEN** no field can hold a password/passphrase/token (the type is closed: theme + window fields only)
+- **AND** saved window geometry contains only bounded numeric size, position and scale-factor fields, using the existing owner-only atomic preferences writer
 
 #### Scenario: Redaction in errors
 - **WHEN** a backend error message is constructed from a URI or connection string containing `user:password@host`
@@ -166,3 +167,5 @@ A remote file opened with its default application SHALL be downloaded to an owne
 - **WHEN** the user opens a file on a remote location
 - **THEN** a job with progress downloads it to the private folder, then the default app opens it, and the folder is removed when the app quits
 
+### Requirement: Search, sizes and Open With are bounded
+Find Files and Properties walks SHALL NOT follow symlinks and SHALL be capped (see `file-search`; sizes stop at 5 M entries or depth 256). Wildcard patterns are capped at 1024 bytes and 64 alternatives and matched without backtracking blow-up. Open With SHALL parse `.desktop` `Exec` lines without a shell, drop field codes other than `%f %F %u %U %%`, cap arguments at 256 and launch detached; chmod masks modes to `0o7777` and refuses to change a symlink.

@@ -29,7 +29,10 @@ fn store(s: &mut Session, cut: bool) {
     }
     let text = sources
         .iter()
-        .map(|u| u.path_str())
+        .map(|u| {
+            u.local_path_string()
+                .unwrap_or_else(|| u.path_str().to_string())
+        })
         .collect::<Vec<_>>()
         .join("\n");
     s.clipboard_outbox = Some(text.clone());

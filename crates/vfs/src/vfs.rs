@@ -78,6 +78,16 @@ pub trait Vfs: Send + Sync {
 
     fn rename(&self, from: &VfsUri, to: &VfsUri) -> Result<(), FmError>;
 
+    /// Set the Unix permission bits (`mode & 0o7777`) of one item, never following a
+    /// final symlink further than the platform does. Backends without Unix modes keep this
+    /// default.
+    fn set_permissions(&self, uri: &VfsUri, mode: u32) -> Result<(), FmError> {
+        let _ = (uri, mode);
+        Err(FmError::Unsupported(
+            "this location does not support Unix permissions",
+        ))
+    }
+
     /// Are both paths on the same volume? Drives move/copy decisions.
     fn same_device(&self, a: &VfsUri, b: &VfsUri) -> bool;
 

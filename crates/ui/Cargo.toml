@@ -18,6 +18,8 @@ fm-term.workspace = true
 fm-vfs.workspace = true
 serde_json.workspace = true
 egui = { workspace = true, features = ["default_fonts"] }
+egui_extras.workspace = true
+jiff.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true

@@ -296,6 +296,28 @@ impl VfsUri {
     }
 
     /// Parent URI, or `None` at the root.
+    /// The OS path of a local `file` uri, or `None` for other schemes and for the
+    /// Windows drive list (`/`, which has no OS path). See [`native_path`].
+    pub fn local_path(&self) -> Option<std::path::PathBuf> {
+        self.local_path_string().map(std::path::PathBuf::from)
+    }
+
+    /// [`Self::local_path`] as a string (for display, the clipboard and child processes).
+    pub fn local_path_string(&self) -> Option<String> {
+        (self.scheme == Scheme::File && self.authority.is_local())
+            .then(|| native_path(&self.path, cfg!(windows)))
+            .flatten()
+    }
+
+    /// The Windows "This PC" folder: `file:///`, whose children are the drives.
+    pub fn is_drive_list(&self) -> bool {
+        cfg!(windows) && self.is_local_root()
+    }
+
+    fn is_local_root(&self) -> bool {
+        self.scheme == Scheme::File && self.authority.is_local() && self.path == "/"
+    }
+
     pub fn parent(&self) -> Option<Self> {
         if self.path == "/" {
             return None;
@@ -462,9 +484,64 @@ fn normalize_path(raw: &str) -> Result<String, FmError> {
     }
 }
 
+/// A local `file` path (`/`-separated, absolute) in OS form. With `windows`:
+/// `/C:/x` → `C:\x`, `/C:` → `C:\` (a bare `C:` would be drive-relative), other paths are
+/// UNC (`/server/share/x` → `\\server\share\x`) and `/` — the drive list — has none.
+/// Without `windows` the path is returned unchanged.
+pub fn native_path(path: &str, windows: bool) -> Option<String> {
+    if !windows {
+        return Some(path.to_string());
+    }
+    let rest = path.strip_prefix('/')?;
+    if rest.is_empty() {
+        return None;
+    }
+    let is_drive =
+        matches!(rest.as_bytes(), [d, b':'] | [d, b':', b'/', ..] if d.is_ascii_alphabetic());
+    if is_drive {
+        let mut out = rest.replace('/', "\\");
+        if out.len() == 2 {
+            out.push('\\');
+        }
+        return Some(out);
+    }
+    Some(format!("\\\\{}", rest.replace('/', "\\")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_paths_map_drives_unc_and_the_drive_list() {
+        assert_eq!(native_path("/home/a", false).as_deref(), Some("/home/a"));
+        assert_eq!(native_path("/", false).as_deref(), Some("/"));
+        assert_eq!(native_path("/", true), None);
+        assert_eq!(native_path("/C:", true).as_deref(), Some("C:\\"));
+        assert_eq!(
+            native_path("/d:/Users/x", true).as_deref(),
+            Some("d:\\Users\\x")
+        );
+        assert_eq!(
+            native_path("/nas/share/x", true).as_deref(),
+            Some("\\\\nas\\share\\x")
+        );
+        assert_eq!(native_path("/C:x", true).as_deref(), Some("\\\\C:x"));
+        assert_eq!(native_path("relative", true), None);
+        let c = VfsUri::parse("C:\\Users").expect("uri");
+        assert_eq!(
+            native_path(c.path_str(), true).as_deref(),
+            Some("C:\\Users")
+        );
+        let unc = VfsUri::parse("\\\\nas\\share").expect("uri");
+        assert_eq!(
+            native_path(unc.path_str(), true).as_deref(),
+            Some("\\\\nas\\share")
+        );
+        let sftp = VfsUri::parse("sftp://h/x").expect("uri");
+        assert_eq!(sftp.local_path(), None);
+        assert_eq!(VfsUri::root_file().is_drive_list(), cfg!(windows));
+    }
 
     #[test]
     fn parses_posix_absolute() {

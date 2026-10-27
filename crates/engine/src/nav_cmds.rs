@@ -61,6 +61,9 @@ pub fn open() -> CommandSpec {
             let raw = uri_param(params)?;
             let to = VfsUri::parse(&raw)
                 .map_err(|_| FmError::invalid_uri(format!("nav.open: {raw}")))?;
+            if s.needs_sftp_login_to(&to, true) {
+                return Ok(());
+            }
             // No backend → error before committing the location (no ghost "loading").
             s.backends.require(&to)?;
             {
@@ -305,11 +308,16 @@ mod tests {
     }
 
     #[test]
-    fn open_without_a_backend_for_the_scheme_is_an_error() {
+    fn opening_an_unconnected_sftp_server_requests_login_without_moving_the_pane() {
         let mut s = Session::default();
         let before = s.layout.state(1).expect("pane").location.clone();
-        let err = (open().run)(&mut s, &Params::String("sftp://host/dir".to_string()));
-        assert!(err.is_err());
+        let result = (open().run)(&mut s, &Params::String("sftp://host/dir".to_string()));
+        assert!(result.is_ok());
+        let prompt = s.remote.sftp_prompt.as_ref().expect("login dialog");
+        assert!(prompt.navigate);
+        assert_eq!(prompt.host, "host");
+        assert_eq!(prompt.landing.as_ref().map(VfsUri::path_str), Some("/dir"));
+        assert!(s.notice.is_none());
         assert_eq!(
             s.layout.state(1).expect("pane").location,
             before,

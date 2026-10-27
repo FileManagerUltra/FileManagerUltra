@@ -15,15 +15,18 @@ use serde_json::{Value, json};
 
 use crate::theme::Tokens;
 
+#[path = "preview_time.rs"]
+mod time;
+
 type Action = (&'static str, Value);
 
 /// Per-pane text fields of the log filter bar.
 #[derive(Clone, Default)]
 struct LogUi {
+    filters_open: bool,
     query: String,
     regex: bool,
-    from: String,
-    to: String,
+    time: Option<time::TimePicker>,
 }
 
 fn mono(tokens: &Tokens) -> FontId {
@@ -37,6 +40,19 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let mut published: Option<fm_engine::file_cmds::GridSelection> = None;
     toolbar(ui, s, pane, &mut actions);
     ui.separator();
+    let can_page = s.layout.focused() == pane
+        && ui.is_enabled()
+        && ui.ctx().memory(|m| m.is_above_modal_layer(ui.layer_id()))
+        && !ui.ctx().text_edit_focused()
+        && !ui.any_popup_open()
+        && !ui.ctx().egui_is_using_pointer()
+        && !ui
+            .data(|d| d.get_temp::<LogUi>(Id::NULL.with(("pv-logui", pane))))
+            .is_some_and(|st| st.time.is_some());
+    ui.data_mut(|d| {
+        d.insert_temp(Id::NULL.with("pv-can-page"), can_page);
+        d.insert_temp(Id::NULL.with("pv-page-used"), false);
+    });
     if let Some(slot) = s.preview_slot(pane) {
         match &slot.body {
             Body::Empty => centered(ui, tokens, "Select a file to preview it"),
@@ -71,9 +87,22 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 let p = p.clone();
                 static_body(ui, pane, tokens, &p, slot.pretty, slot.wrap, slot.zoom);
             }
-            Body::Log(v) => log_body(ui, pane, tokens, v, &mut actions),
+            Body::Grid(items) => multi_grid(ui, pane, tokens, items),
+            Body::Log(v) => {
+                log_body(ui, pane, tokens, v, &mut actions);
+                let id = Id::NULL.with(("pv-logui", pane));
+                let mut st: LogUi = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
+                if let Some(picker) = &mut st.time {
+                    picker.show(ui.ctx(), pane, tokens, &mut actions);
+                    if !picker.open {
+                        st.time = None;
+                    }
+                }
+                ui.data_mut(|d| d.insert_temp(id, st));
+            }
         }
     }
+    ui.data_mut(|d| d.insert_temp(Id::NULL.with("pv-can-page"), false));
     for (id, params) in actions {
         let mut params = params;
         if let Some(o) = params.as_object_mut() {
@@ -95,6 +124,78 @@ fn centered(ui: &mut Ui, tokens: &Tokens, msg: &str) {
     ui.centered_and_justified(|ui| ui.label(tokens.muted(msg)));
 }
 
+fn paged_scroll(
+    ui: &mut Ui,
+    area: ScrollArea,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+) -> ScrollArea {
+    // ScrollArea prehashes its salt before passing it to make_persistent_id.
+    let id = ui.make_persistent_id(egui::IdSalt::new(&salt));
+    let enabled = ui.data_mut(|d| {
+        let enabled = d
+            .get_temp::<bool>(Id::NULL.with("pv-can-page"))
+            .unwrap_or(false);
+        d.insert_temp(Id::NULL.with("pv-can-page"), false);
+        enabled
+    });
+    let (pages, lines, horizontal, home, end) = if enabled {
+        ui.input_mut(|input| {
+            let down = input.consume_key(egui::Modifiers::NONE, egui::Key::PageDown);
+            let up = input.consume_key(egui::Modifiers::NONE, egui::Key::PageUp);
+            let line_down = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+            let line_up = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+            let right = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight);
+            let left = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft);
+            let home = input.consume_key(egui::Modifiers::NONE, egui::Key::Home);
+            let end = input.consume_key(egui::Modifiers::NONE, egui::Key::End);
+            (
+                i32::from(down) - i32::from(up),
+                i32::from(line_down) - i32::from(line_up),
+                i32::from(right) - i32::from(left),
+                home,
+                end,
+            )
+        })
+    } else {
+        (0, 0, 0, false, false)
+    };
+    let area = area.id_salt(salt);
+    if pages == 0 && lines == 0 && horizontal == 0 && !home && !end {
+        return area;
+    }
+    ui.data_mut(|d| {
+        d.insert_temp(
+            Id::NULL.with("pv-page-used"),
+            pages != 0 || lines != 0 || home || end,
+        )
+    });
+    let offset = egui::scroll_area::State::load(ui.ctx(), id)
+        .map_or(egui::Vec2::ZERO, |state| state.clamped_offset());
+    let page = ui.available_height().max(1.0) * 0.9;
+    let line = ui.text_style_height(&egui::TextStyle::Monospace);
+    let bottom = ui
+        .data(|d| d.get_temp::<f32>(id.with("pv-bottom")))
+        .unwrap_or(0.0);
+    let y = if home {
+        0.0
+    } else if end {
+        bottom
+    } else {
+        (offset.y + pages as f32 * page + lines as f32 * line).max(0.0)
+    };
+    let area = area.horizontal_scroll_offset((offset.x + horizontal as f32 * line).max(0.0));
+    if pages != 0 || lines != 0 || home || end {
+        area.stick_to_bottom(false).vertical_scroll_offset(y)
+    } else {
+        area
+    }
+}
+
+fn remember_scroll<R>(ui: &Ui, output: &egui::scroll_area::ScrollAreaOutput<R>) {
+    let bottom = (output.content_size.y - output.inner_rect.height()).max(0.0);
+    ui.data_mut(|d| d.insert_temp(output.id.with("pv-bottom"), bottom));
+}
+
 fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
     let Some(slot) = s.preview_slot(pane) else {
         return;
@@ -112,8 +213,8 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                 actions.push(("preview.toggle_wrap", json!({})));
             }
         };
-        match &slot.body {
-            Body::Static(p) => match &**p {
+        if let Body::Static(p) = &slot.body {
+            match &**p {
                 Preview::Structured(d) => {
                     let ok = d.pretty.is_ok();
                     let r = ui.add_enabled(ok, egui::Button::selectable(slot.pretty, "Pretty"));
@@ -147,14 +248,46 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                     actions,
                 ),
                 _ => {}
-            },
-            Body::Log(v) => log_toolbar(ui, pane, v, actions),
-            _ => {}
+            }
         }
     };
     ui.horizontal(|ui| {
         source_picker(ui, s, pane, actions);
-        if let Some(e) = &slot.subject {
+        if matches!(slot.body, Body::Log(_)) || slot.subjects.len() > 1 {
+            let id = Id::NULL.with(("pv-logui", pane));
+            let mut st: LogUi = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
+            if matches!(slot.body, Body::Log(_)) && ui
+                    .add(egui::Button::selectable(st.filters_open, RichText::new("Filter").strong()).frame_when_inactive(true))
+                    .on_hover_text(
+                        "Show or hide preview options. Applied filters stay active when hidden.",
+                    )
+                    .clicked()
+                {
+                    st.filters_open = !st.filters_open;
+                }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if slot.updates_available
+                    && ui.button("Reload")
+                        .on_hover_text("Selected files changed. Reload their preview while keeping filters and source order.")
+                        .clicked()
+                {
+                    actions.push(("preview.reload", json!({})));
+                }
+                let title = if slot.subjects.len() > 1 {
+                    format!("{} selected files", slot.subjects.len())
+                } else {
+                    slot.subject
+                        .as_ref()
+                        .map_or_else(String::new, |e| e.name.clone())
+                };
+                ui.add(egui::Label::new(RichText::new(title).strong()).truncate());
+            });
+            ui.data_mut(|d| d.insert_temp(id, st));
+            return;
+        }
+        if slot.subjects.len() > 1 {
+            ui.label(RichText::new(format!("{} selected files", slot.subjects.len())).strong());
+        } else if let Some(e) = &slot.subject {
             ui.label(RichText::new(&e.name).strong());
         }
         let needed = {
@@ -190,6 +323,18 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
             });
         }
     });
+    if let Body::Log(v) = &slot.body
+        && ui
+            .data(|d| d.get_temp::<LogUi>(Id::NULL.with(("pv-logui", pane))))
+            .is_some_and(|st| st.filters_open)
+    {
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.spacing_mut().button_padding = vec2(10.0, 3.0);
+            log_toolbar(ui, pane, v, actions);
+        });
+    }
 }
 
 fn source_picker(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
@@ -255,16 +400,67 @@ fn static_body(
             ui.label(RichText::new("Cannot preview").color(tokens.error).strong());
             ui.label(e);
         }),
-        Preview::Log(_) => centered(ui, tokens, "Log"),
+        Preview::Log(doc) => {
+            let row_h = line_height(tokens);
+            tight_rows(ui);
+            let output = paged_scroll(ui, ScrollArea::both(), ("pv-log-card", pane)).show_rows(
+                ui,
+                row_h,
+                doc.records.len(),
+                |ui, range| {
+                    tight_rows(ui);
+                    for index in range {
+                        if let Some(record) = doc.records.get(index) {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(record.first_line())
+                                        .font(mono(tokens))
+                                        .line_height(Some(row_h)),
+                                )
+                                .extend(),
+                            );
+                        }
+                    }
+                },
+            );
+            remember_scroll(ui, &output);
+        }
     }
+}
+
+fn multi_grid(ui: &mut Ui, pane: PaneId, tokens: &Tokens, items: &[(fm_vfs::Entry, Arc<Preview>)]) {
+    let columns = ((ui.available_width() / 300.0).floor() as usize).clamp(1, 4);
+    let output = paged_scroll(ui, ScrollArea::vertical(), ("pv-multi-grid", pane)).show(ui, |ui| {
+        for row in items.chunks(columns) {
+            ui.columns(columns, |uis| {
+                for (column, (entry, preview)) in uis.iter_mut().zip(row) {
+                    column.push_id(&entry.uri, |ui| {
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(&entry.name).strong()).truncate(),
+                            )
+                            .on_hover_text(entry.uri.to_string());
+                            ui.separator();
+                            ui.allocate_ui(vec2(ui.available_width(), 240.0), |ui| {
+                                ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                                static_body(ui, pane, tokens, preview, false, false, Zoom::Fit);
+                            });
+                        });
+                    });
+                }
+            });
+            ui.add_space(tokens.padding);
+        }
+    });
+    remember_scroll(ui, &output);
 }
 
 /// Cards are taller than a small pane; scroll them instead of overflowing the slot.
 fn scrolled(ui: &mut Ui, pane: PaneId, what: &str, add: impl FnOnce(&mut Ui)) {
-    ScrollArea::vertical()
-        .id_salt(("pv-scroll", what, pane))
+    let output = paged_scroll(ui, ScrollArea::vertical(), ("pv-scroll", what, pane))
         .auto_shrink(false)
         .show(ui, add);
+    remember_scroll(ui, &output);
 }
 
 fn spans_job(tokens: &Tokens, spans: &[Span], wrap: bool, width: f32) -> LayoutJob {
@@ -307,10 +503,9 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
         ScrollArea::vertical()
     } else {
         ScrollArea::both()
-    }
-    .id_salt(("pv-text", pane))
-    .auto_shrink(false);
-    if wrap {
+    };
+    let area = paged_scroll(ui, area, ("pv-text", pane)).auto_shrink(false);
+    let output = if wrap {
         area.show(ui, |ui| {
             tight_rows(ui);
             for (i, line) in d.lines.iter().enumerate() {
@@ -327,7 +522,7 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
                     ui.add(egui::Label::new(spans_job(tokens, line, true, 0.0)).wrap());
                 });
             }
-        });
+        })
     } else {
         area.show_rows(ui, row_h, d.lines.len(), |ui, range| {
             tight_rows(ui);
@@ -346,8 +541,9 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
                     ui.add(egui::Label::new(spans_job(tokens, line, false, 0.0)).extend());
                 });
             }
-        });
-    }
+        })
+    };
+    remember_scroll(ui, &output);
 }
 
 fn structured(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &StructDoc, pretty: bool, wrap: bool) {
@@ -392,8 +588,7 @@ fn inline_job(tokens: &Tokens, parts: &[Inline], base: f32) -> LayoutJob {
 }
 
 fn markdown(ui: &mut Ui, tokens: &Tokens, blocks: &[MdBlock], truncated: bool, wrap: bool) {
-    ScrollArea::vertical()
-        .id_salt("pv-md")
+    let output = paged_scroll(ui, ScrollArea::vertical(), "pv-md")
         .auto_shrink(false)
         .show(ui, |ui| {
             for (i, b) in blocks.iter().enumerate() {
@@ -448,6 +643,7 @@ fn markdown(ui: &mut Ui, tokens: &Tokens, blocks: &[MdBlock], truncated: bool, w
                 ui.label(tokens.muted("… truncated"));
             }
         });
+    remember_scroll(ui, &output);
 }
 
 fn image(ui: &mut Ui, pane: PaneId, tokens: &Tokens, p: &Arc<Preview>, img: &ImageDoc, zoom: Zoom) {
@@ -456,7 +652,7 @@ fn image(ui: &mut Ui, pane: PaneId, tokens: &Tokens, p: &Arc<Preview>, img: &Ima
         return;
     }
     let ctx = ui.ctx().clone();
-    let id = Id::NULL.with(("pv-tex", pane));
+    let id = ui.make_persistent_id(("pv-tex", pane));
     let ident = Arc::as_ptr(p) as usize;
     let cached: Option<(usize, Vec<egui::TextureHandle>)> = ctx.data_mut(|d| d.get_temp(id));
     let textures = match cached {
@@ -505,13 +701,13 @@ fn image(ui: &mut Ui, pane: PaneId, tokens: &Tokens, p: &Arc<Preview>, img: &Ima
         Zoom::Actual => 1.0,
         Zoom::Scale(v) => v,
     };
-    ScrollArea::both()
-        .id_salt(("pv-img", pane))
+    let output = paged_scroll(ui, ScrollArea::both(), ("pv-img", pane))
         .auto_shrink(false)
         .max_height(avail.y)
         .show(ui, |ui| {
             ui.add(egui::Image::new((tex.id(), natural * scale)).sense(Sense::hover()));
         });
+    remember_scroll(ui, &output);
     ui.label(tokens.muted(format!(
         "{} · {ow}×{oh} · {:.0}%{}",
         img.format,
@@ -527,8 +723,7 @@ fn image(ui: &mut Ui, pane: PaneId, tokens: &Tokens, p: &Arc<Preview>, img: &Ima
 fn hex(ui: &mut Ui, tokens: &Tokens, h: &HexDoc) {
     let row_h = ui.fonts_mut(|f| f.row_height(&mono(tokens))) + 2.0;
     let rows = h.bytes.len().div_ceil(16);
-    ScrollArea::both()
-        .id_salt("pv-hex")
+    let output = paged_scroll(ui, ScrollArea::both(), "pv-hex")
         .auto_shrink(false)
         .show_rows(ui, row_h, rows, |ui, range| {
             for r in range {
@@ -558,6 +753,7 @@ fn hex(ui: &mut Ui, tokens: &Tokens, h: &HexDoc) {
                 );
             }
         });
+    remember_scroll(ui, &output);
     if (h.bytes.len() as u64) < h.total {
         ui.label(tokens.muted(format!("First {} of {} bytes", h.bytes.len(), h.total)));
     }
@@ -602,8 +798,7 @@ fn video_body(
     if v.width != Some(bucket) {
         actions.push(("preview.video.fit", json!({ "width": avail.x * ppp })));
     }
-    ScrollArea::vertical()
-        .id_salt(("pv-video", pane))
+    let output = paged_scroll(ui, ScrollArea::vertical(), ("pv-video", pane))
         .auto_shrink(false)
         .show(ui, |ui| {
             let controls_h = ui.spacing().interact_size.y + ui.spacing().item_spacing.y * 2.0;
@@ -653,6 +848,7 @@ fn video_body(
             }
             meta_card(ui, tokens, m);
         });
+    remember_scroll(ui, &output);
     if v.playing {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(16));
@@ -841,10 +1037,14 @@ fn thumb_grid(
         ctx.data_mut(|dt| dt.insert_temp(want_id, true));
     }
     // Keep asking until egui reports the focus (the first pass of a window may be discarded).
-    if ctx.data(|dt| dt.get_temp::<bool>(want_id)).unwrap_or(false) {
+    // A preview following another pane's cursor (e.g. landing on a folder) must not steal the
+    // keyboard from that pane, so the grid only claims focus when its own pane is focused.
+    let pane_focused = s.layout.focused() == pane;
+    let want = ctx.data(|dt| dt.get_temp::<bool>(want_id)).unwrap_or(false);
+    if pane_focused {
         if ctx.memory(|m| m.has_focus(grid_id)) {
             ctx.data_mut(|dt| dt.insert_temp(want_id, false));
-        } else {
+        } else if want || ctx.memory(|m| m.focused().is_none()) {
             ctx.memory_mut(|m| m.request_focus(grid_id));
         }
     }
@@ -854,7 +1054,11 @@ fn thumb_grid(
     // Registering the widget keeps egui from dropping focus as "disappeared".
     ui.interact(ui.max_rect(), grid_id, Sense::focusable_noninteractive());
     let active = ctx.memory_mut(|m| {
-        let on = m.has_focus(grid_id);
+        let mut on = m.has_focus(grid_id);
+        if on && !pane_focused {
+            m.surrender_focus(grid_id);
+            on = false;
+        }
         if on {
             m.set_focus_lock_filter(grid_id, ARROW_KEYS);
         }
@@ -1160,10 +1364,35 @@ fn dir_card(ui: &mut Ui, tokens: &Tokens, d: &DirDoc) {
 fn log_toolbar(ui: &mut Ui, pane: PaneId, v: &LogView, actions: &mut Vec<Action>) {
     let id = Id::NULL.with(("pv-logui", pane));
     let mut st: LogUi = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
+    st.query.clone_from(&v.filter.query);
+    st.regex = v.filter.regex;
     let before = st.clone();
 
+    if !v.sources.is_empty() {
+        let response = egui::ComboBox::from_id_salt(("pv-log-order", pane))
+            .selected_text(if v.chronological {
+                "Chronological"
+            } else {
+                "Concatenate"
+            })
+            .show_ui(ui, |ui| {
+                for (label, mode, on) in [
+                    ("Concatenate", "concatenate", !v.chronological),
+                    ("Chronological", "chronological", v.chronological),
+                ] {
+                    if ui.selectable_label(on, label).clicked() {
+                        actions.push(("preview.log.order", json!({ "mode": mode })));
+                    }
+                }
+            })
+            .response;
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::ComboBox, response.enabled(), "Preview order")
+        });
+        response.on_hover_text("Concatenate in file-pane order, or merge by timestamp (unknown times last). Filename gutter is not copied.");
+    }
     let current = v.filter.min_level.map_or("All", Level::label);
-    egui::ComboBox::from_id_salt(("pv-level", pane))
+    let severity = egui::ComboBox::from_id_salt(("pv-level", pane))
         .selected_text(current)
         .width(70.0)
         .show_ui(ui, |ui| {
@@ -1184,54 +1413,93 @@ fn log_toolbar(ui: &mut Ui, pane: PaneId, v: &LogView, actions: &mut Vec<Action>
                     ));
                 }
             }
+        })
+        .response;
+    severity.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::ComboBox, severity.enabled(), "Minimum severity")
+    });
+    severity.on_hover_ui(|ui| {
+        log_filter_help(ui, "Minimum severity", |ui| {
+            ui.label("Show the selected level and anything more severe.");
+            ui.label(RichText::new("Warning shows Warning, Error and Critical.").strong());
+            ui.add_space(4.0);
+            ui.label("All shows every severity.");
+            ui.label("Unrecognised levels count as Info.");
+            ui.add_space(4.0);
+            ui.label("Low to high:");
+            ui.label("Debug < Info < Notice < Warning < Error < Critical");
         });
+    });
     ui.add(
         egui::TextEdit::singleline(&mut st.query)
             .hint_text("Search")
             .desired_width(120.0),
+    )
+    .on_hover_text(
+        "Search loaded records across the selected files. Enable .* to use a regular expression.",
     );
-    ui.checkbox(&mut st.regex, ".*")
-        .on_hover_text("Regular expression");
+    ui.checkbox(&mut st.regex, ".*").on_hover_ui(|ui| {
+        log_filter_help(ui, "Regular-expression search", |ui| {
+            ui.label("On: search using patterns.");
+            ui.label("Off: search for literal text.");
+            ui.add_space(4.0);
+            ui.label(RichText::new("Example: error|warning").strong());
+            ui.label("Matches either \"error\" or \"warning\".");
+        });
+    });
     if st.query != before.query || st.regex != before.regex {
         actions.push((
             "preview.log.search",
             json!({ "query": st.query, "regex": st.regex }),
         ));
     }
-    ui.menu_button("Time", |ui| {
-        ui.label("From (YYYY-MM-DD HH:MM)");
-        ui.text_edit_singleline(&mut st.from);
-        ui.label("To");
-        ui.text_edit_singleline(&mut st.to);
-        if ui.button("Apply").clicked() {
-            actions.push((
-                "preview.log.time_range",
-                json!({ "from": st.from, "to": st.to }),
-            ));
-        }
-        if ui.button("Clear").clicked() {
-            st.from.clear();
-            st.to.clear();
-            actions.push(("preview.log.time_range", json!({})));
-        }
-    });
-    ui.data_mut(|d| d.insert_temp(id, st));
+    if ui
+        .button("Time")
+        .on_hover_text("Choose optional From and To dates and times (UTC).")
+        .clicked()
+    {
+        st.time = Some(time::TimePicker::new(v));
+    }
 
     let (can_follow, access, more) = match v.doc.try_read() {
-        Ok(d) => (d.can_follow(), d.format.is_access(), d.more_before),
+        Ok(d) => (
+            v.sources.is_empty() && d.can_follow(),
+            d.format.is_access(),
+            d.more_before,
+        ),
         Err(_) => (false, false, false),
     };
     if ui
         .add_enabled(can_follow, egui::Button::selectable(v.follow, "Live tail"))
-        .on_disabled_hover_text("This log cannot be followed")
+        .on_hover_text("Watch this file for new records. Scrolling up pauses live tail.")
+        .on_disabled_hover_text(if v.sources.is_empty() {
+            "This log cannot be followed"
+        } else {
+            "Live tail is available for single files only"
+        })
         .clicked()
     {
         actions.push(("preview.log.follow", json!({})));
     }
-    if access && ui.selectable_label(v.columns, "Columns").clicked() {
+    if access
+        && ui
+            .selectable_label(v.columns, "Columns")
+            .on_hover_text("Show access-log fields in columns instead of raw record text.")
+            .clicked()
+    {
         actions.push(("preview.log.columns", json!({})));
     }
-    if ui.selectable_label(v.expand_all, "Expand").clicked() {
+    if ui
+        .selectable_label(v.expand_all, "Expand")
+        .on_hover_ui(|ui| {
+            log_filter_help(ui, "Expand log records", |ui| {
+                ui.label("Show every line of multiline records, including stack traces.");
+                ui.add_space(4.0);
+                ui.label("Turn off to collapse records to their first line.");
+            });
+        })
+        .clicked()
+    {
         actions.push((
             "preview.log.fold",
             json!({ "mode": if v.expand_all { "collapse" } else { "expand" } }),
@@ -1244,9 +1512,44 @@ fn log_toolbar(ui: &mut Ui, pane: PaneId, v: &LogView, actions: &mut Vec<Action>
     {
         actions.push(("preview.log.mark", json!({})));
     }
-    if more && ui.button("Load earlier").clicked() {
+    if more
+        && ui
+            .add_enabled(
+                v.sources.is_empty() || v.window_bytes < fm_engine::preview_multi::MAX_WINDOW,
+                egui::Button::new("Load earlier"),
+            )
+            .on_hover_text("Load an older bounded chunk of records from the selected files.")
+            .on_disabled_hover_text("The maximum preview window is already loaded.")
+            .clicked()
+    {
         actions.push(("preview.log.earlier", json!({})));
     }
+    let clear_help = "Clear all filters: reset severity, search, regex and time bounds. Ordering and display options stay unchanged.";
+    if ui
+        .add_enabled(!v.filter.is_empty(), egui::Button::new("Clear"))
+        .on_hover_text(clear_help)
+        .on_disabled_hover_text("No active filters to clear.")
+        .clicked()
+    {
+        st.query.clear();
+        st.regex = false;
+        st.time = None;
+        actions.push(("preview.log.clear_filters", json!({})));
+    }
+    ui.data_mut(|d| d.insert_temp(id, st));
+}
+
+fn log_filter_help(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
+    ui.set_max_width(360.0);
+    let size = egui::TextStyle::Body.resolve(ui.style()).size;
+    ui.style_mut().override_font_id = Some(egui::FontId::proportional(size));
+    ui.vertical(|ui| {
+        ui.label(RichText::new(title).strong());
+        ui.separator();
+        body(ui);
+        ui.add_space(4.0);
+        ui.label("Only the preview changes, not the file.");
+    });
 }
 
 fn log_body(ui: &mut Ui, pane: PaneId, tokens: &Tokens, v: &LogView, actions: &mut Vec<Action>) {
@@ -1266,6 +1569,24 @@ fn log_body(ui: &mut Ui, pane: PaneId, tokens: &Tokens, v: &LogView, actions: &m
         status.push_str(&format!(" · {n}"));
     }
     ui.label(tokens.muted(status));
+    if v.sources.iter().any(|source| source.note.is_some()) {
+        ui.collapsing("Source details", |ui| {
+            for source in &v.sources {
+                if let Some(note) = &source.note {
+                    ui.label(tokens.muted(format!("{}: {note}", source.entry.name)));
+                }
+            }
+        });
+        for source in &v.sources {
+            if let Some(note) = &source.note
+                && note.starts_with("Cannot preview:")
+            {
+                ui.label(
+                    RichText::new(format!("{}: {note}", source.entry.name)).color(tokens.error),
+                );
+            }
+        }
+    }
     if let Some(e) = &v.filter_error {
         ui.label(RichText::new(e).color(tokens.error));
     }
@@ -1279,61 +1600,87 @@ fn log_body(ui: &mut Ui, pane: PaneId, tokens: &Tokens, v: &LogView, actions: &m
         }
     };
     let rows: Option<Vec<(usize, usize)>> = folding.then(|| {
+        let mut end = 0usize;
         (0..shown)
             .filter_map(record_at)
-            .flat_map(|r| {
+            .map(|r| {
                 let lines = doc.records.get(r).map_or(1, |rec| {
-                    if v.expand_all || v.expanded.contains(&rec.key()) {
+                    if v.expand_all || v.expanded.contains(&v.record_key(r, rec)) {
                         rec.text.lines().count().max(1)
                     } else {
                         1
                     }
                 });
-                (0..lines).map(move |l| (r, l))
+                end = end.saturating_add(lines);
+                (r, end)
             })
             .collect()
     });
-    let body_rows = rows.as_ref().map_or(shown, Vec::len);
+    let body_rows = rows
+        .as_ref()
+        .map_or(shown, |rows| rows.last().map_or(0, |(_, end)| *end));
     let end_mark = doc.marks.contains(&(doc.base + total as i64));
     let count = body_rows + usize::from(end_mark);
-    let row_h = ui.fonts_mut(|f| f.row_height(&mono(tokens))) + 2.0;
+    let row_h = line_height(tokens);
+    tight_rows(ui);
 
-    let out = ScrollArea::both()
-        .id_salt(("pv-log", pane))
-        .auto_shrink(false)
-        .stick_to_bottom(true)
-        .show_rows(ui, row_h, count, |ui, range| {
-            for i in range {
-                if i >= body_rows {
-                    marker_row(ui, tokens, &doc, doc.marks.len(), row_h);
-                    continue;
-                }
-                let (r, line) = match &rows {
-                    Some(rows) => match rows.get(i) {
-                        Some(x) => *x,
-                        None => continue,
-                    },
-                    None => match record_at(i) {
-                        Some(r) => (r, 0),
-                        None => continue,
-                    },
-                };
-                let Some(rec) = doc.records.get(r) else {
-                    continue;
-                };
-                if line == 0
-                    && let Some(n) = doc.marks.iter().position(|m| *m == doc.base + r as i64)
-                {
-                    marker_rule(ui, tokens, n + 1, row_h);
-                }
-                log_row(ui, tokens, &doc, v, rec, line, columns, row_h, actions);
+    let area = ScrollArea::both().auto_shrink(false).stick_to_bottom(true);
+    let out = paged_scroll(ui, area, ("pv-log", pane)).show_rows(ui, row_h, count, |ui, range| {
+        for i in range {
+            if i >= body_rows {
+                marker_row(ui, tokens, &doc, doc.marks.len(), row_h);
+                continue;
             }
-        });
+            let (r, line) = match &rows {
+                Some(rows) => {
+                    let index = rows.partition_point(|(_, end)| *end <= i);
+                    let Some((r, _)) = rows.get(index) else {
+                        continue;
+                    };
+                    let start = index
+                        .checked_sub(1)
+                        .and_then(|index| rows.get(index))
+                        .map_or(0, |(_, end)| *end);
+                    (*r, i - start)
+                }
+                None => match record_at(i) {
+                    Some(r) => (r, 0),
+                    None => continue,
+                },
+            };
+            let Some(rec) = doc.records.get(r) else {
+                continue;
+            };
+            if line == 0
+                && let Some(n) = doc.marks.iter().position(|m| *m == doc.base + r as i64)
+            {
+                marker_rule(ui, tokens, n + 1, row_h);
+            }
+            let source = v.record_source(r);
+            log_row(
+                ui,
+                tokens,
+                &doc,
+                v,
+                rec,
+                v.record_key(r, rec),
+                source.map(|s| &s.entry),
+                line,
+                columns,
+                row_h,
+                actions,
+            );
+        }
+    });
+    remember_scroll(ui, &out);
     if v.follow
-        && out
-            .inner_rect
-            .contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default())
-        && ui.input(|i| i.smooth_scroll_delta.y > 0.0)
+        && (ui
+            .data(|d| d.get_temp::<bool>(Id::NULL.with("pv-page-used")))
+            .unwrap_or(false)
+            || (out
+                .inner_rect
+                .contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default())
+                && ui.input(|i| i.smooth_scroll_delta.y > 0.0)))
     {
         actions.push(("preview.log.follow", json!({ "on": false })));
     }
@@ -1378,94 +1725,91 @@ fn log_row(
     doc: &LogDoc,
     v: &LogView,
     rec: &LogRecord,
+    record_key: u64,
+    source: Option<&fm_vfs::Entry>,
     line: usize,
     columns: bool,
     row_h: f32,
     actions: &mut Vec<Action>,
 ) {
-    let (rect, resp) =
-        ui.allocate_exact_size(vec2(ui.available_width().max(900.0), row_h), Sense::click());
-    if resp.hovered() {
-        ui.painter().rect_filled(rect, 0.0, tokens.hover_bg);
-    }
-    let painter = ui.painter_at(rect);
     let font = mono(tokens);
     let color = if rec.orphan {
         tokens.text_muted
     } else {
         tokens.level(rec.level)
     };
-    let folded = !v.expand_all && !v.expanded.contains(&rec.key());
+    let folded = !v.expand_all && !v.expanded.contains(&record_key);
     let extra = rec.extra_lines();
 
-    if columns && doc.format.is_access() && rec.fields.len() >= 6 {
-        let w = rect.width();
-        let url_w = (w - 560.0).max(200.0);
-        let xs = [
-            0.0,
-            160.0,
-            290.0,
-            350.0,
-            350.0 + url_w,
-            350.0 + url_w + 50.0,
-        ];
-        for (i, text) in rec.fields.iter().take(6).enumerate() {
-            let c = match i {
-                4 => rec.status.map_or(tokens.text, |s| tokens.status(s)),
-                0 | 5 => tokens.text_muted,
-                _ => tokens.text,
-            };
-            let clip = egui::Rect::from_min_max(
-                rect.min + vec2(xs[i], 0.0),
-                egui::pos2(
-                    rect.min.x + xs.get(i + 1).copied().unwrap_or(w) - 6.0,
-                    rect.max.y,
-                ),
-            );
-            painter.with_clip_rect(clip).text(
-                clip.left_center(),
-                egui::Align2::LEFT_CENTER,
-                text,
-                font.clone(),
-                c,
+    let text = rec.text.lines().nth(line).unwrap_or("");
+    ui.horizontal(|ui| {
+        tight_rows(ui);
+        if let Some(source) = source {
+            ui.add_sized(
+                vec2(200.0, row_h),
+                egui::Label::new(
+                    RichText::new(&source.name)
+                        .font(font.clone())
+                        .color(tokens.text_muted)
+                        .line_height(Some(row_h)),
+                )
+                .truncate()
+                .halign(egui::Align::LEFT)
+                .selectable(false),
+            )
+            .on_hover_text(source.uri.to_string());
+        }
+        if line == 0 && extra > 0 {
+            if ui
+                .add_sized(
+                    vec2(18.0, row_h),
+                    egui::Button::new(if folded { ">" } else { "v" }).frame(false),
+                )
+                .clicked()
+            {
+                actions.push(("preview.log.fold", json!({ "record": record_key })));
+            }
+        } else {
+            ui.add_space(18.0);
+        }
+        if columns && doc.format.is_access() && rec.fields.len() >= 6 {
+            for (i, field) in rec.fields.iter().take(6).enumerate() {
+                ui.add_sized(
+                    vec2(if i == 3 { 300.0 } else { 110.0 }, row_h),
+                    egui::Label::new(
+                        RichText::new(field)
+                            .font(font.clone())
+                            .color(color)
+                            .line_height(Some(row_h)),
+                    )
+                    .truncate()
+                    .selectable(true),
+                );
+            }
+        } else {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(text)
+                        .font(font.clone())
+                        .line_height(Some(row_h))
+                        .color(if line > 0 { tokens.text_muted } else { color }),
+                )
+                .extend()
+                .selectable(true),
             );
         }
-        return;
-    }
-
-    let text = rec.text.lines().nth(line).unwrap_or("");
-    let mut x = rect.min.x + 4.0;
-    if line == 0 && extra > 0 {
-        let g = painter.text(
-            egui::pos2(x, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            if folded { ">" } else { "v" },
-            font.clone(),
-            tokens.text_muted,
-        );
-        x = g.right() + 6.0;
-    } else if extra > 0 {
-        x += 16.0;
-    }
-    let g = painter.text(
-        egui::pos2(x, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        text,
-        font.clone(),
-        if line > 0 { tokens.text_muted } else { color },
-    );
-    if line == 0 && folded && extra > 0 {
-        painter.text(
-            egui::pos2(g.right() + 10.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            format!("+{extra} lines"),
-            font,
-            tokens.text_muted,
-        );
-    }
-    if extra > 0 && resp.clicked() {
-        actions.push(("preview.log.fold", json!({ "record": rec.key() })));
-    }
+        if line == 0 && folded && extra > 0 {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!("+{extra} lines"))
+                        .font(font)
+                        .color(tokens.text_muted)
+                        .line_height(Some(row_h)),
+                )
+                .selectable(false),
+            );
+        }
+    });
 }
 
 /// True while a thumbnail grid owns the keyboard, so the file listing must not also act on keys.
@@ -1598,6 +1942,45 @@ mod tests {
             }
             for tokens in [Tokens::dark(), Tokens::light()] {
                 frame(&mut s, pane, &tokens);
+                if name == "f.log" {
+                    use egui_kittest::{Harness, kittest::Queryable};
+
+                    let Body::Log(view) = &s.preview_slot(pane).expect("slot").body else {
+                        panic!("expected log preview");
+                    };
+                    let mut harness =
+                        Harness::builder()
+                            .with_size(vec2(1000.0, 400.0))
+                            .build_ui(|ui| {
+                                crate::theme::apply_to(ui.ctx(), &tokens);
+                                ui.style_mut().interaction.tooltip_delay = 0.0;
+                                let mut actions = Vec::new();
+                                ui.horizontal(|ui| log_toolbar(ui, pane, view, &mut actions));
+                                assert!(actions.is_empty(), "hover must not change filters");
+                            });
+                    harness.get_by_role(egui::accesskit::Role::ComboBox).hover();
+                    harness.run();
+                    assert_eq!(harness.get_all_by_label("Minimum severity").count(), 2);
+                    harness.get_by_label("Warning shows Warning, Error and Critical.");
+                    harness.get_by_label("Only the preview changes, not the file.");
+                    harness.get_by_label(".*").hover();
+                    harness.run();
+                    harness.get_by_label("Regular-expression search");
+                    harness.get_by_label("Example: error|warning");
+                    harness.get_by_label("Expand").hover();
+                    harness.run();
+                    harness.get_by_label("Expand log records");
+                    harness.get_by_label("Turn off to collapse records to their first line.");
+                    for (button, help) in [
+                        ("Time", "Choose optional From and To dates and times (UTC)."),
+                        ("Mark", "Set a marker below the last record (Ctrl+Shift+M)"),
+                        ("Clear", "No active filters to clear."),
+                    ] {
+                        harness.get_by_label(button).hover();
+                        harness.run();
+                        harness.get_by_label(help);
+                    }
+                }
             }
         }
         s.dispatch("preview.toggle_pretty", &json!({})).ok();
@@ -1685,7 +2068,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::theme::apply_to(&ctx, &tokens);
         let state_id = Id::NULL.with(("pv-thumb-state", pane));
-        let mut run = |ctx: &egui::Context, key: Option<egui::Key>| {
+        let run = |s: &mut Session, ctx: &egui::Context, key: Option<egui::Key>| {
             let mut input = egui::RawInput::default();
             if let Some(key) = key {
                 input.events.push(egui::Event::Key {
@@ -1697,25 +2080,40 @@ mod tests {
                 });
             }
             let mut out = ctx.run_ui(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| show(ui, &mut s, pane, &tokens));
+                egui::CentralPanel::default().show(ctx, |ui| show(ui, s, pane, &tokens));
             });
             out.textures_delta.clear();
         };
-        run(&ctx, None);
-        run(&ctx, None);
-        run(&ctx, None);
+        run(&mut s, &ctx, None);
+        run(&mut s, &ctx, None);
+        run(&mut s, &ctx, None);
+        // Following the files pane's cursor onto a folder must not steal its keyboard.
+        assert_ne!(s.layout.focused(), pane);
+        assert!(
+            !grid_has_keyboard(&ctx),
+            "grid stole focus from the files pane"
+        );
+        run(&mut s, &ctx, Some(egui::Key::End));
+        assert!(!grid_has_keyboard(&ctx));
+        let _ = s.layout.focus_pane(pane);
+        run(&mut s, &ctx, None);
+        run(&mut s, &ctx, None);
         assert!(grid_has_keyboard(&ctx), "grid never got focus");
-        run(&ctx, Some(egui::Key::ArrowRight));
+        run(&mut s, &ctx, Some(egui::Key::ArrowRight));
         let cursor = |ctx: &egui::Context| {
             ctx.data(|d| d.get_temp::<(usize, f32, f32)>(state_id))
                 .map(|t| t.0)
         };
         assert_eq!(cursor(&ctx), Some(1));
         assert!(grid_has_keyboard(&ctx));
-        run(&ctx, Some(egui::Key::PageDown));
+        run(&mut s, &ctx, Some(egui::Key::PageDown));
         assert_eq!(cursor(&ctx), Some(3));
-        run(&ctx, Some(egui::Key::Home));
+        run(&mut s, &ctx, Some(egui::Key::Home));
         assert_eq!(cursor(&ctx), Some(0));
+        // Focusing another pane hands the keys back.
+        let _ = s.layout.focus_pane(files_pane);
+        run(&mut s, &ctx, None);
+        assert!(!grid_has_keyboard(&ctx));
     }
 
     #[test]

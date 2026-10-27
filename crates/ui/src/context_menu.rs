@@ -10,6 +10,8 @@ use fm_vfs::VfsUri;
 
 /// Command ids in menu order; `None` is a separator.
 const ENTRIES: &[Option<&str>] = &[
+    Some("file.open_with.dialog"),
+    None,
     Some("file.clip_cut"),
     Some("file.clip_copy"),
     Some("file.clip_paste"),
@@ -17,12 +19,19 @@ const ENTRIES: &[Option<&str>] = &[
     Some("file.copy"),
     Some("file.move"),
     Some("file.rename"),
+    Some("file.duplicate"),
+    None,
+    Some("file.copy_path"),
+    Some("file.copy_name"),
     None,
     Some("file.mkdir"),
     Some("file.newfile"),
     None,
     Some("file.delete"),
     Some("file.delete_permanent"),
+    None,
+    Some("bookmark.add"),
+    Some("file.properties"),
 ];
 
 fn queue_id() -> Id {

@@ -44,6 +44,12 @@ All pane topology changes SHALL be engine commands; the UI never mutates the lay
 ### Requirement: Pane state survives splits and closes
 Tree expansion, listing sort, selection, scroll and history SHALL live in `fm-layout`'s per-pane state, keyed by `PaneId`, so topology changes never reset a pane's view.
 
+#### Scenario: Shift-wheel scrolls horizontally
+- **WHEN** the user holds Shift and scrolls the mouse wheel over a pane's scrollable content
+- **THEN** the gesture scrolls horizontally where the content overflows
+- **AND** it does not fall back to vertical scrolling when there is no horizontal overflow
+- **AND** ordinary wheel scrolling remains vertical and affects the hovered pane, not a different focused pane
+
 #### Scenario: Split preserves view state
 - **WHEN** a pane with an expanded tree, a non-default sort and a selection is split
 - **THEN** the original pane keeps its expansion, sort and selection after the split
@@ -61,4 +67,3 @@ Every pane header SHALL show a close button while more than one pane exists, dis
 #### Scenario: Close by id
 - **WHEN** `pane.close {"pane": <id>}` is dispatched with three panes open
 - **THEN** exactly that pane is closed and the other two remain
-

@@ -28,6 +28,8 @@ pub struct ViewIndex {
     pub revision: u64,
     pub sort: SortSpec,
     pub hidden: bool,
+    /// The quick filter the order was built with (`None` or empty: no filter).
+    pub filter: Option<String>,
     /// Indices into the cached entry slice.
     pub order: Arc<[u32]>,
 }
@@ -96,6 +98,15 @@ pub struct Session {
     pub trash: crate::trash_cmds::TrashState,
     /// Inverse records of finished jobs, newest last (capability `trash-and-undo`).
     pub undo: UndoStack,
+    /// The Open With dialog and the (lazily scanned) installed applications.
+    pub open_with: Option<crate::openwith_cmds::OpenWith>,
+    pub(crate) app_catalog: Option<Arc<Mutex<Option<Arc<crate::openwith_cmds::AppCatalog>>>>>,
+    /// The Find Files window and its running search.
+    pub search: Option<crate::search_cmds::Search>,
+    /// The open Properties dialog and its folder-size walk.
+    pub properties: Option<crate::props_cmds::Properties>,
+    /// Home, Documents, Downloads… resolved at start-up (capability `places`).
+    pub standard_places: crate::places_cmds::StandardPlaces,
     pub(crate) devices: DeviceCache,
     /// Staged read results, written by workers, drained by [`Session::poll`].
     inbox: Arc<Mutex<HashMap<VfsUri, ReadOutcome>>>,
@@ -115,6 +126,11 @@ impl Default for Session {
             remote.servers.clone(),
         )));
         Self {
+            standard_places: crate::places_cmds::StandardPlaces::detect(),
+            properties: None,
+            search: None,
+            open_with: None,
+            app_catalog: None,
             registry: Registry::new(),
             prefs: Prefs::default(),
             jobs: JobQueue::new(),
@@ -348,9 +364,14 @@ impl Session {
     /// The sorted view of the pane's directory, built lazily and cached per
     /// (pane, revision, sort). `None` while the read is loading or failed.
     pub fn view_index(&mut self, pane: PaneId) -> Option<ViewIndex> {
-        let (loc, sort) = {
+        let (loc, sort, filter) = {
             let state = self.layout.state(pane)?;
-            (state.location.clone(), state.listing.sort.clone())
+            let filter = state
+                .listing
+                .filter
+                .clone()
+                .filter(|f| !f.trim().is_empty());
+            (state.location.clone(), state.listing.sort.clone(), filter)
         };
         let show_hidden = self.show_hidden;
         let (revision, entries) = match self.dirs.state(&loc) {
@@ -361,11 +382,23 @@ impl Session {
             && ix.revision == revision
             && ix.sort == sort
             && ix.hidden == show_hidden
+            && ix.filter == filter
         {
             return Some(ix.clone());
         }
+        // An unusable filter (too long) shows nothing rather than everything.
+        let test = filter.as_deref().map(crate::glob::NameTest::parse);
         let mut order: Vec<u32> = (0..entries.len() as u32)
-            .filter(|i| show_hidden || entries.get(*i as usize).is_some_and(|e| !is_hidden(e)))
+            .filter(|i| {
+                entries.get(*i as usize).is_some_and(|e| {
+                    (show_hidden || !is_hidden(e))
+                        && match &test {
+                            None => true,
+                            Some(Ok(test)) => test.matches(&e.name),
+                            Some(Err(_)) => false,
+                        }
+                })
+            })
             .collect();
         order.sort_by(|a, b| {
             let ea = entries.get(*a as usize);
@@ -381,6 +414,7 @@ impl Session {
             revision,
             sort,
             hidden: show_hidden,
+            filter,
             order: order.into(),
         };
         self.indexes.insert(pane, ix.clone());

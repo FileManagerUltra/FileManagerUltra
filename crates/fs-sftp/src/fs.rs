@@ -423,6 +423,22 @@ impl Vfs for SftpFs {
         })?
     }
 
+    fn set_permissions(&self, uri: &VfsUri, mode: u32) -> Result<(), FmError> {
+        let path = self.path(uri)?.to_string();
+        let inner = self.inner.clone();
+        block_on_timeout(async move {
+            let attrs = FileAttributes {
+                permissions: Some(mode & 0o7777),
+                ..FileAttributes::empty()
+            };
+            inner
+                .sftp
+                .set_metadata(path.clone(), attrs)
+                .await
+                .map_err(|e| map_err(e, &path))
+        })?
+    }
+
     fn rename(&self, from: &VfsUri, to: &VfsUri) -> Result<(), FmError> {
         let a = self.path(from)?.to_string();
         let b = self.path(to)?.to_string();

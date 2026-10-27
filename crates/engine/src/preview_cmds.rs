@@ -58,13 +58,36 @@ pub struct LogView {
     pub expanded: HashSet<u64>,
     /// Bumped whenever the document changed (append, earlier chunk, reload).
     pub rev: u64,
+    /// Multi-file source ranges in the concatenated document.
+    pub sources: Vec<crate::preview_multi::SourceRange>,
+    pub chronological: bool,
+    pub window_bytes: u64,
     busy: bool,
     next_follow: Instant,
     filter_rev: u64,
 }
 
 impl LogView {
-    fn new(doc: LogDoc) -> Self {
+    pub fn record_source(&self, index: usize) -> Option<&crate::preview_multi::SourceRange> {
+        let source = self.sources.get(
+            self.sources
+                .partition_point(|source| source.records.end <= index),
+        )?;
+        source.records.contains(&index).then_some(source)
+    }
+
+    pub fn record_key(&self, index: usize, record: &log::LogRecord) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let Some(source) = self.record_source(index) else {
+            return record.key();
+        };
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        source.entry.uri.hash(&mut hash);
+        record.key().hash(&mut hash);
+        hash.finish()
+    }
+
+    pub(crate) fn new(doc: LogDoc) -> Self {
         Self {
             doc: Arc::new(RwLock::new(doc)),
             filter: LogFilter::default(),
@@ -75,6 +98,9 @@ impl LogView {
             expand_all: false,
             expanded: HashSet::new(),
             rev: 0,
+            sources: Vec::new(),
+            chronological: false,
+            window_bytes: LogLimits::default().initial_tail,
             busy: false,
             next_follow: Instant::now(),
             filter_rev: 0,
@@ -92,6 +118,7 @@ pub enum Body {
     Loading,
     Static(Arc<Preview>),
     Log(Box<LogView>),
+    Grid(Vec<(Entry, Arc<Preview>)>),
 }
 
 type Key = (VfsUri, Option<SystemTime>, Option<u64>, bool);
@@ -104,6 +131,7 @@ fn key_of(e: &Entry, recursive: bool) -> Key {
 pub struct PreviewSlot {
     /// What the body is about.
     pub subject: Option<Entry>,
+    pub subjects: Vec<Entry>,
     pub body: Body,
     pub pretty: bool,
     pub wrap: bool,
@@ -120,17 +148,23 @@ pub struct PreviewSlot {
     pub target: Option<PaneId>,
     /// Something changed inside the previewed folder; re-render it in place.
     pub stale: bool,
+    /// Multi-file content changed; keep the loaded view until the user reloads.
+    pub updates_available: bool,
     token: u64,
-    key: Option<Key>,
+    key: Option<Vec<Key>>,
     /// Stops a running recursive folder scan when the slot moves on or is dropped.
     scan: Option<ScanCancel>,
-    pending: Option<(Entry, Instant)>,
+    pending: Option<(Vec<Entry>, Instant)>,
+    multi_window: u64,
+    saved_log: Option<(LogFilter, bool, bool, bool)>,
+    source_sort: Option<fm_layout::SortSpec>,
 }
 
 impl PreviewSlot {
     pub(crate) fn new() -> Self {
         Self {
             subject: None,
+            subjects: Vec::new(),
             body: Body::Empty,
             pretty: false,
             wrap: false,
@@ -141,10 +175,14 @@ impl PreviewSlot {
             video: None,
             target: None,
             stale: false,
+            updates_available: false,
             token: 0,
             key: None,
             scan: None,
             pending: None,
+            multi_window: LogLimits::default().initial_tail,
+            saved_log: None,
+            source_sort: None,
         }
     }
 
@@ -155,7 +193,7 @@ impl PreviewSlot {
         }
     }
 
-    fn log_mut(&mut self) -> Option<&mut LogView> {
+    pub(crate) fn log_mut(&mut self) -> Option<&mut LogView> {
         match &mut self.body {
             Body::Log(l) => Some(l),
             _ => None,
@@ -171,6 +209,11 @@ impl PreviewSlot {
 
 #[derive(Debug)]
 enum Msg {
+    BatchRendered {
+        pane: PaneId,
+        token: u64,
+        body: Body,
+    },
     Rendered {
         pane: PaneId,
         token: u64,
@@ -234,6 +277,26 @@ pub fn run_budgeted<T: Send + 'static>(
 }
 
 impl Session {
+    fn preview_entries(&mut self, pane: PaneId) -> Vec<Entry> {
+        let Some(state) = self.layout.state(pane) else {
+            return Vec::new();
+        };
+        if state.listing.selected_count() > 0
+            && let Some((entries, ix)) = self.pane_view(pane)
+            && let Some(state) = self.layout.state(pane)
+        {
+            return ix
+                .order
+                .iter()
+                .filter_map(|i| entries.get(*i as usize))
+                .filter(|e| state.listing.is_selected(&e.name))
+                .take(crate::preview_multi::MAX_SOURCES + 1)
+                .cloned()
+                .collect();
+        }
+        self.cursor_entry(pane).into_iter().collect()
+    }
+
     /// The entry under the cursor of Files pane `pane` (`None` on `..` or when empty).
     /// On `.` this is the pane's own folder, so a following Preview shows the folder.
     fn cursor_entry(&mut self, pane: PaneId) -> Option<Entry> {
@@ -280,7 +343,16 @@ impl Session {
         let now = Instant::now();
         for pane in previews {
             let target = self.layout.preview_target(pane);
-            let desired = target.and_then(|t| self.cursor_entry(t));
+            if target.is_some_and(|target| !self.pane_view_ready(target))
+                && self
+                    .previews
+                    .slots
+                    .get(&pane)
+                    .is_some_and(|slot| slot.subjects.len() > 1 && slot.target == target)
+            {
+                continue;
+            }
+            let desired = target.map(|t| self.preview_entries(t)).unwrap_or_default();
             let slot = self
                 .previews
                 .slots
@@ -313,40 +385,78 @@ impl Session {
         }
     }
 
-    fn advance_slot(&mut self, pane: PaneId, desired: Option<Entry>, now: Instant) -> bool {
+    fn advance_slot(&mut self, pane: PaneId, desired: Vec<Entry>, now: Instant) -> bool {
         let mut changed = false;
         let recursive = self.prefs.recursive_preview;
         let Some(slot) = self.previews.slots.get_mut(&pane) else {
             return false;
         };
-        match desired {
-            None => {
+        match desired.as_slice() {
+            [] => {
                 if slot.key.is_some() || slot.pending.is_some() {
                     slot.key = None;
                     slot.scan = None;
                     slot.pending = None;
                     slot.subject = None;
+                    slot.subjects.clear();
                     slot.body = Body::Empty;
                     slot.pretty = false;
                     slot.thumb_window = None;
-                    self.previews.token();
+                    slot.token = 0;
+                    slot.saved_log = None;
+                    slot.updates_available = false;
                     changed = true;
                 }
             }
-            Some(e) => {
-                let same_subject = slot.subject.as_ref().is_some_and(|s| s.uri == e.uri);
-                let same_log =
-                    slot.log().is_some() && slot.subject.as_ref().is_some_and(|s| s.uri == e.uri);
-                if slot.stale && same_subject && slot.pending.is_none() {
-                    slot.pending = Some((e, now));
-                } else if slot.key.as_ref() == Some(&key_of(&e, recursive)) || same_log {
+            entries => {
+                let keys: Vec<_> = entries.iter().map(|e| key_of(e, recursive)).collect();
+                let same_subject = slot
+                    .subjects
+                    .iter()
+                    .map(|e| &e.uri)
+                    .eq(entries.iter().map(|e| &e.uri));
+                let same_log = entries.len() == 1 && slot.log().is_some() && same_subject;
+                let source_sort = slot
+                    .target
+                    .and_then(|target| self.layout.state(target))
+                    .map(|state| state.listing.sort.clone());
+                let same_selection = slot.subjects.len() == entries.len()
+                    && slot
+                        .subjects
+                        .iter()
+                        .all(|source| entries.iter().any(|entry| entry.uri == source.uri));
+                let keep_multi = entries.len() > 1
+                    && same_selection
+                    && source_sort == slot.source_sort
+                    && (matches!(slot.body, Body::Log(_) | Body::Grid(_))
+                        || (matches!(slot.body, Body::Loading) && slot.token != 0));
+                if slot.stale && same_subject {
+                    if slot.pending.is_none() {
+                        slot.pending = Some((desired, now));
+                    }
+                } else if keep_multi {
+                    if slot.key.as_ref() != Some(&keys) && !slot.updates_available {
+                        slot.updates_available = true;
+                        changed = true;
+                    }
                     slot.pending = None;
-                } else if slot.pending.as_ref().map(|(p, _)| key_of(p, recursive))
-                    != Some(key_of(&e, recursive))
+                } else if (slot.key.as_ref() == Some(&keys)
+                    && (slot.token != 0 || !matches!(slot.body, Body::Loading)))
+                    || same_log
                 {
-                    slot.pending = Some((e, now + DEBOUNCE));
+                    slot.pending = None;
+                } else if slot
+                    .pending
+                    .as_ref()
+                    .map(|(p, _)| p.iter().map(|e| key_of(e, recursive)).collect::<Vec<_>>())
+                    != Some(keys)
+                {
+                    slot.pending = Some((desired, now + DEBOUNCE));
                     // The cursor moved on: stop the old folder scan right away.
                     slot.scan = None;
+                    if matches!(slot.body, Body::Loading) {
+                        slot.token = 0;
+                    }
                 }
             }
         }
@@ -369,11 +479,32 @@ impl Session {
         let Some(slot) = self.previews.slots.get_mut(&pane) else {
             return false;
         };
-        let Some((entry, _)) = slot.pending.take() else {
+        let Some((entries, _)) = slot.pending.take() else {
             return false;
         };
-        let refresh = slot.stale && slot.subject.as_ref().is_some_and(|s| s.uri == entry.uri);
+        let Some(entry) = entries.first().cloned() else {
+            return false;
+        };
+        let refresh = slot.stale
+            && slot.subjects.len() == entries.len()
+            && slot
+                .subjects
+                .iter()
+                .all(|source| entries.iter().any(|entry| entry.uri == source.uri));
+        if let Some(view) = slot.log() {
+            slot.saved_log = Some((
+                view.filter.clone(),
+                view.chronological,
+                view.expand_all,
+                view.columns,
+            ));
+        }
         slot.stale = false;
+        slot.updates_available = false;
+        slot.source_sort = slot
+            .target
+            .and_then(|target| self.layout.state(target))
+            .map(|state| state.listing.sort.clone());
         if slot.subject.as_ref().is_none_or(|s| s.uri != entry.uri) {
             slot.pretty = false;
             slot.thumb_window = None;
@@ -381,10 +512,28 @@ impl Session {
         }
         slot.token = token;
         slot.scan = None;
-        slot.key = Some(key_of(&entry, recursive));
+        if slot
+            .subjects
+            .iter()
+            .map(|e| &e.uri)
+            .ne(entries.iter().map(|e| &e.uri))
+        {
+            slot.multi_window = LogLimits::default().initial_tail;
+        }
+        slot.key = Some(entries.iter().map(|e| key_of(e, recursive)).collect());
+        slot.subjects = entries.clone();
         slot.subject = Some(entry.clone());
         if !refresh {
             slot.body = Body::Loading;
+        }
+        if entries.iter().any(|source| {
+            source.uri.scheme() != entry.uri.scheme()
+                || source.uri.authority() != entry.uri.authority()
+        }) {
+            slot.body = Body::Static(Arc::new(Preview::Error(
+                "Select files from a single filesystem or server for a combined preview.".into(),
+            )));
+            return true;
         }
         let vfs = match self.backends.require(&entry.uri) {
             Ok(v) => v,
@@ -394,6 +543,27 @@ impl Session {
             }
         };
         let inbox = self.previews.inbox.clone();
+        if entries.len() > 1 {
+            let window = slot.multi_window;
+            if entries.len() > crate::preview_multi::MAX_SOURCES {
+                slot.body = Body::Static(Arc::new(Preview::Error(format!(
+                    "Select at most {} files for a combined preview.",
+                    crate::preview_multi::MAX_SOURCES
+                ))));
+                return true;
+            }
+            let cancel = ScanCancel::default();
+            let flag = cancel.0.clone();
+            slot.scan = Some(cancel);
+            self.jobs.submit(lane_for(entry.uri.scheme()), move |_ctx| {
+                let body = crate::preview_multi::render(vfs, entries, window, flag.clone());
+                if !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    PreviewHub::push(&inbox, Msg::BatchRendered { pane, token, body });
+                }
+                Ok(())
+            });
+            return true;
+        }
         if recursive && entry.is_dir_like() && entry.uri.scheme() == fm_vfs::Scheme::File {
             // A full scan has no time budget, so it gets its own thread instead of holding a job lane.
             let cancel = ScanCancel::default();
@@ -469,6 +639,9 @@ impl Session {
         let Some(slot) = self.previews.slots.get_mut(&pane) else {
             return false;
         };
+        if slot.pending.is_some() {
+            return false;
+        }
         let (Some(entry), token) = (slot.subject.clone(), slot.token) else {
             return false;
         };
@@ -518,6 +691,16 @@ impl Session {
     /// Ask for the chunk before the loaded window.
     fn start_earlier(&mut self, pane: PaneId) -> Result<(), FmError> {
         let slot = self.previews.slots.get_mut(&pane).ok_or_else(no_preview)?;
+        if slot.subjects.len() > 1 {
+            if slot.multi_window >= crate::preview_multi::MAX_WINDOW {
+                return Err(FmError::InvalidParams("The combined preview window is full; select fewer files to search a larger window per file.".into()));
+            }
+            slot.multi_window = (slot.multi_window + LogLimits::default().chunk)
+                .min(crate::preview_multi::MAX_WINDOW);
+            slot.pending = Some((slot.subjects.clone(), Instant::now()));
+            slot.stale = true;
+            return Ok(());
+        }
         let (Some(entry), token) = (slot.subject.clone(), slot.token) else {
             return Err(no_log());
         };
@@ -566,16 +749,28 @@ impl Session {
             return;
         };
         view.filter_rev = token;
-        if view.filter.is_empty() {
+        if view.filter.is_empty() && !view.chronological {
             view.filtered = None;
             view.filter_error = None;
             return;
         }
-        let (doc, filter, rev) = (view.doc.clone(), view.filter.clone(), token);
+        let (doc, filter, rev, chronological) = (
+            view.doc.clone(),
+            view.filter.clone(),
+            token,
+            view.chronological,
+        );
         let inbox = self.previews.inbox.clone();
         self.jobs.submit(crate::jobs::JobLane::Local, move |_ctx| {
             let result = match doc.read() {
-                Ok(d) => apply_filter(&d, &filter),
+                Ok(d) => apply_filter(&d, &filter).map(|mut indices| {
+                    if chronological {
+                        indices.sort_by_key(|i| {
+                            d.records.get(*i as usize).map(|r| (r.ts.is_none(), r.ts))
+                        });
+                    }
+                    indices
+                }),
                 Err(_) => Err("log is unavailable".to_string()),
             };
             PreviewHub::push(
@@ -601,6 +796,40 @@ impl Session {
         let mut rewant = Vec::new();
         for msg in msgs {
             match msg {
+                Msg::BatchRendered {
+                    pane,
+                    token,
+                    mut body,
+                } => {
+                    let Some(slot) = self.previews.slots.get_mut(&pane) else {
+                        continue;
+                    };
+                    if slot.token != token {
+                        continue;
+                    }
+                    let settings = slot
+                        .log()
+                        .map(|view| {
+                            (
+                                view.filter.clone(),
+                                view.chronological,
+                                view.expand_all,
+                                view.columns,
+                            )
+                        })
+                        .or_else(|| slot.saved_log.clone());
+                    if let (Some((filter, chronological, expand, columns)), Body::Log(new)) =
+                        (&settings, &mut body)
+                    {
+                        new.filter = filter.clone();
+                        new.chronological = *chronological;
+                        new.expand_all = *expand;
+                        new.columns = *columns;
+                    }
+                    slot.body = body;
+                    refilter.push(pane);
+                    changed = true;
+                }
                 Msg::Rendered {
                     pane,
                     token,
@@ -613,7 +842,16 @@ impl Session {
                         continue;
                     }
                     slot.body = match preview {
-                        Preview::Log(doc) => Body::Log(Box::new(LogView::new(doc))),
+                        Preview::Log(doc) => {
+                            let mut view = LogView::new(doc);
+                            if let Some((filter, _, expand, columns)) = &slot.saved_log {
+                                view.filter = filter.clone();
+                                view.expand_all = *expand;
+                                view.columns = *columns;
+                                refilter.push(pane);
+                            }
+                            Body::Log(Box::new(view))
+                        }
                         other => Body::Static(Arc::new(other)),
                     };
                     // New items (after a paste, say) need thumbnails even if the window is unchanged.
@@ -683,6 +921,33 @@ impl Session {
 
     pub fn preview_slot(&self, pane: PaneId) -> Option<&PreviewSlot> {
         self.previews.slot(pane)
+    }
+
+    pub(crate) fn reload_preview(&mut self, params: &Params) -> Result<(), FmError> {
+        let pane = self.preview_pane(params)?;
+        let slot = self.previews.slots.get(&pane).ok_or_else(no_preview)?;
+        if slot.subjects.len() < 2 || !matches!(slot.body, Body::Log(_) | Body::Grid(_)) {
+            return Err(FmError::InvalidParams(
+                "A loaded multi-file preview is required.".into(),
+            ));
+        }
+        let target = slot.target.ok_or_else(no_preview)?;
+        let subjects: Vec<_> = slot.subjects.iter().map(|e| e.uri.clone()).collect();
+        let entries = self.preview_entries(target);
+        if subjects.len() != entries.len()
+            || subjects
+                .iter()
+                .any(|uri| !entries.iter().any(|entry| &entry.uri == uri))
+        {
+            return Err(FmError::InvalidParams(
+                "The selected files changed; wait for their preview to load.".into(),
+            ));
+        }
+        let slot = self.previews.slots.get_mut(&pane).ok_or_else(no_preview)?;
+        slot.pending = Some((entries, Instant::now()));
+        slot.stale = true;
+        self.start_render(pane);
+        Ok(())
     }
 
     /// The Preview pane a `preview.*` command acts on.
@@ -932,7 +1197,7 @@ pub fn toggle_pretty() -> CommandSpec {
     }
 }
 
-fn log_cmd(
+pub(crate) fn log_cmd(
     pane_params: &Params,
     s: &mut Session,
     f: impl FnOnce(&mut LogView) -> Result<bool, FmError>,
@@ -1048,7 +1313,10 @@ pub fn log_follow() -> CommandSpec {
             let on = bool_param(p, "on");
             log_cmd(p, s, |v| {
                 let want = on.unwrap_or(!v.follow);
-                if want && !v.doc.read().map(|d| d.can_follow()).unwrap_or(false) {
+                if want
+                    && (!v.sources.is_empty()
+                        || !v.doc.read().map(|d| d.can_follow()).unwrap_or(false))
+                {
                     return Err(FmError::InvalidParams("this log cannot be followed".into()));
                 }
                 v.follow = want;
@@ -1175,6 +1443,84 @@ pub fn specs() -> Vec<CommandSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn stale_renders_cannot_replace_cleared_or_reselected_previews() {
+        let a = Entry::new(
+            VfsUri::parse("/a.log").expect("uri"),
+            fm_vfs::EntryKind::File,
+        );
+        let b = Entry::new(
+            VfsUri::parse("/b.log").expect("uri"),
+            fm_vfs::EntryKind::File,
+        );
+        let mut s = Session::default();
+        let mut slot = PreviewSlot::new();
+        slot.token = 7;
+        slot.subject = Some(a.clone());
+        slot.subjects = vec![a.clone()];
+        slot.key = Some(vec![key_of(&a, false)]);
+        slot.body = Body::Loading;
+        s.previews.slots.insert(1, slot);
+        let now = Instant::now();
+        s.advance_slot(1, vec![b], now);
+        s.advance_slot(1, vec![a.clone()], now + Duration::from_millis(1));
+        let slot = s.previews.slot(1).expect("slot");
+        assert_eq!(slot.pending.as_ref().expect("pending").0[0].uri, a.uri);
+        PreviewHub::push(
+            &s.previews.inbox,
+            Msg::Rendered {
+                pane: 1,
+                token: 7,
+                preview: Preview::Error("stale".into()),
+            },
+        );
+        s.drain_previews();
+        assert!(matches!(
+            s.previews.slot(1).expect("slot").body,
+            Body::Loading
+        ));
+        s.advance_slot(1, Vec::new(), now);
+        PreviewHub::push(
+            &s.previews.inbox,
+            Msg::BatchRendered {
+                pane: 1,
+                token: 7,
+                body: Body::Grid(Vec::new()),
+            },
+        );
+        s.drain_previews();
+        assert!(matches!(
+            s.previews.slot(1).expect("slot").body,
+            Body::Empty
+        ));
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn mixed_servers_do_not_use_the_first_servers_backend() {
+        let mut s = Session::default();
+        let mut slot = PreviewSlot::new();
+        slot.pending = Some((
+            vec![
+                Entry::new(
+                    VfsUri::parse("sftp://alice@first/a.log").expect("uri"),
+                    fm_vfs::EntryKind::File,
+                ),
+                Entry::new(
+                    VfsUri::parse("sftp://alice@second/b.log").expect("uri"),
+                    fm_vfs::EntryKind::File,
+                ),
+            ],
+            Instant::now(),
+        ));
+        s.previews.slots.insert(1, slot);
+        s.start_render(1);
+        assert!(matches!(&s.previews.slot(1).expect("slot").body,
+            Body::Static(p) if matches!(&**p, Preview::Error(e) if e.contains("single filesystem"))
+        ));
+    }
 
     #[test]
     fn budget_gives_up_on_slow_work() {

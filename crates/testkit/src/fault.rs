@@ -166,6 +166,10 @@ impl<V: Vfs> Vfs for FaultFs<V> {
         self.inner.remove(uri)
     }
 
+    fn set_permissions(&self, uri: &VfsUri, mode: u32) -> Result<(), FmError> {
+        self.inner.set_permissions(uri, mode)
+    }
+
     fn rename(&self, from: &VfsUri, to: &VfsUri) -> Result<(), FmError> {
         if self.faults().rename_unsupported {
             return Err(FmError::Unsupported("rename (injected)"));

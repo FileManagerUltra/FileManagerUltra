@@ -13,7 +13,7 @@ pub mod vfs;
 
 pub use entry::{Entry, EntryKind};
 pub use error::FmError;
-pub use uri::{Authority, Scheme, VfsUri};
+pub use uri::{Authority, Scheme, VfsUri, native_path};
 pub use vfs::{SpaceInfo, Vfs, WriteOpts};
 
 /// Hard caps for hostile input (capability `security`). A path, component or URI that

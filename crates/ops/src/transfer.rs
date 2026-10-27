@@ -122,8 +122,12 @@ impl<'a, 'b> Runner<'a, 'b> {
             return;
         };
         self.roots = Some((
-            top.src.path_str().to_string(),
-            top.dst.path_str().to_string(),
+            top.src
+                .local_path_string()
+                .unwrap_or_else(|| top.src.path_str().to_string()),
+            top.dst
+                .local_path_string()
+                .unwrap_or_else(|| top.dst.path_str().to_string()),
         ));
         let mut failed_dirs: Vec<&VfsUri> = Vec::new();
         let mut done_idx: Vec<usize> = Vec::new();

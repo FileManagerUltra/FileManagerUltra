@@ -5,7 +5,7 @@
 
 use fm_layout::{PaneId, PaneKind};
 use fm_term::{Pump, Snapshot, Status, TermSession};
-use fm_vfs::{FmError, Scheme, VfsUri};
+use fm_vfs::{FmError, VfsUri};
 
 use crate::file_cmds::{object, other_pane_dir};
 use crate::registry::{CommandSpec, Params};
@@ -27,14 +27,13 @@ pub struct TermSelection {
 }
 
 fn local_dir(uri: &VfsUri) -> Option<String> {
-    (uri.scheme() == Scheme::File && uri.authority().is_local())
-        .then(|| uri.path_str().to_string())
+    uri.local_path_string()
         .filter(|p| std::path::Path::new(p).is_dir())
 }
 
 /// The native path of a local file or folder uri, whether or not it exists.
 fn local_path(uri: &VfsUri) -> Option<String> {
-    (uri.scheme() == Scheme::File && uri.authority().is_local()).then(|| uri.path_str().to_string())
+    uri.local_path_string()
 }
 
 fn home_dir() -> Option<String> {
@@ -343,7 +342,7 @@ pub fn cd_here() -> CommandSpec {
 
 fn other_files_dir(s: &Session) -> Option<String> {
     let uri = other_pane_dir(s)?;
-    (uri.scheme() == Scheme::File && uri.authority().is_local()).then(|| uri.path_str().to_string())
+    uri.local_path_string()
 }
 
 /// `term.clear_scrollback`

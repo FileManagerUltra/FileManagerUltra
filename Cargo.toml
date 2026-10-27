@@ -38,6 +38,8 @@ eframe = { version = "0.37", default-features = false, features = [
     "system_fonts",
 ] }
 egui = "0.37"
+egui_extras = { version = "0.37", default-features = false, features = ["datepicker"] }
+jiff = { version = "0.2", default-features = false, features = ["std"] }
 egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }
 # eframe/egui-winit both build winit with `default-features = false`, which drops
 # `wayland-csd-adwaita`. Without it Wayland windows get winit's fallback CSD frame,

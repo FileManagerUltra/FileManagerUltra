@@ -1,7 +1,7 @@
 //! Platform trash (design D6). Local files only; a failure is an error, never a silent
 //! downgrade to permanent deletion.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use fm_vfs::{FmError, Scheme, VfsUri};
 
@@ -17,13 +17,15 @@ pub const RESTORE_SUPPORTED: bool = cfg!(any(
     )
 ));
 
-fn local_path(uri: &VfsUri) -> Result<&Path, FmError> {
+fn local_path(uri: &VfsUri) -> Result<PathBuf, FmError> {
     if uri.scheme() != Scheme::File || !uri.authority().is_local() {
         return Err(FmError::Unsupported(
             "the trash is only available for local files",
         ));
     }
-    Ok(Path::new(uri.path_str()))
+    uri.local_path().ok_or(FmError::Unsupported(
+        "This PC lists the drives; it cannot be trashed",
+    ))
 }
 
 fn backend(err: trash::Error) -> FmError {
@@ -33,10 +35,10 @@ fn backend(err: trash::Error) -> FmError {
 /// Move one local item to the platform trash. Does not follow a symlink.
 pub fn trash_local(uri: &VfsUri) -> Result<(), FmError> {
     let path = local_path(uri)?;
-    if std::fs::symlink_metadata(path).is_err() {
+    if std::fs::symlink_metadata(&path).is_err() {
         return Err(FmError::NotFound(uri.to_string()));
     }
-    trash::delete(path).map_err(backend)
+    trash::delete(&path).map_err(backend)
 }
 
 /// Put a previously trashed local item back where it was.
@@ -51,7 +53,7 @@ pub fn trash_local(uri: &VfsUri) -> Result<(), FmError> {
 ))]
 pub fn restore_local(original: &VfsUri) -> Result<(), FmError> {
     let path = local_path(original)?;
-    if std::fs::symlink_metadata(path).is_ok() {
+    if std::fs::symlink_metadata(&path).is_ok() {
         return Err(FmError::AlreadyExists(original.to_string()));
     }
     let items = trash::os_limited::list().map_err(backend)?;

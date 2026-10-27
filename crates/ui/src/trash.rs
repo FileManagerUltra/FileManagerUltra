@@ -277,7 +277,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
         );
     }
     let rows = build_rows(s);
-    egui::ScrollArea::vertical()
+    egui::ScrollArea::both()
         .auto_shrink([false, false])
         .show_rows(ui, row_h, rows.len(), |ui, range| {
             let ctrl = ui.input(|i| i.modifiers.command);

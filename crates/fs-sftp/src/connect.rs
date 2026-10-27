@@ -242,7 +242,10 @@ pub fn connect(
         Ok(result) => result,
         Err(_) => Err(FmError::backend(
             "sftp",
-            format!("connecting to {} timed out", params.host),
+            format!(
+                "Connection to {}:{} timed out. Check the server address, network or VPN, and firewall.",
+                params.host, params.port
+            ),
         )),
     }
 }
@@ -276,10 +279,16 @@ async fn connect_async(
             let why = rejection.lock().ok().and_then(|mut r| r.take());
             return Err(match why {
                 Some(why) => FmError::backend("sftp", why),
-                None => fail("cannot connect to the server"),
+                None => fail(
+                    "Cannot reach the SFTP server. Check the server address, network or VPN, and firewall",
+                ),
             });
         }
-        Err(_) => return Err(fail("connection timed out")),
+        Err(_) => {
+            return Err(fail(
+                "Connection timed out. Check the server address, network or VPN, and firewall",
+            ));
+        }
     };
 
     let user = params.user.clone();

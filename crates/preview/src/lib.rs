@@ -221,7 +221,18 @@ pub fn render(vfs: &dyn Vfs, entry: &Entry, limits: &Limits) -> Preview {
 
 /// [`render`] with per-request options.
 pub fn render_with(vfs: &dyn Vfs, entry: &Entry, limits: &Limits, opts: RenderOpts) -> Preview {
-    let run = std::panic::AssertUnwindSafe(|| render_inner(vfs, entry, limits, opts));
+    render_with_log_limits(vfs, entry, limits, opts, &log::LogLimits::default())
+}
+
+/// Render with a shared-budget allocation for log windows in a multi-file preview.
+pub fn render_with_log_limits(
+    vfs: &dyn Vfs,
+    entry: &Entry,
+    limits: &Limits,
+    opts: RenderOpts,
+    logs: &log::LogLimits,
+) -> Preview {
+    let run = std::panic::AssertUnwindSafe(|| render_inner(vfs, entry, limits, opts, logs));
     match std::panic::catch_unwind(run) {
         Ok(Ok(p)) => p,
         Ok(Err(e)) => Preview::Error(e.to_string()),
@@ -234,6 +245,7 @@ fn render_inner(
     entry: &Entry,
     limits: &Limits,
     opts: RenderOpts,
+    logs: &log::LogLimits,
 ) -> Result<Preview, FmError> {
     if entry.is_dir_like() {
         return dir::summarize(vfs, entry, limits, opts.recursive).map(Preview::Dir);
@@ -250,7 +262,7 @@ fn render_inner(
     let kind = sniff::sniff(entry.uri.path_str(), &head);
     match kind {
         Kind::Image(_) => image_prev::render(vfs, entry, limits),
-        Kind::Log => log::open_doc(vfs, entry, limits).map(Preview::Log),
+        Kind::Log => log::open_doc_with(vfs, entry, limits, logs).map(Preview::Log),
         Kind::Text(lang) => text::render_text(vfs, entry, limits, &lang),
         Kind::Structured(f) => structured::render(vfs, entry, limits, f),
         Kind::Markdown => markdown::render(vfs, entry, limits),

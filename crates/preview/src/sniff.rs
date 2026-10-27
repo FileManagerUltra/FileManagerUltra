@@ -78,6 +78,27 @@ pub fn is_log_name(name: &str) -> bool {
     false
 }
 
+fn is_system_log_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let stem = lower.strip_suffix(".gz").unwrap_or(&lower);
+    [
+        "syslog", "messages", "secure", "maillog", "cron", "debug", "dmesg",
+    ]
+    .iter()
+    .any(|base| {
+        stem == *base
+            || stem.strip_prefix(base).is_some_and(|suffix| {
+                let bytes = suffix.as_bytes();
+                bytes.len() > 1
+                    && matches!(bytes.first(), Some(b'.' | b'-'))
+                    && bytes
+                        .iter()
+                        .skip(1)
+                        .all(|b| b.is_ascii_digit() || *b == b'-')
+            })
+    })
+}
+
 fn is_text(head: &[u8]) -> bool {
     if head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF]) {
         return true;
@@ -105,7 +126,11 @@ pub fn sniff(path: &str, head: &[u8]) -> Kind {
         return Kind::Log;
     }
     if head.starts_with(&[0x1F, 0x8B]) {
-        return Kind::Binary;
+        return if is_system_log_name(name) {
+            Kind::Log
+        } else {
+            Kind::Binary
+        };
     }
     if let Some(k) = magic(head) {
         return k;
@@ -119,6 +144,9 @@ pub fn sniff(path: &str, head: &[u8]) -> Kind {
     }
     if !is_text(head) {
         return Kind::Binary;
+    }
+    if is_system_log_name(name) {
+        return Kind::Log;
     }
     let norm = path.replace('\\', "/");
     if norm.contains("/var/report/") && head.first() == Some(&b'{') {
@@ -168,6 +196,53 @@ mod tests {
         }
         for n in ["catalog", "log.txt", "a.logic", "b.log.bak"] {
             assert!(!is_log_name(n), "{n}");
+        }
+    }
+
+    #[test]
+    fn extensionless_system_logs_and_rotations_are_logs() {
+        for name in [
+            "/var/log/syslog",
+            "/var/log/syslog.1",
+            "/var/log/messages",
+            "/var/log/messages-20261027",
+            "/var/log/secure",
+            "/var/log/maillog",
+            "/var/log/cron",
+            "/var/log/debug",
+            "/var/log/dmesg",
+            "/var/log/auth.log",
+            "/var/log/kern.log",
+        ] {
+            assert_eq!(
+                sniff(name, b"Oct 27 13:00:00 host service: started\n"),
+                Kind::Log,
+                "{name}"
+            );
+        }
+        assert_eq!(sniff("/var/log/syslog.2.gz", &[0x1f, 0x8b]), Kind::Log);
+        assert_eq!(
+            sniff("/var/log/messages-20261027.gz", &[0x1f, 0x8b]),
+            Kind::Log
+        );
+        for name in [
+            "/var/log/syslog.conf",
+            "/var/log/messages.backup",
+            "/tmp/cron.sh",
+        ] {
+            assert_ne!(sniff(name, b"plain text"), Kind::Log, "{name}");
+        }
+    }
+
+    #[test]
+    fn binary_login_databases_are_not_text_logs() {
+        for name in [
+            "/var/log/lastlog",
+            "/var/log/wtmp",
+            "/var/log/btmp",
+            "/var/log/syslog",
+        ] {
+            assert_eq!(sniff(name, &[0, 0, 1, 2, 0, 0]), Kind::Binary, "{name}");
         }
     }
 

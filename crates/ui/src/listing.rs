@@ -51,6 +51,7 @@ pub fn show(
     let dir_state = s.dirs.state(&location);
 
     let mut open: Option<VfsUri> = None;
+    filter_bar(ui, s, pane, tokens);
     if let Some(state) = s.layout.state(pane) {
         let action = header(ui, pane, &state.listing.sort, state.col_widths, tokens);
         match action {
@@ -357,11 +358,21 @@ fn ready_rows(
     let pitch = tokens.row_height + ui.spacing().item_spacing.y;
     let page_rows = ((ui.available_height() / pitch).floor() as isize - 1).max(1);
     let tree_active = s.layout.state(pane).is_some_and(|p| p.tree.active);
+    // Show in Folder: select the revealed item once its folder is listed.
+    let mut moved = false;
+    if let Some(state) = s.layout.state_mut(pane)
+        && let Some(name) = state.listing.reveal.take()
+        && let Some(row) = names.iter().position(|n| *n == name)
+    {
+        state.listing.select_only(Some(&name), row);
+        moved = true;
+    }
     if pane_focused
         && !tree_active
         && !ui.ctx().text_edit_focused()
         && !crate::preview::grid_has_keyboard(ui.ctx())
     {
+        esc_clears_filter(ui, s, pane);
         let outcomes: Vec<KeyOutcome> = ui.input(|i| {
             i.events
                 .iter()
@@ -380,7 +391,6 @@ fn ready_rows(
             && let Some(state) = s.layout.state_mut(pane)
         {
             let listing = &mut state.listing;
-            let mut moved = false;
             for outcome in outcomes {
                 moved |= matches!(
                     outcome,
@@ -426,25 +436,26 @@ fn ready_rows(
                     KeyOutcome::Open => open_key = true,
                 }
             }
-            // Keys that do not move focus (bare Shift/Ctrl, letters) must not re-scroll.
-            if moved {
-                let row = if listing.on_current {
-                    0
-                } else if listing.on_parent {
-                    1 // `..` sits directly below the always-present `.`
-                } else {
-                    listing.focused_row.min(names.len().saturating_sub(1)) + specials
-                };
-                // Scroll just enough to keep the focused row visible.
-                let top = row as f32 * pitch;
-                let bottom = top + tokens.row_height;
-                let view = ui.available_height();
-                if top < saved_scroll {
-                    scroll_to = Some(top);
-                } else if bottom > saved_scroll + view {
-                    scroll_to = Some(bottom - view);
-                }
-            }
+        }
+    }
+    // Keys that do not move focus (bare Shift/Ctrl, letters) must not re-scroll.
+    if moved && let Some(state) = s.layout.state(pane) {
+        let listing = &state.listing;
+        let row = if listing.on_current {
+            0
+        } else if listing.on_parent {
+            1 // `..` sits directly below the always-present `.`
+        } else {
+            listing.focused_row.min(names.len().saturating_sub(1)) + specials
+        };
+        // Scroll just enough to keep the focused row visible.
+        let top = row as f32 * pitch;
+        let bottom = top + tokens.row_height;
+        let view = ui.available_height();
+        if top < saved_scroll {
+            scroll_to = Some(top);
+        } else if bottom > saved_scroll + view {
+            scroll_to = Some(bottom - view);
         }
     }
     let on_parent = s.layout.state(pane).is_some_and(|p| p.listing.on_parent);
@@ -466,7 +477,7 @@ fn ready_rows(
         .layout
         .state(pane)
         .map_or([0.0; 3], |state| state.col_widths);
-    let builder = egui::ScrollArea::vertical()
+    let builder = egui::ScrollArea::both()
         .id_salt(format!("fm-list-{pane}"))
         .auto_shrink([false, false]);
     // The pane state's offset is the source of truth: no ScrollArea is
@@ -515,6 +526,84 @@ fn ready_rows(
         }
     }
     open
+}
+
+/// The quick-filter bar above the listing, shown while the pane has a filter. Typing narrows
+/// the listing (`view.filter`); Esc or the clear button removes it; Enter or Down hands the
+/// keyboard back to the rows.
+fn filter_bar(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
+    let Some(state) = s.layout.state(pane) else {
+        return;
+    };
+    let Some(mut text) = state.listing.filter.clone() else {
+        return;
+    };
+    let focus = state.listing.filter_focus;
+    let shown = s.pane_view(pane).map(|(_, ix)| ix.order.len());
+    let (mut clear, mut back, mut changed) = (false, false, false);
+    ui.horizontal(|ui| {
+        let caption = ui.label(tokens.muted("Filter"));
+        let edit = egui::TextEdit::singleline(&mut text)
+            .id(egui::Id::NULL.with(("fm-listing-filter", pane)))
+            .hint_text("part of a name, or * ? [a-z]")
+            .desired_width((ui.available_width() - 120.0).max(80.0));
+        let response = ui.add(edit).labelled_by(caption.id).on_hover_text(
+            "Show only matching names. Wildcards: * any text, ? one character, [a-z] a range; \
+             separate alternatives with ;",
+        );
+        if focus {
+            response.request_focus();
+        }
+        changed = response.changed();
+        let (esc, enter, down) = ui.input(|i| {
+            (
+                i.key_pressed(egui::Key::Escape),
+                i.key_pressed(egui::Key::Enter),
+                i.key_pressed(egui::Key::ArrowDown),
+            )
+        });
+        if (response.has_focus() || response.lost_focus()) && esc {
+            clear = true;
+        } else if (response.lost_focus() && enter) || (response.has_focus() && down) {
+            back = true;
+            response.surrender_focus();
+        }
+        if let Some(n) = shown {
+            ui.label(tokens.muted(format!("{n} shown")));
+        }
+        if ui
+            .small_button("×")
+            .on_hover_text("Clear the filter (Esc)")
+            .clicked()
+        {
+            clear = true;
+        }
+    });
+    if let Some(state) = s.layout.state_mut(pane) {
+        state.listing.filter_focus = false;
+        if back {
+            state.tree.active = false;
+        }
+    }
+    if clear || changed || back {
+        let _ = s.layout.focus_pane(pane);
+    }
+    if clear {
+        s.dispatch_or_notice("view.filter.clear", &serde_json::Value::Null);
+    } else if changed {
+        s.dispatch_or_notice("view.filter", &serde_json::json!({ "text": text }));
+    }
+}
+
+/// Esc in a focused listing clears its quick filter.
+fn esc_clears_filter(ui: &Ui, s: &mut Session, pane: PaneId) {
+    let has_filter = s
+        .layout
+        .state(pane)
+        .is_some_and(|p| p.listing.filter.is_some());
+    if has_filter && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        s.dispatch_or_notice("view.filter.clear", &serde_json::Value::Null);
+    }
 }
 
 /// Where an entry's name starts: the Name column after the icon gutter, shared by the
@@ -766,7 +855,9 @@ fn entry_row_ui(
         );
     }
     column_separators(ui.painter(), &cols, rect, tokens);
-    response.clone().on_hover_text(entry.uri.path_str());
+    response
+        .clone()
+        .on_hover_text(fm_engine::item_cmds::display_path(&entry.uri));
     open
 }
 

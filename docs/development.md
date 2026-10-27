@@ -47,6 +47,12 @@ See `AGENTS.md` §2. `docs/architecture.md` explains why each crate exists and h
   remove those two files. An installed package supplies its own desktop entry.
 
 - **Wayland**: window-wide file drops from other applications depend on winit's Wayland support and may be unavailable; in-app pane-to-pane drag & drop is unaffected, and pasting paths from the clipboard always works. See `docs/architecture.md` §11.
+
+The main window saves its normal size, position and maximized state about a second
+after they stop changing (and on exit) and restores them on launch, re-asserting the
+position for the first moments in case the window manager places the window itself. Positions on disconnected monitors are not restored.
+Native Wayland controls placement in the compositor, so only size/maximized state
+can be restored there; X11/XWayland, Windows and macOS also restore position.
 - **Network discovery** (manual smoke; multicast cannot run in CI): File ▸ Network should list Samba/NAS hosts (mDNS) and Windows PCs (WS-Discovery) within ~5 s; opening one asks for credentials in a popup, a wrong password reopens it with an error, and `Remember until you quit` reconnects silently. VLANs/VPNs may hide hosts; use the Network pane's Connect… button (or File ▸ Connect to SMB Server…) as the fallback.
 - **SMB**: pure Rust on every OS, no system libraries. The `fm-fs-smb` integration tests start `dperson/samba` in Docker and skip themselves when Docker or the image is missing.
 - **macOS**: local roots are `/` and `/Volumes`.

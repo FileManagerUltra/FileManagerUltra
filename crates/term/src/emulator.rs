@@ -2,6 +2,8 @@ use std::num::NonZeroU16;
 
 use vt100::Parser;
 
+use crate::charset::Charsets;
+
 /// Lines of scrollback kept per terminal.
 pub const SCROLLBACK: usize = 10_000;
 /// Smallest and largest grid accepted; hostile or absurd sizes are clamped.
@@ -104,17 +106,22 @@ fn dim(v: u16, max: u16) -> NonZeroU16 {
 /// The VT parser and screen model. Pure data: feed it bytes, read snapshots.
 pub struct Emulator {
     parser: Parser,
+    charsets: Charsets,
+    scratch: Vec<u8>,
 }
 
 impl Emulator {
     pub fn new(rows: u16, cols: u16) -> Self {
         Self {
             parser: Parser::new(dim(rows, MAX_ROWS), dim(cols, MAX_COLS), SCROLLBACK),
+            charsets: Charsets::default(),
+            scratch: Vec::new(),
         }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
-        self.parser.process(bytes);
+        self.charsets.translate(bytes, &mut self.scratch);
+        self.parser.process(&self.scratch);
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
@@ -207,6 +214,13 @@ mod tests {
         assert_eq!(s.cell(0, 3).map(|c| c.fg), Some(Color::Indexed(1)));
         assert_eq!(text(&e), "hi red\nnext");
         assert_eq!(s.cursor, Some((1, 4)));
+    }
+
+    #[test]
+    fn dec_line_drawing_renders_as_box_characters() {
+        let mut e = Emulator::new(4, 10);
+        e.feed(b"\x1b(0lqk\r\nx x\r\nmqj\x1b(B ok");
+        assert_eq!(text(&e), "┌─┐\n│ │\n└─┘ ok");
     }
 
     #[test]

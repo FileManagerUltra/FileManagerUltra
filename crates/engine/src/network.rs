@@ -123,6 +123,34 @@ impl CredCache {
 }
 
 impl Session {
+    pub(crate) fn sftp_retry_prompt(
+        &self,
+        params: &ConnectParams,
+        navigate: bool,
+        landing: Option<VfsUri>,
+    ) -> SftpPrompt {
+        let profile = self.prefs.profiles.iter().find(|p| {
+            p.protocol == crate::prefs::Protocol::Sftp
+                && p.host == params.host
+                && p.port == params.port
+                && p.user == params.user
+        });
+        SftpPrompt {
+            landing,
+            navigate,
+            host: params.host.clone(),
+            port: Some(params.port),
+            user: params.user.clone(),
+            key_path: match &params.auth {
+                AuthMethod::Key { path, .. } => path.to_string_lossy().into_owned(),
+                AuthMethod::Password(_) => String::new(),
+            },
+            start_dir: params.start_dir.clone().unwrap_or_default(),
+            save_as: profile.map(|p| p.name.clone()).unwrap_or_default(),
+            ..SftpPrompt::default()
+        }
+    }
+
     fn smb_timeout(&self) -> Duration {
         Duration::from_secs(self.prefs.remote_timeout_secs.clamp(1, 600))
     }
@@ -142,6 +170,14 @@ impl Session {
     /// A read of an unconnected `sftp://` address signs in: silently with a password kept for
     /// this run, otherwise through the connect popup. `true` when handled.
     pub(crate) fn needs_sftp_login(&mut self, uri: &VfsUri) -> bool {
+        let navigate = self
+            .layout
+            .state(self.layout.focused())
+            .is_some_and(|st| st.location == *uri);
+        self.needs_sftp_login_to(uri, navigate)
+    }
+
+    pub(crate) fn needs_sftp_login_to(&mut self, uri: &VfsUri, navigate: bool) -> bool {
         if uri.scheme() != Scheme::Sftp || self.backends.get_for(uri).is_some() {
             return false;
         }
@@ -154,10 +190,6 @@ impl Session {
         {
             return true;
         }
-        let navigate = self
-            .layout
-            .state(self.layout.focused())
-            .is_some_and(|st| st.location == *uri);
         let port = auth.port.unwrap_or(22);
         let user = auth.user.clone().unwrap_or_default();
         let profile = self
@@ -186,8 +218,10 @@ impl Session {
                 auth: AuthMethod::Password(password.clone()),
                 start_dir,
             };
+            let mut retry = self.sftp_retry_prompt(&params, navigate, Some(uri.clone()));
             if let Err(err) = self.connect_sftp_to(params, navigate, Some(uri.clone())) {
-                self.notice = Some(err.to_string());
+                retry.error = Some(err.to_string());
+                self.remote.sftp_prompt = Some(retry);
             }
             return true;
         }

@@ -11,6 +11,7 @@
 )]
 
 mod menu;
+mod window;
 
 use std::path::PathBuf;
 
@@ -31,6 +32,7 @@ struct App {
     was_focused: bool,
     dialogs: fm_ui::dialogs::Dialogs,
     last_ws_tick: std::time::Instant,
+    window: window::Tracker,
 }
 
 impl App {
@@ -307,6 +309,14 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.window.reposition(&ctx);
+        window::capture(&ctx, &mut self.session.prefs);
+        if self.window.save_due(&ctx, &self.session.prefs)
+            && let Some(dir) = &self.config_dir
+            && let Err(err) = fm_engine::prefs::save(dir, &self.session.prefs)
+        {
+            eprintln!("failed to save preferences: {err}");
+        }
         // Shortcuts run before any widget renders: `Tab` drives egui's focus
         // traversal, which is committed at `begin_pass`; `consume_shortcuts`
         // cancels it before the menu/tree/listing can act on it.
@@ -446,6 +456,9 @@ impl eframe::App for App {
         self.dialogs.show(&ctx, &mut self.session, &tokens);
         fm_ui::jobs::show(&ctx, &mut self.session, &tokens);
         fm_ui::preferences::show(&ctx, &mut self.session, &tokens);
+        fm_ui::properties::show(&ctx, &mut self.session, &tokens);
+        fm_ui::search::show(&ctx, &mut self.session, &tokens);
+        fm_ui::open_with::show(&ctx, &mut self.session, &tokens);
         fm_ui::remote::host_key_dialog(&ctx, &mut self.session, &tokens);
         fm_ui::remote::login_dialog(&ctx, &mut self.session, &tokens);
         fm_ui::sftp_popup::sftp_prompt_dialog(&ctx, &mut self.session, &tokens);
@@ -543,7 +556,7 @@ fn main() -> eframe::Result {
     if let Ok(icon) = eframe::icon_data::from_png_bytes(fm_brand::ICON_PNG) {
         viewport = viewport.with_icon(icon);
     }
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport: viewport
             .with_title(fm_brand::APP_NAME)
             .with_app_id(fm_brand::WINDOW_CLASS)
@@ -553,11 +566,16 @@ fn main() -> eframe::Result {
         event_loop_builder: prefer_x11(),
         ..Default::default()
     };
+    window::restore(&mut options, &session.prefs);
 
     eframe::run_native(
         fm_brand::APP_NAME,
         options,
         Box::new(move |cc| {
+            let position = cc
+                .winit_window()
+                .and_then(|window| window::restore_native(window, &session.prefs));
+            let tracker = window::Tracker::new(position, &session.prefs);
             // Seed the theme before the first frame; `sync_theme` keeps it current.
             let theme_pref = session.prefs.theme;
             set_egui_theme_preference(&cc.egui_ctx, theme_pref);
@@ -575,6 +593,7 @@ fn main() -> eframe::Result {
                 was_focused: true,
                 dialogs: fm_ui::dialogs::Dialogs::default(),
                 last_ws_tick: std::time::Instant::now(),
+                window: tracker,
             }))
         }),
     )

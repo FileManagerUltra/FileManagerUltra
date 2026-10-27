@@ -345,6 +345,8 @@ struct ConnectJob {
     navigate: bool,
     /// Where a Network-folder sign-in was headed (and where a refused one asks again).
     landing: Option<VfsUri>,
+    /// Silent saved-server attempts can raise a retry dialog on failure.
+    retry_prompt: Option<SftpPrompt>,
 }
 
 /// A freshly opened backend, staged by a connect job.
@@ -615,6 +617,11 @@ impl Session {
             *lock(&self.remote.known) = KnownHosts::load(dir);
         }
         let login = Login::Sftp(params.clone());
+        let retry_prompt = if self.remote.sftp_prompt.is_none() && landing.is_some() {
+            Some(self.sftp_retry_prompt(&params, navigate, landing.clone()))
+        } else {
+            None
+        };
         let (key, authority) = self.begin_connect(login)?;
         let known = self.remote.known.clone();
         let pending = self.remote.pending.clone();
@@ -639,6 +646,7 @@ impl Session {
                 authority,
                 navigate,
                 landing,
+                retry_prompt,
             },
         );
         Ok(job)
@@ -675,6 +683,7 @@ impl Session {
                 authority,
                 navigate,
                 landing,
+                retry_prompt: None,
             },
         );
         Ok(job)
@@ -886,6 +895,9 @@ impl Session {
             }
             Err(err) => {
                 let message = err.to_string();
+                if job.scheme == Scheme::Sftp && self.remote.sftp_prompt.is_none() {
+                    self.remote.sftp_prompt = job.retry_prompt;
+                }
                 let in_popup = job.scheme == Scheme::Sftp && self.remote.sftp_prompt.is_some();
                 if in_popup {
                     if let Some(prompt) = self.remote.sftp_prompt.as_mut() {

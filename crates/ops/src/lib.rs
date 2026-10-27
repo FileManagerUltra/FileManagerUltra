@@ -165,6 +165,31 @@ pub fn rename(backends: &dyn Backends, uri: &VfsUri, new_name: &str) -> Result<V
     Ok(target)
 }
 
+/// Set the permission bits of each item (not recursive). A failure on one item is recorded
+/// and the rest still run.
+pub fn set_permissions(
+    backends: &dyn Backends,
+    sources: &[VfsUri],
+    mode: u32,
+    ctx: &OpCtx,
+) -> OpReport {
+    let mut report = OpReport::default();
+    for uri in sources {
+        if ctx.cancel.is_cancelled() {
+            report.cancelled = true;
+            break;
+        }
+        match backends
+            .vfs(uri)
+            .and_then(|vfs| vfs.set_permissions(uri, mode & 0o7777))
+        {
+            Ok(()) => report.done += 1,
+            Err(e) => report.failed.push((uri.clone(), e)),
+        }
+    }
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

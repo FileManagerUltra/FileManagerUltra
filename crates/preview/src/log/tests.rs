@@ -55,6 +55,34 @@ fn stack_traces_fold_into_their_record() {
 }
 
 #[test]
+fn generic_timestamps_and_severities_work_for_system_rotations() {
+    let first =
+        parse::header(LogFormat::Generic, "2024-05-01 10:00:00 ERROR failed").expect("header");
+    let embedded = parse::header(
+        LogFormat::Generic,
+        "update-alternatives 2024-05-01 10:00:00: ERROR failed",
+    )
+    .expect("header");
+    assert_eq!(first.ts, parse_bound("2024-05-01 10:00:00"));
+    assert_eq!(embedded.ts, first.ts);
+    assert_eq!(first.level, Some(Level::Error));
+    assert_eq!(embedded.level, Some(Level::Error));
+}
+
+#[test]
+fn shared_budget_caps_the_number_of_tiny_log_records() {
+    let fs = MemFs::new();
+    fs.put_str("/a.log", b"a\nb\nc\nd\ne\n").expect("put");
+    let lim = LogLimits {
+        max_records: 3,
+        ..LogLimits::default()
+    };
+    let doc = open_doc_with(&fs, &stat(&fs, "/a.log"), &Limits::default(), &lim).expect("doc");
+    assert_eq!(doc.records.len(), 3);
+    assert!(doc.note.expect("limit note").contains("record limit"));
+}
+
+#[test]
 fn tail_first_then_earlier_chunks_cover_everything_once() {
     let fs = MemFs::new();
     fs.put_str("/a.log", monolog(400).as_bytes()).expect("put");

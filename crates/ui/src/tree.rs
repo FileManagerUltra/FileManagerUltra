@@ -42,6 +42,8 @@ fn root_label(root: &VfsUri) -> String {
         "Network".to_string()
     } else if root.scheme() == fm_vfs::Scheme::Servers {
         "Saved servers".to_string()
+    } else if root.is_drive_list() {
+        "This PC".to_string()
     } else {
         root.file_name().unwrap_or("/").to_string()
     }
@@ -212,7 +214,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         .first()
         .is_some_and(|r| r.uri.scheme() == fm_vfs::Scheme::Servers);
     let max_chars = ((ui.available_width() / (tokens.font_size * 0.55)).max(8.0)) as usize;
-    let output = egui::ScrollArea::vertical()
+    let output = egui::ScrollArea::both()
         .id_salt(format!("fm-tree-{pane}"))
         .auto_shrink([false, true])
         .vertical_scroll_offset(saved_scroll)
@@ -301,7 +303,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             scroll_focus_done = true;
                         }
                     }
-                    response.clone().on_hover_text(row.uri.path_str());
+                    response
+                        .clone()
+                        .on_hover_text(fm_engine::item_cmds::display_path(&row.uri));
                     if response.has_focus() {
                         // Left/Right belong to expand/collapse; without the lock egui moves
                         // widget focus sideways (into the listing) before we see the key.

@@ -169,6 +169,7 @@ pub fn header(format: LogFormat, line: &str) -> Option<Header> {
     static APA_ERR: OnceLock<Regex> = OnceLock::new();
     static MONO: OnceLock<Regex> = OnceLock::new();
     static PHP: OnceLock<Regex> = OnceLock::new();
+    static GENERIC_TIME: OnceLock<Regex> = OnceLock::new();
     match format {
         LogFormat::NginxAccess | LogFormat::ApacheAccess => {
             let r = re(
@@ -246,6 +247,7 @@ pub fn header(format: LogFormat, line: &str) -> Option<Header> {
             }
             let level = line
                 .split(|c: char| !c.is_ascii_alphabetic())
+                .filter(|word| !word.is_empty())
                 .take(8)
                 .find_map(|w| {
                     (w.len() >= 3 && w.chars().all(|c| c.is_ascii_uppercase()))
@@ -253,7 +255,11 @@ pub fn header(format: LogFormat, line: &str) -> Option<Header> {
                         .flatten()
                 });
             Some(Header {
-                ts: parse_iso(line),
+                ts: parse_iso(line).or_else(|| {
+                    let timestamp =
+                        re(&GENERIC_TIME, r"\b\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d")?.find(line)?;
+                    parse_iso(line.get(timestamp.start()..)?)
+                }),
                 level,
                 ..Header::default()
             })

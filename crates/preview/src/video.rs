@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use fm_vfs::{Entry, Scheme};
+use fm_vfs::Entry;
 
 use crate::platform::{Os, tool_candidates};
 use crate::{ImageDoc, Limits, MetaDoc, Preview, base_meta, image_prev};
@@ -211,8 +211,9 @@ fn poster(
 
 /// A small still of a local video for directory thumbnails; `None` without ffmpeg.
 pub fn thumbnail(entry: &Entry, edge: u32) -> Option<ImageDoc> {
-    let path = entry.uri.path_str();
-    if entry.uri.scheme() != Scheme::File || !entry.uri.authority().is_local() || !safe_path(path) {
+    let native = entry.uri.local_path_string()?;
+    let path = native.as_str();
+    if !safe_path(path) {
         return None;
     }
     static TOOLS: std::sync::OnceLock<(Option<PathBuf>, Option<PathBuf>)> =
@@ -233,16 +234,15 @@ pub fn thumbnail(entry: &Entry, edge: u32) -> Option<ImageDoc> {
 
 pub fn render(entry: &Entry, limits: &Limits) -> Preview {
     let mut rows = base_meta(entry);
-    let path = entry.uri.path_str();
-    let local = entry.uri.scheme() == Scheme::File && entry.uri.authority().is_local();
-    if !local {
+    let native = entry.uri.local_path_string();
+    let Some(path) = native.as_deref() else {
         return Preview::Meta(MetaDoc {
             rows,
             hint: Some("Video previews need a local file; copy it locally to preview.".into()),
             poster: None,
             video: None,
         });
-    }
+    };
     let (Some(ffprobe), Some(ffmpeg)) = (find_tool("ffprobe"), find_tool("ffmpeg")) else {
         return Preview::Meta(MetaDoc {
             rows,

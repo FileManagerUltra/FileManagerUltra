@@ -331,3 +331,20 @@ fn ppk_keys_get_an_actionable_error() {
     let err = connect(&p, Arc::new(TrustAll)).unwrap_err();
     assert!(err.to_string().contains("Export OpenSSH key"), "{err}");
 }
+
+#[test]
+fn set_permissions_changes_the_remote_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _server, fs) = setup();
+    std::fs::write(dir.path().join("p.sh"), b"x").unwrap();
+    fs.set_permissions(&uri(&fs, "/p.sh"), 0o750).unwrap();
+    let mode = std::fs::metadata(dir.path().join("p.sh"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o7777, 0o750);
+    assert_eq!(
+        fs.stat(&uri(&fs, "/p.sh")).unwrap().permissions,
+        Some(0o750)
+    );
+}

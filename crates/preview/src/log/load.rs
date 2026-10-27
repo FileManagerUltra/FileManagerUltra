@@ -76,7 +76,7 @@ fn parse_stream(
     let mut records: Vec<LogRecord> = Vec::new();
     let mut consumed = 0u64;
     let mut hidden = 0usize;
-    while consumed < byte_limit {
+    while consumed < byte_limit && records.len() < lim.max_records {
         let Some(n) = read_line(&mut r, &mut buf, lim.max_line)? else {
             break;
         };
@@ -227,11 +227,13 @@ pub fn open_doc_with(
     if offset > 0 {
         offset += skip_partial_line(&mut reader)?;
     }
-    let (records, consumed) = parse_stream(&mut reader, format, lim, u64::MAX)?;
+    let (records, consumed) = parse_stream(&mut reader, format, lim, lim.initial_tail)?;
     let mut records = records;
     if offset > 0 && records.first().is_some_and(|r| r.orphan) {
         records.remove(0);
     }
+    let note = (records.len() >= lim.max_records)
+        .then(|| "record limit reached; remaining records not loaded".into());
     Ok(LogDoc {
         format,
         bytes: size_of(&records),
@@ -240,7 +242,7 @@ pub fn open_doc_with(
         start_offset: offset,
         end_offset: offset + consumed,
         gz: false,
-        note: None,
+        note,
         base: 0,
         marks: Vec::new(),
     })
@@ -255,6 +257,7 @@ fn open_gz(
     let dec = flate2::read::GzDecoder::new(vfs.open_read(&entry.uri)?);
     let (mut records, _) =
         parse_stream(dec.take(lim.max_bytes * 4), format, lim, lim.max_bytes * 4)?;
+    let record_cap = records.len() >= lim.max_records;
     let mut more_before = false;
     let mut bytes = size_of(&records);
     if bytes > lim.max_bytes {
@@ -274,7 +277,11 @@ fn open_gz(
         end_offset: 0,
         gz: true,
         bytes,
-        note: Some("compressed log: read-only, no follow".into()),
+        note: Some(if record_cap {
+            "compressed log: record limit reached; remaining records not loaded".into()
+        } else {
+            "compressed log: read-only, no follow".into()
+        }),
         base: 0,
         marks: Vec::new(),
     })

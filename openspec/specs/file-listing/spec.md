@@ -132,3 +132,10 @@ Navigating a pane to a directory — by selecting it in the tree, `nav.open`, or
 - **WHEN** the directory is re-read by `nav.refresh` after the user moved to another row
 - **THEN** the cursor stays on that row
 
+
+### Requirement: Quick filter and selection commands
+`view.filter {text?}` (Ctrl+F) SHALL show a filter bar above the listing that narrows the rows to names containing the text, or matching it when it has wildcards (`* ? [..]`); the filter is transient, cleared by Esc, the bar's clear button (`view.filter.clear`) or navigating away, and the selection is pruned to visible rows. `edit.select_all` (Ctrl+A), `edit.select_none` (Ctrl+Shift+A), `edit.invert_selection` (Ctrl+Shift+I) and `edit.select_pattern {pattern, mode?}` (Ctrl+Shift+S, a dialog) SHALL act on the visible rows only.
+
+#### Scenario: Filter then select all
+- **WHEN** the user filters by `o` and presses Ctrl+A
+- **THEN** only the visible matching rows are selected

@@ -46,8 +46,31 @@ impl LocalFs {
                 format!("local backend got a {} uri", uri.scheme()),
             ));
         }
-        Ok(PathBuf::from(uri.path_str()))
+        uri.local_path().ok_or(FmError::Unsupported(
+            "This PC lists the drives; open a drive first",
+        ))
     }
+}
+
+/// How a local uri is named in errors: the OS form (`C:\x` on Windows).
+fn shown(uri: &VfsUri) -> String {
+    uri.local_path_string()
+        .unwrap_or_else(|| uri.path_str().to_string())
+}
+
+/// The Windows drive list ("This PC"): every letter whose root `probe` reports as a folder.
+fn drive_entries(root: &VfsUri, probe: impl Fn(&str) -> bool) -> Vec<Entry> {
+    (b'A'..=b'Z')
+        .filter_map(|letter| {
+            let name = format!("{}:", char::from(letter));
+            if !probe(&format!("{name}\\")) {
+                return None;
+            }
+            let mut entry = Entry::new(root.join(&name).ok()?, EntryKind::Dir);
+            entry.name = name;
+            Some(entry)
+        })
+        .collect()
 }
 
 fn map_io(e: std::io::Error, path: &str) -> FmError {
@@ -177,8 +200,13 @@ impl Vfs for LocalFs {
     }
 
     fn read_dir(&self, uri: &VfsUri) -> Result<Vec<Entry>, FmError> {
+        if uri.is_drive_list() {
+            return Ok(drive_entries(uri, |root| {
+                fs::metadata(root).is_ok_and(|m| m.is_dir())
+            }));
+        }
         let path = self.path(uri)?;
-        let display = uri.path_str();
+        let display = &shown(uri);
         let rd = fs::read_dir(&path).map_err(|e| map_io(e, display))?;
         let mut out = Vec::new();
         for item in rd {
@@ -199,8 +227,13 @@ impl Vfs for LocalFs {
     }
 
     fn stat(&self, uri: &VfsUri) -> Result<Entry, FmError> {
+        if uri.is_drive_list() {
+            let mut entry = Entry::new(uri.clone(), EntryKind::Dir);
+            entry.name = "This PC".to_string();
+            return Ok(entry);
+        }
         let path = self.path(uri)?;
-        let display = uri.path_str();
+        let display = &shown(uri);
         let meta = fs::symlink_metadata(&path).map_err(|e| map_io(e, display))?;
         let name = uri
             .file_name()
@@ -235,7 +268,7 @@ impl Vfs for LocalFs {
 
     fn open_read(&self, uri: &VfsUri) -> Result<Box<dyn Read + Send>, FmError> {
         let path = self.path(uri)?;
-        let display = uri.path_str();
+        let display = &shown(uri);
         let f = fs::File::open(&path).map_err(|e| map_io(e, display))?;
         Ok(Box::new(f))
     }
@@ -243,7 +276,7 @@ impl Vfs for LocalFs {
     fn open_read_at(&self, uri: &VfsUri, offset: u64) -> Result<Box<dyn Read + Send>, FmError> {
         use std::io::{Seek, SeekFrom};
         let path = self.path(uri)?;
-        let display = uri.path_str();
+        let display = &shown(uri);
         let mut f = fs::File::open(&path).map_err(|e| map_io(e, display))?;
         f.seek(SeekFrom::Start(offset))
             .map_err(|e| map_io(e, display))?;
@@ -252,7 +285,7 @@ impl Vfs for LocalFs {
 
     fn open_write(&self, uri: &VfsUri, opts: WriteOpts) -> Result<Box<dyn Write + Send>, FmError> {
         let path = self.path(uri)?;
-        let display = uri.path_str();
+        let display = &shown(uri);
         let mut o = fs::OpenOptions::new();
         o.write(true).create(opts.create);
         if opts.append {
@@ -266,18 +299,34 @@ impl Vfs for LocalFs {
 
     fn create_dir(&self, uri: &VfsUri) -> Result<(), FmError> {
         let path = self.path(uri)?;
-        let display = uri.path_str();
+        let display = &shown(uri);
         fs::create_dir(&path).map_err(|e| map_io(e, display))
     }
 
     fn create_symlink(&self, target: &str, link: &VfsUri) -> Result<(), FmError> {
         let path = self.path(link)?;
-        make_symlink(target, &path).map_err(|e| map_io(e, link.path_str()))
+        make_symlink(target, &path).map_err(|e| map_io(e, &shown(link)))
+    }
+
+    #[cfg(unix)]
+    fn set_permissions(&self, uri: &VfsUri, mode: u32) -> Result<(), FmError> {
+        use std::os::unix::fs::PermissionsExt;
+        let path = self.path(uri)?;
+        let display = &shown(uri);
+        // Symlinks have no mode of their own on Linux; refuse instead of changing the target.
+        let meta = fs::symlink_metadata(&path).map_err(|e| map_io(e, display))?;
+        if meta.file_type().is_symlink() {
+            return Err(FmError::Unsupported(
+                "permissions of a symbolic link cannot be changed",
+            ));
+        }
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode & 0o7777))
+            .map_err(|e| map_io(e, display))
     }
 
     fn remove(&self, uri: &VfsUri) -> Result<(), FmError> {
         let path = self.path(uri)?;
-        let display = uri.path_str();
+        let display = &shown(uri);
         let meta = fs::symlink_metadata(&path).map_err(|e| map_io(e, display))?;
         if meta.is_dir() && !meta.file_type().is_symlink() {
             let mut rd = fs::read_dir(&path).map_err(|e| map_io(e, display))?;
@@ -298,7 +347,7 @@ impl Vfs for LocalFs {
     fn rename(&self, from: &VfsUri, to: &VfsUri) -> Result<(), FmError> {
         let src = self.path(from)?;
         let dst = self.path(to)?;
-        let display = from.path_str();
+        let display = &shown(from);
         fs::rename(&src, &dst).map_err(|e| map_io(e, display))
     }
 
@@ -351,6 +400,35 @@ impl Vfs for LocalFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_drive_list_has_one_folder_per_existing_drive_root() {
+        let root = VfsUri::root_file();
+        let drives = drive_entries(&root, |p| p == "C:\\" || p == "E:\\");
+        let names: Vec<_> = drives.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["C:", "E:"]);
+        assert!(drives.iter().all(|e| e.kind == EntryKind::Dir));
+        let c = drives.first().expect("C:");
+        assert_eq!(c.uri.path_str(), "/C:");
+        assert_eq!(c.uri.parent(), Some(root.clone()));
+        assert!(drive_entries(&root, |_| false).is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn this_pc_lists_drives_and_has_no_os_path() {
+        let fs_ = LocalFs::new();
+        let root = VfsUri::root_file();
+        let drives = fs_.read_dir(&root).expect("drives");
+        assert!(!drives.is_empty());
+        assert_eq!(fs_.stat(&root).expect("stat").name, "This PC");
+        assert!(matches!(
+            fs_.create_dir(&root.join("x").expect("uri")),
+            Err(_)
+        ));
+        let first = drives.first().expect("drive");
+        fs_.read_dir(&first.uri).expect("a drive root lists");
+    }
 
     #[test]
     fn scheme_is_file() {

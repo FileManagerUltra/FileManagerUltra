@@ -28,6 +28,10 @@ The terminal SHALL render the visible grid (text, 16/256/true colour, bold/itali
 - **WHEN** the pane is resized
 - **THEN** the pty and parser grid are resized to the new rows/cols
 
+#### Scenario: Line-drawing boxes
+- **WHEN** a curses/dialog program designates the DEC Special Graphics set (`ESC ( 0`, or `ESC ) 0` + SO) and prints `lqqk`/`x`/`mqqj`
+- **THEN** the cells hold `┌──┐`/`│`/`└──┘`, and light box characters are painted edge to edge so borders join without gaps
+
 ### Requirement: Input routing
 While a Terminal pane is focused, text, Enter, Backspace, Tab, arrows, Home/End, PageUp/Down, Delete, F1–F12 and `Ctrl+<letter>` SHALL be sent to the shell. Only `Ctrl+Shift+…` chords and `Ctrl+Shift+Tab` are handled as app shortcuts. Mouse wheel scrolls scrollback; typing returns to the live screen.
 

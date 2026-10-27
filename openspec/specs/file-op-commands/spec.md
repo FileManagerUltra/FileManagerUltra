@@ -86,3 +86,10 @@ An entry classified as a program SHALL NOT start unless the caller passes `mode:
 - **WHEN** a folder thumbnail is double-clicked in a focused grid
 - **THEN** the connected Files pane navigates into that folder
 
+
+### Requirement: Everyday item commands
+The context menu and File/Edit menus SHALL offer: `file.open_with.dialog` (Open With…: installed applications, those registered for the file type first and the default marked — XDG desktop entries on Linux, `/Applications` on macOS, the system dialog on Windows; local files only, launched without a shell), `file.duplicate` (Ctrl+Shift+D, a "copy" next to the original), `file.copy_path` / `file.copy_name` (to the clipboard), `bookmark.add` and `file.properties` (Alt+Enter). Properties SHALL show name, location, kind, modified time and a live size/count computed on a background walk that stops when the window closes; for one item on a backend that supports it, permissions are editable (rwx grid plus setuid/setgid/sticky) and applied with `file.chmod {mode, sources?}` (local unix and SFTP; symlinks are refused).
+
+#### Scenario: Bad chmod params
+- **WHEN** `file.chmod` is dispatched with mode `"9999"` or no mode
+- **THEN** it returns an error and no job is submitted

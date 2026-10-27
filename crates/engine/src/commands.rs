@@ -45,6 +45,9 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(arrange_cmds::specs());
     specs.extend(pane_kind_cmds::specs());
     specs.extend(preview_cmds::specs());
+    specs.extend(crate::preview_filter_cmds::specs());
+    specs.extend(crate::preview_order_cmds::specs());
+    specs.extend(crate::preview_reload_cmds::specs());
     specs.extend(term_cmds::specs());
     specs.extend(nav_cmds::specs());
     specs.extend(open_cmds::specs());
@@ -61,6 +64,12 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(crate::remote_cmds::specs());
     specs.extend(crate::network::specs());
     specs.extend(crate::trash_cmds::specs());
+    specs.extend(crate::select_cmds::specs());
+    specs.extend(crate::item_cmds::specs());
+    specs.extend(crate::places_cmds::specs());
+    specs.extend(crate::props_cmds::specs());
+    specs.extend(crate::search_cmds::specs());
+    specs.extend(crate::openwith_cmds::specs());
     specs
 }
 

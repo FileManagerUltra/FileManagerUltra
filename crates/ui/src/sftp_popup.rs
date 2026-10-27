@@ -201,7 +201,7 @@ pub fn sftp_prompt_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             if busy {
                 ui.label(tokens.muted("Connecting…"));
             } else if let Some(error) = &prompt.error {
-                ui.colored_label(tokens.error, error.as_str());
+                ui.add(egui::Label::new(egui::RichText::new(error).color(tokens.error)).wrap());
             }
             ui.horizontal(|ui| {
                 if ui
@@ -235,9 +235,17 @@ pub fn sftp_prompt_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     }
     if submit && !busy {
         match form.params() {
-            Err(message) => s.notice = Some(message),
+            Err(message) => {
+                if let Some(prompt) = s.remote.sftp_prompt.as_mut() {
+                    prompt.error = Some(message);
+                }
+            }
             Ok(params) => {
-                s.dispatch_or_notice("remote.connect", &params);
+                if let Err(err) = s.dispatch("remote.connect", &params)
+                    && let Some(prompt) = s.remote.sftp_prompt.as_mut()
+                {
+                    prompt.error = Some(err.to_string());
+                }
             }
         }
     }

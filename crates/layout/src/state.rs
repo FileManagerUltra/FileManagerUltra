@@ -188,6 +188,16 @@ pub struct ListingState {
     /// The cursor is on the `..` row (it is not an entry, so it has no `focused_row`).
     pub on_parent: bool,
     pub scroll: f32,
+    /// Quick filter typed into the listing (`Some` while the filter bar is shown). Transient:
+    /// never persisted, and cleared when the pane changes folder.
+    #[serde(skip)]
+    pub filter: Option<String>,
+    /// Ask the UI to put the keyboard in the filter field on the next frame.
+    #[serde(skip)]
+    pub filter_focus: bool,
+    /// Select and scroll to this name once the listing has loaded (Show in Folder).
+    #[serde(skip)]
+    pub reveal: Option<String>,
 }
 
 impl Default for ListingState {
@@ -199,6 +209,9 @@ impl Default for ListingState {
             on_current: false,
             on_parent: false,
             scroll: 0.0,
+            filter: None,
+            filter_focus: false,
+            reveal: None,
         }
     }
 }
@@ -261,6 +274,44 @@ impl ListingState {
         self.on_current = false;
         self.on_parent = false;
         self.selection = order.iter().cloned().collect();
+    }
+
+    /// Select exactly the names in `order` that are not selected now (Invert Selection).
+    pub fn invert(&mut self, order: &[String]) {
+        self.on_current = false;
+        self.on_parent = false;
+        self.selection = order
+            .iter()
+            .filter(|name| !self.selection.contains(*name))
+            .cloned()
+            .collect();
+    }
+
+    /// Add (`add`) or remove the names in `order` for which `matches` holds; other selected
+    /// names stay as they are. Returns how many names matched.
+    pub fn select_matching(
+        &mut self,
+        order: &[String],
+        add: bool,
+        matches: impl Fn(&str) -> bool,
+    ) -> usize {
+        self.on_current = false;
+        self.on_parent = false;
+        let mut count = 0;
+        for name in order.iter().filter(|n| matches(n)) {
+            count += 1;
+            if add {
+                self.selection.insert(name.clone());
+            } else {
+                self.selection.remove(name);
+            }
+        }
+        if let Some(row) = order.iter().position(|n| self.selection.contains(n))
+            && add
+        {
+            self.focused_row = row;
+        }
+        count
     }
 
     /// Drop selected names that no longer exist (after a re-read).
@@ -513,6 +564,17 @@ pub struct PaneState {
     /// Preview panes: which Files pane to show.
     #[serde(default)]
     pub preview_source: PreviewSource,
+    /// Which Places sections are collapsed (persisted per pane).
+    #[serde(default)]
+    pub places: PlacesState,
+}
+
+/// Collapse state of the Places sections above the tree. Both start expanded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PlacesState {
+    pub places_collapsed: bool,
+    pub bookmarks_collapsed: bool,
 }
 
 fn default_tree_width() -> f32 {
@@ -548,6 +610,7 @@ impl PaneState {
             tree_width: DEFAULT_TREE_WIDTH,
             col_widths: DEFAULT_COL_WIDTHS,
             preview_source: PreviewSource::Follow,
+            places: PlacesState::default(),
         };
         if pane.location != pane.tree.root {
             pane.reveal_location();
@@ -584,6 +647,7 @@ impl PaneState {
         }
         self.history.push(to.clone());
         self.location = to;
+        self.listing.filter = None;
         self.listing.focus_current();
         self.listing.scroll = 0.0;
         self.reveal_location();
@@ -637,6 +701,7 @@ impl PaneState {
         match self.history.back() {
             Some(loc) => {
                 self.location = loc;
+                self.listing.filter = None;
                 self.listing.focus_current();
                 self.reveal_location();
                 true
@@ -650,6 +715,7 @@ impl PaneState {
         match self.history.forward() {
             Some(loc) => {
                 self.location = loc;
+                self.listing.filter = None;
                 self.listing.focus_current();
                 self.reveal_location();
                 true
@@ -688,6 +754,62 @@ mod tests {
         assert_eq!(p.tree.root, VfsUri::root_file());
         assert_eq!(p.location, VfsUri::parse("/home/u").expect("uri"));
         assert!(p.tree.is_expanded(&VfsUri::parse("/home").expect("uri")));
+    }
+
+    #[test]
+    fn invert_and_pattern_selection_work_on_the_visible_order() {
+        let order: Vec<String> = ["a.jpg", "b.png", "c.jpg", "d.txt"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut l = ListingState::default();
+        l.select_only(Some("a.jpg"), 0);
+        l.invert(&order);
+        assert!(!l.is_selected("a.jpg"));
+        assert_eq!(l.selected_count(), 3);
+        l.clear_selection();
+        let jpg = |n: &str| n.ends_with(".jpg");
+        assert_eq!(l.select_matching(&order, true, jpg), 2);
+        assert!(l.is_selected("a.jpg") && l.is_selected("c.jpg"));
+        assert_eq!(l.focused_row, 0);
+        l.select_matching(&order, true, |n| n == "d.txt");
+        assert_eq!(l.select_matching(&order, false, jpg), 2);
+        assert_eq!(l.selection().collect::<Vec<_>>(), vec!["d.txt"]);
+        l.invert(&[]);
+        assert_eq!(l.selected_count(), 0);
+    }
+
+    #[test]
+    fn the_quick_filter_is_transient_and_cleared_on_navigation() {
+        let mut p = PaneState::new(VfsUri::parse("/d").expect("uri"));
+        p.listing.filter = Some("jpg".into());
+        let json = serde_json::to_string(&p).expect("ser");
+        let back: PaneState = serde_json::from_str(&json).expect("de");
+        assert_eq!(back.listing.filter, None);
+        p.navigate(VfsUri::parse("/d/e").expect("uri"));
+        assert_eq!(p.listing.filter, None);
+        p.listing.filter = Some("x".into());
+        assert!(p.go_back());
+        assert_eq!(p.listing.filter, None);
+        p.listing.filter = Some("x".into());
+        assert!(p.go_forward());
+        assert_eq!(p.listing.filter, None);
+    }
+
+    #[test]
+    fn places_collapse_state_round_trips_and_defaults_to_expanded() {
+        let mut p = PaneState::new(VfsUri::parse("/d").expect("uri"));
+        assert_eq!(p.places, PlacesState::default());
+        p.places.bookmarks_collapsed = true;
+        let json = serde_json::to_string(&p).expect("ser");
+        let back: PaneState = serde_json::from_str(&json).expect("de");
+        assert!(back.places.bookmarks_collapsed && !back.places.places_collapsed);
+        let mut v = serde_json::to_value(&p).expect("value");
+        if let Some(o) = v.as_object_mut() {
+            o.remove("places");
+        }
+        let legacy: PaneState = serde_json::from_value(v).expect("legacy");
+        assert_eq!(legacy.places, PlacesState::default());
     }
 
     #[test]

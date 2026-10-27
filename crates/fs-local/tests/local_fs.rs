@@ -330,3 +330,31 @@ fn links_to_directories_are_flagged_openable() {
     assert!(!by_name("broken").link_to_dir);
     assert!(!by_name("realdir").link_to_dir && by_name("realdir").is_dir_like());
 }
+
+#[cfg(unix)]
+#[test]
+#[allow(clippy::expect_used)]
+fn set_permissions_changes_the_mode_but_refuses_symlinks() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempdir();
+    let file = dir.path().join("run.sh");
+    fs::write(&file, b"#!/bin/sh").expect("write");
+    let vfs = LocalFs::new();
+    vfs.set_permissions(&uri(&file), 0o100_755).expect("chmod");
+    let mode = fs::metadata(&file).expect("meta").permissions().mode();
+    assert_eq!(mode & 0o7777, 0o755, "file-type bits are masked off");
+    assert_eq!(
+        vfs.stat(&uri(&file)).expect("stat").permissions,
+        Some(0o755)
+    );
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&file, &link).expect("symlink");
+    assert!(matches!(
+        vfs.set_permissions(&uri(&link), 0o700),
+        Err(FmError::Unsupported(_))
+    ));
+    assert!(matches!(
+        vfs.set_permissions(&uri(&dir.path().join("gone")), 0o700),
+        Err(FmError::NotFound(_))
+    ));
+}

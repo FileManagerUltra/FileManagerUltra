@@ -34,6 +34,16 @@ The menu bar SHALL render its items from the command registry, and selecting an 
 ### Requirement: Quit exits cleanly
 The application SHALL close without panic when the user quits, and SHALL persist preferences before exiting.
 
+#### Scenario: Restore window geometry
+- **WHEN** the user moves or resizes the main window and closes the application normally
+- **THEN** the next launch restores its normal size and desktop position, along with maximized state
+- **AND** application zoom does not change the stored native dimensions
+- **AND** maximizing, fullscreen or minimizing does not replace the last normal geometry
+- **AND** geometry is saved about a second after it stops changing, so a killed process or ended session still restores it
+- **AND** a window manager that places the new window elsewhere is overridden with the saved position
+- **AND** invalid geometry falls back to default dimensions and positions on a disconnected monitor are left to the window manager
+- **AND** on native Wayland, size is restored but window positioning remains compositor-controlled
+
 #### Scenario: Quit from the menu or shortcut
 - **WHEN** the user triggers `app.quit`
 - **THEN** the window closes and the process exits with status 0

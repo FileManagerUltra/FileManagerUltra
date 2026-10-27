@@ -413,9 +413,18 @@ impl russh_sftp::server::Handler for Sftp {
     async fn setstat(
         &mut self,
         id: u32,
-        _path: String,
-        _attrs: FileAttributes,
+        path: String,
+        attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
+        #[cfg(unix)]
+        if let Some(mode) = attrs.permissions {
+            use std::os::unix::fs::PermissionsExt;
+            let p = self.map(&path)?;
+            fs::set_permissions(&p, fs::Permissions::from_mode(mode & 0o7777))
+                .map_err(|e| code(&e))?;
+        }
+        #[cfg(not(unix))]
+        let _ = (path, attrs);
         Ok(ok(id))
     }
 

@@ -82,6 +82,19 @@ pub const WS_NEW: &str = "workspace.new";
 pub const WS_CLOSE: &str = "workspace.close";
 pub const WS_SAVE: &str = "workspace.save";
 pub const WS_RENAME: &str = "workspace.rename";
+pub const SELECT_ALL: &str = "edit.select_all";
+pub const SELECT_NONE: &str = "edit.select_none";
+pub const SELECT_INVERT: &str = "edit.invert_selection";
+pub const SELECT_PATTERN: &str = "edit.select_pattern";
+pub const VIEW_FILTER: &str = "view.filter";
+pub const VIEW_FILTER_CLEAR: &str = "view.filter.clear";
+pub const COPY_PATH: &str = "file.copy_path";
+pub const COPY_NAME: &str = "file.copy_name";
+pub const FILE_DUPLICATE: &str = "file.duplicate";
+pub const OPEN_WITH: &str = "file.open_with.dialog";
+pub const PROPERTIES: &str = "file.properties";
+pub const FIND_FILES: &str = "search.open";
+pub const BOOKMARK_ADD: &str = "bookmark.add";
 
 /// Every command id referenced by the menus or the shortcut table.
 /// (Used by the tests and by `cargo xtask brand-check`'s registry cross-check.)
@@ -160,6 +173,19 @@ pub fn all_ids() -> &'static [&'static str] {
         WS_CLOSE,
         WS_SAVE,
         WS_RENAME,
+        SELECT_ALL,
+        SELECT_NONE,
+        SELECT_INVERT,
+        SELECT_PATTERN,
+        VIEW_FILTER,
+        VIEW_FILTER_CLEAR,
+        COPY_PATH,
+        COPY_NAME,
+        FILE_DUPLICATE,
+        OPEN_WITH,
+        PROPERTIES,
+        FIND_FILES,
+        BOOKMARK_ADD,
     ]
 }
 
@@ -334,6 +360,39 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
             EDIT_UNDO,
             egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::Z),
         ),
+        // Ctrl+A stays with the listing (and text fields), which select all themselves.
+        (
+            SELECT_NONE,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::A),
+        ),
+        (
+            SELECT_INVERT,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::I),
+        ),
+        (
+            SELECT_PATTERN,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::S),
+        ),
+        (
+            VIEW_FILTER,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::F),
+        ),
+        (
+            BOOKMARK_ADD,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::D),
+        ),
+        (
+            FILE_DUPLICATE,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::D),
+        ),
+        (
+            PROPERTIES,
+            egui::KeyboardShortcut::new(Modifiers::ALT, Key::Enter),
+        ),
+        (
+            FIND_FILES,
+            egui::KeyboardShortcut::new(Modifiers::ALT, Key::F7),
+        ),
         // Real windows deliver these as clipboard events instead; see `clipboard_event_ids`.
         (
             FILE_CLIP_COPY,
@@ -498,6 +557,31 @@ fn theme_radio(
     }
 }
 
+/// Go → Places: the standard folders and bookmarks, opened in the focused pane.
+fn places_menu(ui: &mut egui::Ui, session: &mut Session) {
+    let places = session.places();
+    ui.menu_button("Places", |ui| {
+        let mut bookmarks = false;
+        for place in places {
+            if place.bookmark && !bookmarks {
+                bookmarks = true;
+                ui.separator();
+            }
+            if ui
+                .button(&place.name)
+                .on_hover_text(place.uri.to_string())
+                .clicked()
+            {
+                session.dispatch_or_notice(
+                    "nav.open",
+                    &serde_json::json!({ "uri": place.uri.to_string() }),
+                );
+                ui.close();
+            }
+        }
+    });
+}
+
 /// The top menu bar (File / Panes / View / Help).
 pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs) {
     egui::menu::MenuBar::new().ui(ui, |ui| {
@@ -507,6 +591,11 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, FILE_MKDIR);
             item(ui, session, dialogs, FILE_NEWFILE);
             item(ui, session, dialogs, FILE_RENAME);
+            item(ui, session, dialogs, FILE_DUPLICATE);
+            ui.separator();
+            item(ui, session, dialogs, OPEN_WITH);
+            item(ui, session, dialogs, PROPERTIES);
+            item(ui, session, dialogs, FIND_FILES);
             ui.separator();
             item(ui, session, dialogs, REMOTE_CONNECT);
             item(ui, session, dialogs, NETWORK_CONNECT);
@@ -528,6 +617,14 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, FILE_CLIP_CUT);
             item(ui, session, dialogs, FILE_CLIP_COPY);
             item(ui, session, dialogs, FILE_CLIP_PASTE);
+            ui.separator();
+            item(ui, session, dialogs, COPY_PATH);
+            item(ui, session, dialogs, COPY_NAME);
+            ui.separator();
+            item(ui, session, dialogs, SELECT_ALL);
+            item(ui, session, dialogs, SELECT_NONE);
+            item(ui, session, dialogs, SELECT_INVERT);
+            item(ui, session, dialogs, SELECT_PATTERN);
         });
         ui.menu_button("Go", |ui| {
             item(ui, session, dialogs, NAV_GOTO);
@@ -536,6 +633,9 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, NAV_BACK);
             item(ui, session, dialogs, NAV_FORWARD);
             item(ui, session, dialogs, NAV_REFRESH);
+            ui.separator();
+            item(ui, session, dialogs, BOOKMARK_ADD);
+            places_menu(ui, session);
         });
         ui.menu_button("Workspace", |ui| {
             item(ui, session, dialogs, WS_NEW);
@@ -574,6 +674,9 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
         ui.menu_button("View", |ui| {
             check_item(ui, session, dialogs, VIEW_HIDDEN, session.show_hidden);
             check_item(ui, session, dialogs, VIEW_LINKS, session.show_link_targets);
+            ui.separator();
+            item(ui, session, dialogs, VIEW_FILTER);
+            item(ui, session, dialogs, VIEW_FILTER_CLEAR);
             ui.separator();
             item(ui, session, dialogs, ZOOM_IN);
             item(ui, session, dialogs, ZOOM_OUT);
@@ -660,7 +763,12 @@ pub fn consume_shortcuts(
         if !files_focused && id.starts_with("file.clip_") {
             continue;
         }
-        if typing && (id.starts_with("file.") || id == EDIT_UNDO || shortcut.modifiers.is_none()) {
+        if typing
+            && (id.starts_with("file.")
+                || id.starts_with("edit.")
+                || id == PROPERTIES
+                || shortcut.modifiers.is_none())
+        {
             continue;
         }
         let consumed = ctx.input_mut(|input| input.consume_shortcut(&shortcut));
@@ -824,6 +932,11 @@ mod tests {
             Key::Equals => "=",
             Key::Minus => "-",
             Key::Num0 => "0",
+            Key::A => "A",
+            Key::I => "I",
+            Key::S => "S",
+            Key::D => "D",
+            Key::Enter => "Enter",
             _ => "?",
         }
     }

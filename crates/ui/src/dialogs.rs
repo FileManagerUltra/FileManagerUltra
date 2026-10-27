@@ -38,6 +38,16 @@ pub enum Dialog {
         uri: VfsUri,
         name: String,
     },
+    /// Rename a bookmark in Places.
+    RenameBookmark {
+        uri: String,
+        name: String,
+    },
+    /// Select (or deselect) the names matching a wildcard pattern.
+    SelectPattern {
+        pattern: String,
+        mode: &'static str,
+    },
     /// Copy/move with no other pane to take as destination.
     Destination {
         command: &'static str,
@@ -53,6 +63,16 @@ pub struct Dialogs {
     focus_next: bool,
 }
 
+fn queue_id() -> Id {
+    Id::NULL.with("fm-dialog-queue")
+}
+
+/// Ask for `dialog` from a widget that has no access to [`Dialogs`]; it opens on the next
+/// [`Dialogs::show`].
+pub fn queue(ctx: &Context, dialog: Dialog) {
+    ctx.data_mut(|d| d.insert_temp(queue_id(), Some(dialog)));
+}
+
 /// The dialog a command needs before it can run, if any. The app calls this for shortcuts and
 /// menu items; `None` means dispatch the command directly.
 pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
@@ -66,6 +86,10 @@ pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
     let dir = file_cmds::focused_dir(s)?;
     let selection = file_cmds::focused_selection(s);
     match id {
+        "edit.select_pattern" => Some(Dialog::SelectPattern {
+            pattern: "*".to_string(),
+            mode: "replace",
+        }),
         "file.mkdir" => Some(Dialog::Mkdir {
             dir: dir.clone(),
             name: String::new(),
@@ -122,6 +146,9 @@ impl Dialogs {
         conflict_dialog(ctx, s, tokens);
         kind_switch_dialog(ctx, s, tokens);
         unsaved_dialog(ctx, s, tokens);
+        if let Some(Some(dialog)) = ctx.data_mut(|d| d.remove_temp::<Option<Dialog>>(queue_id())) {
+            self.request(dialog);
+        }
         let Some(mut dialog) = self.open.take() else {
             return;
         };
@@ -182,6 +209,41 @@ impl Dialogs {
                     s.dispatch_or_notice(
                         "workspace.rename",
                         &json!({"tab": *tab, "name": name.as_str()}),
+                    );
+                    false
+                } else {
+                    !(cancel || esc)
+                }
+            }
+            Dialog::RenameBookmark { uri, name } => {
+                let verdict = if name.trim().is_empty()
+                    || name.chars().count() > fm_engine::prefs::MAX_BOOKMARK_NAME
+                {
+                    Err("1-100 characters".to_string())
+                } else {
+                    Ok(())
+                };
+                let (go, cancel) =
+                    name_dialog(ctx, tokens, "Rename bookmark", name, &verdict, focus);
+                if (go || enter) && verdict.is_ok() {
+                    s.dispatch_or_notice(
+                        "bookmark.rename",
+                        &json!({"uri": uri.as_str(), "name": name.trim()}),
+                    );
+                    false
+                } else {
+                    !(cancel || esc)
+                }
+            }
+            Dialog::SelectPattern { pattern, mode } => {
+                let verdict = fm_engine::glob::Glob::parse(pattern)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string());
+                let (go, cancel) = pattern_dialog(ctx, tokens, pattern, mode, &verdict, focus);
+                if (go || enter) && verdict.is_ok() {
+                    s.dispatch_or_notice(
+                        "edit.select_pattern",
+                        &json!({"pattern": pattern.as_str(), "mode": *mode}),
                     );
                     false
                 } else {
@@ -283,6 +345,70 @@ fn name_dialog(
             if focus {
                 edit.request_focus();
             }
+            match verdict {
+                Ok(()) => {
+                    ui.label(" ");
+                }
+                Err(msg) => {
+                    ui.label(RichText::new(msg).color(tokens.error).font(tokens.font()));
+                }
+            }
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(verdict.is_ok(), egui::Button::new("OK"))
+                    .clicked()
+                {
+                    go = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    (go, cancel)
+}
+
+/// Select by pattern: the pattern plus whether it replaces, extends or trims the selection.
+fn pattern_dialog(
+    ctx: &Context,
+    tokens: &Tokens,
+    pattern: &mut String,
+    mode: &mut &'static str,
+    verdict: &Result<(), String>,
+    focus: bool,
+) -> (bool, bool) {
+    let (mut go, mut cancel) = (false, false);
+    egui::Window::new("Select by pattern")
+        .id(Id::NULL.with("fm-pattern-dialog"))
+        .collapsible(false)
+        .movable(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .frame(frame(tokens))
+        .show(ctx, |ui| {
+            let caption = ui.label(
+                RichText::new("Names matching (* ? [a-z], alternatives split by ;)")
+                    .color(tokens.text)
+                    .font(tokens.font()),
+            );
+            let edit = ui.add(egui::TextEdit::singleline(pattern).desired_width(280.0));
+            let edit = edit.labelled_by(caption.id);
+            if focus {
+                edit.request_focus();
+            }
+            ui.horizontal(|ui| {
+                for (value, label, tip) in [
+                    ("replace", "Select", "Select only the matching items"),
+                    ("add", "Add", "Add the matching items to the selection"),
+                    (
+                        "remove",
+                        "Deselect",
+                        "Remove the matching items from the selection",
+                    ),
+                ] {
+                    ui.radio_value(mode, value, label).on_hover_text(tip);
+                }
+            });
             match verdict {
                 Ok(()) => {
                     ui.label(" ");

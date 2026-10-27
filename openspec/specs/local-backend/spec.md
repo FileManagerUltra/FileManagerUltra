@@ -33,3 +33,10 @@ Directory reads SHALL be capped at a configured maximum entry count, and the UI 
 - **WHEN** `fm-ui` and `fm-app` sources are inspected (review + layering: only `fm-engine` above L0 performs filesystem work)
 - **THEN** no widget or app module calls `std::fs` or a `Vfs` method directly — reads arrive as job events applied in `Session::poll`
 
+
+### Requirement: Windows drives
+On Windows the local root `file:///` SHALL be a virtual **This PC** folder listing every existing drive root (A:–Z:) as a folder; it is the default tree root, it appears in Places, `This PC` and a bare `D:` are accepted in the location bar, and Up from a drive root returns to it. It has no OS path, so writes to it fail with an error. Uris map to OS paths only through `VfsUri::local_path` (`/C:/x` → `C:\x`, `/C:` → `C:\`, `/server/share` → `\\server\share`), and paths are shown, copied and passed to child processes in that native form.
+
+#### Scenario: Switch drives
+- **WHEN** a Windows user opens This PC in the tree or Places
+- **THEN** the available drives are listed and clicking `D:` shows `D:\`

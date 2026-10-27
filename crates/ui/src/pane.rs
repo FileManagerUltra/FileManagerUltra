@@ -136,6 +136,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     Layout::top_down(Align::Min),
                     |ui| {
                         ui.set_min_size(ui.available_size());
+                        if let Some(target) = crate::places::show(ui, s, pane, tokens) {
+                            open = Some(target);
+                        }
                         if let Some(target) = tree::show(ui, s, pane, tokens) {
                             open = Some(target);
                         }

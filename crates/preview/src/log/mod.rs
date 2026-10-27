@@ -163,6 +163,8 @@ pub struct LogLimits {
     pub max_bytes: u64,
     pub max_line: usize,
     pub max_record_lines: usize,
+    /// Record-count cap for shared-budget multi-file previews.
+    pub max_records: usize,
 }
 
 impl Default for LogLimits {
@@ -173,6 +175,7 @@ impl Default for LogLimits {
             max_bytes: 64 << 20,
             max_line: 64 << 10,
             max_record_lines: 1000,
+            max_records: usize::MAX,
         }
     }
 }
