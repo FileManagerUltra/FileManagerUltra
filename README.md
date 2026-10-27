@@ -20,6 +20,10 @@ cargo test  --workspace
 cargo xtask layers       # layering enforcement
 ```
 
+## Install
+
+See [docs/install.md](docs/install.md).
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Logo source: `packaging/logo.svg`.
