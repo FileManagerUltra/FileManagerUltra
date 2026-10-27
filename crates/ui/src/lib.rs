@@ -18,6 +18,7 @@ pub mod terminal;
 pub mod theme;
 pub mod trash;
 pub mod tree;
+pub mod updates;
 pub mod workspaces;
 
 pub use theme::{Tokens, apply_to};

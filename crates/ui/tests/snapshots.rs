@@ -333,6 +333,49 @@ fn preferences_dialog_dark_light() {
     }
 }
 
+#[test]
+fn update_notification_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for (case, status) in [
+            (
+                "available",
+                fm_engine::updates::UpdateStatus::Available {
+                    version: "0.2.0".into(),
+                    url: "https://github.com/releases".into(),
+                },
+            ),
+            (
+                "failed",
+                fm_engine::updates::UpdateStatus::Failed(
+                    "Cannot check for updates: network unavailable".into(),
+                ),
+            ),
+        ] {
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let mut session = fixture_session();
+            session.updates.status = status;
+            session.updates.visible = true;
+            session.registry =
+                fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+            let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                egui::CentralPanel::default().show(ui, |ui| {
+                    ui.label("The file manager remains usable.");
+                });
+                fm_ui::jobs::show(ui.ctx(), &mut session, &tokens);
+            });
+            harness.set_size(egui::vec2(820.0, 360.0));
+            harness.run();
+            harness.snapshot(format!("update_{case}_{theme}"));
+            results.extend_harness(&mut harness);
+        }
+    }
+}
+
 /// 1×1 RGBA PNG (the same fixture the preview unit tests use).
 const TINY_PNG: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 0,

@@ -24,6 +24,9 @@ pub const EXECUTABLE: &str = "filemanagerultra";
 /// Window class; equal to the slug so X11/Wayland matching is predictable.
 pub const WINDOW_CLASS: &str = APP_SLUG;
 
+/// Public release source; organisation and repository names need not follow a product rename.
+pub const RELEASE_REPOSITORY: &str = "FileManagerUltra/FileManagerUltra";
+
 /// Application icon (256 px PNG) for the window and installers; source art is `assets/logo.svg`.
 pub const ICON_PNG: &[u8] = include_bytes!("../assets/icon-256.png");
 
@@ -40,7 +43,7 @@ Name={name}
 Exec={exec}
 StartupWMClass={wm}
 Icon={slug}
-Categories=Utility;FileManagement;
+Categories=Utility;FileManager;
 Terminal=false
 ",
         name = APP_NAME,

@@ -38,3 +38,29 @@ The AppImage needs FUSE 2 (`sudo apt install libfuse2`, or run it with `--appima
 ## Building from source
 
 See [development.md](development.md).
+
+## Updating
+
+The app checks the official repository's published stable GitHub Releases in the
+background at startup. This contacts GitHub (which receives the request's IP
+address and app version), but does not delay opening your folders or interrupt
+file transfers. Disable **Check for updates at startup** in Preferences to opt out.
+**Help → Check for Updates…** always lets you check manually.
+
+A newer version opens the **Jobs** panel with a dismissible update entry.
+**Download update…** opens the
+GitHub release page in your browser; download the package for your OS and
+architecture and follow the installation steps above. Installation is manual:
+the app does not download, run installers, replace itself or restart automatically.
+Wait for active transfers to finish and close the app before replacing it.
+For `.deb` installations, use `apt install ./<new-package>.deb`.
+
+Workflow artifacts and unpublished tags do not trigger update notifications:
+there must be a published, non-prerelease GitHub Release with a newer version.
+Checking and no-update results do not open the Jobs panel. An offline or
+rate-limited check reports an error in the status bar; retry through
+**Help → Check for Updates…**. Manual no-update results also use the status bar.
+
+Windows packages built with the icon-resource fix embed the application icon in
+the executable. Reinstall the updated package to recreate shortcuts; an old
+pinned taskbar shortcut may need to be unpinned and pinned again.

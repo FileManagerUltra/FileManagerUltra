@@ -507,6 +507,11 @@ fn main() -> eframe::Result {
         }
     };
     session.prefs = prefs;
+    if session.prefs.check_updates
+        && let Err(err) = session.updates.check(false)
+    {
+        session.notice = Some(err.to_string());
+    }
     fm_engine::open_cmds::sweep_open_temp(false);
     if let Some(dir) = &config_dir {
         session.remote.set_config_dir(dir.clone());
@@ -541,7 +546,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: viewport
             .with_title(fm_brand::APP_NAME)
-            .with_app_id(fm_brand::APP_ID)
+            .with_app_id(fm_brand::WINDOW_CLASS)
             .with_inner_size(egui::vec2(1024.0, 700.0))
             .with_drag_and_drop(true)
             .with_min_inner_size(egui::vec2(640.0, 400.0)),

@@ -16,6 +16,7 @@ fn open_id() -> Id {
 pub fn panel_visible(ctx: &Context, s: &Session) -> bool {
     let toggled = ctx.data(|d| d.get_temp::<bool>(open_id())).unwrap_or(false);
     toggled
+        || crate::updates::available(s)
         || s.fileops.jobs().iter().any(|j| {
             j.state.is_running()
                 || matches!(j.state, OpState::Failed(_))
@@ -46,6 +47,7 @@ pub fn indicator_text(s: &Session) -> String {
         .filter(|j| j.state.is_running())
         .collect();
     match running.as_slice() {
+        [] if crate::updates::available(s) => "Update available".into(),
         [] => String::new(),
         [one] => match one.progress.bytes.fraction() {
             Some(f) => format!("{} · {:.0}%", one.label, f * 100.0),
@@ -142,7 +144,13 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         )
         .show(ctx, |ui| {
             ui.set_min_width(300.0);
-            if rows.is_empty() {
+            if crate::updates::available(s) {
+                crate::updates::show(ui, s, tokens);
+                if !rows.is_empty() {
+                    ui.separator();
+                }
+            }
+            if rows.is_empty() && !crate::updates::available(s) {
                 ui.label(tokens.muted("No jobs"));
             }
             for row in &rows {
@@ -195,6 +203,63 @@ mod tests {
         let s = Session::default();
         assert!(indicator_text(&s).is_empty());
         assert!(!panel_visible(&Context::default(), &s));
+    }
+
+    #[test]
+    fn only_available_undismissed_updates_open_the_jobs_panel() {
+        use fm_engine::updates::UpdateStatus;
+        let ctx = Context::default();
+        let mut s = Session::new().expect("session");
+        s.updates.visible = true;
+        for status in [
+            UpdateStatus::Idle,
+            UpdateStatus::Checking,
+            UpdateStatus::UpToDate,
+            UpdateStatus::Failed("offline".into()),
+        ] {
+            s.updates.status = status;
+            assert!(!panel_visible(&ctx, &s));
+            assert!(indicator_text(&s).is_empty());
+        }
+        s.updates.status = UpdateStatus::Available {
+            version: "0.2.0".into(),
+            url: String::new(),
+        };
+        assert!(panel_visible(&ctx, &s));
+        assert_eq!(indicator_text(&s), "Update available");
+        s.dispatch("app.updates.dismiss", &serde_json::Value::Null)
+            .expect("dismiss");
+        assert!(!panel_visible(&ctx, &s));
+        assert!(indicator_text(&s).is_empty());
+    }
+
+    #[test]
+    fn dismissing_an_update_keeps_file_jobs_visible_and_cancellable() {
+        let ctx = Context::default();
+        let mut s = Session::new().expect("session");
+        s.backends
+            .register(std::sync::Arc::new(fm_testkit::MemFs::new()));
+        let job = s
+            .submit_op(fm_engine::OpRequest::Mkdir {
+                parent: fm_vfs::VfsUri::root_file(),
+                name: "test-folder".into(),
+            })
+            .expect("submit");
+        s.updates.visible = true;
+        s.updates.status = fm_engine::updates::UpdateStatus::Available {
+            version: "0.2.0".into(),
+            url: String::new(),
+        };
+        assert!(panel_visible(&ctx, &s));
+        let before = indicator_text(&s);
+        assert!(before.contains("test-folder"), "{before}");
+        s.dispatch("app.updates.dismiss", &serde_json::Value::Null)
+            .expect("dismiss update");
+        assert!(panel_visible(&ctx, &s), "file job still needs the panel");
+        assert_eq!(indicator_text(&s), before);
+        assert!(s.fileops.get(job).is_some());
+        s.dispatch("job.cancel", &json!({"job": job}))
+            .expect("cancel file job");
     }
 
     #[test]

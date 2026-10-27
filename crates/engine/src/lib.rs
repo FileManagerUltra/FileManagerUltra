@@ -36,6 +36,8 @@ pub mod theme_cmds;
 pub mod thumb_cmds;
 pub mod thumbs;
 pub mod trash_cmds;
+pub mod update_cmds;
+pub mod updates;
 pub mod video_cmds;
 pub mod view_cmds;
 pub mod workspace;

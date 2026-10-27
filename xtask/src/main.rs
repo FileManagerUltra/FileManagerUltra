@@ -5,6 +5,7 @@
 
 mod brand;
 mod ci;
+mod desktop;
 mod layers;
 mod util;
 
@@ -36,10 +37,11 @@ fn dispatch() -> Result<String, String> {
             None => Err("usage: cargo xtask rename \"<NewName>\"".to_string()),
         },
         Some("packager-config") => brand::packager_config(),
+        Some("desktop-install") => desktop::install(),
         Some("ci") => ci::run(),
         Some("--version") | Some("-V") => Ok(format!("xtask {}", env!("CARGO_PKG_VERSION"))),
         _ => Err(
-            "usage: cargo xtask <layers|brand-check|rename <name>|packager-config|ci|--version>"
+            "usage: cargo xtask <layers|brand-check|rename <name>|packager-config|desktop-install|ci|--version>"
                 .to_string(),
         ),
     }

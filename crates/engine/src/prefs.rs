@@ -25,6 +25,8 @@ pub enum ThemePreference {
 /// may ever live here — the closed-schema test asserts the exact key set.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Prefs {
+    #[serde(default = "default_true")]
+    pub check_updates: bool,
     #[serde(default)]
     pub theme: ThemePreference,
     #[serde(default)]
@@ -197,6 +199,7 @@ fn default_true() -> bool {
 impl Default for Prefs {
     fn default() -> Self {
         Self {
+            check_updates: true,
             theme: ThemePreference::default(),
             window_maximized: false,
             last_dir: None,
@@ -431,6 +434,7 @@ mod tests {
         assert_eq!(
             keys,
             [
+                "check_updates",
                 "last_dir",
                 "profiles",
                 "recursive_preview",
@@ -454,6 +458,19 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn update_checks_default_on_and_opt_out_round_trips() {
+        let old: Prefs = toml::from_str("").expect("old preferences");
+        assert!(old.check_updates);
+        let prefs = Prefs {
+            check_updates: false,
+            ..Prefs::default()
+        };
+        let encoded = toml::to_string(&prefs).expect("encode");
+        let decoded: Prefs = toml::from_str(&encoded).expect("decode");
+        assert!(!decoded.check_updates);
     }
 
     #[test]

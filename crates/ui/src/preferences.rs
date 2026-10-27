@@ -23,6 +23,11 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .frame(frame(tokens))
         .show(ctx, |ui| {
+            let mut check_updates = s.prefs.check_updates;
+            if ui.checkbox(&mut check_updates, "Check for updates at startup").changed() {
+                s.dispatch_or_notice("prefs.updates", &json!({"value": check_updates}));
+            }
+            ui.add_space(tokens.padding);
             ui.label(RichText::new("Appearance").color(tokens.accent).strong());
             ui.horizontal(|ui| {
                 ui.label("Theme");

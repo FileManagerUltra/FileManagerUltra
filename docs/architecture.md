@@ -176,6 +176,29 @@ The product name must be changeable in one commit. Therefore:
 
 ## 6. Engine: session, commands, state
 
+### Release checks
+
+`engine::Updates` owns one bounded-result worker for startup/manual GitHub release
+checks. It is separate from the filesystem lanes so an offline update server
+cannot delay directory reads. Requests use verified HTTPS, no redirects, a 15 s
+timeout and a 1 MiB metadata limit. `Session::poll` drains results without waiting.
+Startup checks default on (`Prefs.check_updates`); only available updates open
+the Jobs panel, with a dismissible download CTA alongside any file operations.
+Checks in progress and no-update results never open the panel. Errors use the
+status bar; manual checks also report no newer release there.
+The download command opens the official release page on a worker; no code is
+downloaded or installed by the app. Signed in-app installation is a later change.
+
+Windows executables embed the branded ICO via the app's build script. This is
+separate from the runtime window icon and supplies Explorer/shortcut branding;
+the packager also uses that ICO for its NSIS installer.
+
+On Linux, the runtime application ID uses `WINDOW_CLASS` (the slug), matching
+the packaged `<slug>.desktop` filename and `StartupWMClass`. Development runs
+can register the same identity and a per-user icon with
+`cargo xtask desktop-install`; the standalone tool reads identity from the
+brand source, like the packager config generator.
+
 `fm-engine` owns all mutable application state; the UI borrows it per frame.
 
 ```rust

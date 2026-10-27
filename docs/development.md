@@ -11,6 +11,7 @@
 
 ```sh
 cargo run -p fm-app                 # run the desktop app
+cargo xtask desktop-install         # Linux: register this build's launcher and dock icon
 cargo test  --workspace              # the suite
 cargo test  -p fm-ops                # one crate
 cargo clippy --workspace --all-targets -- -D warnings
@@ -33,6 +34,17 @@ CARGO_TARGET_DIR=target/agent-<name> cargo test -p fm-engine
 See `AGENTS.md` §2. `docs/architecture.md` explains why each crate exists and how data flows.
 
 ## Platform notes
+
+- **Linux development icon**: `cargo run` sets the window icon but does not install
+  an icon-theme entry or desktop launcher. GNOME/Wayland docks need those to show
+  the application icon. Run `cargo xtask desktop-install` once, then restart the
+  app and re-pin any old generic dock shortcut. It writes
+  `$XDG_DATA_HOME/applications/<slug>.desktop` and
+  `$XDG_DATA_HOME/icons/hicolor/256x256/apps/<slug>.png` (default data directory:
+  `~/.local/share`). The launcher points at the binary alongside the running
+  xtask, normally `target/debug/<executable>`; re-run after moving the checkout
+  or switching the Cargo target/profile. No root privileges are needed. To undo,
+  remove those two files. An installed package supplies its own desktop entry.
 
 - **Wayland**: window-wide file drops from other applications depend on winit's Wayland support and may be unavailable; in-app pane-to-pane drag & drop is unaffected, and pasting paths from the clipboard always works. See `docs/architecture.md` §11.
 - **Network discovery** (manual smoke; multicast cannot run in CI): File ▸ Network should list Samba/NAS hosts (mDNS) and Windows PCs (WS-Discovery) within ~5 s; opening one asks for credentials in a popup, a wrong password reopens it with an error, and `Remember until you quit` reconnects silently. VLANs/VPNs may hide hosts; use the Network pane's Connect… button (or File ▸ Connect to SMB Server…) as the fallback.

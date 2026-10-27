@@ -80,6 +80,8 @@ pub struct Session {
     pub pending_kind: Option<(PaneId, fm_layout::PaneKind)>,
     /// `app.about` raises this flag; the UI shows the dialog and clears it.
     pub about_open: bool,
+    /// Non-blocking release check and its dismissible notification.
+    pub updates: crate::updates::Updates,
     /// Set by `app.preferences`; the UI renders the dialog and clears it.
     pub preferences_open: bool,
     /// Shared directory listings (capability `directory-cache`).
@@ -136,6 +138,7 @@ impl Default for Session {
             clipboard_out: None,
             pending_kind: None,
             about_open: false,
+            updates: Default::default(),
             preferences_open: false,
             dirs: DirCache::new(),
             backends,
@@ -258,7 +261,9 @@ impl Session {
 
     /// Whether background work is in flight, so the app must keep polling without user input.
     pub fn is_busy(&self) -> bool {
-        !self.inflight.is_empty()
+        self.updates.checking()
+            || self.updates.browser_job.is_some()
+            || !self.inflight.is_empty()
             || self.remote.is_busy()
             || self.previews.is_busy()
             || self.thumbs.is_busy()
@@ -273,6 +278,7 @@ impl Session {
         let (term_changed, _) = self.pump_terminals();
         let term_changed = self.close_exited_terminals() || term_changed;
         let mut changed = !events.is_empty() || term_changed;
+        changed |= self.pump_updates();
         changed |= self.pump_remote_lost();
         changed |= self.pump_trash();
         self.sync_servers();
@@ -280,6 +286,12 @@ impl Session {
         self.remote_tick();
         changed |= self.refresh_previews();
         for ev in &events {
+            if self.updates.finish_browser(ev) {
+                if let JobEvent::Failed { message, .. } = ev {
+                    self.notice = Some(message.clone());
+                }
+                continue;
+            }
             if ev.is_terminal() && (self.finish_op(ev) || self.finish_remote(ev)) {
                 continue;
             }

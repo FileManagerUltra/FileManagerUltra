@@ -133,7 +133,8 @@ pub fn packager_config() -> Result<String, String> {
         "name = \"{slug}\"\nversion = \"{version}\"\nproduct-name = \"{name}\"\nidentifier = \"{id}\"\npublisher = \"{name}\"\n\
 description = \"A cross-platform multi-pane file manager\"\ncategory = \"Utility\"\n\
 icons = [\"{root}/packaging/icon.png\", \"{root}/packaging/icon.ico\", \"{root}/packaging/icon.icns\"]\nout-dir = \"{root}/target/packager\"\n\
-binaries-dir = \"{root}/target/release\"\nbinaries = [{{ path = \"{slug}\", main = true }}]\n",
+binaries-dir = \"{root}/target/release\"\nbinaries = [{{ path = \"{slug}\", main = true }}]\n\
+\n[nsis]\ninstaller-icon = \"{root}/packaging/icon.ico\"\n",
         name = brand.name,
         slug = brand.slug,
         root = root.display().to_string().replace('\\', "/"),
@@ -316,7 +317,7 @@ fn replace_const(text: &str, constant: &str, value: &str) -> Result<String, Stri
     Ok(replaced.into_owned())
 }
 
-fn read_brand(root: &Path) -> Result<Brand, String> {
+pub(crate) fn read_brand(root: &Path) -> Result<Brand, String> {
     let text = util::read(&root.join(BRAND_LIB))?;
     let name = capture_const(&text, "APP_NAME")?;
     let slug = capture_const(&text, "APP_SLUG")?;
@@ -399,5 +400,22 @@ mod tests {
     fn replace_const_errors_when_missing() {
         let text = "pub const OTHER: &str = \"x\";\n";
         assert!(replace_const(text, "APP_NAME", "New").is_err());
+    }
+
+    #[test]
+    fn packager_uses_branded_windows_installer_icon() {
+        packager_config().expect("generate config");
+        let root = util::workspace_root().expect("workspace");
+        let text = util::read(&root.join("target/Packager.toml")).expect("config");
+        let config: toml::Table = toml::from_str(&text).expect("parse");
+        let path = config["nsis"]["installer-icon"]
+            .as_str()
+            .expect("icon path");
+        let bytes = fs::read(path).expect("icon exists");
+        assert_eq!(bytes.get(..4), Some([0, 0, 1, 0].as_slice()), "ICO header");
+        assert_eq!(
+            config["product-name"].as_str(),
+            Some(read_brand(&root).expect("brand").name.as_str())
+        );
     }
 }

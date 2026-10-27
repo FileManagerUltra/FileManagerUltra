@@ -28,3 +28,7 @@ winit.workspace = true
 
 [dev-dependencies]
 fm-testkit.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+fm-brand.workspace = true
+winresource = "0.1"
