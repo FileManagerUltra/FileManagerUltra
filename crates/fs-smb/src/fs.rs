@@ -317,6 +317,7 @@ impl SmbFs {
                     permissions: None,
                     hidden: false,
                     link_to_dir: false,
+                    label: None,
                 })
             })
             .collect()
@@ -409,6 +410,7 @@ impl SmbFs {
             hidden: attrs.hidden(),
             link_to_dir: attrs.reparse_point() && attrs.directory(),
             kind,
+            label: None,
         }
     }
 }
@@ -441,6 +443,7 @@ impl Vfs for SmbFs {
                 permissions: None,
                 hidden: false,
                 link_to_dir: false,
+                label: None,
             });
         };
         let display = uri.path_str();

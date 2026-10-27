@@ -5,6 +5,7 @@
 
 mod charset;
 mod emulator;
+mod queries;
 mod quote;
 mod session;
 

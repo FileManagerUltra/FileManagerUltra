@@ -58,17 +58,46 @@ fn shown(uri: &VfsUri) -> String {
         .unwrap_or_else(|| uri.path_str().to_string())
 }
 
-/// The Windows drive list ("This PC"): every letter whose root `probe` reports as a folder.
-fn drive_entries(root: &VfsUri, probe: impl Fn(&str) -> bool) -> Vec<Entry> {
+/// The Windows drive list ("This PC"): every letter whose root `probe` reports as a folder,
+/// shown as `Label (C:)` when `label` knows the volume's name.
+fn drive_entries(
+    root: &VfsUri,
+    probe: impl Fn(&str) -> bool,
+    label: impl Fn(&str) -> Option<String>,
+) -> Vec<Entry> {
     (b'A'..=b'Z')
         .filter_map(|letter| {
             let name = format!("{}:", char::from(letter));
-            if !probe(&format!("{name}\\")) {
+            let drive_root = format!("{name}\\");
+            if !probe(&drive_root) {
                 return None;
             }
             let mut entry = Entry::new(root.join(&name).ok()?, EntryKind::Dir);
+            entry.label = label(&drive_root)
+                .map(|l| {
+                    l.trim()
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .take(64)
+                        .collect::<String>()
+                })
+                .filter(|l| !l.is_empty())
+                .map(|l| format!("{l} ({name})"));
             entry.name = name;
             Some(entry)
+        })
+        .collect()
+}
+
+/// Volume labels by mount point (`C:\` → `Windows`), as the OS reports them.
+fn volume_labels() -> std::collections::HashMap<String, String> {
+    sysinfo::Disks::new_with_refreshed_list()
+        .list()
+        .iter()
+        .filter_map(|d| {
+            let mount = d.mount_point().to_str()?.to_ascii_uppercase();
+            let name = d.name().to_str()?.to_string();
+            Some((mount, name))
         })
         .collect()
 }
@@ -170,6 +199,7 @@ fn entry_for(parent_uri: &VfsUri, path: &Path, name: String) -> Option<Entry> {
         hidden: os_hidden(&link_meta),
         link_to_dir: link_meta.file_type().is_symlink()
             && follow.as_ref().is_some_and(|m| m.is_dir()),
+        label: None,
     })
 }
 
@@ -201,9 +231,12 @@ impl Vfs for LocalFs {
 
     fn read_dir(&self, uri: &VfsUri) -> Result<Vec<Entry>, FmError> {
         if uri.is_drive_list() {
-            return Ok(drive_entries(uri, |root| {
-                fs::metadata(root).is_ok_and(|m| m.is_dir())
-            }));
+            let labels = volume_labels();
+            return Ok(drive_entries(
+                uri,
+                |root| fs::metadata(root).is_ok_and(|m| m.is_dir()),
+                |root| labels.get(root).cloned(),
+            ));
         }
         let path = self.path(uri)?;
         let display = &shown(uri);
@@ -263,6 +296,7 @@ impl Vfs for LocalFs {
                     None
                 }
             },
+            label: None,
         })
     }
 
@@ -404,14 +438,20 @@ mod tests {
     #[test]
     fn the_drive_list_has_one_folder_per_existing_drive_root() {
         let root = VfsUri::root_file();
-        let drives = drive_entries(&root, |p| p == "C:\\" || p == "E:\\");
+        let drives = drive_entries(
+            &root,
+            |p| p == "C:\\" || p == "E:\\",
+            |p| (p == "C:\\").then(|| " Windows\u{7} ".to_string()),
+        );
         let names: Vec<_> = drives.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["C:", "E:"]);
+        let shown: Vec<_> = drives.iter().map(Entry::display_name).collect();
+        assert_eq!(shown, ["Windows (C:)", "E:"]);
         assert!(drives.iter().all(|e| e.kind == EntryKind::Dir));
         let c = drives.first().expect("C:");
         assert_eq!(c.uri.path_str(), "/C:");
         assert_eq!(c.uri.parent(), Some(root.clone()));
-        assert!(drive_entries(&root, |_| false).is_empty());
+        assert!(drive_entries(&root, |_| false, |_| None).is_empty());
     }
 
     #[cfg(windows)]

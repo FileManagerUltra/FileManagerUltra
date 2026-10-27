@@ -158,6 +158,11 @@ impl TermSession {
                 Err(_) => break,
             }
         }
+        let replies = self.emulator.take_replies();
+        if !replies.is_empty() {
+            // Best effort: a full queue only loses an answer, never blocks the frame.
+            let _ = self.input.try_send(replies);
+        }
         let backlog = !self.output.is_empty();
         if !backlog
             && self.status == Status::Running

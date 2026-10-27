@@ -797,9 +797,9 @@ fn entry_row_ui(
             format!("{}{slash}", entry.name)
         }
     } else if entry.is_dir() {
-        format!("{}/", entry.name)
+        format!("{}/", entry.display_name())
     } else {
-        entry.name.clone()
+        entry.display_name().to_string()
     };
     let cols = columns(rect, widths);
     if cols.name.width() >= 1.0 {

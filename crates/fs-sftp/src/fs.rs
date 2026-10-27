@@ -161,6 +161,7 @@ impl SftpFs {
             link_to_dir: matches!(kind, EntryKind::Symlink { .. })
                 && link.as_ref().is_some_and(|l| l.1),
             kind,
+            label: None,
         }
     }
 }

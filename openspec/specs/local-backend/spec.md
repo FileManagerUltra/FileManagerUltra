@@ -40,3 +40,7 @@ On Windows the local root `file:///` SHALL be a virtual **This PC** folder listi
 #### Scenario: Switch drives
 - **WHEN** a Windows user opens This PC in the tree or Places
 - **THEN** the available drives are listed and clicking `D:` shows `D:\`
+
+#### Scenario: Drive labels
+- **WHEN** a drive has a volume label
+- **THEN** it is shown as `Label (C:)` in the tree and listing (sanitized, at most 64 characters) while its name, selection key and path stay `C:`

@@ -57,6 +57,13 @@ When the shell exits the pane SHALL show "process exited (code N)" and offer `te
 - **WHEN** the user types `exit`
 - **THEN** the exit banner appears and `term.restart` starts a fresh shell
 
+### Requirement: Terminal queries
+The emulator SHALL answer cursor-position (`CSI 6 n`), status (`CSI 5 n`) and device-attribute (`CSI c`, `CSI > c`) requests in stream order, with the cursor position as of the request, and the replies SHALL be bounded so a query flood cannot grow memory.
+
+#### Scenario: Windows ConPTY start-up
+- **WHEN** a shell starts on Windows and ConPTY asks for the cursor position before drawing
+- **THEN** the request is answered and the prompt appears
+
 ### Requirement: Hostile output
 Escape sequences are untrusted. The parser MUST bound line width, title/OSC lengths and scrollback, ignore unsupported sequences, and never execute or open anything from output (no hyperlink launching, no clipboard-write sequences honoured, no title used unescaped).
 

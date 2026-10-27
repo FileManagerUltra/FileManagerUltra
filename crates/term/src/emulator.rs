@@ -3,6 +3,7 @@ use std::num::NonZeroU16;
 use vt100::Parser;
 
 use crate::charset::Charsets;
+use crate::queries::{Queries, Query};
 
 /// Lines of scrollback kept per terminal.
 pub const SCROLLBACK: usize = 10_000;
@@ -108,20 +109,62 @@ pub struct Emulator {
     parser: Parser,
     charsets: Charsets,
     scratch: Vec<u8>,
+    queries: Queries,
+    /// Answers to terminal queries, for the session to send back to the program.
+    replies: Vec<u8>,
 }
+
+/// Cap on unsent replies, so a program flooding queries cannot grow memory.
+const MAX_REPLIES: usize = 4096;
 
 impl Emulator {
     pub fn new(rows: u16, cols: u16) -> Self {
         Self {
             parser: Parser::new(dim(rows, MAX_ROWS), dim(cols, MAX_COLS), SCROLLBACK),
             charsets: Charsets::default(),
+            queries: Queries::default(),
+            replies: Vec::new(),
             scratch: Vec::new(),
         }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
         self.charsets.translate(bytes, &mut self.scratch);
-        self.parser.process(&self.scratch);
+        // Parse up to each query before answering it, so a cursor report is accurate.
+        let mut start = 0;
+        for i in 0..self.scratch.len() {
+            let Some(query) = self.scratch.get(i).and_then(|b| self.queries.step(*b)) else {
+                continue;
+            };
+            if let Some(part) = self.scratch.get(start..=i) {
+                self.parser.process(part);
+            }
+            start = i + 1;
+            self.answer(query);
+        }
+        if let Some(rest) = self.scratch.get(start..) {
+            self.parser.process(rest);
+        }
+    }
+
+    fn answer(&mut self, query: Query) {
+        let reply = match query {
+            Query::CursorPosition => {
+                let (row, col) = self.parser.screen().cursor_position();
+                format!("\x1b[{};{}R", u32::from(row) + 1, u32::from(col) + 1)
+            }
+            Query::Status => "\x1b[0n".to_string(),
+            Query::PrimaryAttributes => "\x1b[?62;22c".to_string(),
+            Query::SecondaryAttributes => "\x1b[>0;10;1c".to_string(),
+        };
+        if self.replies.len() + reply.len() <= MAX_REPLIES {
+            self.replies.extend_from_slice(reply.as_bytes());
+        }
+    }
+
+    /// Replies owed to the program since the last call.
+    pub fn take_replies(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.replies)
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
@@ -214,6 +257,23 @@ mod tests {
         assert_eq!(s.cell(0, 3).map(|c| c.fg), Some(Color::Indexed(1)));
         assert_eq!(text(&e), "hi red\nnext");
         assert_eq!(s.cursor, Some((1, 4)));
+    }
+
+    #[test]
+    fn queries_are_answered_with_the_cursor_at_that_point() {
+        let mut e = Emulator::new(5, 20);
+        // ConPTY's startup handshake: nothing is drawn until this is answered.
+        e.feed(b"\x1b[6n");
+        assert_eq!(e.take_replies(), b"\x1b[1;1R");
+        e.feed(b"ab\r\ncd\x1b[6nefgh\x1b[5n\x1b[");
+        e.feed(b"c");
+        assert_eq!(e.take_replies(), b"\x1b[2;3R\x1b[0n\x1b[?62;22c");
+        assert!(e.take_replies().is_empty());
+        assert_eq!(text(&e), "ab\ncdefgh");
+        for _ in 0..10_000 {
+            e.feed(b"\x1b[6n");
+        }
+        assert!(e.take_replies().len() <= MAX_REPLIES);
     }
 
     #[test]

@@ -188,6 +188,7 @@ mod tests {
             permissions: None,
             hidden: false,
             link_to_dir: false,
+            label: None,
         }
     }
 

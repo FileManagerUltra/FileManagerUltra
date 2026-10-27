@@ -114,11 +114,7 @@ pub enum OpenPlan {
 
 /// Decide from the cached listing, without touching the filesystem.
 pub fn plan(s: &mut Session, uri: &VfsUri) -> OpenPlan {
-    let Some(entry) = uri
-        .parent()
-        .and_then(|p| s.dirs.entries(&p))
-        .and_then(|list| list.iter().find(|e| e.uri == *uri).cloned())
-    else {
+    let Some(entry) = known_entry(s, uri) else {
         return OpenPlan::Navigate;
     };
     match classify(&entry, Os::current()) {
@@ -126,6 +122,37 @@ pub fn plan(s: &mut Session, uri: &VfsUri) -> OpenPlan {
         OpenKind::Document => OpenPlan::Launch,
         OpenKind::Executable => OpenPlan::ConfirmRun { name: entry.name },
     }
+}
+
+/// What is already known about `uri` without I/O: its parent's cached listing, else the
+/// items and subjects of a loaded preview (a folder or multi-file grid shows entries the
+/// panes have not listed).
+fn known_entry(s: &Session, uri: &VfsUri) -> Option<Entry> {
+    use crate::preview_cmds::Body;
+    let cached = uri
+        .parent()
+        .and_then(|p| s.dirs.entries(&p))
+        .and_then(|list| list.iter().find(|e| e.uri == *uri).cloned());
+    cached.or_else(|| {
+        s.previews.slots.values().find_map(|slot| {
+            let from_doc = |doc: &fm_preview::Preview| match doc {
+                fm_preview::Preview::Dir(d) => d.items.iter().find(|e| e.uri == *uri).cloned(),
+                _ => None,
+            };
+            slot.subjects
+                .iter()
+                .chain(slot.subject.iter())
+                .find(|e| e.uri == *uri)
+                .cloned()
+                .or_else(|| match &slot.body {
+                    Body::Static(doc) => from_doc(doc),
+                    Body::Grid(cells) => cells.iter().find_map(|(e, doc)| {
+                        (e.uri == *uri).then(|| e.clone()).or_else(|| from_doc(doc))
+                    }),
+                    _ => None,
+                })
+        })
+    })
 }
 
 pub(crate) fn local_path(uri: &VfsUri) -> Result<PathBuf, FmError> {
@@ -478,6 +505,35 @@ mod tests {
         ] {
             assert!(s.dispatch("file.open", &p).is_err(), "{p}");
         }
+    }
+
+    #[test]
+    fn files_shown_only_in_a_preview_open_instead_of_navigating() {
+        let dir = tempfile::tempdir().expect("tmp");
+        std::fs::write(dir.path().join("a.txt"), "x").expect("write");
+        std::fs::create_dir(dir.path().join("sub")).expect("mkdir");
+        let mut s = Session::new().expect("session");
+        let folder = VfsUri::parse(&dir.path().to_string_lossy()).expect("uri");
+        let vfs = s.backends.require(&folder).expect("vfs");
+        let subject = vfs.stat(&folder).expect("stat");
+        let doc = fm_preview::dir::summarize(
+            vfs.as_ref(),
+            &subject,
+            &fm_preview::Limits::default(),
+            false,
+        )
+        .expect("summary");
+        let mut slot = crate::preview_cmds::PreviewSlot::new();
+        slot.subject = Some(subject);
+        slot.body =
+            crate::preview_cmds::Body::Static(std::sync::Arc::new(fm_preview::Preview::Dir(doc)));
+        s.previews.slots.insert(1, slot);
+
+        let file = folder.join("a.txt").expect("join");
+        assert!(s.dirs.entries(&folder).is_none(), "not listed by any pane");
+        assert_eq!(plan(&mut s, &file), OpenPlan::Launch);
+        let sub = folder.join("sub").expect("join");
+        assert_eq!(plan(&mut s, &sub), OpenPlan::Navigate);
     }
 
     #[cfg(unix)]

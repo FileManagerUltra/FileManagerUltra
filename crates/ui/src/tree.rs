@@ -90,14 +90,16 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
         let DirState::Ready { entries, .. } = dir_state else {
             continue;
         };
-        let mut dirs: Vec<(String, VfsUri)> = entries
+        let mut dirs: Vec<&fm_vfs::Entry> = entries
             .iter()
             .filter(|e| e.kind == EntryKind::Dir)
             .filter(|e| s.show_hidden || !fm_engine::is_hidden(e))
-            .map(|e| (e.name.clone(), e.uri.clone()))
             .collect();
-        dirs.sort_by_key(|(name, _)| name.to_lowercase());
-        for (name, child) in dirs.into_iter().rev() {
+        dirs.sort_by_key(|e| e.name.to_lowercase());
+        let dirs = dirs
+            .into_iter()
+            .map(|e| (e.display_name().to_string(), e.uri.clone()));
+        for (name, child) in dirs.rev() {
             if rows.len() + stack.len() >= MAX_ROWS {
                 break;
             }

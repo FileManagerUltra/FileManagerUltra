@@ -35,6 +35,10 @@ pub struct Entry {
     /// A symlink whose target resolves to a directory (always false for other kinds).
     #[serde(default)]
     pub link_to_dir: bool,
+    /// What to show instead of `name` (a Windows drive's volume label: `Data (D:)`).
+    /// `name` stays the key for selection and paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 impl Entry {
@@ -49,7 +53,13 @@ impl Entry {
             permissions: None,
             hidden: false,
             link_to_dir: false,
+            label: None,
         }
+    }
+
+    /// The text shown for this entry: the label if the backend set one, else the name.
+    pub fn display_name(&self) -> &str {
+        self.label.as_deref().unwrap_or(&self.name)
     }
 
     pub fn is_dir(&self) -> bool {
