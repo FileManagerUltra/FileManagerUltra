@@ -4,6 +4,12 @@
 //! The shell owns a [`fm_engine::Session`] and routes every interaction through
 //! `Session::dispatch` — it performs no filesystem work itself.
 
+// Release builds on Windows use the GUI subsystem, so no console window opens.
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
+
 mod menu;
 
 use std::path::PathBuf;
