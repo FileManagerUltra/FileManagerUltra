@@ -11,6 +11,12 @@ Every Files pane SHALL show a collapsible Devices section above Places listing m
 - **WHEN** no eligible volume is mounted
 - **THEN** no Devices heading or placeholder is shown
 
+#### Scenario: Windows internal data drives
+- **WHEN** Windows has internal fixed disks alongside USB, network and virtual volumes
+- **THEN** internal physical disk drive letters are excluded
+- **AND** removable drives, network mappings, USB-backed fixed drives and virtual drive letters without partition associations remain eligible
+- **AND** missing classification metadata does not implicitly include fixed drives
+
 #### Scenario: Plugging in a stick
 - **WHEN** a USB stick is mounted while the app is focused
 - **THEN** it appears in Devices within 5 seconds without user action and a status notice names it
@@ -23,9 +29,15 @@ Every Files pane SHALL show a collapsible Devices section above Places listing m
 #### Scenario: Unplugging
 - **WHEN** a listed device disappears while the app is focused
 - **THEN** its row is removed within 5 seconds and a pane that was showing it reports the folder as unavailable instead of crashing
+- **AND** an empty Windows removable drive-letter slot without capacity or volume serial is not retained as a device
 
 ### Requirement: Device detection never blocks
-Device scanning SHALL run on a dedicated single-flight worker isolated from file-operation lanes, SHALL be rate-limited (2 s focused, 10 s unfocused, immediate on focus regain), and SHALL keep the previous list when a scan fails or exceeds one second. The UI thread SHALL only read the cached list. A hung scan SHALL NOT cause replacement scan workers to accumulate.
+Device scanning SHALL run on a dedicated single-flight worker isolated from file-operation lanes, SHALL be rate-limited (2 s focused, 10 s unfocused, immediate on focus regain), and SHALL keep the previous list while a scan is pending or fails. Successful results SHALL be applied regardless of duration. A scan still pending after 10 seconds SHALL report one diagnostic; completed successful scans SHALL NOT be reported as failures. Automatic polling SHALL wait its interval after completion before scanning again. The UI thread SHALL only read the cached list. A hung scan SHALL NOT cause replacement scan workers to accumulate.
+
+#### Scenario: Discovery takes longer than one second
+- **WHEN** a background scan successfully completes after several seconds
+- **THEN** its mounted volumes update Devices without a timeout error
+- **AND** the next automatic scan waits the polling interval after completion
 
 #### Scenario: A mount hangs
 - **WHEN** reading one device stalls
@@ -37,6 +49,12 @@ Device scanning SHALL run on a dedicated single-flight worker isolated from file
 #### Scenario: Eject a busy stick
 - **WHEN** a copy is writing to the device
 - **THEN** eject is refused with an actionable message and the copy continues
+
+#### Scenario: Two sticks are connected
+- **WHEN** Eject is clicked on one
+- **THEN** only the selected mount is targeted and its row shows Ejecting
+- **AND** other removal actions are disabled with an explanation until completion
+- **AND** Windows retains its Shell request while waiting for confirmed removal or explicit failure
 
 #### Scenario: Malformed params
 - **WHEN** `devices.eject` receives a missing, non-string or unlisted uri

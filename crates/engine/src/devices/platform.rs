@@ -415,12 +415,56 @@ pub(super) use linux::{remove, scan, scan_current};
 mod windows {
     use super::*;
 
-    const SCAN: &str = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); @(Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -ne $env:SystemDrive -and $_.DriveType -in 2,3,4 } | Select-Object DeviceID,VolumeName,VolumeSerialNumber,ProviderName,FileSystem,Size,FreeSpace,DriveType) | ConvertTo-Json -Compress";
-    const EJECT: &str = "$ErrorActionPreference='Stop'; $d=$env:FM_EJECT_DRIVE; if ($d -notmatch '^[A-Za-z]:$') { throw 'Invalid drive' }; $item=(New-Object -ComObject Shell.Application).Namespace(17).ParseName($d); if ($null -eq $item) { throw 'Drive not found' }; $item.InvokeVerb('Eject')";
+    const SCAN: &str = r#"
+$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+@(Get-CimInstance Win32_LogicalDisk | Where-Object {
+    $_.DeviceID -ne $env:SystemDrive -and $_.DriveType -in 2,3,4 -and
+    ($_.DriveType -ne 2 -or $_.Size -gt 0 -or -not [string]::IsNullOrEmpty($_.VolumeSerialNumber))
+} | ForEach-Object {
+    $volume=$_
+    $userMounted=$volume.DriveType -in 2,4
+    if ($volume.DriveType -eq 3) {
+        $partitions=@(Get-CimAssociatedInstance -InputObject $volume -Association Win32_LogicalDiskToPartition)
+        $userMounted=$partitions.Count -eq 0
+        foreach ($partition in $partitions) {
+            foreach ($disk in @(Get-CimAssociatedInstance -InputObject $partition -Association Win32_DiskDriveToDiskPartition)) {
+                if ($disk.InterfaceType -eq 'USB' -or $disk.PNPDeviceID -match '^(USBSTOR|USB)\\') {
+                    $userMounted=$true
+                }
+            }
+        }
+    }
+    $volume | Select-Object DeviceID,VolumeName,VolumeSerialNumber,ProviderName,FileSystem,Size,FreeSpace,DriveType,@{Name='UserMounted';Expression={$userMounted}}
+}) | ConvertTo-Json -Compress
+"#;
+    const EJECT: &str = r#"
+$ErrorActionPreference='Stop'
+$d=$env:FM_EJECT_DRIVE
+if ($d -notmatch '^[A-Za-z]:$') { throw 'Invalid drive' }
+$volume=Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -eq $d }
+if ($null -eq $volume -or $volume.DriveType -ne 2 -or [string]::IsNullOrEmpty($volume.VolumeSerialNumber)) {
+    throw 'The selected removable volume is no longer available'
+}
+$identity='{0}:{1}:{2}' -f $volume.DeviceID,$volume.VolumeSerialNumber,$volume.ProviderName
+if ($identity -cne $env:FM_EJECT_IDENTITY) { throw 'Mount identity changed; refresh Devices' }
+$shell=New-Object -ComObject Shell.Application
+$folder=$shell.Namespace(17)
+$item=$folder.ParseName($d + '\')
+if ($null -eq $item) { throw 'Drive not found in Windows Shell' }
+$item.InvokeVerb('Eject')
+$deadline=[DateTime]::UtcNow.AddSeconds(5)
+do {
+    Start-Sleep -Milliseconds 250
+    $current=Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -eq $d }
+    if ($null -eq $current -or ($current.Size -le 0 -and [string]::IsNullOrEmpty($current.VolumeSerialNumber))) { exit 0 }
+} while ([DateTime]::UtcNow -lt $deadline)
+throw 'Windows did not eject the selected drive. Close open files and use Safely Remove Hardware if it remains busy'
+"#;
 
     fn powershell(script: &str) -> Command {
         let mut cmd = Command::new("powershell.exe");
-        cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+        cmd.args(["-NoProfile", "-NonInteractive", "-STA", "-Command", script]);
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
@@ -447,6 +491,19 @@ mod windows {
         });
         entries
             .iter()
+            .filter(|v| match v.get("DriveType").and_then(|v| v.as_u64()) {
+                Some(2) => {
+                    v.get("Size")
+                        .and_then(|v| v.as_u64())
+                        .is_some_and(|size| size > 0)
+                        || v.get("VolumeSerialNumber")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|serial| !serial.is_empty())
+                }
+                Some(4) => true,
+                Some(3) => v.get("UserMounted").and_then(|v| v.as_bool()) == Some(true),
+                _ => false,
+            })
             .map(|v| {
                 let text = |key| v.get(key).and_then(|v| v.as_str()).unwrap_or("");
                 let drive = text("DeviceID");
@@ -498,13 +555,57 @@ mod windows {
         }
         let path = d.mount.local_path().ok_or_else(|| error("Invalid drive"))?;
         let drive = path.to_string_lossy();
-        output(powershell(EJECT).env("FM_EJECT_DRIVE", drive.trim_end_matches('\\')))?;
+        output(
+            powershell(EJECT)
+                .env("FM_EJECT_DRIVE", drive.trim_end_matches('\\'))
+                .env("FM_EJECT_IDENTITY", &d.identity),
+        )?;
         Ok(())
     }
 
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn unplugged_media_slots_disappear_without_hiding_other_volumes() {
+            let plugged = parse(br#"[
+                {"DeviceID":"E:","VolumeName":"First","VolumeSerialNumber":"111","DriveType":2,"Size":4096},
+                {"DeviceID":"F:","VolumeName":"Second","VolumeSerialNumber":"222","DriveType":2,"Size":8192},
+                {"DeviceID":"Z:","ProviderName":"\\\\server\\share","DriveType":4}
+            ]"#).expect("plugged");
+            let unplugged = parse(br#"[
+                {"DeviceID":"E:","VolumeName":"","VolumeSerialNumber":null,"DriveType":2,"Size":0},
+                {"DeviceID":"F:","VolumeName":"Second","VolumeSerialNumber":"222","DriveType":2,"Size":8192},
+                {"DeviceID":"G:","DriveType":2},
+                {"DeviceID":"Z:","ProviderName":"\\\\server\\share","DriveType":4}
+            ]"#).expect("unplugged");
+            assert_eq!(unplugged.len(), 2);
+            assert_eq!(unplugged[0].name, "Second");
+            let mut session = crate::Session::default();
+            let removed = plugged[0].mount.clone();
+            session.layout.state_mut(1).expect("pane").location = removed.clone();
+            session.volumes.replace(plugged);
+            session.volumes.start(move || Ok(unplugged)).expect("scan");
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while session.volumes.scanning() {
+                session.pump_devices();
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert_eq!(session.volumes.entries().len(), 2);
+            assert!(session.volumes.unavailable(&removed));
+            assert!(matches!(
+                session.dirs.state(&removed),
+                crate::DirState::Failed { .. }
+            ));
+            assert!(
+                session
+                    .info
+                    .as_ref()
+                    .is_some_and(|(message, _)| message.contains("First disconnected"))
+            );
+        }
 
         #[test]
         fn windows_metadata_includes_virtual_fixed_drives_and_network_mappings() {
@@ -514,16 +615,21 @@ mod windows {
             let _remove: fn(&Device) -> Result<(), FmError> = remove;
             let entries = parse(br#"[
                 {"DeviceID":"E:","VolumeName":"USB","VolumeSerialNumber":"123","DriveType":2,"Size":4096,"FreeSpace":2048},
-                {"DeviceID":"V:","VolumeName":"Private","VolumeSerialNumber":"456","DriveType":3},
-                {"DeviceID":"Z:","VolumeName":"","ProviderName":"\\\\server\\share","DriveType":4}
+                {"DeviceID":"V:","VolumeName":"Private","VolumeSerialNumber":"456","DriveType":3,"UserMounted":true},
+                {"DeviceID":"Z:","VolumeName":"","ProviderName":"\\\\server\\share","DriveType":4},
+                {"DeviceID":"D:","VolumeName":"Internal data","DriveType":3,"UserMounted":false},
+                {"DeviceID":"F:","VolumeName":"Unclassified fixed disk","DriveType":3},
+                {"DeviceID":"G:","VolumeName":"External USB HDD","DriveType":3,"UserMounted":true}
             ]"#).expect("volumes");
-            assert_eq!(entries.len(), 3);
+            assert_eq!(entries.len(), 4);
             assert_eq!(entries[0].removal, Removal::Eject);
             assert_eq!(entries[0].total, Some(4096));
             assert!(matches!(entries[1].removal, Removal::Unsupported(_)));
             assert_eq!(entries[2].name, "Z:");
             assert_eq!(entries[2].free, None);
-            assert!(parse(br#"{"DeviceID":"E:;bad","DriveType":2}"#).is_err());
+            assert_eq!(entries[3].name, "External USB HDD");
+            assert!(matches!(entries[3].removal, Removal::Unsupported(_)));
+            assert!(parse(br#"{"DeviceID":"E:;bad","DriveType":2,"Size":4096}"#).is_err());
             assert!(parse(b"null").expect("no volumes").is_empty());
         }
     }

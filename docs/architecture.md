@@ -298,12 +298,22 @@ UI thread (eframe)                 engine workers                backends
 separately from `Session::devices` (the drag/drop same-device cache). The shell
 calls `devices_tick(focused)` and schedules repaint without input. A single-flight
 `devices-scan` worker polls every 2 s focused / 10 s unfocused and on focus regain;
-`poll()` applies snapshots and connection notices. Failed or >1 s scans retain the
-last list; a hung worker is not replaced until it exits, so it cannot starve the
-local job lane or accumulate threads.
+`poll()` applies snapshots and connection notices. Pending/failed scans retain the
+last list; successful scans are applied even when slow. A scan still pending after
+10 s reports one warning. A hung worker is not replaced until it exits, so it cannot
+starve the local job lane or accumulate threads. Automatic polling waits its
+interval after completion, avoiding continuous rescans on slower systems.
 
 Linux reads bounded mountinfo plus sysinfo capacity and volume labels; macOS uses
 sysinfo and diskutil plist metadata; Windows uses fixed PowerShell/CIM queries.
+Windows fixed drives are filtered through logical-disk/partition/physical-disk
+associations: internal physical disks are hidden, USB-backed disks and virtual
+drive letters without a partition association remain eligible. Removable drives
+and network mappings remain eligible independently of physical backing.
+Windows eject revalidates the selected drive's serial-backed identity inside an
+STA PowerShell process and keeps Shell COM references alive until the drive
+disappears or the wait fails. Only the selected row shows pending removal;
+other removal actions are temporarily disabled with an explanatory tooltip.
 System/pseudo mounts are excluded, but virtual/encrypted mounts are not excluded
 solely for being non-removable. Unavailable capacity is explicit.
 

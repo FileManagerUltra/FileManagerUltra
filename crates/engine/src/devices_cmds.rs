@@ -78,10 +78,11 @@ fn remove(s: &mut Session, params: &Params, eject: bool) -> Result<(), FmError> 
     let id = s.jobs.submit(crate::JobLane::Local, move |_ctx| {
         crate::devices::remove(&worker_device)
     });
+    let name = crate::devices::display_label(&device.name);
     s.volumes.removal = Some((id, device));
     // A pending discovery result predating removal must not overwrite the next refresh.
     s.info = Some((
-        "Removing volume; do not unplug it yet".into(),
+        format!("Removing {name}; do not unplug it yet"),
         std::time::Instant::now(),
     ));
     Ok(())
@@ -210,6 +211,14 @@ mod tests {
         let mut s = fixture();
         let d = s.volumes.entries()[0].clone();
         s.volumes.removal = Some((999, d.clone()));
+        assert_eq!(s.volumes.removal_target(), Some(&d));
+        let mut other = d.clone();
+        other.mount = VfsUri::parse("/media/other").expect("other");
+        other.identity = "other".into();
+        s.volumes.replace(vec![d.clone(), other.clone()]);
+        assert!(!s.volumes.blocks(&other.mount));
+        assert!(target(&s, &json!({"uri": other.mount.to_string()}), true).is_err());
+        assert_eq!(s.volumes.removal_target(), Some(&d));
         assert!(
             s.dispatch("nav.open", &json!({"uri": d.mount.to_string()}))
                 .is_err()

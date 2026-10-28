@@ -10,3 +10,12 @@
 - [x] Docs: places/security spec sync, architecture, development manual checks, devlog.
 - [ ] Verify actual VeraCrypt mount discovery/ownership on each OS; add a volume-manager dismount adapter only when its identity can be verified (otherwise the implemented browse-only fallback applies).
 - [ ] Manual check on Linux, macOS and Windows with USB media and mounted VeraCrypt volumes (mount/unmount detection, browsing, capacity, eject vs dismount, busy/unsupported failures).
+
+## Manual evidence
+
+- 2026-10-28: User confirmed Linux VeraCrypt mount discovery and browsing at
+  `/media/veracrypt2`; Devices lists the volume with Dismount disabled as intended.
+  Capacity and disappearance detection remain unconfirmed.
+- 2026-10-28: User confirmed Windows VeraCrypt volume discovery. This does not
+  yet verify the pending fixed-drive filter changes, dismount or unplug behavior.
+  macOS hardware checks remain unconfirmed.

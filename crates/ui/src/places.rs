@@ -169,14 +169,31 @@ fn device_row(
 /// Shared by the sidebar and Go menu. Unsupported volume managers remain browseable.
 pub fn device_removal(ui: &mut Ui, s: &mut Session, device: &fm_engine::devices::Device) -> bool {
     use fm_engine::devices::Removal;
+    let removing = s
+        .volumes
+        .removal_target()
+        .is_some_and(|target| target.mount == device.mount && target.identity == device.identity);
     let enabled = !s.volumes.removing() && !matches!(device.removal, Removal::Unsupported(_));
     let tip = match &device.removal {
+        _ if removing => "Removal requested for this volume; do not unplug it until confirmed",
+        _ if s.volumes.removing() => "Wait for the other volume's removal to finish",
         Removal::Unsupported(reason) => reason.as_str(),
         Removal::Eject => "Unmount and safely eject this drive",
         Removal::Dismount => "Unmount this volume without powering off its host disk",
     };
+    let label = if removing {
+        match device.removal {
+            Removal::Eject => "Ejecting...",
+            _ => "Dismounting...",
+        }
+    } else {
+        device.removal.label()
+    };
     if ui
-        .add_enabled(enabled, egui::Button::new(device.removal.label()))
+        .push_id(("volume-removal", device.mount.as_str()), |ui| {
+            ui.add_enabled(enabled, egui::Button::new(label))
+        })
+        .inner
         .on_disabled_hover_text(tip)
         .on_hover_text(tip)
         .clicked()
@@ -611,6 +628,59 @@ mod tests {
             identity: "virtual-42".into(),
             removal: Removal::Unsupported("Dismount this volume in VeraCrypt".into()),
         }
+    }
+
+    #[test]
+    fn two_eject_buttons_dispatch_only_the_clicked_volume() {
+        let mut s = Session::new().expect("session");
+        s.standard_places.0.clear();
+        let mem = fm_testkit::MemFs::new();
+        mem.mkdirs_str("/media/first").expect("first");
+        mem.mkdirs_str("/media/second").expect("second");
+        s.backends.register(std::sync::Arc::new(mem));
+        let mut first = device();
+        first.name = "First USB".into();
+        first.mount = VfsUri::parse("/media/first").expect("uri");
+        first.removal = Removal::Eject;
+        let mut second = first.clone();
+        second.name = "Second USB".into();
+        second.mount = VfsUri::parse("/media/second").expect("uri");
+        second.identity = "second".into();
+        s.volumes.replace(vec![first.clone(), second]);
+        s.submit_op(fm_engine::OpRequest::Mkdir {
+            parent: first.mount,
+            name: "test".into(),
+        })
+        .expect("memory-only operation");
+        let mut h = Harness::builder()
+            .with_size(vec2(450.0, 800.0))
+            .build_ui_state(
+                |ui, s| {
+                    let _ = show(ui, s, 1, &Tokens::dark());
+                },
+                s,
+            );
+        assert_eq!(h.query_all_by_label("Eject").count(), 2);
+        h.query_all_by_label("Eject").next().expect("first").click();
+        h.run();
+        assert!(
+            h.state()
+                .notice
+                .as_deref()
+                .is_some_and(|text| text.contains("file operation"))
+        );
+        h.query_all_by_label("Eject")
+            .nth(1)
+            .expect("second")
+            .click();
+        h.run();
+        assert!(
+            h.state()
+                .notice
+                .as_deref()
+                .is_some_and(|text| text.contains("Home is unavailable"))
+        );
+        assert!(!h.state().volumes.removing(), "never execute OS removal");
     }
 
     #[test]

@@ -32,6 +32,12 @@ mounted network volumes and mounted virtual volumes such as VeraCrypt, regardles
 of the removable flag; system, pseudo and implementation-only mounts are excluded.
 Linux document-portal (`fuse.portal`) and GVFS bridge (`fuse.gvfsd-fuse`) mounts
 SHALL be excluded, while user-mounted FUSE filesystems remain eligible.
+Windows SHALL exclude fixed drive letters backed by internal physical disks.
+Removable drives, network mappings, USB-backed fixed drives and virtual drive
+letters without physical partition associations SHALL remain eligible. Missing
+classification metadata SHALL NOT implicitly include a fixed drive.
+Windows removable drive-letter slots without capacity or a volume serial SHALL
+not count as mounted media and SHALL disappear from Devices after unplugging.
 Rows SHALL show only the volume label and removal action, open through `nav.open`,
 and act as drop targets. Mount location and capacity SHALL remain available in the
 hover tooltip and the directory Preview, not as extra sidebar lines.
@@ -46,8 +52,10 @@ Collapse state SHALL persist independently per pane with the workspace.
 ### Requirement: Non-blocking mount detection
 Discovery SHALL poll off the UI and file-operation lanes on a single-flight worker
 every 2 seconds focused / 10 seconds unfocused, refreshing on focus regain and with
-`devices.refresh`. Failed or over-one-second scans SHALL preserve the previous list,
-report a diagnostic, and never accumulate replacement workers while hung.
+`devices.refresh`. Pending or failed scans SHALL preserve the previous list.
+Successful results SHALL be applied even when slow; a scan still pending after
+10 seconds SHALL report one diagnostic without spawning replacement workers.
+Automatic polling SHALL wait its interval after completion before scanning again.
 
 #### Scenario: A volume disappears
 - **WHEN** a listed volume is disconnected while the app is focused
@@ -71,3 +79,9 @@ other mounted volumes; Dismount SHALL never power off the host disk.
 #### Scenario: Invalid or busy removal
 - **WHEN** removal params are malformed, unlisted, stale, unsupported or target an active transfer
 - **THEN** the command reports an error without executing a removal tool
+
+#### Scenario: Two USB drives are connected
+- **WHEN** Eject is selected for one volume
+- **THEN** only that volume is targeted and its row shows Ejecting while pending
+- **AND** other removal buttons are temporarily disabled with an explanation
+- **AND** Windows keeps its Shell request alive until the target disappears or reports failure, never reporting success merely for submitting the request

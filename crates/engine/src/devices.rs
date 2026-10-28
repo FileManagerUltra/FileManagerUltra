@@ -10,9 +10,9 @@ use fm_vfs::{FmError, VfsUri};
 
 pub const SCAN_INTERVAL: Duration = Duration::from_secs(2);
 pub const IDLE_SCAN_INTERVAL: Duration = Duration::from_secs(10);
-const SCAN_BUDGET: Duration = Duration::from_secs(1);
+const SLOW_SCAN_WARNING: Duration = Duration::from_secs(10);
 const MAX_DEVICES: usize = 256;
-type ScanResult = (Instant, Result<Vec<Device>, FmError>);
+type ScanResult = Result<Vec<Device>, FmError>;
 
 /// What can safely detach this volume. Unknown virtual/encrypted mounts are browse-only.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,7 +85,7 @@ pub struct Devices {
     pending: Option<Receiver<ScanResult>>,
     started: Option<Instant>,
     next_scan: Option<Instant>,
-    expired: bool,
+    slow_reported: bool,
     initialized: bool,
     last_error: Option<String>,
     focused: bool,
@@ -104,6 +104,10 @@ impl Devices {
 
     pub fn removing(&self) -> bool {
         self.removal.is_some()
+    }
+
+    pub fn removal_target(&self) -> Option<&Device> {
+        self.removal.as_ref().map(|(_, device)| device)
     }
 
     /// Merge a discovered snapshot. Public for injected discovery providers and UI fixtures.
@@ -166,12 +170,12 @@ impl Devices {
                         Ok(entries)
                     }
                 });
-                let _ = tx.send((Instant::now(), result));
+                let _ = tx.send(result);
             })
             .map_err(|e| FmError::backend("devices", format!("Cannot start volume scan: {e}")))?;
         self.pending = Some(rx);
         self.started = Some(Instant::now());
-        self.expired = false;
+        self.slow_reported = false;
         Ok(())
     }
 
@@ -235,21 +239,22 @@ impl crate::Session {
             return false;
         };
         let received = rx.try_recv();
-        let finished = received
-            .as_ref()
-            .map(|(finished, _)| *finished)
-            .unwrap_or_else(|_| Instant::now());
-        if !self.volumes.expired
+        if matches!(received, Err(TryRecvError::Empty))
+            && !self.volumes.slow_reported
             && self
                 .volumes
                 .started
-                .is_some_and(|start| finished.saturating_duration_since(start) > SCAN_BUDGET)
+                .is_some_and(|start| start.elapsed() > SLOW_SCAN_WARNING)
         {
-            self.volumes.expired = true;
-            self.notice = Some("Volume scan took too long; keeping the previous Devices list. A slow or disconnected mount may be responsible.".into());
+            self.volumes.slow_reported = true;
+            let message = "Volume scan is still waiting after 10 seconds; showing the previous Devices list. Check slow or disconnected mounts in the OS or VeraCrypt.";
+            if self.volumes.last_error.as_deref() != Some(message) {
+                self.notice = Some(message.into());
+            }
+            self.volumes.last_error = Some(message.into());
         }
         let result = match received {
-            Ok((_, result)) => result,
+            Ok(result) => result,
             Err(TryRecvError::Empty) => return false,
             Err(TryRecvError::Disconnected) => Err(FmError::backend(
                 "devices",
@@ -258,9 +263,14 @@ impl crate::Session {
         };
         self.volumes.pending = None;
         self.volumes.started = None;
-        if self.volumes.expired {
-            return true;
-        }
+        self.volumes.next_scan = Some(
+            Instant::now()
+                + if self.volumes.focused {
+                    SCAN_INTERVAL
+                } else {
+                    IDLE_SCAN_INTERVAL
+                },
+        );
         match result {
             Ok(entries) => {
                 let old = self.volumes.entries.clone();
@@ -514,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn slow_scan_is_single_flight_and_discards_late_snapshot() {
+    fn slow_scan_is_single_flight_and_applies_late_snapshot() {
         let mut s = crate::Session::default();
         s.volumes.replace(vec![device()]);
         let (tx, rx) = bounded(1);
@@ -527,9 +537,17 @@ mod tests {
         s.volumes.started = Some(Instant::now() - Duration::from_secs(2));
         s.pump_devices();
         assert!(s.volumes.scanning());
+        assert!(s.notice.is_none(), "a two-second scan is not an error");
+        s.volumes.started = Some(Instant::now() - SLOW_SCAN_WARNING - Duration::from_secs(1));
+        s.pump_devices();
         assert!(s.notice.is_some());
-        // This would clear the list if a second worker were launched.
+        s.notice = None;
+        s.pump_devices();
+        assert!(s.notice.is_none(), "do not repeat the slow-scan warning");
+        // A second worker would clear the list before the original scan finishes.
         s.volumes.start(|| Ok(Vec::new())).expect("dedup");
+        s.pump_devices();
+        assert_eq!(s.volumes.entries().len(), 1);
         tx.send(()).expect("release");
         let deadline = Instant::now() + Duration::from_secs(2);
         while s.volumes.scanning() {
@@ -537,6 +555,24 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(s.volumes.entries().len(), 1);
+        assert!(s.volumes.entries().is_empty(), "apply the eventual result");
+        assert!(
+            s.volumes
+                .next_scan
+                .is_some_and(|next| next > Instant::now())
+        );
+    }
+
+    #[test]
+    fn successful_scan_over_one_second_is_applied_without_warning() {
+        let mut s = crate::Session::default();
+        let (tx, rx) = bounded(1);
+        s.volumes.pending = Some(rx);
+        s.volumes.started = Some(Instant::now() - Duration::from_secs(3));
+        tx.send(Ok(vec![device()])).expect("result");
+        assert!(s.pump_devices());
+        assert_eq!(s.volumes.entries(), &[device()]);
+        assert!(s.notice.is_none());
+        assert!(!s.volumes.scanning());
     }
 }
