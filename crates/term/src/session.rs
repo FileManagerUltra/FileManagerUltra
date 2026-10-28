@@ -190,6 +190,11 @@ impl TermSession {
         self.status
     }
 
+    pub fn mouse(&mut self, event: crate::MouseEvent) -> Result<(), FmError> {
+        let bytes = self.emulator.mouse_report(event)?;
+        self.write(&bytes)
+    }
+
     /// Whether something other than the shell owns the terminal (a running command).
     /// Always `false` where the platform cannot tell.
     pub fn has_foreground_job(&self) -> bool {

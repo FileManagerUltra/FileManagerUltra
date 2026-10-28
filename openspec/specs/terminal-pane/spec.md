@@ -37,7 +37,7 @@ The terminal SHALL render the visible grid (text, 16/256/true colour, bold/itali
 - **THEN** the cells hold `┌──┐`/`│`/`└──┘`, and light box characters are painted edge to edge so borders join without gaps
 
 ### Requirement: Input routing
-While a Terminal pane is focused, text, Enter, Backspace, Tab, arrows, Home/End, PageUp/Down, Delete, F1–F12 and `Ctrl+<letter>` SHALL be sent to the shell. Only `Ctrl+Shift+…` chords and `Ctrl+Shift+Tab` are handled as app shortcuts. Mouse wheel scrolls scrollback; typing returns to the live screen.
+While a Terminal pane is focused, text, Enter, Backspace, Tab, arrows, Home/End, PageUp/Down, Delete, F1–F12 and `Ctrl+<letter>` SHALL be sent to the shell. Only `Ctrl+Shift+…` chords and `Ctrl+Shift+Tab` are handled as app shortcuts. Mouse wheel scrolls scrollback unless the application requested mouse reporting; typing returns to the live screen.
 
 #### Scenario: Ctrl+C
 - **WHEN** Ctrl+C is pressed in a focused terminal
@@ -46,6 +46,27 @@ While a Terminal pane is focused, text, Enter, Backspace, Tab, arrows, Home/End,
 #### Scenario: Unfocused pane
 - **WHEN** another pane is focused
 - **THEN** key events are not sent to the terminal
+
+### Requirement: Application mouse input
+When a terminal application requests mouse input, pointer events SHALL be sent through `term.mouse`, using the application's requested protocol: X10 (`?9`), press/release (`?1000`), button motion (`?1002`) or any motion (`?1003`), with default byte, UTF-8 (`?1005`) or SGR (`?1006`) encoding. Reports SHALL contain one-based screen-cell coordinates, left/middle/right buttons, wheel up/down and modifiers; movement is reported only when the cell changes and the requested mode permits it. Legacy bytes MUST NOT be converted to UTF-8; coordinates outside a legacy encoding's range are not reported at a different location.
+
+Holding Shift SHALL bypass application mouse input for local text selection and scrollback. Without application mouse reporting, existing local mouse behavior SHALL be preserved. Applications receive no clicks originating outside their pane or under a popup. A captured button SHALL be released even if the pointer leaves the pane/window or Shift is subsequently held. Wheel accumulation SHALL retain fractional steps and emit at most 32 reports per event. Disabling/resetting mouse mode restores local behavior. Mouse input SHALL use the bounded asynchronous terminal write queue.
+
+#### Scenario: Click and scroll in a terminal application
+- **WHEN** mc or btop enables mouse reporting and the user clicks a menu item or turns the wheel over the terminal
+- **THEN** the application receives the corresponding button or wheel reports at that cell, rather than a local text selection or scrollback action
+
+#### Scenario: Drag outside the pane
+- **WHEN** a button is pressed in an application with button-motion reporting and dragged outside the pane
+- **THEN** movement uses bounded screen coordinates and the eventual release reaches the application
+
+#### Scenario: Select text while mouse reporting is active
+- **WHEN** the user holds Shift and drags or scrolls over a terminal application
+- **THEN** local selection or scrollback is used and no new application mouse gesture starts
+
+#### Scenario: Malformed mouse command
+- **WHEN** `term.mouse` receives an unknown action/button, wrong-typed modifier, negative/oversized coordinate or a cell outside the current grid
+- **THEN** it returns an error without writing to the shell or panicking
 
 ### Requirement: Copy, paste, scrollback
 `Ctrl+Shift+C` SHALL copy the selection and `Ctrl+Shift+V` SHALL paste (bracketed when the app enabled it). Scrollback MUST be capped (10 000 lines). Paste larger than 1 MiB is rejected with a notice.
@@ -92,4 +113,3 @@ A terminal pane whose shell exits (exit, Ctrl-D) SHALL close. The last remaining
 #### Scenario: Exit closes the pane
 - **WHEN** the shell in a terminal pane exits and other panes exist
 - **THEN** the pane is closed
-

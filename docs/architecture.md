@@ -332,6 +332,28 @@ Guards enforced by `ops` regardless of UI: never drop a directory into itself or
 - **Shortcut routing:** `fm-app`'s catalogue maps keys → command ids (`Ctrl+Q` quit, `Ctrl+Shift+T` theme toggle, `Tab` pane.swap, `Backspace` nav.up, `Alt+Left/Right` nav.back/forward, `Ctrl+R` nav.refresh, `Ctrl+H` view.hidden.toggle (dot-files hidden by default, session-wide)); every entry must exist in the registry or the crate tests + `brand-check` fail it.
 - **Dialogs:** conflict resolution, connect (SMB/SFTP), progress/jobs panel, error toasts — later changes, all `fm-ui` components driven by `Session`.
 
+Terminal mouse input stays on the command path: `fm-term` exposes the parser's mouse
+mode/encoding in `Snapshot.mouse`, `fm-ui::terminal` tracks pointer capture and cell
+changes, and `engine::term_mouse_cmds` dispatches structured `term.mouse` events to the
+running terminal. Protocol encoding happens in `fm-term` so legacy raw bytes are never
+UTF-8 converted by `term.input`; the existing bounded writer queue keeps pty I/O off the
+UI thread. Shift bypasses application mouse tracking for selection and scrollback.
+
+Listing column widths are preferred widths in `PaneState.col_widths` (zero means
+content-fit), changed through `view.columns.resize`. The UI caches bounded content
+measurements by directory revision and font/scale, leaves Name flexible, and fits the
+preferred widths continuously to the available space without persisting compression.
+Divider drags use their original geometry and redistribute adjacent space; double-click
+restores content fitting. Headers and rows share the geometry and clip truncated text
+to each cell. Legacy fixed defaults migrate to content fitting during layout validation.
+
+Log time presets and custom date/time fields dispatch the existing
+`preview.log.time_range` command. Presets calculate From relative to current UTC time
+on Apply and leave To open, so Live tail can include newly appended records. From stays
+fixed after Apply; this is not a sliding-window filter. Custom bounds retain calendar
+selection, typed dates/times, optional endpoints and inline validation. Filtering affects
+only loaded records and selecting a preset performs no additional log scanning or I/O.
+
 ### 9.1 Theming and dark mode
 
 Dark mode is a v1 feature, not a later polish pass: **every widget is built against semantic tokens from day one, so both themes are always renderable.**

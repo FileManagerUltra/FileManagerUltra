@@ -558,7 +558,7 @@ pub struct PaneState {
     /// Width of the tree column in px (drag-resized, persisted per pane).
     #[serde(default = "default_tree_width")]
     pub tree_width: f32,
-    /// Widths of the Size, Modified and Type columns in px (drag-resized in the header).
+    /// Preferred Size, Modified and Type widths in px; zero means fit to content.
     #[serde(default = "default_col_widths")]
     pub col_widths: [f32; 3],
     /// Preview panes: which Files pane to show.
@@ -587,8 +587,9 @@ fn default_col_widths() -> [f32; 3] {
 
 /// Default tree width in px.
 pub const DEFAULT_TREE_WIDTH: f32 = 220.0;
-/// Default Size / Modified / Type column widths, and the band a drag may use.
-pub const DEFAULT_COL_WIDTHS: [f32; 3] = [90.0, 140.0, 72.0];
+/// Detail columns fit to content until manually resized.
+pub const DEFAULT_COL_WIDTHS: [f32; 3] = [0.0; 3];
+pub(crate) const LEGACY_COL_WIDTHS: [f32; 3] = [90.0, 140.0, 72.0];
 pub const MIN_COL_WIDTH: f32 = 40.0;
 pub const MAX_COL_WIDTH: f32 = 400.0;
 
@@ -618,13 +619,17 @@ impl PaneState {
         pane
     }
 
-    /// Resize detail column `ix` (0 Size, 1 Modified, 2 Type); non-finite widths and
-    /// unknown columns are ignored, the rest is clamped.
+    /// Resize detail column `ix` (0 Size, 1 Modified, 2 Type); zero restores content
+    /// fitting. Non-finite widths and unknown columns are ignored; the rest is clamped.
     pub fn set_col_width(&mut self, ix: usize, width: f32) {
         if let Some(w) = self.col_widths.get_mut(ix)
             && width.is_finite()
         {
-            *w = width.clamp(MIN_COL_WIDTH, MAX_COL_WIDTH);
+            *w = if width == 0.0 {
+                0.0
+            } else {
+                width.clamp(MIN_COL_WIDTH, MAX_COL_WIDTH)
+            };
         }
     }
 
@@ -831,6 +836,30 @@ mod tests {
         p.reset_col_width(1);
         assert_eq!(p.col_widths, DEFAULT_COL_WIDTHS);
         p.reset_col_width(9);
+    }
+
+    #[test]
+    fn content_fit_and_legacy_column_widths_survive_workspace_validation() {
+        let mut layout = crate::Layout::single(VfsUri::parse("/d").expect("uri"));
+        layout.states.get_mut(&1).expect("pane").col_widths = [0.0, 180.0, 72.0];
+        let text = serde_json::to_string(&layout).expect("serialize");
+        let mut restored: crate::Layout = serde_json::from_str(&text).expect("restore");
+        restored.validate().expect("validate");
+        assert_eq!(
+            restored.state(1).expect("pane").col_widths,
+            [0.0, 180.0, 72.0]
+        );
+        let mut legacy = serde_json::to_value(&restored).expect("json");
+        legacy["states"]["1"]
+            .as_object_mut()
+            .expect("state")
+            .remove("col_widths");
+        let mut restored: crate::Layout = serde_json::from_value(legacy).expect("legacy");
+        restored.validate().expect("validate");
+        assert_eq!(restored.state(1).expect("pane").col_widths, [0.0; 3]);
+        restored.states.get_mut(&1).expect("pane").col_widths = LEGACY_COL_WIDTHS;
+        restored.validate().expect("migrate defaults");
+        assert_eq!(restored.state(1).expect("pane").col_widths, [0.0; 3]);
     }
 
     fn uri(p: &str) -> VfsUri {

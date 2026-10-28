@@ -126,11 +126,14 @@ When the previewed file is a log (by name, location or content), the preview SHA
 #### Scenario: Choosing a log time range
 - **WHEN** the user opens Time in the preview's expandable filter row, including in a narrow pane
 - **THEN** the time dialog is centered in the application viewport
-- **THEN** a separate window offers optional From and To dates via calendar pickers and hour/minute/second controls, labelled as UTC
+- **THEN** a separate window offers a quick-range list alongside optional From and To dates, editable `YYYY-MM-DD` dates with calendar pickers, and `HH:MM` or `HH:MM:SS` time fields
+- **AND** UTC (UTC+00:00) is explicit, while log timestamps retain their original offsets
+- **AND** quick ranges offer the last 5/15/30 minutes, 1/3/6/12/24 hours and 3/7 days, setting From to the current time minus the interval evaluated on Apply and leaving To unchecked/open-ended, without scanning or loading additional records
+- **AND** applying a quick range produces a fixed From rather than a continuously sliding filter, allowing newly loaded Live tail records through without an upper bound; the dialog explains that filters affect only loaded records
 - **AND** opening it restores applied bounds or suggests dates from the loaded log records
-- **AND** editing fields or choosing calendar dates does not close the window or apply a filter
+- **AND** choosing a quick range, editing fields or choosing calendar dates does not close the window or apply a filter; manual edits select the custom range
 - **AND** Apply dispatches the time-range command, Clear removes the bounds, and Cancel or closing the window leaves the applied filter unchanged
-- **AND** a reversed range shows an inline error and keeps the window open
+- **AND** an invalid date/time or reversed range shows an inline error and keeps the window open; unchecked bounds remain open-ended
 
 #### Scenario: Hostile regex
 - **WHEN** the user enters an invalid or oversized regex

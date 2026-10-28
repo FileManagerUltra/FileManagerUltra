@@ -3,6 +3,7 @@ use std::num::NonZeroU16;
 use vt100::Parser;
 
 use crate::charset::Charsets;
+use crate::mouse::{MouseEvent, MouseProtocol};
 use crate::queries::{Queries, Query};
 
 /// Lines of scrollback kept per terminal.
@@ -60,6 +61,7 @@ pub struct Snapshot {
     pub application_cursor: bool,
     pub bracketed_paste: bool,
     pub alternate_screen: bool,
+    pub mouse: MouseProtocol,
 }
 
 impl Snapshot {
@@ -177,6 +179,19 @@ impl Emulator {
         (r.get(), c.get())
     }
 
+    pub fn mouse_protocol(&self) -> MouseProtocol {
+        let screen = self.parser.screen();
+        MouseProtocol {
+            mode: screen.mouse_protocol_mode(),
+            encoding: screen.mouse_protocol_encoding(),
+        }
+    }
+
+    pub fn mouse_report(&self, event: MouseEvent) -> Result<Vec<u8>, fm_vfs::FmError> {
+        let (rows, cols) = self.size();
+        self.mouse_protocol().report(event, rows, cols)
+    }
+
     /// Scroll the view into history by `lines` (negative = towards the live screen).
     pub fn scroll(&mut self, lines: i32) {
         let now = self.parser.screen().scrollback();
@@ -232,6 +247,7 @@ impl Emulator {
             application_cursor: screen.application_cursor(),
             bracketed_paste: screen.bracketed_paste(),
             alternate_screen: screen.alternate_screen(),
+            mouse: self.mouse_protocol(),
         }
     }
 }
@@ -240,6 +256,32 @@ impl Emulator {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn application_controls_mouse_reporting_and_reset() {
+        use crate::{MouseProtocolEncoding as E, MouseProtocolMode as M};
+        let mut e = Emulator::new(24, 80);
+        assert!(!e.snapshot().mouse.enabled());
+        for (sequence, mode) in [
+            (b"\x1b[?9h".as_slice(), M::Press),
+            (b"\x1b[?1000h", M::PressRelease),
+            (b"\x1b[?1002h", M::ButtonMotion),
+            (b"\x1b[?1003h", M::AnyMotion),
+        ] {
+            for byte in sequence {
+                e.feed(&[*byte]);
+            }
+            assert_eq!(e.snapshot().mouse.mode, mode);
+        }
+        e.feed(b"\x1b[?1005h");
+        assert_eq!(e.snapshot().mouse.encoding, E::Utf8);
+        e.feed(b"\x1b[?1006h");
+        assert_eq!(e.snapshot().mouse.encoding, E::Sgr);
+        e.feed(b"\x1b[?1003l\x1b[?1006l");
+        assert_eq!(e.snapshot().mouse, MouseProtocol::default());
+        e.feed(b"\x1b[?1000h\x1b[?1006h\x1bc");
+        assert_eq!(e.snapshot().mouse, MouseProtocol::default());
+    }
 
     fn text(e: &Emulator) -> String {
         let s = e.snapshot();

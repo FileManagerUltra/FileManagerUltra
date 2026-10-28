@@ -128,6 +128,9 @@ impl Layout {
             if !st.tree_width.is_finite() {
                 st.tree_width = DEFAULT_TREE_WIDTH;
             }
+            if st.col_widths == state::LEGACY_COL_WIDTHS {
+                st.col_widths = DEFAULT_COL_WIDTHS;
+            }
             for ix in 0..3 {
                 let w = st.col_widths.get(ix).copied().unwrap_or(0.0);
                 st.set_col_width(ix, w);

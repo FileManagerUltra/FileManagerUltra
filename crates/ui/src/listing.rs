@@ -52,8 +52,13 @@ pub fn show(
 
     let mut open: Option<VfsUri> = None;
     filter_bar(ui, s, pane, tokens);
+    let content = content_widths(ui, pane, &location, &dir_state, tokens);
+    let mut sizing = ColumnSizing {
+        content,
+        requested: s.layout.state(pane)?.col_widths,
+    };
     if let Some(state) = s.layout.state(pane) {
-        let action = header(ui, pane, &state.listing.sort, state.col_widths, tokens);
+        let action = header(ui, pane, &state.listing.sort, sizing, tokens);
         match action {
             Some(HeaderAction::Sort(key)) => {
                 if let Some(state) = s.layout.state_mut(pane) {
@@ -61,15 +66,12 @@ pub fn show(
                     s.invalidate_view(pane);
                 }
             }
-            Some(HeaderAction::Resize(ix, w)) => {
-                if let Some(state) = s.layout.state_mut(pane) {
-                    state.set_col_width(ix, w);
-                }
-            }
-            Some(HeaderAction::Reset(ix)) => {
-                if let Some(state) = s.layout.state_mut(pane) {
-                    state.reset_col_width(ix);
-                }
+            Some(HeaderAction::Resize(widths)) => {
+                s.dispatch_or_notice(
+                    "view.columns.resize",
+                    &serde_json::json!({"pane": pane, "widths": widths}),
+                );
+                sizing.requested = s.layout.state(pane)?.col_widths;
             }
             None => {}
         }
@@ -84,28 +86,179 @@ pub fn show(
             ui.label(tokens.muted("Ctrl+R to retry"));
         }
         DirState::Ready { .. } => {
-            open = ready_rows(ui, s, pane, tokens, pane_focused, parent.as_ref());
+            open = ready_rows(ui, s, pane, tokens, pane_focused, parent.as_ref(), sizing);
         }
     }
     open
 }
 
-/// Minimum Name-column width before the detail columns collapse entirely.
+/// Name takes spare space; only details compress below their content widths.
 const MIN_NAME: f32 = 80.0;
 /// Grab width of a column border in the header.
 const GRIP_W: f32 = 6.0;
 
-/// Detail-column widths per layout, ordered by how much room they need:
-/// `(size, mtime, type)` — a zero width drops the column. Narrow panes degrade
-/// by dropping Type first, then Size, so columns never overlap.
-fn layouts([size, mtime, ty]: [f32; 3]) -> [[f32; 3]; 5] {
-    [
-        [size, mtime, ty],
-        [size, mtime, 0.0],
-        [0.0, mtime, 0.0],
-        [size, 0.0, 0.0],
-        [0.0, 0.0, 0.0],
+#[derive(Clone, Copy, Debug)]
+struct ColumnSizing {
+    content: [f32; 3],
+    requested: [f32; 3],
+}
+
+impl ColumnSizing {
+    fn preferred(self) -> [f32; 3] {
+        std::array::from_fn(|i| {
+            let request = self.requested.get(i).copied().unwrap_or(0.0);
+            let content = self
+                .content
+                .get(i)
+                .copied()
+                .unwrap_or(fm_layout::MIN_COL_WIDTH);
+            if request.is_finite() && request > 0.0 {
+                request.clamp(fm_layout::MIN_COL_WIDTH, fm_layout::MAX_COL_WIDTH)
+            } else {
+                content
+            }
+        })
+    }
+
+    fn fit(self, width: f32) -> [f32; 3] {
+        let mut widths = self.preferred();
+        let budget = (width - MIN_NAME).max(0.0);
+        // Give back manually added whitespace before compressing any content.
+        let content: [f32; 3] = std::array::from_fn(|i| {
+            self.content
+                .get(i)
+                .copied()
+                .unwrap_or(fm_layout::MIN_COL_WIDTH)
+                .min(widths.get(i).copied().unwrap_or(0.0))
+        });
+        shrink_to(&mut widths, &content, budget);
+        shrink_to(&mut widths, &[40.0, 80.0, 40.0], budget);
+        // Retire the least useful detail gradually instead of leaving three slivers
+        // of unrelated text in a narrow split.
+        for column in [2, 0, 1] {
+            let excess = (widths.iter().sum::<f32>() - budget).max(0.0);
+            if let Some(width) = widths.get_mut(column) {
+                *width = (*width - excess).max(0.0);
+            }
+        }
+        widths
+    }
+}
+
+fn shrink_to(widths: &mut [f32], floors: &[f32], budget: f32) {
+    let sum: f32 = widths.iter().sum();
+    let slack: f32 = widths
+        .iter()
+        .zip(floors)
+        .map(|(w, floor)| (w - floor).max(0.0))
+        .sum();
+    if sum > budget && slack > 0.0 {
+        let fraction = ((sum - budget) / slack).min(1.0);
+        for (width, floor) in widths.iter_mut().zip(floors) {
+            *width -= (*width - floor).max(0.0) * fraction;
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ContentWidths {
+    location: VfsUri,
+    revision: Option<u64>,
+    font: egui::FontId,
+    padding: f32,
+    pixels_per_point: f32,
+    widths: [f32; 3],
+}
+
+fn content_widths(
+    ui: &Ui,
+    pane: PaneId,
+    location: &VfsUri,
+    state: &DirState,
+    tokens: &Tokens,
+) -> [f32; 3] {
+    let id = egui::Id::NULL.with(("fm-column-content", pane));
+    let pixels_per_point = ui.ctx().pixels_per_point();
+    let previous = ui.ctx().data_mut(|d| d.get_temp::<ContentWidths>(id));
+    if let Some(cache) = &previous
+        && cache.location == *location
+        && cache.font == tokens.font()
+        && cache.padding == tokens.padding
+        && cache.pixels_per_point == pixels_per_point
+        && (cache.revision == state.revision() || matches!(state, DirState::Loading { .. }))
+    {
+        return cache.widths;
+    }
+    let mut size_examples = vec!["<DIR>".to_string()];
+    let mut time_examples = vec!["2000-00-00 00:00".to_string()];
+    if let DirState::Ready { entries, .. } = state {
+        // Only five numeric maxima and two dates need formatting; never shape text
+        // for every entry or rescan an unchanged directory while dragging.
+        let mut maxima = [0u64; 5];
+        let mut earliest = None;
+        let mut latest = None;
+        for entry in entries.iter() {
+            if !entry.is_dir_like()
+                && let Some(bytes) = entry.size
+            {
+                let mut value = bytes;
+                let mut bucket = 0;
+                while value >= 1024 && bucket < 4 {
+                    value /= 1024;
+                    bucket += 1;
+                }
+                if let Some(maximum) = maxima.get_mut(bucket) {
+                    *maximum = (*maximum).max(bytes);
+                }
+            }
+            if let Some(time) = entry.modified {
+                earliest = Some(earliest.map_or(time, |old: SystemTime| old.min(time)));
+                latest = Some(latest.map_or(time, |old: SystemTime| old.max(time)));
+            }
+        }
+        size_examples.extend(maxima.into_iter().map(human_size));
+        time_examples.extend([earliest, latest].into_iter().flatten().map(format_mtime));
+    }
+    let measure = |text: &str| {
+        ui.painter()
+            .layout_no_wrap(text.into(), tokens.font(), tokens.text)
+            .size()
+            .x
+    };
+    let header = |label: &str| measure(label) + tokens.font_size * 0.7 + tokens.padding;
+    let widths = [
+        size_examples
+            .iter()
+            .map(|s| measure(s))
+            .fold(header("Size"), f32::max),
+        time_examples
+            .iter()
+            .map(|s| measure(s))
+            .fold(header("Modified"), f32::max),
+        ["Dir", "File", "Link", "Other"]
+            .into_iter()
+            .map(measure)
+            .fold(header("Type"), f32::max),
     ]
+    .map(|w| {
+        (w + 2.0 * tokens.padding)
+            .ceil()
+            .clamp(fm_layout::MIN_COL_WIDTH, fm_layout::MAX_COL_WIDTH)
+    });
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(
+            id,
+            ContentWidths {
+                location: location.clone(),
+                revision: state.revision(),
+                font: tokens.font(),
+                padding: tokens.padding,
+                pixels_per_point,
+                widths,
+            },
+        )
+    });
+    widths
 }
 
 /// Per-column rects for one full-width listing row. Shared by the header and
@@ -133,14 +286,10 @@ fn paint_link_icon(painter: &egui::Painter, origin: egui::Pos2, color: egui::Col
     painter.line_segment([tip, egui::pos2(x0 + 5.5, y0)], stroke);
 }
 
-/// Lay out the columns for `rect`, picking the widest layout that fits beside a
-/// usable Name column; dropped columns get zero width (and are not drawn).
-fn columns(rect: egui::Rect, widths: [f32; 3]) -> Columns {
-    let [size_w, mtime_w, type_w] = layouts(widths)
-        .into_iter()
-        .find(|[s, m, t]| rect.width() >= MIN_NAME + s + m + t)
-        .unwrap_or([0.0, 0.0, 0.0]);
-    let split = rect.right() - (size_w + mtime_w + type_w);
+/// One continuous layout shared by header, hit-testing and entry rows.
+fn columns(rect: egui::Rect, sizing: ColumnSizing) -> Columns {
+    let [size_w, mtime_w, type_w] = sizing.fit(rect.width());
+    let split = (rect.right() - (size_w + mtime_w + type_w)).max(rect.left());
     let mut right = rect.right();
     let mut take = |width: f32| {
         let col = egui::Rect::from_min_max(
@@ -176,7 +325,13 @@ fn column_separators(painter: &egui::Painter, cols: &Columns, rect: egui::Rect, 
 
 /// Sort direction triangle, same style as the tree's disclosure triangles
 /// (up = ascending, down = descending).
-fn paint_sort_arrow(ui: &Ui, c: egui::Pos2, size: f32, dir: SortDir, tokens: &Tokens) {
+fn paint_sort_arrow(
+    painter: &egui::Painter,
+    c: egui::Pos2,
+    size: f32,
+    dir: SortDir,
+    tokens: &Tokens,
+) {
     let pts = match dir {
         SortDir::Asc => vec![
             c + egui::vec2(-size, size * 0.5),
@@ -189,7 +344,7 @@ fn paint_sort_arrow(ui: &Ui, c: egui::Pos2, size: f32, dir: SortDir, tokens: &To
             c + egui::vec2(0.0, size * 0.7),
         ],
     };
-    ui.painter().add(egui::Shape::convex_polygon(
+    painter.add(egui::Shape::convex_polygon(
         pts,
         tokens.text_muted,
         egui::Stroke::NONE,
@@ -199,28 +354,145 @@ fn paint_sort_arrow(ui: &Ui, c: egui::Pos2, size: f32, dir: SortDir, tokens: &To
 /// What a header interaction asks for.
 enum HeaderAction {
     Sort(SortKey),
-    /// Column index (0 Size, 1 Modified, 2 Type) and its new width.
-    Resize(usize, f32),
-    Reset(usize),
+    Resize([f32; 3]),
+}
+
+#[derive(Clone, Copy)]
+struct ColumnDrag {
+    start_x: f32,
+    widths: [f32; 3],
+    floors: [f32; 3],
+    available: f32,
+}
+
+impl ColumnDrag {
+    fn resize(self, boundary: usize, pointer_x: f32) -> [f32; 3] {
+        let mut widths = self.widths;
+        let Some(right) = widths.get(boundary).copied() else {
+            return widths;
+        };
+        let delta = pointer_x - self.start_x;
+        let Some(right_widths) = self.widths.get(boundary..) else {
+            return widths;
+        };
+        let original_right: f32 = right_widths.iter().sum();
+        let minimum = right_widths.len() as f32 * fm_layout::MIN_COL_WIDTH;
+        let maximum = (self.available - MIN_NAME - boundary as f32 * fm_layout::MIN_COL_WIDTH)
+            .min(original_right - right + fm_layout::MAX_COL_WIDTH)
+            .max(minimum);
+        let target = (original_right - delta).clamp(minimum, maximum);
+        let minimums = [fm_layout::MIN_COL_WIDTH; 3];
+        if let Some(width) = widths.get_mut(boundary) {
+            *width = (right + target - original_right)
+                .max(self.floors.get(boundary).copied().unwrap_or(right))
+                .min(fm_layout::MAX_COL_WIDTH);
+        }
+        if let (Some(right), Some(floors)) =
+            (widths.get_mut(boundary..), self.floors.get(boundary..))
+        {
+            shrink_to(right, floors, target);
+            shrink_to(
+                right,
+                minimums.get(..right.len()).unwrap_or_default(),
+                target,
+            );
+        }
+        if boundary > 0 {
+            if let (Some(left), Some(floor)) =
+                (widths.get_mut(boundary - 1), self.floors.get(boundary - 1))
+            {
+                *left = (*left + original_right - target)
+                    .max(*floor)
+                    .min(fm_layout::MAX_COL_WIDTH);
+            }
+            if let (Some(left), Some(floors)) =
+                (widths.get_mut(..boundary), self.floors.get(..boundary))
+            {
+                let budget = self.available - MIN_NAME - target;
+                shrink_to(left, floors, budget);
+                shrink_to(left, minimums.get(..left.len()).unwrap_or_default(), budget);
+            }
+        }
+        widths.map(|w| w.clamp(fm_layout::MIN_COL_WIDTH, fm_layout::MAX_COL_WIDTH))
+    }
 }
 
 fn header(
     ui: &mut Ui,
     pane: PaneId,
     sort: &SortSpec,
-    widths: [f32; 3],
+    mut sizing: ColumnSizing,
     tokens: &Tokens,
 ) -> Option<HeaderAction> {
-    // Paint fixed-width columns into one full-width row. An auto-sizing
-    // `ui.horizontal` of labels would exceed the pane's allocated width and
-    // expand the whole split past the window.
     let available = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(available, tokens.row_height),
         egui::Sense::click(),
     );
+    let cols = columns(rect, sizing);
+    let mut action = None;
+    let mut active_x = None;
+    for (ix, cell) in [cols.size, cols.mtime, cols.ty].into_iter().enumerate() {
+        let id = egui::Id::NULL.with(("fm-col-grip", pane, ix));
+        if cell.width() < fm_layout::MIN_COL_WIDTH - 0.01 {
+            continue;
+        }
+        let grip = egui::Rect::from_center_size(
+            egui::pos2(cell.left(), rect.center().y),
+            egui::vec2(GRIP_W, rect.height()),
+        );
+        let resp = ui.interact(grip, id, egui::Sense::click_and_drag());
+        if resp.hovered() || resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            active_x = Some(ix);
+        }
+        if resp.double_clicked() {
+            if let Some(width) = sizing.requested.get_mut(ix) {
+                *width = 0.0;
+            }
+            action = Some(HeaderAction::Resize(sizing.requested));
+        } else if resp.dragged()
+            && sizing
+                .fit(available)
+                .iter()
+                .all(|w| *w >= fm_layout::MIN_COL_WIDTH - 0.01)
+            && let Some(pointer) = resp.interact_pointer_pos()
+        {
+            if resp.drag_started() {
+                let widths = sizing.fit(available);
+                let floors = std::array::from_fn(|i| {
+                    sizing
+                        .content
+                        .get(i)
+                        .copied()
+                        .unwrap_or(fm_layout::MIN_COL_WIDTH)
+                        .min(widths.get(i).copied().unwrap_or(0.0))
+                });
+                let start_x = pointer.x - resp.total_drag_delta().unwrap_or_default().x;
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(
+                        id,
+                        ColumnDrag {
+                            start_x,
+                            widths,
+                            floors,
+                            available,
+                        },
+                    )
+                });
+            }
+            if let Some(drag) = ui.ctx().data_mut(|d| d.get_temp::<ColumnDrag>(id)) {
+                sizing.requested = drag.resize(ix, pointer.x);
+                action = Some(HeaderAction::Resize(sizing.requested));
+            }
+        }
+        if resp.drag_stopped() {
+            ui.ctx().data_mut(|d| d.remove::<ColumnDrag>(id));
+        }
+    }
+    // Paint the updated layout now, so header and rows follow the pointer in the same frame.
+    let cols = columns(rect, sizing);
     ui.painter().rect_filled(rect, 0.0, tokens.panel);
-    let cols = columns(rect, widths);
 
     let cells = [
         (SortKey::Name, cols.name, "Name"),
@@ -243,58 +515,39 @@ fn header(
             ui.painter()
                 .layout_no_wrap(label.to_string(), tokens.font(), tokens.text_muted);
         let y = cell.center().y;
-        let (text_pos, arrow_x) = if key == SortKey::Name {
+        let arrow_x = if key == SortKey::Name {
             let x = cell.left() + tokens.padding;
-            (
-                egui::pos2(x, y),
-                x + galley.size().x + tokens.padding + size,
-            )
+            (x + galley.size().x + tokens.padding + size).min(cell.right() - tokens.padding - size)
         } else {
-            let right = cell.right() - tokens.padding;
-            (egui::pos2(right - arrow_space, y), right - size)
+            cell.right() - tokens.padding - size
         };
-        let align = if key == SortKey::Name {
-            egui::Align2::LEFT_CENTER
-        } else {
-            egui::Align2::RIGHT_CENTER
-        };
-        ui.painter()
-            .text(text_pos, align, label, tokens.font(), tokens.text_muted);
+        let painter = ui.painter().with_clip_rect(cell.intersect(ui.clip_rect()));
+        let mut text_rect = cell.shrink2(egui::vec2(tokens.padding, 0.0));
+        text_rect.max.x -= arrow_space;
+        paint_cell(
+            &painter,
+            text_rect,
+            label,
+            tokens.font(),
+            tokens.text_muted,
+            key != SortKey::Name,
+        );
         if sorted {
-            paint_sort_arrow(ui, egui::pos2(arrow_x, y), size, sort.dir, tokens);
+            paint_sort_arrow(&painter, egui::pos2(arrow_x, y), size, sort.dir, tokens);
         }
     }
     column_separators(ui.painter(), &cols, rect, tokens);
 
-    // Registered after the row's click sense, so a border wins hit-testing over a sort click.
-    let mut action = None;
-    for (ix, cell) in [cols.size, cols.mtime, cols.ty].into_iter().enumerate() {
-        let x = cell.left();
-        if cell.width() < 1.0 || x <= rect.left() + 1.0 {
-            continue;
-        }
-        let grip = egui::Rect::from_center_size(
-            egui::pos2(x, rect.center().y),
-            egui::vec2(GRIP_W, rect.height()),
+    if let Some(ix) = active_x
+        && let Some(cell) = [cols.size, cols.mtime, cols.ty].get(ix)
+    {
+        ui.painter().line_segment(
+            [
+                egui::pos2(cell.left(), rect.top()),
+                egui::pos2(cell.left(), rect.bottom()),
+            ],
+            egui::Stroke::new(tokens.border_width.max(2.0), tokens.accent),
         );
-        let resp = ui.interact(
-            grip,
-            egui::Id::NULL.with(("fm-col-grip", pane, ix)),
-            egui::Sense::click_and_drag(),
-        );
-        if resp.hovered() || resp.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-            ui.painter().line_segment(
-                [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                egui::Stroke::new(tokens.border_width.max(2.0), tokens.accent),
-            );
-        }
-        if resp.double_clicked() {
-            action = Some(HeaderAction::Reset(ix));
-        } else if resp.dragged() {
-            // The columns are right-anchored: dragging a border right shrinks its column.
-            action = Some(HeaderAction::Resize(ix, cell.width() - resp.drag_delta().x));
-        }
     }
     if action.is_some() {
         return action;
@@ -312,6 +565,7 @@ fn header(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ready_rows(
     ui: &mut Ui,
     s: &mut Session,
@@ -319,6 +573,7 @@ fn ready_rows(
     tokens: &Tokens,
     pane_focused: bool,
     parent: Option<&VfsUri>,
+    widths: ColumnSizing,
 ) -> Option<VfsUri> {
     let (entries, ix) = s.pane_view(pane)?;
     let mut open: Option<VfsUri> = None;
@@ -473,10 +728,6 @@ fn ready_rows(
     }
 
     let row_height = tokens.row_height;
-    let widths = s
-        .layout
-        .state(pane)
-        .map_or([0.0; 3], |state| state.col_widths);
     let builder = egui::ScrollArea::both()
         .id_salt(format!("fm-list-{pane}"))
         .auto_shrink([false, false]);
@@ -513,7 +764,8 @@ fn ready_rows(
             let Some(entry) = entries.get(idx as usize) else {
                 continue;
             };
-            if let Some(target) = entry_row_ui(ui, s, pane, tokens, pane_focused, entry, entry_row)
+            if let Some(target) =
+                entry_row_ui(ui, s, pane, tokens, pane_focused, entry, entry_row, widths)
             {
                 open = Some(target);
             }
@@ -608,7 +860,7 @@ fn esc_clears_filter(ui: &Ui, s: &mut Session, pane: PaneId) {
 
 /// Where an entry's name starts: the Name column after the icon gutter, shared by the
 /// special rows so `.`/`..` line up with the files below them.
-fn name_origin(rect: egui::Rect, widths: [f32; 3], tokens: &Tokens) -> egui::Pos2 {
+fn name_origin(rect: egui::Rect, widths: ColumnSizing, tokens: &Tokens) -> egui::Pos2 {
     columns(rect, widths).name.left_center() + egui::vec2(tokens.padding + ICON_GUTTER, 0.0)
 }
 
@@ -617,7 +869,7 @@ fn current_row(
     s: &mut Session,
     pane: PaneId,
     tokens: &Tokens,
-    widths: [f32; 3],
+    widths: ColumnSizing,
     focused: bool,
 ) {
     let available = ui.available_width();
@@ -653,7 +905,7 @@ fn parent_row(
     ui: &mut Ui,
     tokens: &Tokens,
     parent: Option<&VfsUri>,
-    widths: [f32; 3],
+    widths: ColumnSizing,
     focused: bool,
     open: &mut Option<VfsUri>,
     focus_parent: &mut bool,
@@ -692,6 +944,7 @@ fn parent_row(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn entry_row_ui(
     ui: &mut Ui,
     s: &mut Session,
@@ -700,12 +953,12 @@ fn entry_row_ui(
     pane_focused: bool,
     entry: &Entry,
     row: usize,
+    widths: ColumnSizing,
 ) -> Option<VfsUri> {
     let state = s.layout.state(pane)?;
     let selected = state.listing.is_selected(&entry.name);
     let focused =
         state.listing.focused_row == row && !state.listing.on_parent && !state.listing.on_current;
-    let widths = state.col_widths;
 
     let available = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
@@ -803,21 +1056,19 @@ fn entry_row_ui(
     };
     let cols = columns(rect, widths);
     if cols.name.width() >= 1.0 {
-        let name = ellipsize_name(
-            &display_name,
-            cols.name.width() - 2.0 * tokens.padding - ICON_GUTTER,
-            tokens,
-        );
         if entry.is_symlink() {
             let origin = cols.name.left_center() + egui::vec2(tokens.padding, 0.0);
             paint_link_icon(ui.painter(), origin, text_color);
         }
-        ui.painter().text(
-            cols.name.left_center() + egui::vec2(tokens.padding + ICON_GUTTER, 0.0),
-            egui::Align2::LEFT_CENTER,
-            name,
+        let mut cell = cols.name.shrink2(egui::vec2(tokens.padding, 0.0));
+        cell.min.x += ICON_GUTTER;
+        paint_cell(
+            ui.painter(),
+            cell,
+            &display_name,
             tokens.font(),
             text_color,
+            false,
         );
     }
     if cols.size.width() >= 1.0 {
@@ -826,32 +1077,35 @@ fn entry_row_ui(
         } else {
             entry.size.map(human_size).unwrap_or_default()
         };
-        ui.painter().text(
-            cols.size.right_center() - egui::vec2(tokens.padding, 0.0),
-            egui::Align2::RIGHT_CENTER,
-            size,
+        paint_cell(
+            ui.painter(),
+            cols.size.shrink2(egui::vec2(tokens.padding, 0.0)),
+            &size,
             tokens.font(),
             tokens.text_muted,
+            true,
         );
     }
     if cols.mtime.width() >= 1.0 {
         let mtime = entry.modified.map(format_mtime).unwrap_or_default();
-        ui.painter().text(
-            cols.mtime.right_center() - egui::vec2(tokens.padding, 0.0),
-            egui::Align2::RIGHT_CENTER,
-            mtime,
+        paint_cell(
+            ui.painter(),
+            cols.mtime.shrink2(egui::vec2(tokens.padding, 0.0)),
+            &mtime,
             tokens.font(),
             tokens.text_muted,
+            true,
         );
     }
     if cols.ty.width() >= 1.0 {
         let label = type_label(&entry.kind);
-        ui.painter().text(
-            cols.ty.right_center() - egui::vec2(tokens.padding, 0.0),
-            egui::Align2::RIGHT_CENTER,
+        paint_cell(
+            ui.painter(),
+            cols.ty.shrink2(egui::vec2(tokens.padding, 0.0)),
             label,
             tokens.font(),
             tokens.text_muted,
+            true,
         );
     }
     column_separators(ui.painter(), &cols, rect, tokens);
@@ -871,15 +1125,32 @@ fn display_names(s: &mut Session, pane: PaneId) -> Vec<String> {
         .collect()
 }
 
-fn ellipsize_name(name: &str, width: f32, tokens: &Tokens) -> String {
-    let max_chars = ((width / (tokens.font_size * 0.55)).max(8.0)) as usize;
-    let count = name.chars().count();
-    if count <= max_chars {
-        return name.to_string();
+fn paint_cell(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+    right_aligned: bool,
+) {
+    if rect.width() < font.size {
+        return;
     }
-    let mut out: String = name.chars().take(max_chars.saturating_sub(1)).collect();
-    out.push('…');
-    out
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width());
+    let galley = painter.layout_job(job);
+    let x = if right_aligned {
+        rect.right() - galley.size().x
+    } else {
+        rect.left()
+    };
+    painter
+        .with_clip_rect(rect.intersect(painter.clip_rect()))
+        .galley(
+            egui::pos2(x, rect.center().y - galley.size().y * 0.5),
+            galley,
+            color,
+        );
 }
 
 pub(crate) fn human_size(bytes: u64) -> String {
@@ -1037,20 +1308,234 @@ mod tests {
     }
 
     #[test]
-    fn columns_follow_the_configured_widths_and_degrade_when_narrow() {
+    fn columns_keep_preferred_widths_and_compress_continuously_when_narrow() {
         let rect = |w: f32| egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(w, 20.0));
-        let c = columns(rect(600.0), [100.0, 200.0, 50.0]);
+        let sizing = ColumnSizing {
+            content: [60.0, 150.0, 50.0],
+            requested: [100.0, 200.0, 50.0],
+        };
+        let c = columns(rect(600.0), sizing);
         assert_eq!(
             (c.size.width(), c.mtime.width(), c.ty.width()),
             (100.0, 200.0, 50.0)
         );
         assert_eq!(c.name.width(), 250.0);
-        let narrow = columns(rect(300.0), [100.0, 200.0, 50.0]);
-        assert_eq!(narrow.ty.width(), 0.0);
-        assert_eq!(narrow.size.width(), 0.0);
-        assert_eq!(narrow.mtime.width(), 200.0);
-        let tiny = columns(rect(100.0), [100.0, 200.0, 50.0]);
-        assert_eq!(tiny.name.width(), 100.0);
+        let compact = columns(rect(340.0), sizing);
+        assert_eq!(
+            (
+                compact.size.width(),
+                compact.mtime.width(),
+                compact.ty.width()
+            ),
+            (60.0, 150.0, 50.0)
+        );
+        let narrow = columns(rect(300.0), sizing);
+        assert!(narrow.ty.width() > 0.0 && narrow.size.width() > 0.0);
+        assert_eq!(narrow.name.width(), MIN_NAME);
+        let tiny = columns(rect(100.0), sizing);
+        assert!((tiny.name.width() - MIN_NAME).abs() < 0.01);
+        let mut previous = sizing.fit(0.0);
+        for width in 1..1000 {
+            let fitted = sizing.fit(width as f32);
+            for (now, before) in fitted.into_iter().zip(previous) {
+                assert!(
+                    now >= before - 0.001 && now - before <= 1.01,
+                    "no column jumps at {width}"
+                );
+            }
+            let c = columns(rect(width as f32), sizing);
+            for cell in [c.name, c.size, c.mtime, c.ty] {
+                assert!(cell.width() >= -0.001);
+                assert!(cell.left() >= -0.001 && cell.right() <= width as f32 + 0.001);
+            }
+            previous = fitted;
+        }
+    }
+
+    #[test]
+    fn dragging_inner_dividers_trades_adjacent_space_without_moving_name() {
+        let drag = ColumnDrag {
+            start_x: 300.0,
+            widths: [100.0, 200.0, 60.0],
+            floors: [60.0, 150.0, 60.0],
+            available: 600.0,
+        };
+        assert_eq!(drag.resize(1, 320.0), [120.0, 180.0, 60.0]);
+        assert_eq!(drag.resize(1, 290.0), [90.0, 210.0, 60.0]);
+        assert_eq!(drag.resize(1, 1000.0), [280.0, 40.0, 40.0]);
+        assert_eq!(drag.resize(1, -1000.0), [60.0, 400.0, 60.0]);
+        assert_eq!(drag.resize(0, 330.0), [70.0, 200.0, 60.0]);
+        assert_eq!(drag.resize(0, -1000.0), [260.0, 200.0, 60.0]);
+        // Absolute pointer positions, not accumulated frame deltas: reverse after hitting a limit.
+        assert_eq!(drag.resize(1, 305.0), [105.0, 195.0, 60.0]);
+    }
+
+    #[test]
+    fn content_fitted_dividers_are_not_locked_when_neighbors_have_no_whitespace() {
+        let sizing = ColumnSizing {
+            content: [80.0, 160.0, 60.0],
+            requested: [0.0; 3],
+        };
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 20.0));
+        let before = columns(rect, sizing);
+        for (boundary, cell) in [before.size, before.mtime, before.ty]
+            .into_iter()
+            .enumerate()
+        {
+            let drag = ColumnDrag {
+                start_x: cell.left(),
+                widths: sizing.fit(rect.width()),
+                floors: sizing.content,
+                available: rect.width(),
+            };
+            for delta in [-15.0, -10.0, 10.0, 15.0] {
+                let requested = drag.resize(boundary, cell.left() + delta);
+                let after = columns(
+                    rect,
+                    ColumnSizing {
+                        requested,
+                        ..sizing
+                    },
+                );
+                let edge = [after.size, after.mtime, after.ty]
+                    .get(boundary)
+                    .expect("column")
+                    .left();
+                assert!(
+                    (edge - cell.left() - delta).abs() < 0.01,
+                    "boundary {boundary} must move by {delta}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn details_fit_content_not_long_names_and_follow_font_changes() {
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            render_frame(&tokens, |ui| {
+                let location = VfsUri::parse("/columns").expect("uri");
+                let mut entry = Entry::new(location.join("x").expect("uri"), EntryKind::File);
+                entry.size = Some(u64::MAX);
+                entry.modified = Some(SystemTime::UNIX_EPOCH);
+                let state = |revision, entry: Entry| DirState::Ready {
+                    revision,
+                    entries: vec![entry].into(),
+                };
+                let widths = content_widths(ui, 1, &location, &state(1, entry.clone()), &tokens);
+                let size_width = ui
+                    .painter()
+                    .layout_no_wrap(human_size(u64::MAX), tokens.font(), tokens.text)
+                    .size()
+                    .x;
+                let date_width = ui
+                    .painter()
+                    .layout_no_wrap(
+                        format_mtime(SystemTime::UNIX_EPOCH),
+                        tokens.font(),
+                        tokens.text,
+                    )
+                    .size()
+                    .x;
+                assert!(widths[0] >= size_width + 2.0 * tokens.padding);
+                assert!(widths[1] >= date_width + 2.0 * tokens.padding);
+                entry.name = "very-long-variable-filename".repeat(100);
+                assert_eq!(
+                    content_widths(ui, 1, &location, &state(2, entry.clone()), &tokens),
+                    widths
+                );
+                let larger = Tokens {
+                    font_size: tokens.font_size * 1.5,
+                    ..tokens
+                };
+                let enlarged = content_widths(ui, 1, &location, &state(2, entry), &larger);
+                assert!(enlarged.iter().zip(widths).all(|(large, old)| *large > old));
+                assert_eq!(
+                    content_widths(ui, 1, &location, &DirState::Loading { job: 1 }, &larger),
+                    enlarged
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn header_drag_follows_pointer_and_double_click_restores_content_fit() {
+        let ctx = egui::Context::default();
+        let tokens = Tokens::dark();
+        crate::theme::apply_to(&ctx, &tokens);
+        let mut sizing = ColumnSizing {
+            content: [60.0, 150.0, 60.0],
+            requested: [100.0, 200.0, 60.0],
+        };
+        let mut time = 0.0;
+        let mut run = |sizing: &mut ColumnSizing, events: Vec<egui::Event>| {
+            time += 0.05;
+            let mut action = None;
+            let mut area = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 200.0),
+                    )),
+                    events,
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        ui.set_width(600.0);
+                        area = egui::Rect::from_min_size(
+                            ui.cursor().min,
+                            egui::vec2(ui.available_width(), tokens.row_height),
+                        );
+                        action = header(ui, 1, &SortSpec::default(), *sizing, &tokens);
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            if let Some(HeaderAction::Resize(widths)) = &action {
+                sizing.requested = *widths;
+            }
+            (area, action)
+        };
+        let (rect, _) = run(&mut sizing, vec![]);
+        let initial = columns(rect, sizing);
+        let start = egui::pos2(initial.mtime.left(), rect.center().y);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+        };
+        run(
+            &mut sizing,
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+        );
+        for delta in [10.0, 20.0, 30.0, 15.0] {
+            let pointer = start + egui::vec2(delta, 0.0);
+            let (_, action) = run(&mut sizing, vec![egui::Event::PointerMoved(pointer)]);
+            assert!(matches!(action, Some(HeaderAction::Resize(_))));
+            let after = columns(rect, sizing);
+            assert!(
+                (after.mtime.left() - pointer.x).abs() < 0.01,
+                "divider must track pointer"
+            );
+            assert!((after.name.width() - initial.name.width()).abs() < 0.01);
+        }
+        let end = start + egui::vec2(15.0, 0.0);
+        run(&mut sizing, vec![button(end, false)]);
+        // Begin a separate double-click at the Size/Name boundary.
+        let edge = egui::pos2(columns(rect, sizing).size.left(), rect.center().y);
+        run(
+            &mut sizing,
+            vec![egui::Event::PointerMoved(edge), button(edge, true)],
+        );
+        run(&mut sizing, vec![button(edge, false)]);
+        run(&mut sizing, vec![button(edge, true)]);
+        let (_, action) = run(&mut sizing, vec![button(edge, false)]);
+        assert!(matches!(action, Some(HeaderAction::Resize(_))));
+        assert_eq!(sizing.requested[0], 0.0);
+        assert_eq!(columns(rect, sizing).size.width(), sizing.content[0]);
     }
 
     #[test]

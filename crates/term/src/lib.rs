@@ -5,12 +5,16 @@
 
 mod charset;
 mod emulator;
+mod mouse;
 mod queries;
 mod quote;
 mod session;
 mod shell;
 
 pub use emulator::{Cell, Color, Emulator, MAX_COLS, MAX_ROWS, MIN_SIZE, SCROLLBACK, Snapshot};
+pub use mouse::{
+    MouseAction, MouseButton, MouseEvent, MouseProtocol, MouseProtocolEncoding, MouseProtocolMode,
+};
 pub use quote::{Dialect, cd_command, path_arg};
 pub use session::{MAX_INPUT, PUMP_BUDGET, Pump, Status, TermSession, spawn_env_allowed};
 pub use shell::Shell;

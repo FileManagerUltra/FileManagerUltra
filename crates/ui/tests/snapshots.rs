@@ -1325,14 +1325,19 @@ fn log_time_picker_dark_light() {
         harness.run();
         harness.get_by_label("To").click();
         harness.run();
-        harness.get_by_label("From Hour").click();
+        harness.get_by_label("From time").click();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         harness.run();
-        harness.get_by_label("From Hour").type_text("9");
+        harness.get_by_label("From time").type_text("09:00");
         harness.key_press(egui::Key::Enter);
         harness.run();
         harness.get_by_label("Log time range");
         harness.snapshot(format!("log_time_picker_{theme}"));
-        harness.get_by_label("2024-05-01").click();
+        harness
+            .get_all_by_label("Calendar")
+            .next()
+            .expect("From calendar")
+            .click();
         harness.run();
         harness.get_by_label("Save");
         harness.snapshot(format!("log_time_calendar_{theme}"));

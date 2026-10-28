@@ -1455,7 +1455,7 @@ fn log_toolbar(ui: &mut Ui, pane: PaneId, v: &LogView, actions: &mut Vec<Action>
     }
     if ui
         .button("Time")
-        .on_hover_text("Choose optional From and To dates and times (UTC).")
+        .on_hover_text("Choose a quick range or custom From and To dates and times (UTC).")
         .clicked()
     {
         st.time = Some(time::TimePicker::new(v));
@@ -1972,7 +1972,10 @@ mod tests {
                     harness.get_by_label("Expand log records");
                     harness.get_by_label("Turn off to collapse records to their first line.");
                     for (button, help) in [
-                        ("Time", "Choose optional From and To dates and times (UTC)."),
+                        (
+                            "Time",
+                            "Choose a quick range or custom From and To dates and times (UTC).",
+                        ),
                         ("Mark", "Set a marker below the last record (Ctrl+Shift+M)"),
                         ("Clear", "No active filters to clear."),
                     ] {

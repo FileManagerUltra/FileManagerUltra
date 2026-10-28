@@ -230,6 +230,11 @@ fn follow_appends_continues_and_survives_rotation() {
     let lim = LogLimits::default();
     let limits = Limits::default();
     let mut doc = open_doc_with(&fs, &stat(&fs, "/a.log"), &limits, &lim).expect("doc");
+    let filter = LogFilter {
+        from: parse_bound("2024-05-01 10:00:01"),
+        ..Default::default()
+    };
+    let visible_before = apply_filter(&doc, &filter).expect("filter").len();
     assert_eq!(
         follow_poll(&fs, &stat(&fs, "/a.log"), &doc, &limits, &lim).expect("p"),
         FollowUpdate::Unchanged
@@ -248,6 +253,9 @@ fn follow_appends_continues_and_survives_rotation() {
     assert_eq!(doc.records.len(), before + 1);
     assert!(doc.records[before - 1].text.contains("#2 more trace"));
     assert_eq!(doc.records.last().expect("l").level, Some(Level::Warning));
+    let visible = apply_filter(&doc, &filter).expect("filter after append");
+    assert_eq!(visible.len(), visible_before + 1);
+    assert_eq!(visible.last().copied(), Some(before as u32));
     fs.put_str("/a.log", b"[2024-06-01 00:00:00] main.INFO: fresh\n")
         .expect("put");
     match follow_poll(&fs, &stat(&fs, "/a.log"), &doc, &limits, &lim).expect("p") {

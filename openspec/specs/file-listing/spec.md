@@ -25,6 +25,31 @@ The listing SHALL show name, size, modified time and entry kind; clicking a colu
 - **WHEN** `view.sort.dirs_first` is on (default)
 - **THEN** directories sort ahead of files within every sort column
 
+### Requirement: Content-aware, elastic column resizing
+Size, Modified and Type SHALL initially fit their displayed content and headers, including space for a sort indicator. Name SHALL take the remaining width and SHALL NOT auto-size to the longest filename. Content measurements SHALL be cached per directory revision and font/scale, not recalculated over the directory during every drag frame.
+
+Dragging a header divider SHALL follow the pointer using the drag's original geometry, redistributing neighboring space rather than moving every earlier column unnecessarily. Extra whitespace SHALL be reclaimed before compressing content; Name supplies spare room when neighboring content already fits. Where a dragged boundary leaves insufficient room, detail columns may compress. Reversing a drag after reaching a limit SHALL not accumulate jumps. Header and rows SHALL paint the updated geometry in the same frame.
+
+When a pane narrows, columns SHALL compress continuously, rather than disappearing at fixed-width breakpoints. Extremely narrow panes SHALL progressively give up Type, then Size, then Modified space while retaining a usable Name column. Text SHALL be truncated and clipped within its cell; no filename, detail or header may overlap a neighboring column. Automatic compression SHALL NOT overwrite stored width preferences, and expanding the pane SHALL restore them.
+
+Preferred widths SHALL persist in the pane's workspace state. Zero means content fitting; manually chosen widths remain bounded to 40..=400 logical pixels. Double-clicking a divider SHALL restore content fitting for the detail column immediately to its right. Resize and content-fit actions SHALL dispatch `view.columns.resize {pane?, widths: [size, modified, type]}`; malformed input SHALL fail without changing state. Legacy fixed defaults `[90, 140, 72]` SHALL migrate to content fitting; other saved manual widths SHALL be retained.
+
+#### Scenario: Make Modified wider without shifting the filename boundary
+- **WHEN** the user drags the Size/Modified divider left and Size has spare width
+- **THEN** Modified grows while Size gives up that spare width, and the Name boundary remains in place
+
+#### Scenario: Neighboring columns already fit their content
+- **WHEN** a divider is dragged between two content-fitted columns
+- **THEN** it is not locked: surrounding room is redistributed, with compression only where the new geometry cannot fit the content
+
+#### Scenario: Fit a manually resized column
+- **WHEN** a divider is double-clicked
+- **THEN** the column to its right returns to content fitting and that choice survives saving/restoring the workspace
+
+#### Scenario: Resize a narrow pane and restore it
+- **WHEN** a pane becomes too narrow for its preferred columns and is then expanded
+- **THEN** detail widths compress smoothly and later recover, without altering the saved preferences
+
 ### Requirement: Selection is multi-select and survives re-reads
 The listing SHALL support click-to-select, Shift-range selection, Ctrl-toggle, Ctrl+A select-all and Escape clear; selection SHALL be stored by entry name so a re-read of the same directory preserves it, pruning entries that vanished.
 

@@ -7,7 +7,7 @@ use egui::{
 use fm_engine::Session;
 use fm_engine::term_cmds::{TermSelection, exit_code};
 use fm_layout::PaneId;
-use fm_term::Snapshot;
+use fm_term::{MouseAction, MouseButton, MouseEvent, Snapshot};
 
 use crate::theme::Tokens;
 
@@ -178,7 +178,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused
         });
         forward_input(ui, s, pane, &snap);
     }
-    handle_pointer(ui, s, pane, &response, rect, &m, &snap);
+    if exited.is_none() && s.pending_kind.is_none() {
+        handle_pointer(ui, s, pane, &response, rect, &m, &snap);
+    }
     paint(
         ui,
         s,
@@ -253,6 +255,130 @@ fn forward_input(ui: &Ui, s: &mut Session, pane: PaneId, snap: &Snapshot) {
     }
 }
 
+#[derive(Clone, Default)]
+struct MouseState {
+    pressed: [bool; 3],
+    last_cell: Option<(u16, u16)>,
+    wheel: f32,
+}
+
+fn mouse_button(button: egui::PointerButton) -> Option<(usize, MouseButton)> {
+    match button {
+        egui::PointerButton::Primary => Some((0, MouseButton::Left)),
+        egui::PointerButton::Middle => Some((1, MouseButton::Middle)),
+        egui::PointerButton::Secondary => Some((2, MouseButton::Right)),
+        _ => None,
+    }
+}
+
+impl MouseState {
+    fn held(&self) -> Option<MouseButton> {
+        [MouseButton::Left, MouseButton::Middle, MouseButton::Right]
+            .into_iter()
+            .zip(self.pressed)
+            .find_map(|(button, held)| held.then_some(button))
+    }
+
+    fn event(
+        &mut self,
+        event: &Event,
+        snap: &Snapshot,
+        cell: Option<(u16, u16)>,
+        inside: bool,
+        modifiers: Modifiers,
+        cell_height: f32,
+    ) -> Vec<MouseEvent> {
+        if !snap.mouse.enabled() {
+            *self = Self::default();
+            return Vec::new();
+        }
+        let Some((row, col)) = cell.or(self.last_cell) else {
+            return Vec::new();
+        };
+        let mut actions = Vec::new();
+        let mut mods = modifiers;
+        match event {
+            Event::PointerButton {
+                button,
+                pressed,
+                modifiers,
+                ..
+            } => {
+                mods = *modifiers;
+                let Some((index, button)) = mouse_button(*button) else {
+                    return Vec::new();
+                };
+                let Some(held) = self.pressed.get_mut(index) else {
+                    return Vec::new();
+                };
+                if *pressed && inside && !mods.shift {
+                    *held = true;
+                    actions.push(MouseAction::Press(button));
+                    self.last_cell = Some((row, col));
+                } else if !pressed && *held {
+                    // Finish an application drag even outside the pane or after Shift.
+                    *held = false;
+                    actions.push(MouseAction::Release(button));
+                    self.last_cell = Some((row, col));
+                }
+            }
+            Event::PointerMoved(_) if !mods.shift && (inside || self.held().is_some()) => {
+                if self.last_cell != Some((row, col)) {
+                    self.last_cell = Some((row, col));
+                    actions.push(MouseAction::Move(self.held()));
+                }
+            }
+            Event::MouseWheel {
+                unit,
+                delta,
+                modifiers,
+                ..
+            } if inside && !modifiers.shift => {
+                mods = *modifiers;
+                let lines = match unit {
+                    egui::MouseWheelUnit::Point => delta.y / cell_height,
+                    egui::MouseWheelUnit::Line => delta.y,
+                    egui::MouseWheelUnit::Page => delta.y * f32::from(snap.rows),
+                };
+                self.wheel = (self.wheel + lines).clamp(-32.0, 32.0);
+                let steps = self.wheel.trunc() as i32;
+                self.wheel -= steps as f32;
+                let action = if steps > 0 {
+                    MouseAction::ScrollUp
+                } else {
+                    MouseAction::ScrollDown
+                };
+                actions.extend(std::iter::repeat_n(action, steps.unsigned_abs() as usize));
+            }
+            Event::PointerGone => {
+                for (held, button) in self.pressed.iter_mut().zip([
+                    MouseButton::Left,
+                    MouseButton::Middle,
+                    MouseButton::Right,
+                ]) {
+                    if *held {
+                        actions.push(MouseAction::Release(button));
+                        *held = false;
+                    }
+                }
+                self.last_cell = None;
+            }
+            _ => {}
+        }
+        actions
+            .into_iter()
+            .map(|action| MouseEvent {
+                row,
+                col,
+                action,
+                shift: mods.shift,
+                alt: mods.alt,
+                ctrl: mods.ctrl,
+            })
+            .collect()
+    }
+}
+
 fn handle_pointer(
     ui: &Ui,
     s: &mut Session,
@@ -262,6 +388,52 @@ fn handle_pointer(
     m: &Metrics,
     snap: &Snapshot,
 ) {
+    let state_id = response.id.with("mouse");
+    let mut state = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<MouseState>(state_id).unwrap_or_default());
+    let (events, mods, pointer) =
+        ui.input(|i| (i.events.clone(), i.modifiers, i.pointer.hover_pos()));
+    for event in events {
+        let pos = match &event {
+            Event::PointerButton { pos, .. } | Event::PointerMoved(pos) => Some(*pos),
+            _ => pointer,
+        };
+        let inside = response.hovered() && pos.is_some_and(|p| rect.contains(p));
+        let cell = pos.map(|p| cell_at(rect, m, snap, p));
+        for event in state.event(&event, snap, cell, inside, mods, m.ch) {
+            if matches!(
+                event.action,
+                MouseAction::Press(_) | MouseAction::ScrollUp | MouseAction::ScrollDown
+            ) {
+                s.terminal_select(None);
+            }
+            let (action, button) = match event.action {
+                MouseAction::Press(b) => ("press", Some(b)),
+                MouseAction::Release(b) => ("release", Some(b)),
+                MouseAction::Move(b) => ("move", b),
+                MouseAction::ScrollUp => ("up", None),
+                MouseAction::ScrollDown => ("down", None),
+            };
+            let button = button.map(|b| match b {
+                MouseButton::Left => "left",
+                MouseButton::Middle => "middle",
+                MouseButton::Right => "right",
+            });
+            let mut params = serde_json::json!({
+                "pane": pane, "row": event.row, "col": event.col, "action": action,
+                "shift": event.shift, "alt": event.alt, "ctrl": event.ctrl,
+            });
+            if let Some(button) = button {
+                params["button"] = button.into();
+            }
+            s.dispatch_or_notice("term.mouse", &params);
+        }
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(state_id, state));
+    if snap.mouse.enabled() && !mods.shift {
+        return;
+    }
     if response.hovered() {
         let wheel = ui.input(|i| i.smooth_scroll_delta.y);
         let lines = (wheel / m.ch).round() as i32;
@@ -507,6 +679,310 @@ fn paint_box(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mouse_snapshot() -> Snapshot {
+        let mut emulator = fm_term::Emulator::new(24, 80);
+        emulator.feed(b"\x1b[?1002h\x1b[?1006h");
+        emulator.snapshot()
+    }
+
+    fn button(pressed: bool, modifiers: Modifiers) -> Event {
+        Event::PointerButton {
+            pos: egui::pos2(20.0, 20.0),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        }
+    }
+
+    fn wheel(lines: f32, modifiers: Modifiers) -> Event {
+        Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, lines),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn application_click_drag_release_and_shift_override() {
+        let snap = mouse_snapshot();
+        let mut state = MouseState::default();
+        let cell = Some((2, 4));
+        let press = state.event(
+            &button(true, Modifiers::NONE),
+            &snap,
+            cell,
+            true,
+            Modifiers::NONE,
+            16.0,
+        );
+        assert_eq!(press.len(), 1);
+        assert_eq!(press[0].action, MouseAction::Press(MouseButton::Left));
+        let moved = Event::PointerMoved(egui::pos2(30.0, 20.0));
+        assert!(
+            state
+                .event(&moved, &snap, cell, true, Modifiers::NONE, 16.0)
+                .is_empty()
+        );
+        let drag = state.event(&moved, &snap, Some((2, 5)), true, Modifiers::NONE, 16.0);
+        assert_eq!(drag[0].action, MouseAction::Move(Some(MouseButton::Left)));
+        let release = state.event(
+            &button(false, Modifiers::SHIFT),
+            &snap,
+            Some((2, 79)),
+            false,
+            Modifiers::SHIFT,
+            16.0,
+        );
+        assert_eq!(release[0].action, MouseAction::Release(MouseButton::Left));
+        assert!(state.held().is_none());
+        assert!(
+            state
+                .event(
+                    &button(true, Modifiers::SHIFT),
+                    &snap,
+                    cell,
+                    true,
+                    Modifiers::SHIFT,
+                    16.0
+                )
+                .is_empty()
+        );
+        assert!(
+            state.held().is_none(),
+            "Shift selection is not captured by the app"
+        );
+        assert!(
+            state
+                .event(
+                    &button(false, Modifiers::NONE),
+                    &snap,
+                    cell,
+                    true,
+                    Modifiers::NONE,
+                    16.0
+                )
+                .is_empty()
+        );
+        assert!(
+            state
+                .event(
+                    &button(true, Modifiers::NONE),
+                    &snap,
+                    cell,
+                    false,
+                    Modifiers::NONE,
+                    16.0
+                )
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn application_wheel_is_fractional_bounded_and_shift_bypasses_it() {
+        let snap = mouse_snapshot();
+        let mut state = MouseState::default();
+        let cell = Some((0, 0));
+        for _ in 0..3 {
+            assert!(
+                state
+                    .event(
+                        &wheel(0.25, Modifiers::NONE),
+                        &snap,
+                        cell,
+                        true,
+                        Modifiers::NONE,
+                        16.0
+                    )
+                    .is_empty()
+            );
+        }
+        let events = state.event(
+            &wheel(0.25, Modifiers::NONE),
+            &snap,
+            cell,
+            true,
+            Modifiers::NONE,
+            16.0,
+        );
+        assert_eq!(events[0].action, MouseAction::ScrollUp);
+        assert!(
+            state
+                .event(
+                    &wheel(1.0, Modifiers::SHIFT),
+                    &snap,
+                    cell,
+                    true,
+                    Modifiers::SHIFT,
+                    16.0
+                )
+                .is_empty()
+        );
+        assert!(
+            state
+                .event(
+                    &wheel(1.0, Modifiers::NONE),
+                    &snap,
+                    cell,
+                    false,
+                    Modifiers::NONE,
+                    16.0
+                )
+                .is_empty()
+        );
+        let flood = state.event(
+            &wheel(-1e9, Modifiers::NONE),
+            &snap,
+            cell,
+            true,
+            Modifiers::NONE,
+            16.0,
+        );
+        assert_eq!(flood.len(), 32);
+        assert!(flood.iter().all(|e| e.action == MouseAction::ScrollDown));
+        let disabled = Snapshot::default();
+        assert!(
+            state
+                .event(
+                    &button(true, Modifiers::NONE),
+                    &disabled,
+                    cell,
+                    true,
+                    Modifiers::NONE,
+                    16.0
+                )
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn leaving_the_window_releases_captured_buttons() {
+        let snap = mouse_snapshot();
+        let mut state = MouseState::default();
+        state.event(
+            &button(true, Modifiers::NONE),
+            &snap,
+            Some((1, 2)),
+            true,
+            Modifiers::NONE,
+            16.0,
+        );
+        let release = state.event(
+            &Event::PointerGone,
+            &snap,
+            None,
+            false,
+            Modifiers::NONE,
+            16.0,
+        );
+        assert_eq!(release[0].action, MouseAction::Release(MouseButton::Left));
+        assert!(state.held().is_none());
+    }
+
+    #[test]
+    fn pointer_reports_dispatch_through_the_command_registry() {
+        use fm_engine::{CommandSpec, Params, Registry};
+        let mut s = Session::default();
+        s.registry = Registry::from_specs(vec![CommandSpec {
+            id: "term.mouse",
+            label: "Mouse",
+            menu: &[],
+            shortcut: None,
+            params: "mouse",
+            enabled: |_| true,
+            run: |s, params| {
+                s.clipboard_outbox
+                    .get_or_insert_default()
+                    .push_str(&format!("{params}\n"));
+                Ok(())
+            },
+        }])
+        .expect("registry");
+        let snap = mouse_snapshot();
+        let ctx = egui::Context::default();
+        let render = |s: &mut Session, mut events: Vec<Event>, shift| {
+            events.insert(
+                0,
+                Event::ModifiersChanged(if shift {
+                    Modifiers::SHIFT
+                } else {
+                    Modifiers::NONE
+                }),
+            );
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 350.0))),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let (rect, response) =
+                        ui.allocate_exact_size(vec2(400.0, 300.0), Sense::click_and_drag());
+                    handle_pointer(
+                        ui,
+                        s,
+                        1,
+                        &response,
+                        rect,
+                        &Metrics { cw: 8.0, ch: 16.0 },
+                        &snap,
+                    );
+                });
+            });
+            output.textures_delta.clear();
+        };
+        render(&mut s, vec![], false);
+        render(
+            &mut s,
+            vec![
+                Event::PointerMoved(egui::pos2(20.0, 20.0)),
+                button(true, Modifiers::NONE),
+            ],
+            false,
+        );
+        render(
+            &mut s,
+            vec![button(false, Modifiers::NONE), wheel(-1.0, Modifiers::NONE)],
+            false,
+        );
+        let reports: Vec<Params> = s
+            .clipboard_outbox
+            .take()
+            .expect("reports")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("json"))
+            .collect();
+        assert!(
+            reports
+                .iter()
+                .any(|e| e["action"] == "press" && e["row"] == 0 && e["col"] == 1)
+        );
+        assert!(reports.iter().any(|e| e["action"] == "release"));
+        assert!(reports.iter().any(|e| e["action"] == "down"));
+        render(
+            &mut s,
+            vec![button(true, Modifiers::SHIFT), wheel(1.0, Modifiers::SHIFT)],
+            true,
+        );
+        for x in [80.0, 120.0] {
+            render(&mut s, vec![Event::PointerMoved(egui::pos2(x, 20.0))], true);
+        }
+        render(&mut s, vec![button(false, Modifiers::SHIFT)], true);
+        assert!(
+            s.clipboard_outbox.is_none(),
+            "Shift must keep local selection/scrollback"
+        );
+        let selection = s.terminal_selection.expect("Shift drag selects text");
+        assert_ne!(selection.anchor, selection.head);
+        render(&mut s, vec![], false);
+        assert_eq!(
+            s.terminal_selection,
+            Some(selection),
+            "selection survives releasing Shift"
+        );
+    }
 
     fn bytes(key: Key, m: Modifiers) -> Option<String> {
         key_bytes(key, m, false).map(|b| String::from_utf8_lossy(&b).into_owned())
