@@ -56,21 +56,18 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let mut open = true;
     let mut command: Option<(&'static str, serde_json::Value)> = None;
     let mut start = false;
-    egui::Window::new("Find Files")
+    crate::dialog_style::window(ctx, tokens, "Find Files", &mut open)
         .id(Id::NULL.with("fm-search"))
-        .open(&mut open)
-        .collapsible(false)
         .resizable(true)
         .default_size([620.0, 420.0])
-        .default_pos(ctx.content_rect().center() - egui::Vec2::from([620.0, 420.0]) / 2.0)
-        .frame(crate::dialogs::frame(tokens))
         .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
             let mut submit = false;
             egui::Grid::new("fm-search-form")
                 .num_columns(2)
                 .show(ui, |ui| {
                     let field = |ui: &mut egui::Ui, label: &str, text: &mut String, hint: &str, tip: &str| {
-                        let caption = ui.label(tokens.muted(label));
+                        let caption = ui.label(RichText::new(label).color(tokens.text_muted));
                         let r = ui
                             .add(
                                 egui::TextEdit::singleline(text)
@@ -123,7 +120,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     start = true;
                 }
             });
-            ui.label(tokens.muted(status_line(&status)));
+            crate::dialog_style::hint(ui, tokens, status_line(&status));
             if let Some(err) = &status.error {
                 ui.label(RichText::new(err).color(tokens.error));
             }
@@ -186,7 +183,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                                     egui::Button::selectable(draft.selected == Some(i), text)
                                         .right_text(RichText::new(size).color(tokens.text_muted)),
                                 );
-                                ui.label(tokens.muted(folder));
+                                crate::dialog_style::hint(ui, tokens, folder);
                                 r
                             })
                             .inner;
@@ -204,7 +201,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     }
                 });
         });
-    if start {
+    if start && open {
         draft.selected = None;
         let mut params = json!({
             "name": draft.name.trim(),
@@ -221,7 +218,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             .and_then(|x| x.query.root.as_ref())
             .map(|u| u.to_string());
     }
-    if let Some((id, params)) = command {
+    if let Some((id, params)) = command.filter(|_| open) {
         s.dispatch_or_notice(id, &params);
     }
     ctx.data_mut(|d| d.insert_temp(draft_id(), draft));

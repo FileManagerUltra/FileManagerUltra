@@ -50,6 +50,8 @@ pub struct Tokens {
     pub border_width: f32,
     /// Base font size (px).
     pub font_size: f32,
+    /// Terminal text size.
+    pub term_font_size: f32,
     /// Terminal default background / foreground / cursor / selection.
     pub term_bg: Color32,
     pub term_fg: Color32,
@@ -81,6 +83,7 @@ impl Tokens {
             corner_radius: 6.0,
             border_width: 1.0,
             font_size: 14.0,
+            term_font_size: 14.0,
             term_bg: Color32::from_rgb(0x0f, 0x11, 0x14),
             term_fg: Color32::from_rgb(0xd7, 0xda, 0xde),
             term_cursor: Color32::from_rgb(0x5c, 0xb2, 0xff),
@@ -129,6 +132,7 @@ impl Tokens {
             corner_radius: 6.0,
             border_width: 1.0,
             font_size: 14.0,
+            term_font_size: 14.0,
             term_bg: Color32::from_rgb(0xff, 0xff, 0xff),
             term_fg: Color32::from_rgb(0x1b, 0x1e, 0x23),
             term_cursor: Color32::from_rgb(0x0b, 0x62, 0xd6),
@@ -238,6 +242,39 @@ impl Tokens {
         }
     }
 
+    /// Resolve the preference and apply the user's look: accent, density and text sizes.
+    pub fn resolve_with(prefs: &fm_engine::Prefs, system_dark: bool) -> Self {
+        let mut t = Self::resolve(prefs.theme, system_dark);
+        if let Some([r, g, b]) = prefs.accent_rgb() {
+            let accent = Color32::from_rgb(r, g, b);
+            t.accent = accent;
+            t.term_cursor = accent;
+            // Selection reads as a tint of the accent over the panel.
+            let mix = |a: u8, b: u8| ((u16::from(a) * 35 + u16::from(b) * 65) / 100) as u8;
+            t.selection_bg = Color32::from_rgb(
+                mix(r, t.panel.r()),
+                mix(g, t.panel.g()),
+                mix(b, t.panel.b()),
+            );
+        }
+        let (row, pad) = match prefs.density {
+            fm_engine::Density::Compact => (20.0, 4.0),
+            fm_engine::Density::Normal => (t.row_height, t.padding),
+            fm_engine::Density::Comfortable => (30.0, 8.0),
+        };
+        let scale = prefs.ui_font_size() / t.font_size;
+        t.row_height = (row * scale.max(1.0)).round();
+        t.padding = pad;
+        t.font_size = prefs.ui_font_size();
+        t.term_font_size = prefs.term_font_size();
+        t
+    }
+
+    /// Terminal font.
+    pub fn term_font(&self) -> FontId {
+        FontId::monospace(self.term_font_size)
+    }
+
     /// Base font, sized from tokens.
     pub fn font(&self) -> FontId {
         FontId::monospace(self.font_size)
@@ -289,11 +326,34 @@ pub fn apply_to(ctx: &Context, tokens: &Tokens) {
     ctx.style_mut_of(theme, |style| {
         style.always_scroll_the_only_direction = false;
         style.spacing.item_spacing = Vec2::new(padding, padding);
-        for font in style.text_styles.values_mut() {
+        // Scale from egui's defaults, never from the current style, or repeated
+        // applications would compound.
+        let scale = tokens.font_size / 14.0;
+        let base = egui::Style::default().text_styles;
+        for (text_style, font) in style.text_styles.iter_mut() {
             font.family = egui::FontFamily::Monospace;
+            if let Some(default) = base.get(text_style) {
+                font.size = default.size * scale;
+            }
         }
         style.spacing.button_padding = Vec2::new(padding, padding * 0.6);
     });
+}
+
+/// Accent presets offered in Preferences: label and `#rrggbb`.
+pub const ACCENT_PRESETS: [(&str, &str); 7] = [
+    ("Blue", "#5cb2ff"),
+    ("Teal", "#2fbfa5"),
+    ("Green", "#63c174"),
+    ("Orange", "#f0913a"),
+    ("Red", "#e5534b"),
+    ("Pink", "#e56aa8"),
+    ("Purple", "#a78bfa"),
+];
+
+/// A colour from `#rrggbb`, for swatches.
+pub fn swatch(hex: &str) -> Option<Color32> {
+    fm_engine::prefs::parse_hex_color(hex).map(|[r, g, b]| Color32::from_rgb(r, g, b))
 }
 
 #[cfg(test)]
@@ -380,6 +440,21 @@ mod tests {
     /// Destructuring without `..` is exhaustive at compile time: adding a field to
     /// `Tokens` fails this test until both palettes cover it.
     #[test]
+    fn font_size_changes_do_not_compound() {
+        let ctx = Context::default();
+        let size = |ctx: &Context| ctx.global_style().text_styles[&egui::TextStyle::Body].size;
+        for pref in [20.0, 10.0, 14.0, 20.0, 14.0] {
+            let mut t = Tokens::dark();
+            t.font_size = pref;
+            apply_to(&ctx, &t);
+            ctx.set_theme(egui::Theme::Dark);
+            let expected =
+                egui::Style::default().text_styles[&egui::TextStyle::Body].size * pref / 14.0;
+            assert!((size(&ctx) - expected).abs() < 0.01, "{pref}");
+        }
+    }
+
+    #[test]
     fn both_palettes_cover_every_field() {
         fn check(tokens: Tokens) {
             let Tokens {
@@ -401,6 +476,7 @@ mod tests {
                 corner_radius,
                 border_width,
                 font_size,
+                term_font_size,
                 term_bg,
                 term_fg,
                 term_cursor,
@@ -428,6 +504,7 @@ mod tests {
                 assert_ne!(color.a(), 0, "{name} must be opaque");
             }
             assert!(row_height > 0.0 && padding > 0.0 && font_size > 0.0);
+            assert!(term_font_size > 0.0);
             assert!(corner_radius >= 0.0 && border_width > 0.0);
             let _ = dark;
             assert!(ansi.iter().all(|c| c.a() == 255));

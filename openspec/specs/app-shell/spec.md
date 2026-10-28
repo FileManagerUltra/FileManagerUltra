@@ -31,6 +31,47 @@ The menu bar SHALL render its items from the command registry, and selecting an 
 - **WHEN** a command's `enabled` predicate returns false for the current session
 - **THEN** its menu item renders greyed out and activating it does nothing
 
+### Requirement: Topic-based preferences
+Preferences SHALL present a simplified two-pane dialog with a flat topic list on the left and only the selected topic's settings on the right. Topics SHALL be General, Appearance, Files, Copy and move, Preview, Terminal, Connections, Workspaces and Advanced. Appearance SHALL offer theme, accent colour (presets or `#rrggbb`), density and text size; Files SHALL offer hidden-files default, single-click open, size units, date format and confirmation prompts; Terminal SHALL offer shell and font size; Advanced SHALL offer the thumbnail cache location (shown, changeable to a parent folder that receives a `thumbs` subfolder, resettable), a Clear thumbnail cache button, the cache size limits and the preview time limit. Every such setting SHALL change through the validated `prefs.set` command (bad values return an error and change nothing) and be clamped when read from a hand-edited prefs file. Connections SHALL contain SMB encryption, remote timing and trusted-host management.
+
+Preferences SHALL use proportional typography, left-aligned topic labels and neutral page headings without changing typography elsewhere in the application. Settings groups SHALL use flat sections with thin dividers, consistent spacing and aligned controls rather than nested cards. Trusted hosts SHALL appear in a bordered list with readable rows and aligned Forget actions. Mutually exclusive theme and shell choices SHALL use radio controls.
+
+The dialog SHALL initially select General, remember the selected topic while the application runs, and retain a consistent size when switching topics. Settings and navigation SHALL scroll when needed so the footer and Close remain accessible in small windows. Both dark and light themes SHALL use semantic theme tokens.
+
+#### Scenario: Change a setting in a topic
+- **WHEN** a topic is selected
+- **THEN** its settings appear without settings from other topics
+- **AND** edits dispatch the existing preference commands immediately, without an extra Apply step
+- **AND** switching topics preserves edits and does not change settings by itself
+
+#### Scenario: Close and reopen preferences
+- **WHEN** Close or Escape dismisses Preferences and it is reopened
+- **THEN** the last topic is selected and previous edits remain applied
+- **AND** the existing preference persistence policy is unchanged
+
+### Requirement: Consistent draggable dialogs
+All floating dialogs, including About, Preferences, file-operation prompts, conflict
+and unsaved-workspace confirmations, connection and host-key prompts, key-file
+picker, Properties, Find Files, Open With, log time range and Jobs SHALL follow
+`docs/style-guide.md`: scoped proportional typography, neutral headings, flat
+sections, aligned controls, semantic theme colors and shared window chrome.
+Every dialog SHALL be draggable by its title bar and SHALL have a title-bar close
+button. Initial placement SHALL be centered except Jobs, which starts bottom-right.
+Dragged positions SHALL persist across frames and viewport resizing, subject to
+keeping the window on screen.
+
+#### Scenario: Close without approving
+- **WHEN** the title-bar close button is clicked
+- **THEN** the dialog follows its existing Cancel or dismiss behavior
+- **AND** no destructive operation, permission edit, host-key trust or pending form submission is approved
+- **AND** closing Preferences preserves changes already applied
+- **AND** closing a child key-file picker leaves the connection form open
+
+#### Scenario: Hide and reopen Jobs
+- **WHEN** Jobs is closed using its title-bar button
+- **THEN** the panel stays hidden without cancelling operations or dismissing updates
+- **AND** clicking the status-bar indicator reopens it
+
 ### Requirement: Quit exits cleanly
 The application SHALL close without panic when the user quits, and SHALL persist preferences before exiting.
 

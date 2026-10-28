@@ -13,7 +13,7 @@ use std::time::SystemTime;
 
 use crossbeam_channel::{Receiver, Sender};
 use fm_layout::PaneId;
-use fm_preview::thumbs::{DiskCache, Thumb, ThumbKind, classify, make};
+use fm_preview::thumbs::{DiskCache, Thumb, ThumbKind, classify, make_as};
 use fm_vfs::{Entry, Vfs, VfsUri};
 
 /// Decoded thumbnails kept in memory (least recently drawn go first).
@@ -87,6 +87,7 @@ struct Job {
     epoch: u64,
     ticket: u64,
     vfs: Arc<dyn Vfs>,
+    kind: ThumbKind,
 }
 
 struct Inner {
@@ -98,6 +99,7 @@ struct Inner {
     pending: AtomicUsize,
     pruned: AtomicBool,
     memory_cap: AtomicUsize,
+    disk_cap: AtomicU64,
 }
 
 impl Inner {
@@ -160,15 +162,17 @@ impl Inner {
         let cache = self.cache.read().ok().and_then(|c| c.clone());
         let disk_key = cache
             .as_ref()
-            .map(|_| DiskCache::key(&job.entry, job.key.3));
+            .map(|_| format!("{:?}-{}", job.kind, DiskCache::key(&job.entry, job.key.3)));
         let cached = cache
             .as_ref()
             .zip(disk_key.as_deref())
             .and_then(|(c, k)| c.get(k));
         let thumb = cached.or_else(|| {
-            let made = catch_unwind(AssertUnwindSafe(|| make(&*job.vfs, &job.entry, job.key.3)))
-                .ok()
-                .flatten();
+            let made = catch_unwind(AssertUnwindSafe(|| {
+                make_as(&*job.vfs, &job.entry, job.key.3, job.kind)
+            }))
+            .ok()
+            .flatten();
             if let (Some(t), Some(c), Some(k)) = (&made, &cache, &disk_key) {
                 c.put(k, t);
             }
@@ -183,7 +187,7 @@ fn worker(inner: &Inner, rx: &Receiver<Job>) {
         if let Some(c) = inner.cache.read().ok().and_then(|c| c.clone())
             && !inner.pruned.swap(true, Ordering::AcqRel)
         {
-            c.prune(DISK_BYTES);
+            c.prune(inner.disk_cap.load(Ordering::Relaxed));
         }
         inner.run(&job);
     }
@@ -215,6 +219,7 @@ impl Default for ThumbService {
                 pending: AtomicUsize::new(0),
                 pruned: AtomicBool::new(false),
                 memory_cap: AtomicUsize::new(MEMORY_BYTES),
+                disk_cap: AtomicU64::new(DISK_BYTES),
             }),
             tx: Mutex::new(None),
             next: AtomicU64::new(1),
@@ -224,15 +229,25 @@ impl Default for ThumbService {
 
 impl ThumbService {
     /// Use (or stop using) a disk cache directory.
-    pub fn set_cache_dir(&self, dir: Option<std::path::PathBuf>) {
-        if let Ok(mut c) = self.inner.cache.write() {
-            *c = dir.and_then(DiskCache::open);
+    /// Returns whether the directory could be used (`None` always succeeds).
+    pub fn set_cache_dir(&self, dir: Option<std::path::PathBuf>) -> bool {
+        let wanted = dir.is_some();
+        let cache = dir.and_then(DiskCache::open);
+        let ok = cache.is_some() || !wanted;
+        if ok && let Ok(mut c) = self.inner.cache.write() {
+            *c = cache;
+            self.inner.pruned.store(false, Ordering::Release);
         }
-        self.inner.pruned.store(false, Ordering::Release);
+        ok
     }
 
     pub fn set_memory_cap(&self, bytes: usize) {
         self.inner.memory_cap.store(bytes, Ordering::Relaxed);
+    }
+
+    /// Cap the disk cache; it is pruned at the next start.
+    pub fn set_disk_cap(&self, bytes: u64) {
+        self.inner.disk_cap.store(bytes, Ordering::Relaxed);
     }
 
     /// Whether `entry` gets a thumbnail attempt at all.
@@ -241,9 +256,6 @@ impl ThumbService {
     }
 
     pub fn get(&self, entry: &Entry, edge: u32) -> ThumbState {
-        if !Self::candidate(entry) {
-            return ThumbState::None;
-        }
         let mut st = self.inner.lock();
         st.tick += 1;
         let tick = st.tick;
@@ -262,12 +274,44 @@ impl ThumbService {
 
     /// Request thumbnails for `entries` in order, superseding earlier requests of `pane`.
     pub fn want(&self, pane: PaneId, vfs: &Arc<dyn Vfs>, entries: &[Entry], edge: u32) {
+        self.want_with(pane, vfs, entries, edge, |entry| classify(&entry.name));
+    }
+
+    pub(crate) fn want_configured(
+        &self,
+        pane: PaneId,
+        vfs: &Arc<dyn Vfs>,
+        entries: &[Entry],
+        edge: u32,
+        rules: &crate::preview_types::PreviewRules,
+    ) {
+        self.want_with(pane, vfs, entries, edge, |entry| {
+            match rules.kind(&entry.name) {
+                Some(fm_preview::Kind::Image(_)) => ThumbKind::Image,
+                Some(fm_preview::Kind::Video) => ThumbKind::Video,
+                _ => ThumbKind::Other,
+            }
+        });
+    }
+
+    fn want_with(
+        &self,
+        pane: PaneId,
+        vfs: &Arc<dyn Vfs>,
+        entries: &[Entry],
+        edge: u32,
+        classify: impl Fn(&Entry) -> ThumbKind,
+    ) {
         let epoch = self.next.fetch_add(1, Ordering::Relaxed);
         if let Ok(mut e) = self.inner.epochs.lock() {
             e.insert(pane, epoch);
         }
         let Some(tx) = self.sender() else { return };
-        for entry in entries.iter().filter(|e| Self::candidate(e)) {
+        for entry in entries.iter().filter(|e| !e.is_dir_like()) {
+            let kind = classify(entry);
+            if kind == ThumbKind::Other {
+                continue;
+            }
             let key = key_of(entry, edge);
             let ticket = self.next.fetch_add(1, Ordering::Relaxed);
             {
@@ -296,6 +340,7 @@ impl ThumbService {
                 epoch,
                 ticket,
                 vfs: vfs.clone(),
+                kind,
             };
             if tx.send(job).is_err() {
                 self.inner.pending.fetch_sub(1, Ordering::AcqRel);
@@ -316,6 +361,13 @@ impl ThumbService {
         let mut st = self.inner.lock();
         st.map.retain(|_, i| matches!(i.slot, Slot::Pending(_)));
         st.bytes = 0;
+    }
+
+    pub(crate) fn invalidate_associations(&self) {
+        let mut st = self.inner.lock();
+        st.map.clear();
+        st.bytes = 0;
+        self.inner.done.fetch_add(1, Ordering::Release);
     }
 
     /// Delete the disk cache files; returns how many went.
@@ -413,6 +465,46 @@ mod tests {
             ThumbState::Ready(t) => assert_eq!((t.width, t.height), (160, 80)),
             other => panic!("expected a thumbnail, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn configured_image_filters_apply_to_thumbnails_and_can_be_removed() {
+        use crate::preview_types::{PreviewFilters, PreviewType};
+        let dir = tempfile::tempdir().expect("tmp");
+        let original = png(dir.path(), "photo.png", 40, 20);
+        let renamed = dir.path().join("photo.custom");
+        std::fs::rename(original.uri.local_path().expect("local"), &renamed).expect("rename");
+        let mut entry = original;
+        entry.uri = VfsUri::parse(&renamed.to_string_lossy()).expect("uri");
+        entry.name = "photo.custom".into();
+        fn set_patterns(filters: &mut PreviewFilters, kind: PreviewType, patterns: &[&str]) {
+            if let Some(group) = filters.0.iter_mut().find(|g| g.kind == kind) {
+                group.patterns = patterns.iter().map(|p| p.to_string()).collect();
+            }
+        }
+        let mut filters = PreviewFilters::default();
+        set_patterns(&mut filters, PreviewType::Images, &["*.custom"]);
+        let svc = ThumbService::default();
+        svc.want_configured(
+            1,
+            &vfs(),
+            std::slice::from_ref(&entry),
+            160,
+            &filters.compile().expect("rules"),
+        );
+        wait_idle(&svc);
+        assert!(matches!(svc.get(&entry, 160), ThumbState::Ready(_)));
+        svc.invalidate_associations();
+        set_patterns(&mut filters, PreviewType::Images, &[]);
+        svc.want_configured(
+            1,
+            &vfs(),
+            std::slice::from_ref(&entry),
+            160,
+            &filters.compile().expect("rules"),
+        );
+        wait_idle(&svc);
+        assert!(matches!(svc.get(&entry, 160), ThumbState::None));
     }
 
     #[test]

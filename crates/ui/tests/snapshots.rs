@@ -330,17 +330,20 @@ fn dialogs_dark_light() {
             let mut session = fixture_session();
             let mut dialogs = Dialogs::default();
             dialogs.request(dialog.clone());
-            let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
-                theme::apply_to(ui.ctx(), &tokens);
-                ui.ctx().set_theme(if tokens.dark {
-                    egui::Theme::Dark
-                } else {
-                    egui::Theme::Light
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(480.0, 260.0))
+                .renderer(renderer)
+                .build_ui(move |ui| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    dialogs.show(ui.ctx(), &mut session, &tokens);
                 });
-                dialogs.show(ui.ctx(), &mut session, &tokens);
-            });
-            harness.set_size(egui::vec2(480.0, 240.0));
             harness.run();
+            harness.run_steps(3);
             harness.snapshot(format!("dialog_{case}_{theme}"));
             results.extend_harness(&mut harness);
         }
@@ -349,6 +352,9 @@ fn dialogs_dark_light() {
 
 #[test]
 fn preferences_dialog_dark_light() {
+    use egui_kittest::kittest::Queryable;
+    use serde_json::json;
+
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();
     for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
@@ -357,13 +363,88 @@ fn preferences_dialog_dark_light() {
         };
         let mut session = fixture_session();
         session.preferences_open = true;
-        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
-            theme::apply_to(ui.ctx(), &tokens);
-            fm_ui::preferences::show(ui.ctx(), &mut session, &tokens);
-        });
-        harness.set_size(egui::vec2(560.0, 300.0));
+        session.registry =
+            fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+        let hosts_dir = tempfile::tempdir().expect("known-host directory");
+        std::fs::write(
+            hosts_dir.path().join(fm_engine::remote::KNOWN_HOSTS_FILE),
+            json!({
+                "hosts": [
+                    {
+                        "host": "192.168.0.50:22",
+                        "algorithm": "ssh-ed25519",
+                        "fingerprint": "SHA256:fixture",
+                        "openssh": "AAAAC3NzaC1lZDI1NTE5AAAAfixture"
+                    },
+                    {
+                        "host": "files.example.test:22",
+                        "algorithm": "ssh-ed25519",
+                        "fingerprint": "SHA256:fixture",
+                        "openssh": "AAAAC3NzaC1lZDI1NTE5AAAAfixture"
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("known hosts");
+        session.remote.set_config_dir(hosts_dir.path().into());
+        for name in ["Files", "Remote work", "Logs"] {
+            session
+                .dispatch("workspace.new", &json!({"name": name}))
+                .expect("new");
+            session
+                .dispatch("workspace.save", &json!({}))
+                .expect("save");
+        }
+        // A fixed location keeps the Advanced page independent of the machine's home.
+        session.prefs.thumb_cache_dir = Some("/home/user/.cache/fm".to_string());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 650.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::preferences::show(ui.ctx(), &mut session, &tokens);
+            });
         harness.run();
+        harness.run_steps(3);
         harness.snapshot(format!("dialog_preferences_{theme}"));
+        for topic in [
+            "Appearance",
+            "Files",
+            "Copy and move",
+            "Preview",
+            "Connections",
+            "Workspaces",
+            "Advanced",
+        ] {
+            harness.get_by_label(topic).click();
+            harness.run();
+            harness.run_steps(3);
+            harness.snapshot(format!(
+                "dialog_preferences_{}_{theme}",
+                topic.to_lowercase().replace(' ', "_")
+            ));
+            if topic == "Preview" {
+                harness.get_by_label("Logs").scroll_to_me();
+                harness.run();
+                harness.snapshot(format!("dialog_preferences_file_filters_{theme}"));
+                harness.get_by_label("Images").click();
+                harness.run_steps(3);
+                harness.get_by_label("Add Images pattern").scroll_to_me();
+                harness.run_steps(3);
+                harness.snapshot(format!("dialog_preferences_file_filters_open_{theme}"));
+                harness
+                    .get_by_label("Restore default file filters")
+                    .scroll_to_me();
+                harness.run();
+                harness.snapshot(format!("dialog_preferences_file_filters_bottom_{theme}"));
+            }
+        }
         results.extend_harness(&mut harness);
     }
 }
@@ -983,6 +1064,12 @@ fn selected_previews_offer_reload_only_after_source_changes() {
                     session,
                 );
             assert!(harness.query_by_label("Reload").is_none());
+            if !grid {
+                harness.get_by_label("Filter").click();
+                harness.run();
+                harness.get_by_label("Refresh");
+                assert!(harness.query_by_label("Live tail").is_none());
+            }
             harness
                 .state_mut()
                 .refresh_read(VfsUri::parse("/logs").expect("uri"))
@@ -1001,7 +1088,9 @@ fn selected_previews_offer_reload_only_after_source_changes() {
             harness.run();
             harness.get_by_label("2024-05-01 11:00:00 ERROR original");
             harness.snapshot(format!("preview_reload_{grid}_{theme}"));
-            harness.get_by_label("Reload").click();
+            harness
+                .get_by_label(if grid { "Reload" } else { "Refresh" })
+                .click();
             harness.run();
             while harness
                 .query_by_label("2024-05-01 11:00:00 ERROR changed-content")
@@ -1015,6 +1104,118 @@ fn selected_previews_offer_reload_only_after_source_changes() {
             results.extend_harness(&mut harness);
         }
     }
+}
+
+#[test]
+fn selected_logs_refresh_without_notification_preserves_options() {
+    use egui_kittest::kittest::Queryable;
+    use serde_json::json;
+
+    let (mut session, pane) = multi_preview_fixture(&[
+        ("a.log", b"2024-05-01 11:00:00 ERROR original a\n"),
+        ("b.log", b"2024-05-01 10:00:00 ERROR original b\n"),
+    ]);
+    for (id, params) in [
+        (
+            "preview.log.search",
+            json!({"query": "ERROR", "regex": true}),
+        ),
+        (
+            "preview.log.time_range",
+            json!({"from": "2024-05-01 09:00", "to": ""}),
+        ),
+        ("preview.log.level", json!({"level": "error"})),
+        ("preview.log.order", json!({"mode": "chronological"})),
+        ("preview.log.fold", json!({"mode": "expand"})),
+    ] {
+        session.dispatch(id, &params).expect("option");
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session
+        .preview_slot(pane)
+        .and_then(|s| s.log())
+        .is_none_or(|v| v.is_busy())
+    {
+        session.poll();
+        assert!(Instant::now() < deadline, "filter settled");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let filter = session
+        .preview_slot(pane)
+        .expect("slot")
+        .log()
+        .expect("log")
+        .filter
+        .clone();
+    let fs = MemFs::new();
+    fs.mkdirs_str("/logs").expect("mkdir");
+    for (name, text) in [
+        ("a.log", "2024-05-01 11:30:00 ERROR refreshed a\n"),
+        ("b.log", "2024-05-01 11:15:00 ERROR refreshed b\n"),
+    ] {
+        fs.put_str(&format!("/logs/{name}"), text.as_bytes())
+            .expect("changed source");
+    }
+    session.backends.register(Arc::new(fs));
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1050.0, 500.0))
+        .with_accessibility_check(false)
+        .build_ui_state(
+            move |ui, session: &mut Session| {
+                session.poll();
+                fm_ui::preview::show(ui, session, pane, &Tokens::dark());
+            },
+            session,
+        );
+    assert!(
+        !h.state()
+            .preview_slot(pane)
+            .expect("slot")
+            .updates_available
+    );
+    h.get_by_label("Filter").click();
+    h.run();
+    assert!(h.query_by_label("Live tail").is_none());
+    h.get_by_label("Refresh").click();
+    h.run();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        h.run();
+        let view = h.state().preview_slot(pane).expect("slot").log();
+        if view.is_some_and(|v| {
+            !v.is_busy()
+                && v.filtered.is_some()
+                && v.doc
+                    .read()
+                    .expect("doc")
+                    .records
+                    .iter()
+                    .all(|r| r.text.contains("refreshed"))
+        }) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "refresh finished");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let v = h
+        .state()
+        .preview_slot(pane)
+        .expect("slot")
+        .log()
+        .expect("log");
+    assert_eq!(v.filter, filter);
+    assert!(v.chronological && v.expand_all && !v.follow);
+    assert_eq!(v.filtered.as_ref().expect("filtered").len(), 2);
+    assert_eq!(v.sources.len(), 2);
+    assert!(
+        h.get_by_label("2024-05-01 11:15:00 ERROR refreshed b")
+            .rect()
+            .top()
+            < h.get_by_label("2024-05-01 11:30:00 ERROR refreshed a")
+                .rect()
+                .top()
+    );
+    h.get_by_label("Refresh");
 }
 
 #[test]
@@ -1446,12 +1647,20 @@ fn sftp_popup_dark_light() {
             key_path: "~/.ssh/id_rsa".into(),
             ..Default::default()
         });
-        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
-            theme::apply_to(ui.ctx(), &tokens);
-            fm_ui::sftp_popup::sftp_prompt_dialog(ui.ctx(), &mut session, &tokens);
-        });
-        harness.set_size(egui::vec2(480.0, 420.0));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(480.0, 480.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::sftp_popup::sftp_prompt_dialog(ui.ctx(), &mut session, &tokens);
+            });
         harness.run();
+        harness.run_steps(3);
         harness.snapshot(format!("sftp_popup_{theme}"));
         results.extend_harness(&mut harness);
     }
@@ -1472,12 +1681,20 @@ fn sftp_unreachable_popup_dark_light() {
             error: Some("Cannot reach the SFTP server. Check the server address, network or VPN, and firewall.".into()),
             ..Default::default()
         });
-        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
-            theme::apply_to(ui.ctx(), &tokens);
-            fm_ui::sftp_popup::sftp_prompt_dialog(ui.ctx(), &mut session, &tokens);
-        });
-        harness.set_size(egui::vec2(540.0, 480.0));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(540.0, 480.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::sftp_popup::sftp_prompt_dialog(ui.ctx(), &mut session, &tokens);
+            });
         harness.run();
+        harness.run_steps(3);
         harness.snapshot(format!("sftp_unreachable_{theme}"));
         results.extend_harness(&mut harness);
     }
@@ -1503,12 +1720,20 @@ fn login_dialog_dark_light() {
             navigate: false,
             manual: false,
         });
-        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
-            theme::apply_to(ui.ctx(), &tokens);
-            fm_ui::remote::login_dialog(ui.ctx(), &mut session, &tokens);
-        });
-        harness.set_size(egui::vec2(640.0, 400.0));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(640.0, 400.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::remote::login_dialog(ui.ctx(), &mut session, &tokens);
+            });
         harness.run();
+        harness.run_steps(3);
         harness.snapshot(format!("login_dialog_{theme}"));
         results.extend_harness(&mut harness);
     }
@@ -1534,12 +1759,20 @@ fn manual_connect_dialog_dark_light() {
             navigate: false,
             manual: true,
         });
-        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
-            theme::apply_to(ui.ctx(), &tokens);
-            fm_ui::remote::login_dialog(ui.ctx(), &mut session, &tokens);
-        });
-        harness.set_size(egui::vec2(640.0, 400.0));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(640.0, 600.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::remote::login_dialog(ui.ctx(), &mut session, &tokens);
+            });
         harness.run();
+        harness.run_steps(3);
         harness.snapshot(format!("network_connect_dialog_{theme}"));
         results.extend_harness(&mut harness);
     }
@@ -1699,12 +1932,20 @@ fn changed_host_key_card_dark_light() {
              refusing to connect — this may be an attack"
                 .to_string(),
         );
-        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
-            theme::apply_to(ui.ctx(), &tokens);
-            fm_ui::remote::host_key_alert(ui.ctx(), &mut session, &tokens);
-        });
-        harness.set_size(egui::vec2(560.0, 300.0));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(560.0, 360.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::remote::host_key_alert(ui.ctx(), &mut session, &tokens);
+            });
         harness.run();
+        harness.run_steps(3);
         harness.snapshot(format!("dialog_hostkey_changed_{theme}"));
         results.extend_harness(&mut harness);
     }
@@ -1805,17 +2046,20 @@ fn properties_window_counts_a_folder_dark_light() {
         let Some(renderer) = renderer_or_skip() else {
             return;
         };
-        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
-            theme::apply_to(ui.ctx(), &tokens);
-            ui.ctx().set_theme(if tokens.dark {
-                egui::Theme::Dark
-            } else {
-                egui::Theme::Light
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(520.0, 420.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::properties::show(ui.ctx(), &mut session, &tokens);
             });
-            fm_ui::properties::show(ui.ctx(), &mut session, &tokens);
-        });
-        harness.set_size(egui::vec2(520.0, 420.0));
         harness.run();
+        harness.run_steps(3);
         harness.snapshot(format!("dialog_properties_{theme}"));
         results.extend_harness(&mut harness);
     }
@@ -1840,17 +2084,20 @@ fn find_files_window_lists_results_dark_light() {
         let Some(renderer) = renderer_or_skip() else {
             return;
         };
-        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
-            theme::apply_to(ui.ctx(), &tokens);
-            ui.ctx().set_theme(if tokens.dark {
-                egui::Theme::Dark
-            } else {
-                egui::Theme::Light
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(700.0, 480.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::search::show(ui.ctx(), &mut session, &tokens);
             });
-            fm_ui::search::show(ui.ctx(), &mut session, &tokens);
-        });
-        harness.set_size(egui::vec2(700.0, 480.0));
         harness.run();
+        harness.run_steps(3);
         harness.snapshot(format!("dialog_find_files_{theme}"));
         results.extend_harness(&mut harness);
     }

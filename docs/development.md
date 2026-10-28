@@ -92,6 +92,34 @@ cargo run -p fm-app   # or the installed binary name from fm_brand::EXECUTABLE
 
 Manual checklist:
 
+Preferences: select General, Appearance, Files, Copy and move, Preview, Terminal, Connections,
+Workspaces and Advanced in the left topic column; only that topic's controls appear on the right.
+Check proportional typography, left-aligned navigation and flat, divider-separated sections
+with aligned controls; the file listing keeps its existing typography. Connections separates SMB
+security, remote timing and a bordered trusted-host list with aligned Forget buttons.
+Theme and shell choices use radio controls. Changes apply immediately; Close/Escape and
+reopening retain the topic. Shrink the window to check independent scrolling and that Close
+remains accessible; verify both themes.
+
+All dialogs follow [the dialog style guide](style-guide.md). Drag title bars and
+check that the position stays put on subsequent frames. Check the title-bar close
+button in file-operation confirmations, unsaved-workspace prompts, remote login /
+host-key prompts, the key-file picker, Properties, Find Files, Open With, log time
+range, Jobs and About. Closing must cancel/dismiss, never approve. The key picker
+closes independently; hiding Jobs must not cancel work and its indicator reopens it.
+
+Multi-file log preview: select several logs, open Filter, and use Refresh (in place of
+Live tail) after appending to the files. It reloads all selected sources even before a
+change notification; filters, ordering and expanded-record settings remain applied.
+Single-file logs still offer Live tail.
+
+Preferences > Preview also sets Live tail's polling interval (100..60000 ms, default
+500) and initial log tail (1..64 MiB, default 8). Unlimited initial tail removes that
+window preference, not safety limits: at most 64 MiB for a single log or 32 MiB shared
+across selected files, with existing parser/time limits. Larger files still start at
+the tail. Interval changes reschedule active polling; initial size applies on next open
+or reload. Hover Live tail for delta-transfer and marker behavior.
+
 File-column resizing: Size, Modified and Type start fitted to content; Name takes spare
 space. Drag a header divider back and forth, including beyond a width limit: it should
 track the pointer and redistribute neighboring space. Double-click it to fit the column
@@ -219,6 +247,12 @@ Works as expected
 7. Every pane header has a `×` (hidden on the last pane).
 8. `Ctrl+C` / `Ctrl+X` / `Ctrl+V` copy, cut and paste files (Files pane or thumbnail grid) into the focused folder; Edit menu and context menu show the same entries. Double-clicking a folder thumbnail navigates the connected Files pane. Clicking the only selected file again selects `.`.
 Works as expected
+
+### Preview file-filter checks
+
+In Preferences > Preview, scroll to File type filters. In both themes, press Show on Logs, add `*.trace` (Enter or Add) and confirm a selected `.trace` file changes to log preview immediately. Edit a row and leave the field to save; Remove rows to drop name associations (unmatched files still use content detection). Add `*.trace` to CSV too and confirm Logs wins; press Up on CSV and confirm CSV now wins. Try `../*.log` or `a;b` and confirm an inline error preserves the previous setting. Restore default file filters, verify every field resets, then restart to check persistence. Check custom image extensions in both individual previews and directory thumbnails. HTML/CSV remain text previews.
+
+Preferences > Appearance / Files / Terminal / Advanced (all through `prefs.set`): pick an accent preset and a custom `#rrggbb` (invalid text is ignored; Default restores the theme colour); switch density and change text size up and down repeatedly (sizes must track the value, not shrink cumulatively). In Files, toggle show-hidden (applies at next start), single-click open, size units and date formats (listing, Properties and Search all follow), and turn off the delete/run prompts to confirm they proceed directly. Terminal font size applies to open terminals. In Advanced > Thumbnails check the "Stored in" path, set a parent folder (relative paths and unwritable folders are rejected with the old one kept), press Clear thumbnail cache, and lower the caps; the preview time limit applies to the next render.
 
 ## Dev log
 

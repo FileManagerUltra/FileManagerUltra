@@ -130,6 +130,92 @@ fn toggle_opens_a_following_preview_and_keeps_focus() {
     assert_eq!(r.s.layout.panes().len(), 1);
 }
 
+#[test]
+fn filename_filters_reclassify_loaded_single_and_multi_previews() {
+    let mut r = rig(&[("a.trace", b"alpha\n"), ("b.trace", b"beta\n")]);
+    r.cursor("a.trace");
+    assert!(matches!(&*r.wait_static(), Preview::Text(_)));
+    r.s.dispatch(
+        "prefs.preview.filters",
+        &json!({"groups": [{"type": "logs", "patterns": ["*.trace"]}]}),
+    )
+    .expect("associate");
+    let pane = r.preview;
+    assert!(pump(&mut r.s, |s| s
+        .preview_slot(pane)
+        .and_then(|slot| slot.log())
+        .is_some()));
+    r.select(&["a.trace", "b.trace"]);
+    wait_multi(&mut r, 2);
+    r.s.dispatch(
+        "prefs.preview.filters",
+        &json!({"groups": [{"type": "logs", "patterns": []}, {"type": "images", "patterns": ["*.trace"]}]}),
+    )
+    .expect("change");
+    assert!(pump(&mut r.s, |s| matches!(
+        s.preview_slot(pane).map(|slot| &slot.body),
+        Some(Body::Grid(_))
+    )));
+    r.s.dispatch(
+        "prefs.preview.filters",
+        &json!({"groups": [{"type": "markdown", "patterns": ["*.trace"]}, {"type": "images", "patterns": []}]}),
+    )
+    .expect("markdown");
+    r.select(&[]);
+    r.cursor("a.trace");
+    assert!(pump(
+        &mut r.s,
+        |s| matches!(s.preview_slot(pane).map(|slot| &slot.body),
+        Some(Body::Static(preview)) if matches!(&**preview, Preview::Markdown(_)))
+    ));
+    r.s.dispatch("prefs.preview.filters", &json!({"reset": true}))
+        .expect("reset");
+    assert!(pump(
+        &mut r.s,
+        |s| matches!(s.preview_slot(pane).map(|slot| &slot.body),
+        Some(Body::Static(preview)) if matches!(&**preview, Preview::Text(_)))
+    ));
+}
+
+#[test]
+fn custom_structured_text_and_media_filters_reach_workers() {
+    let mut r = rig(&[
+        ("a.custom", b"{\"message\":\"hello\"}"),
+        ("b.custom", b"<html>hello</html>"),
+        ("c.custom", b"first,second\none,two\n"),
+        ("d.custom", b"%PDF-1.7\n"),
+    ]);
+    r.s.dispatch(
+        "prefs.preview.filters",
+        &json!({"groups": [
+            {"type": "json", "patterns": ["a.custom"]},
+            {"type": "html", "patterns": ["b.custom"]},
+            {"type": "csv", "patterns": ["c.custom"]}
+        ]}),
+    )
+    .expect("custom filters");
+    r.cursor("a.custom");
+    assert!(
+        matches!(&*r.wait_static(), Preview::Structured(doc) if doc.format == fm_preview::Format::Json)
+    );
+    for (name, lang) in [("b.custom", "html"), ("c.custom", "csv")] {
+        r.cursor(name);
+        let pane = r.preview;
+        assert!(pump(
+            &mut r.s,
+            |s| matches!(s.preview_slot(pane).map(|slot| &slot.body),
+            Some(Body::Static(preview)) if matches!(&**preview, Preview::Text(doc) if doc.lang == lang))
+        ));
+    }
+    r.cursor("d.custom");
+    let pane = r.preview;
+    assert!(pump(
+        &mut r.s,
+        |s| matches!(s.preview_slot(pane).map(|slot| &slot.body),
+        Some(Body::Static(preview)) if matches!(&**preview, Preview::Meta(doc) if doc.hint.as_deref().is_some_and(|hint| hint.contains("PDF"))))
+    ));
+}
+
 fn wait_multi(rig: &mut Rig, sources: usize) {
     let pane = rig.preview;
     assert!(pump(&mut rig.s, |s| s
@@ -653,6 +739,54 @@ fn log_mode_filters_and_follows() {
     }));
     r.s.dispatch("preview.log.follow", &json!({"on": false}))
         .expect("off");
+}
+
+#[test]
+fn configured_initial_tail_controls_single_and_combined_log_windows() {
+    let data: String = (0..24_000)
+        .map(|i| {
+            format!(
+                "[2024-05-01 10:00:00] main.INFO: record {i:06} {}\n",
+                "x".repeat(80)
+            )
+        })
+        .collect();
+    assert!(data.len() > 2 << 20);
+    for (tail, multi) in [(1, false), (0, false), (1, true), (0, true)] {
+        let mut r = rig(&[("a.log", data.as_bytes()), ("b.log", data.as_bytes())]);
+        r.s.dispatch("prefs.preview.log", &json!({"tail_mib": tail}))
+            .expect("setting");
+        if multi {
+            r.select(&["a.log", "b.log"]);
+            wait_multi(&mut r, 2);
+        } else {
+            r.cursor("a.log");
+            let pane = r.preview;
+            assert!(pump(&mut r.s, |s| s
+                .preview_slot(pane)
+                .and_then(|slot| slot.log())
+                .is_some()));
+        }
+        let v =
+            r.s.preview_slot(r.preview)
+                .expect("slot")
+                .log()
+                .expect("log");
+        let d = v.doc.read().expect("doc");
+        if tail == 0 {
+            assert!(!d.more_before, "unlimited loads these small files fully");
+            assert_eq!(d.records.len(), 24_000 * if multi { 2 } else { 1 });
+        } else {
+            assert!(d.more_before);
+            assert!(
+                d.records
+                    .iter()
+                    .map(|record| record.text.len())
+                    .sum::<usize>()
+                    <= (1 << 20) + 4096
+            );
+        }
+    }
 }
 
 #[test]

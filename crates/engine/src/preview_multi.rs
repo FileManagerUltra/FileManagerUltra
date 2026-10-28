@@ -7,7 +7,7 @@ use fm_preview::log::{LogDoc, LogFormat, LogLimits, LogRecord};
 use fm_preview::{Limits, Preview, RenderOpts, TextDoc};
 use fm_vfs::{Entry, Vfs};
 
-use crate::preview_cmds::{Body, LogView, RENDER_BUDGET, run_budgeted};
+use crate::preview_cmds::{Body, LogView, run_budgeted};
 
 pub const MAX_SOURCES: usize = 64;
 pub const MAX_WINDOW: u64 = 32 << 20;
@@ -24,9 +24,15 @@ pub(crate) fn render(
     entries: Vec<Entry>,
     window: u64,
     cancel: Arc<AtomicBool>,
+    filters: crate::preview_types::PreviewFilters,
+    budget: std::time::Duration,
 ) -> Body {
-    run_budgeted(RENDER_BUDGET, move || {
-        render_inner(&*vfs, entries, window, &cancel)
+    run_budgeted(budget, move || {
+        let rules = match filters.compile() {
+            Ok(rules) => rules,
+            Err(error) => return Body::Static(Arc::new(Preview::Error(error.to_string()))),
+        };
+        render_inner(&*vfs, entries, window, &cancel, &rules)
     })
     .unwrap_or_else(|| {
         Body::Static(Arc::new(Preview::Error(
@@ -52,7 +58,13 @@ fn text_records(doc: TextDoc) -> (Vec<LogRecord>, Option<String>) {
     (records, note)
 }
 
-fn render_inner(vfs: &dyn Vfs, entries: Vec<Entry>, window: u64, cancel: &AtomicBool) -> Body {
+fn render_inner(
+    vfs: &dyn Vfs,
+    entries: Vec<Entry>,
+    window: u64,
+    cancel: &AtomicBool,
+    rules: &crate::preview_types::PreviewRules,
+) -> Body {
     let count = entries.len().max(1);
     let limits = Limits {
         text_bytes: (8 << 20) / count,
@@ -74,12 +86,13 @@ fn render_inner(vfs: &dyn Vfs, entries: Vec<Entry>, window: u64, cancel: &Atomic
         .into_iter()
         .take_while(|_| !cancel.load(Ordering::Relaxed))
         .map(|entry| {
-            let preview = fm_preview::render_with_log_limits(
+            let preview = fm_preview::render_configured(
                 vfs,
                 &entry,
                 &limits,
                 RenderOpts::default(),
                 &logs,
+                rules.kind(&entry.name),
             );
             let preview = if matches!(preview, Preview::Markdown(_)) {
                 fm_preview::text::render_text(vfs, &entry, &limits, "text")
@@ -115,7 +128,7 @@ fn render_inner(vfs: &dyn Vfs, entries: Vec<Entry>, window: u64, cancel: &Atomic
         gz: false,
         bytes: 0,
         note: Some(
-            "Filters search loaded records only. Live tail is available for single files.".into(),
+            "Filters search loaded records only. Use Refresh to reload changes from the selected files.".into(),
         ),
         base: 0,
         marks: Vec::new(),

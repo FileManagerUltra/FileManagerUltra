@@ -10,7 +10,6 @@ use fm_engine::remote::ConnState;
 use fm_layout::PaneId;
 use fm_vfs::VfsUri;
 
-use crate::dialogs::frame;
 use crate::theme::Tokens;
 
 /// Ask whether to trust an unknown host key (trust on first use).
@@ -22,20 +21,17 @@ pub fn host_key_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     if ctx.input(|i| i.key_pressed(Key::Escape)) {
         answer = Some(false);
     }
-    egui::Window::new("Unknown host key")
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Unknown host key", &mut open)
         .id(Id::NULL.with("fm-hostkey-dialog"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
             ui.label(format!(
                 "The authenticity of {}:{} can't be established.",
                 info.host, info.port
             ));
             ui.add_space(tokens.padding);
-            ui.label(tokens.muted(format!("Key type: {}", info.algorithm)));
+            crate::dialog_style::hint(ui, tokens, format!("Key type: {}", info.algorithm));
             ui.label(RichText::new(&info.fingerprint).monospace().strong());
             ui.add_space(tokens.padding);
             ui.label("Compare the fingerprint with one you know to be correct. Trusting it saves the key, and a later change will be refused.");
@@ -49,6 +45,9 @@ pub fn host_key_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 }
             });
         });
+    if !open {
+        answer = Some(false);
+    }
     if let Some(accept) = answer {
         s.dispatch_or_notice("remote.hostkey.answer", &json!({"accept": accept}));
     }
@@ -98,125 +97,124 @@ pub fn login_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     } else {
         "Authentication Required"
     };
-    egui::Window::new(title)
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, title, &mut open)
         .id(id.with("window"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
-            if !prompt.manual {
-                ui.label(format!("Enter your credentials for {}.", prompt.host));
-            }
-            if let Some(error) = &prompt.error {
-                ui.label(RichText::new(error).color(tokens.error));
-            }
-            ui.add_space(tokens.padding);
-            let smb_profiles: Vec<_> = s
-                .prefs
-                .profiles
-                .iter()
-                .filter(|p| p.protocol == fm_engine::prefs::Protocol::Smb)
-                .collect();
-            if prompt.manual && !smb_profiles.is_empty() {
-                egui::ComboBox::from_label("Profile")
-                    .selected_text(if form.profile.is_empty() {
-                        "(none)"
-                    } else {
-                        form.profile.as_str()
-                    })
-                    .show_ui(ui, |ui| {
-                        for p in smb_profiles {
-                            if ui
-                                .selectable_label(form.profile == p.name, &p.name)
-                                .clicked()
-                            {
-                                form.profile = p.name.clone();
-                                form.save_as = p.name.clone();
-                                form.host = p.host.clone();
-                                form.port = p.port.to_string();
-                                form.share = p.share.clone().unwrap_or_default();
-                                form.user = p.user.clone();
-                                form.domain = p.domain.clone().unwrap_or_default();
-                                form.password.clear();
-                            }
-                        }
-                    });
+            crate::dialog_style::apply(ui, tokens);
+            crate::dialog_style::body(ui, |ui| {
+                if !prompt.manual {
+                    ui.label(format!("Enter your credentials for {}.", prompt.host));
+                }
+                if let Some(error) = &prompt.error {
+                    ui.label(RichText::new(error).color(tokens.error));
+                }
                 ui.add_space(tokens.padding);
-            }
-            egui::Grid::new(id.with("grid"))
-                .num_columns(2)
-                .spacing([tokens.padding, tokens.padding / 2.0])
-                .show(ui, |ui| {
-                    if prompt.manual {
-                        let label = ui.label("Host");
-                        let host = ui
-                            .add(TextEdit::singleline(&mut form.host).desired_width(220.0))
+                let smb_profiles: Vec<_> = s
+                    .prefs
+                    .profiles
+                    .iter()
+                    .filter(|p| p.protocol == fm_engine::prefs::Protocol::Smb)
+                    .collect();
+                if prompt.manual && !smb_profiles.is_empty() {
+                    egui::ComboBox::from_label("Profile")
+                        .selected_text(if form.profile.is_empty() {
+                            "(none)"
+                        } else {
+                            form.profile.as_str()
+                        })
+                        .show_ui(ui, |ui| {
+                            for p in smb_profiles {
+                                if ui
+                                    .selectable_label(form.profile == p.name, &p.name)
+                                    .clicked()
+                                {
+                                    form.profile = p.name.clone();
+                                    form.save_as = p.name.clone();
+                                    form.host = p.host.clone();
+                                    form.port = p.port.to_string();
+                                    form.share = p.share.clone().unwrap_or_default();
+                                    form.user = p.user.clone();
+                                    form.domain = p.domain.clone().unwrap_or_default();
+                                    form.password.clear();
+                                }
+                            }
+                        });
+                    ui.add_space(tokens.padding);
+                }
+                egui::Grid::new(id.with("grid"))
+                    .num_columns(2)
+                    .spacing([tokens.padding, tokens.padding / 2.0])
+                    .show(ui, |ui| {
+                        if prompt.manual {
+                            let label = ui.label("Host");
+                            let host = ui
+                                .add(TextEdit::singleline(&mut form.host).desired_width(220.0))
+                                .labelled_by(label.id);
+                            if form.focus_pending {
+                                host.request_focus();
+                                form.focus_pending = false;
+                            }
+                            ui.end_row();
+                            let label = ui.label("Port");
+                            ui.add(
+                                TextEdit::singleline(&mut form.port)
+                                    .hint_text("445")
+                                    .desired_width(220.0),
+                            )
+                            .labelled_by(label.id);
+                            ui.end_row();
+                            let label = ui.label("Share");
+                            ui.add(
+                                TextEdit::singleline(&mut form.share)
+                                    .hint_text("optional")
+                                    .desired_width(220.0),
+                            )
+                            .labelled_by(label.id);
+                            ui.end_row();
+                        }
+                        let label = ui.label("Username");
+                        let user = ui
+                            .add(TextEdit::singleline(&mut form.user).desired_width(220.0))
                             .labelled_by(label.id);
                         if form.focus_pending {
-                            host.request_focus();
+                            user.request_focus();
                             form.focus_pending = false;
                         }
                         ui.end_row();
-                        let label = ui.label("Port");
-                        ui.add(
-                            TextEdit::singleline(&mut form.port)
-                                .hint_text("445")
-                                .desired_width(220.0),
-                        )
-                        .labelled_by(label.id);
+                        let label = ui.label("Domain");
+                        ui.add(TextEdit::singleline(&mut form.domain).desired_width(220.0))
+                            .labelled_by(label.id);
                         ui.end_row();
-                        let label = ui.label("Share");
+                        let label = ui.label("Password");
+                        let pw = ui
+                            .add(
+                                TextEdit::singleline(&mut form.password)
+                                    .password(true)
+                                    .desired_width(220.0),
+                            )
+                            .labelled_by(label.id);
+                        if pw.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                            connect = true;
+                        }
+                        ui.end_row();
+                    });
+                ui.add_space(tokens.padding);
+                ui.radio_value(&mut form.remember, false, "Forget password immediately");
+                ui.radio_value(&mut form.remember, true, "Remember password until you quit");
+                if prompt.manual {
+                    ui.checkbox(&mut form.require_encryption, "Require encryption");
+                    ui.horizontal(|ui| {
+                        let label = ui.label("Save as profile");
                         ui.add(
-                            TextEdit::singleline(&mut form.share)
+                            TextEdit::singleline(&mut form.save_as)
                                 .hint_text("optional")
-                                .desired_width(220.0),
+                                .desired_width(160.0),
                         )
                         .labelled_by(label.id);
-                        ui.end_row();
-                    }
-                    let label = ui.label("Username");
-                    let user = ui
-                        .add(TextEdit::singleline(&mut form.user).desired_width(220.0))
-                        .labelled_by(label.id);
-                    if form.focus_pending {
-                        user.request_focus();
-                        form.focus_pending = false;
-                    }
-                    ui.end_row();
-                    let label = ui.label("Domain");
-                    ui.add(TextEdit::singleline(&mut form.domain).desired_width(220.0))
-                        .labelled_by(label.id);
-                    ui.end_row();
-                    let label = ui.label("Password");
-                    let pw = ui
-                        .add(
-                            TextEdit::singleline(&mut form.password)
-                                .password(true)
-                                .desired_width(220.0),
-                        )
-                        .labelled_by(label.id);
-                    if pw.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                        connect = true;
-                    }
-                    ui.end_row();
-                });
-            ui.add_space(tokens.padding);
-            ui.radio_value(&mut form.remember, false, "Forget password immediately");
-            ui.radio_value(&mut form.remember, true, "Remember password until you quit");
-            if prompt.manual {
-                ui.checkbox(&mut form.require_encryption, "Require encryption");
-                ui.horizontal(|ui| {
-                    let label = ui.label("Save as profile");
-                    ui.add(
-                        TextEdit::singleline(&mut form.save_as)
-                            .hint_text("optional")
-                            .desired_width(160.0),
-                    )
-                    .labelled_by(label.id);
-                });
-            }
+                    });
+                }
+            });
             ui.add_space(tokens.padding);
             ui.horizontal(|ui| {
                 if ui.button("Cancel").clicked() {
@@ -231,7 +229,7 @@ pub fn login_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 }
             });
         });
-    if cancel {
+    if cancel || !open {
         ctx.data_mut(|d| d.remove::<LoginForm>(id));
         s.dispatch_or_notice("network.login.cancel", &Value::Null);
     } else if connect && !form.user.is_empty() && (!prompt.manual || !form.host.is_empty()) {
@@ -284,14 +282,11 @@ pub fn host_key_alert(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         return;
     };
     let mut dismiss = ctx.input(|i| i.key_pressed(Key::Escape));
-    egui::Window::new("Host key changed")
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Host key changed", &mut open)
         .id(Id::NULL.with("fm-hostkey-alert"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
             ui.label(
                 RichText::new("The server's identity changed")
                     .color(tokens.error)
@@ -300,16 +295,18 @@ pub fn host_key_alert(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             ui.add_space(tokens.padding);
             ui.label(message);
             ui.add_space(tokens.padding);
-            ui.label(tokens.muted(
+            crate::dialog_style::hint(
+                ui,
+                tokens,
                 "Nothing was sent to the server. If you expected this change, forget the \
                  host in Preferences (Trusted hosts) and connect again.",
-            ));
+            );
             ui.add_space(tokens.padding);
             if ui.button("Close").clicked() {
                 dismiss = true;
             }
         });
-    if dismiss {
+    if dismiss || !open {
         s.remote.host_key_alert = None;
     }
 }

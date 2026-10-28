@@ -48,29 +48,26 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let mut open = true;
     let mut launch: Option<String> = None;
     let mut cancel = false;
-    egui::Window::new("Open With")
+    crate::dialog_style::window(ctx, tokens, "Open With", &mut open)
         .id(Id::NULL.with("fm-open-with"))
-        .open(&mut open)
-        .collapsible(false)
         .resizable(true)
         .default_size([380.0, 440.0])
-        .default_pos(ctx.content_rect().center() - egui::Vec2::from([380.0, 440.0]) / 2.0)
-        .frame(crate::dialogs::frame(tokens))
         .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
             ui.label(RichText::new(format!("Open \"{name}\" with:")).color(tokens.text));
             let Some((mime, list)) = &choices else {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(tokens.muted("Looking for applications…"));
+                    crate::dialog_style::hint(ui, tokens, "Looking for applications…");
                 });
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(100));
                 return;
             };
             if let Some(mime) = mime {
-                ui.label(tokens.muted(mime.as_str()));
+                crate::dialog_style::hint(ui, tokens, mime.as_str());
             }
-            let caption = ui.label(tokens.muted("Applications"));
+            let caption = ui.label(RichText::new("Applications").color(tokens.text_muted));
             let response = ui
                 .add(
                     egui::TextEdit::singleline(&mut draft.filter)
@@ -103,7 +100,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                         };
                         if heading != Some(section) {
                             heading = Some(section);
-                            ui.label(tokens.muted(section));
+                            crate::dialog_style::section_heading(ui, tokens, section);
                         }
                         let label = if choice.default {
                             format!("{}  (default)", choice.name)
@@ -120,7 +117,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                         }
                     }
                     if shown.is_empty() {
-                        ui.label(tokens.muted("No applications found"));
+                        crate::dialog_style::hint(ui, tokens, "No applications found");
                     }
                 });
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -144,9 +141,9 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         cancel = true;
     }
     ctx.data_mut(|d| d.insert_temp(draft_id(), draft));
-    if let Some(app) = launch {
-        s.dispatch_or_notice("file.open_with", &json!({ "app": app, "uri": target }));
-    } else if cancel || !open {
+    if cancel || !open {
         s.dispatch_or_notice("file.open_with.close", &serde_json::Value::Null);
+    } else if let Some(app) = launch {
+        s.dispatch_or_notice("file.open_with", &json!({ "app": app, "uri": target }));
     }
 }

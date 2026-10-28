@@ -16,8 +16,12 @@ pub fn show(ui: &mut egui::Ui, session: &mut Session, tokens: &Tokens) {
         return;
     };
     ui.label(format!("Version {version} is available."));
-    ui.label(tokens.muted("Download the installer from GitHub."));
-    ui.label(tokens.muted("Installation is manual; the app will not restart."));
+    crate::dialog_style::hint(ui, tokens, "Download the installer from GitHub.");
+    crate::dialog_style::hint(
+        ui,
+        tokens,
+        "Installation is manual; the app will not restart.",
+    );
     ui.horizontal(|ui| {
         if ui
             .add_enabled(

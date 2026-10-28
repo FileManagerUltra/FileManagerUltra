@@ -71,21 +71,16 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let mut open = true;
     let mut close = false;
     let mut apply = None;
-    egui::Window::new("Properties")
+    crate::dialog_style::window(ctx, tokens, "Properties", &mut open)
         .id(Id::NULL.with("fm-properties"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(crate::dialogs::frame(tokens))
         .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
             egui::Grid::new("fm-properties-grid")
                 .num_columns(2)
                 .spacing([tokens.padding * 3.0, tokens.padding])
                 .show(ui, |ui| {
                     let row = |ui: &mut egui::Ui, label: &str, value: String| {
-                        ui.label(tokens.muted(label));
+                        crate::dialog_style::hint(ui, tokens, label);
                         ui.add(egui::Label::new(RichText::new(value).color(tokens.text)).wrap());
                         ui.end_row();
                     };
@@ -133,7 +128,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                         );
                     }
                     if info.unreadable > 0 {
-                        ui.label(tokens.muted("Unreadable"));
+                        crate::dialog_style::hint(ui, tokens, "Unreadable");
                         ui.label(
                             RichText::new(format!("{} folders could not be read", info.unreadable))
                                 .color(tokens.warning),
@@ -168,7 +163,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     }
                 });
             } else if items.len() == 1 {
-                ui.label(tokens.muted("Permissions are not available here."));
+                crate::dialog_style::hint(ui, tokens, "Permissions are not available here.");
             }
             ui.separator();
             ui.horizontal(|ui| {
@@ -188,7 +183,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             d.remove_temp::<(String, u32)>(edit_id());
         }
     });
-    if let Some(mode) = apply {
+    if let Some(mode) = apply.filter(|_| open && !close) {
         let sources: Vec<String> = items.iter().map(|u| u.to_string()).collect();
         s.dispatch_or_notice(
             "file.chmod",
@@ -202,17 +197,17 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
 
 /// The rwx checkbox grid and the special bits, editing `mode`.
 fn permissions(ui: &mut egui::Ui, tokens: &Tokens, mode: &mut u32) {
-    ui.label(tokens.muted(format!(
-        "Permissions  {}  ({:04o})",
-        mode_string(*mode),
-        *mode
-    )));
+    crate::dialog_style::hint(
+        ui,
+        tokens,
+        format!("Permissions  {}  ({:04o})", mode_string(*mode), *mode),
+    );
     egui::Grid::new("fm-properties-perms")
         .num_columns(4)
         .show(ui, |ui| {
             ui.label("");
             for h in ["Read", "Write", "Execute"] {
-                ui.label(tokens.muted(h));
+                crate::dialog_style::hint(ui, tokens, h);
             }
             ui.end_row();
             for (label, shift) in CLASSES {

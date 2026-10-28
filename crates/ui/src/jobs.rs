@@ -11,16 +11,16 @@ fn open_id() -> Id {
     Id::NULL.with("fm-jobs-open")
 }
 
-/// Whether the panel should currently be visible: explicitly toggled, or something needs the
-/// user's attention (a running job or a failure report).
+/// Explicit visibility overrides automatic opening for jobs, failures and updates.
 pub fn panel_visible(ctx: &Context, s: &Session) -> bool {
-    let toggled = ctx.data(|d| d.get_temp::<bool>(open_id())).unwrap_or(false);
-    toggled
-        || crate::updates::available(s)
-        || s.fileops.jobs().iter().any(|j| {
-            j.state.is_running()
-                || matches!(j.state, OpState::Failed(_))
-                || j.summary.as_ref().is_some_and(|x| x.failed_count > 0)
+    ctx.data(|d| d.get_temp::<bool>(open_id()))
+        .unwrap_or_else(|| {
+            crate::updates::available(s)
+                || s.fileops.jobs().iter().any(|j| {
+                    j.state.is_running()
+                        || matches!(j.state, OpState::Failed(_))
+                        || j.summary.as_ref().is_some_and(|x| x.failed_count > 0)
+                })
         })
 }
 
@@ -48,7 +48,22 @@ pub fn indicator_text(s: &Session) -> String {
         .collect();
     match running.as_slice() {
         [] if crate::updates::available(s) => "Update available".into(),
-        [] => String::new(),
+        [] => {
+            let failed = s
+                .fileops
+                .jobs()
+                .iter()
+                .filter(|j| {
+                    matches!(j.state, OpState::Failed(_))
+                        || j.summary.as_ref().is_some_and(|x| x.failed_count > 0)
+                })
+                .count();
+            match failed {
+                0 => String::new(),
+                1 => "1 job needs attention".into(),
+                n => format!("{n} jobs need attention"),
+            }
+        }
         [one] => match one.progress.bytes.fraction() {
             Some(f) => format!("{} · {:.0}%", one.label, f * 100.0),
             None => one.label.clone(),
@@ -71,7 +86,7 @@ pub fn indicator(ui: &mut Ui, s: &Session, tokens: &Tokens) {
         .clicked()
     {
         let ctx = ui.ctx().clone();
-        let now = ctx.data(|d| d.get_temp::<bool>(open_id())).unwrap_or(false);
+        let now = panel_visible(&ctx, s);
         ctx.data_mut(|d| d.insert_temp(open_id(), !now));
     }
 }
@@ -130,19 +145,13 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         .collect();
     let mut cancel = Vec::new();
     let mut dismiss = Vec::new();
-    egui::Window::new("Jobs")
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Jobs", &mut open)
         .id(Id::NULL.with("fm-jobs-panel"))
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -32.0))
-        .frame(
-            egui::Frame::window(&egui::Style::default())
-                .fill(tokens.panel)
-                .stroke(egui::Stroke::new(tokens.border_width, tokens.border))
-                .corner_radius(tokens.corner_radius)
-                .inner_margin(egui::Margin::same(tokens.padding as i8)),
-        )
+        .pivot(egui::Align2::RIGHT_BOTTOM)
+        .default_pos(ctx.content_rect().right_bottom() + egui::vec2(-8.0, -32.0))
         .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
             ui.set_min_width(300.0);
             if crate::updates::available(s) {
                 crate::updates::show(ui, s, tokens);
@@ -151,33 +160,25 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 }
             }
             if rows.is_empty() && !crate::updates::available(s) {
-                ui.label(tokens.muted("No jobs"));
+                crate::dialog_style::hint(ui, tokens, "No jobs");
             }
             for row in &rows {
-                ui.label(
-                    RichText::new(&row.label)
-                        .color(tokens.text)
-                        .font(tokens.font()),
-                );
+                ui.label(RichText::new(&row.label).color(tokens.text));
                 if row.running {
                     let bar = egui::ProgressBar::new(row.fraction.unwrap_or(0.0) as f32)
                         .fill(tokens.accent);
                     ui.add(bar);
                     if !row.rate.is_empty() {
-                        ui.label(tokens.muted(&row.rate));
+                        crate::dialog_style::hint(ui, tokens, &row.rate);
                     }
-                    ui.label(tokens.muted(&row.current));
+                    crate::dialog_style::hint(ui, tokens, &row.current);
                     if ui.button("Cancel").clicked() {
                         cancel.push(row.id);
                     }
                 } else {
-                    ui.label(tokens.muted(&row.status));
+                    crate::dialog_style::hint(ui, tokens, &row.status);
                     for (item, err) in &row.failures {
-                        ui.label(
-                            RichText::new(format!("{item}: {err}"))
-                                .color(tokens.error)
-                                .font(tokens.font()),
-                        );
+                        ui.label(RichText::new(format!("{item}: {err}")).color(tokens.error));
                     }
                     if ui.button("Dismiss").clicked() {
                         dismiss.push(row.id);
@@ -186,6 +187,9 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 ui.separator();
             }
         });
+    if !open {
+        ctx.data_mut(|d| d.insert_temp(open_id(), false));
+    }
     for id in cancel {
         s.dispatch_or_notice("job.cancel", &json!({"job": id}));
     }

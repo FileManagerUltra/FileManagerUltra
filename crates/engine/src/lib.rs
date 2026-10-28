@@ -12,6 +12,7 @@ pub mod clipboard_cmds;
 pub mod column_cmds;
 pub mod commands;
 pub mod dircache;
+pub mod display_prefs_cmds;
 pub mod dnd_cmds;
 pub mod file_cmds;
 pub mod fileops;
@@ -20,6 +21,7 @@ pub mod goto_cmds;
 pub mod item_cmds;
 pub mod job_cmds;
 pub mod jobs;
+pub mod log_prefs_cmds;
 pub mod nav_cmds;
 pub mod network;
 pub mod open_cmds;
@@ -33,7 +35,9 @@ pub mod preview_cmds;
 pub mod preview_filter_cmds;
 pub mod preview_multi;
 pub mod preview_order_cmds;
+mod preview_prefs_cmds;
 pub mod preview_reload_cmds;
+pub mod preview_types;
 pub mod props_cmds;
 pub mod registry;
 pub mod remote;
@@ -62,8 +66,8 @@ pub use dnd_cmds::{DropAction, DropModifiers, DropOrigin, DropResolution, resolv
 pub use fileops::{FileOps, OpJob, OpRequest, OpState, OpSummary, SpeedMeter};
 pub use jobs::{JobCtx, JobEvent, JobId, JobLane, JobQueue};
 pub use prefs::{
-    Prefs, REMOTE_KEEPALIVE_RANGE, REMOTE_POLL_RANGE, REMOTE_TIMEOUT_RANGE, TerminalShell,
-    ThemePreference,
+    DateFormat, Density, Prefs, REMOTE_KEEPALIVE_RANGE, REMOTE_POLL_RANGE, REMOTE_TIMEOUT_RANGE,
+    SizeUnits, TerminalShell, ThemePreference,
 };
 pub use registry::{CommandSpec, Params, Registry};
 pub use session::{Session, ViewIndex, is_hidden};

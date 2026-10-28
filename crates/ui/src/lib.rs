@@ -4,6 +4,7 @@
 
 pub mod arrange;
 pub mod context_menu;
+pub mod dialog_style;
 pub mod dialogs;
 pub mod dnd;
 pub mod jobs;
@@ -14,6 +15,7 @@ pub mod pane;
 pub mod places;
 pub mod preferences;
 pub mod preview;
+mod preview_filters;
 pub mod properties;
 pub mod remote;
 pub mod search;

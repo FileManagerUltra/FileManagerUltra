@@ -254,17 +254,15 @@ impl TimePicker {
         actions: &mut Vec<Action>,
     ) {
         let mut open = self.open;
-        egui::Window::new("Log time range")
+        crate::dialog_style::window(ctx, tokens, "Log time range", &mut open)
             .id(Id::NULL.with(("pv-time", pane)))
-            .open(&mut open)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
             .show(ctx, |ui| {
+                crate::dialog_style::apply(ui, tokens);
+                crate::dialog_style::body(ui, |ui| {
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(152.0);
-                        ui.label(RichText::new("Quick ranges").color(tokens.accent).strong());
+                        crate::dialog_style::section_heading(ui, tokens, "Quick ranges");
                         ui.add_space(tokens.padding);
                         for (label, seconds) in QUICK_RANGES {
                             if ui
@@ -292,12 +290,8 @@ impl TimePicker {
                     );
                     ui.vertical(|ui| {
                         ui.set_width(292.0);
-                        ui.label(
-                            RichText::new("Custom time range")
-                                .color(tokens.accent)
-                                .strong(),
-                        );
-                        ui.label(RichText::new("UTC (UTC+00:00)").color(tokens.accent));
+                        crate::dialog_style::section_heading(ui, tokens, "Custom time range");
+                        ui.label("UTC (UTC+00:00)");
                         ui.label("Log timestamps keep their original offsets.");
                         ui.add_space(tokens.padding);
                         let from_changed = self.from.show(ui, "From");
@@ -308,15 +302,16 @@ impl TimePicker {
                             self.error = None;
                         }
                         ui.add_space(tokens.padding);
-                        ui.label(tokens.muted(if self.relative.is_some() {
+                        crate::dialog_style::hint(ui, tokens, if self.relative.is_some() {
                             "From is calculated when you Apply.\nTo stays open to include new rows with Live tail."
                         } else {
                             "Use HH:MM or HH:MM:SS.\nUncheck a bound for an open-ended range."
-                        }));
+                        });
                     });
                 });
+                });
                 ui.separator();
-                ui.label(tokens.muted("Filters apply to loaded records only."));
+                crate::dialog_style::hint(ui, tokens, "Filters apply to loaded records only.");
                 if let Some(error) = &self.error {
                     ui.label(RichText::new(error).color(tokens.error));
                 }
@@ -505,9 +500,33 @@ mod tests {
     }
 
     #[test]
-    fn time_window_stays_centered_when_the_viewport_resizes() {
+    fn title_bar_close_does_not_apply_time_edits() {
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 750.0))
+                .with_accessibility_check(false)
+                .build_ui_state(
+                    |ui, (picker, actions): &mut (TimePicker, Vec<Action>)| {
+                        if picker.open {
+                            picker.show(ui.ctx(), 1, &tokens, actions);
+                        }
+                    },
+                    (fixture(), Vec::new()),
+                );
+            harness.get_by_label("Last 1 hour").click();
+            harness.run();
+            harness.get_by_label("Close window").click();
+            harness.run();
+            assert!(!harness.state().0.open);
+            assert!(harness.state().1.is_empty());
+        }
+    }
+
+    #[test]
+    fn time_window_keeps_its_position_when_the_viewport_grows() {
         let ctx = Context::default();
         let mut picker = fixture();
+        let mut previous = None;
         for size in [egui::vec2(900.0, 650.0), egui::vec2(1100.0, 750.0)] {
             let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
             for _ in 0..3 {
@@ -523,10 +542,18 @@ mod tests {
             let window = ctx
                 .memory(|m| m.area_rect(Id::NULL.with(("pv-time", 1_u64))))
                 .expect("window");
-            assert!(
-                window.center().distance(rect.center()) < 1.0,
-                "dialog remains centered"
-            );
+            if let Some(previous) = previous {
+                assert!(
+                    window.center().distance(previous) < 2.0,
+                    "dialog keeps its position"
+                );
+            } else {
+                assert!(
+                    window.center().distance(rect.center()) < 2.0,
+                    "initially centered: {window:?}, viewport {rect:?}"
+                );
+            }
+            previous = Some(window.center());
         }
     }
 
@@ -551,6 +578,7 @@ mod tests {
                     },
                     (fixture(), Vec::new()),
                 );
+            harness.run_steps(4);
             harness.get_by_label("From time").click();
             harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
             harness.run();

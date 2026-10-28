@@ -64,6 +64,11 @@ fn is_local(entry: &Entry) -> bool {
 
 /// Build a thumbnail; `None` when the file is not a (decodable) image or video.
 pub fn make(vfs: &dyn Vfs, entry: &Entry, edge: u32) -> Option<Thumb> {
+    make_as(vfs, entry, edge, classify(&entry.name))
+}
+
+/// Build a thumbnail with the configured media association; decoding remains bounded.
+pub fn make_as(vfs: &dyn Vfs, entry: &Entry, edge: u32, kind: ThumbKind) -> Option<Thumb> {
     if !is_local(entry) || !entry.is_file() && !entry.is_symlink() {
         return None;
     }
@@ -71,7 +76,7 @@ pub fn make(vfs: &dyn Vfs, entry: &Entry, edge: u32) -> Option<Thumb> {
         image_edge: edge,
         ..Limits::default()
     };
-    let doc = match classify(&entry.name) {
+    let doc = match kind {
         ThumbKind::Image => {
             if entry.size.is_some_and(|s| s > limits.image_bytes) {
                 return None;

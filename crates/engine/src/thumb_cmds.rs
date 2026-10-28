@@ -70,7 +70,8 @@ pub(crate) fn request(
         .cloned()
         .collect();
     let vfs = s.backends.require(&subject.uri)?;
-    s.thumbs.want(pane, &vfs, &order, edge);
+    let rules = s.prefs.preview_filters.compile()?;
+    s.thumbs.want_configured(pane, &vfs, &order, edge, &rules);
     Ok(())
 }
 

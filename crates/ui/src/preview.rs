@@ -1469,14 +1469,30 @@ fn log_toolbar(ui: &mut Ui, pane: PaneId, v: &LogView, actions: &mut Vec<Action>
         ),
         Err(_) => (false, false, false),
     };
-    if ui
+    if !v.sources.is_empty() {
+        if ui
+            .add_enabled(!v.is_busy(), egui::Button::new("Refresh"))
+            .on_hover_text("Reload the selected files with their latest changes, keeping filters, ordering and display settings.")
+            .on_disabled_hover_text("Wait for the current preview operation to finish.")
+            .clicked()
+        {
+            actions.push(("preview.reload", json!({})));
+        }
+    } else if ui
         .add_enabled(can_follow, egui::Button::selectable(v.follow, "Live tail"))
-        .on_hover_text("Watch this file for new records. Scrolling up pauses live tail.")
-        .on_disabled_hover_text(if v.sources.is_empty() {
-            "This log cannot be followed"
-        } else {
-            "Live tail is available for single files only"
+        .on_hover_ui(|ui| {
+            log_filter_help(ui, "Live tail", |ui| {
+                ui.label("Checks file size on a background worker, including over SFTP and SMB.");
+                ui.label("Unchanged: no file content downloaded. Growth: reads only appended bytes from the last offset.");
+                ui.add_space(4.0);
+                ui.label("Opening loads a small header and the configured tail window, not the whole file by default.");
+                ui.label("Markers survive normal appends. If the file shrinks, its tail reloads and markers reset. Same-size replacements are not detected.");
+                ui.add_space(4.0);
+                ui.label("Set the polling interval and initial tail size in Preferences > Preview.");
+                ui.label("Scrolling up pauses live tail.");
+            });
         })
+        .on_disabled_hover_text("This log cannot be followed")
         .clicked()
     {
         actions.push(("preview.log.follow", json!({})));
@@ -1971,6 +1987,12 @@ mod tests {
                     harness.run();
                     harness.get_by_label("Expand log records");
                     harness.get_by_label("Turn off to collapse records to their first line.");
+                    harness.get_by_label("Live tail").hover();
+                    harness.run();
+                    harness.get_by_label("Unchanged: no file content downloaded. Growth: reads only appended bytes from the last offset.");
+                    harness.get_by_label(
+                        "Set the polling interval and initial tail size in Preferences > Preview.",
+                    );
                     for (button, help) in [
                         (
                             "Time",

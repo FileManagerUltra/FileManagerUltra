@@ -42,6 +42,44 @@ impl TerminalShell {
     }
 }
 
+/// Row spacing of listings and trees.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Density {
+    Compact,
+    #[default]
+    Normal,
+    Comfortable,
+}
+
+/// How file sizes are written.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SizeUnits {
+    /// KiB, MiB (1024).
+    #[default]
+    Binary,
+    /// kB, MB (1000).
+    Decimal,
+    /// Exact byte counts.
+    Bytes,
+}
+
+/// How modification times are written.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DateFormat {
+    /// 2026-10-28 13:40
+    #[default]
+    Iso,
+    /// 2026-10-28 13:40:05
+    IsoSeconds,
+    /// 10/28/2026 1:40 PM
+    Us,
+    /// 28/10/2026 13:40
+    Eu,
+}
+
 /// Last normal window geometry; only non-secret numeric values.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WindowGeometry {
@@ -86,6 +124,13 @@ pub struct Prefs {
     /// A folder in the preview pane counts (and thumbnails) every file below it.
     #[serde(default)]
     pub recursive_preview: bool,
+    #[serde(default = "default_log_poll_ms")]
+    pub log_poll_ms: u64,
+    /// Zero removes the initial-window limit, not the preview safety caps.
+    #[serde(default = "default_log_tail_mib")]
+    pub log_tail_mib: u64,
+    #[serde(default)]
+    pub preview_filters: crate::preview_types::PreviewFilters,
     /// Saved SFTP connections. Never holds a password or passphrase.
     #[serde(default)]
     pub profiles: Vec<Profile>,
@@ -110,6 +155,77 @@ pub struct Prefs {
     /// Shell for new terminal panes.
     #[serde(default)]
     pub terminal_shell: TerminalShell,
+    /// Accent colour as `#rrggbb`; `None` keeps the theme's own.
+    #[serde(default)]
+    pub accent: Option<String>,
+    #[serde(default)]
+    pub density: Density,
+    /// Interface text size in points.
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
+    /// Terminal text size in points.
+    #[serde(default = "default_font_size")]
+    pub terminal_font_size: f32,
+    #[serde(default)]
+    pub size_units: SizeUnits,
+    #[serde(default)]
+    pub date_format: DateFormat,
+    /// Start with dot-files visible.
+    #[serde(default)]
+    pub show_hidden: bool,
+    /// A single click opens a file or folder.
+    #[serde(default)]
+    pub single_click_open: bool,
+    /// Ask before a permanent delete.
+    #[serde(default = "default_true")]
+    pub confirm_delete: bool,
+    /// Ask before running a program.
+    #[serde(default = "default_true")]
+    pub confirm_run: bool,
+    #[serde(default = "default_thumb_memory")]
+    pub thumb_memory_mib: u64,
+    #[serde(default = "default_thumb_disk")]
+    pub thumb_disk_mib: u64,
+    /// Parent folder of the thumbnail cache; `None` uses the platform cache directory.
+    #[serde(default)]
+    pub thumb_cache_dir: Option<String>,
+    /// Longest a preview may take to render.
+    #[serde(default = "default_preview_secs")]
+    pub preview_time_secs: u64,
+}
+
+pub const FONT_SIZE_RANGE: std::ops::RangeInclusive<f32> = 9.0..=24.0;
+pub const THUMB_MEMORY_RANGE: std::ops::RangeInclusive<u64> = 32..=2048;
+pub const THUMB_DISK_RANGE: std::ops::RangeInclusive<u64> = 32..=8192;
+pub const PREVIEW_TIME_RANGE: std::ops::RangeInclusive<u64> = 2..=120;
+
+fn default_font_size() -> f32 {
+    14.0
+}
+fn default_thumb_memory() -> u64 {
+    192
+}
+fn default_thumb_disk() -> u64 {
+    256
+}
+fn default_preview_secs() -> u64 {
+    15
+}
+
+/// An absolute, sane folder path for the thumbnail cache.
+pub fn valid_cache_parent(dir: &Path) -> bool {
+    let text = dir.to_string_lossy();
+    dir.is_absolute() && text.len() <= 4096 && !text.chars().any(char::is_control)
+}
+
+/// Parse `#rrggbb` into its channels.
+pub fn parse_hex_color(text: &str) -> Option<[u8; 3]> {
+    let hex = text.strip_prefix('#')?;
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    let channel = |i: usize| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok();
+    Some([channel(0)?, channel(2)?, channel(4)?])
 }
 
 /// Most bookmarks kept; longest bookmark name / uri.
@@ -147,6 +263,16 @@ fn default_zoom() -> f32 {
 pub const REMOTE_POLL_RANGE: std::ops::RangeInclusive<u64> = 1..=60;
 pub const REMOTE_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 2..=120;
 pub const REMOTE_KEEPALIVE_RANGE: std::ops::RangeInclusive<u64> = 1..=60;
+pub const LOG_POLL_RANGE: std::ops::RangeInclusive<u64> = 100..=60_000;
+pub const LOG_TAIL_RANGE: std::ops::RangeInclusive<u64> = 1..=64;
+
+fn default_log_poll_ms() -> u64 {
+    500
+}
+
+fn default_log_tail_mib() -> u64 {
+    8
+}
 
 fn default_remote_poll() -> u64 {
     5
@@ -159,6 +285,28 @@ fn default_remote_keepalive() -> u64 {
 }
 
 impl Prefs {
+    pub fn log_poll(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(
+            self.log_poll_ms
+                .clamp(*LOG_POLL_RANGE.start(), *LOG_POLL_RANGE.end()),
+        )
+    }
+
+    pub fn log_limits(&self) -> fm_preview::log::LogLimits {
+        let limits = fm_preview::log::LogLimits::default();
+        let initial_tail = if self.log_tail_mib == 0 {
+            limits.max_bytes
+        } else {
+            self.log_tail_mib
+                .clamp(*LOG_TAIL_RANGE.start(), *LOG_TAIL_RANGE.end())
+                << 20
+        };
+        fm_preview::log::LogLimits {
+            initial_tail,
+            ..limits
+        }
+    }
+
     /// Push the SFTP timeouts to the backend (call after load and after every change).
     pub fn apply_sftp(&self) {
         fm_fs_sftp::set_timeouts(
@@ -282,6 +430,9 @@ impl Default for Prefs {
             last_dir: None,
             retarget_links: true,
             recursive_preview: false,
+            log_poll_ms: default_log_poll_ms(),
+            log_tail_mib: default_log_tail_mib(),
+            preview_filters: crate::preview_types::PreviewFilters::default(),
             profiles: Vec::new(),
             remote_poll_secs: default_remote_poll(),
             remote_timeout_secs: default_remote_timeout(),
@@ -290,11 +441,63 @@ impl Default for Prefs {
             zoom: default_zoom(),
             bookmarks: Vec::new(),
             terminal_shell: TerminalShell::default(),
+            accent: None,
+            density: Density::default(),
+            font_size: default_font_size(),
+            terminal_font_size: default_font_size(),
+            size_units: SizeUnits::default(),
+            date_format: DateFormat::default(),
+            show_hidden: false,
+            single_click_open: false,
+            confirm_delete: true,
+            confirm_run: true,
+            thumb_memory_mib: default_thumb_memory(),
+            thumb_disk_mib: default_thumb_disk(),
+            thumb_cache_dir: None,
+            preview_time_secs: default_preview_secs(),
         }
     }
 }
 
 impl Prefs {
+    fn clamp_f32(value: f32, default: f32) -> f32 {
+        if value.is_finite() {
+            value.clamp(*FONT_SIZE_RANGE.start(), *FONT_SIZE_RANGE.end())
+        } else {
+            default
+        }
+    }
+
+    /// Interface font size, safe against hand-edited values.
+    pub fn ui_font_size(&self) -> f32 {
+        Self::clamp_f32(self.font_size, default_font_size())
+    }
+
+    pub fn term_font_size(&self) -> f32 {
+        Self::clamp_f32(self.terminal_font_size, default_font_size())
+    }
+
+    /// The accent override, if it is a valid colour.
+    pub fn accent_rgb(&self) -> Option<[u8; 3]> {
+        self.accent.as_deref().and_then(parse_hex_color)
+    }
+
+    /// Where thumbnails live: a `thumbs` folder inside the chosen directory (so clearing
+    /// or pruning never touches the user's own files), else the platform cache.
+    pub fn thumb_cache_path(&self) -> Option<PathBuf> {
+        match self.thumb_cache_dir.as_deref().map(Path::new) {
+            Some(dir) if valid_cache_parent(dir) => Some(dir.join("thumbs")),
+            _ => default_cache_dir().map(|d| d.join("thumbs")),
+        }
+    }
+
+    pub fn preview_budget(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(
+            self.preview_time_secs
+                .clamp(*PREVIEW_TIME_RANGE.start(), *PREVIEW_TIME_RANGE.end()),
+        )
+    }
+
     /// The zoom to apply, safe against hand-edited values (NaN, out of range).
     pub fn zoom_factor(&self) -> f32 {
         if self.zoom.is_finite() {
@@ -339,6 +542,10 @@ pub fn load(path: &Path) -> Prefs {
         Err(_) => return Prefs::default(),
     };
     let mut prefs: Prefs = toml::from_str(&text).unwrap_or_default();
+    if let Err(error) = prefs.preview_filters.compile() {
+        eprintln!("Invalid preview filename filters; restoring defaults: {error}");
+        prefs.preview_filters = crate::preview_types::PreviewFilters::default();
+    }
     // A hand-edited file may hold junk bookmarks: drop them rather than the whole file.
     prefs.bookmarks.retain(Bookmark::is_valid);
     prefs.bookmarks.truncate(MAX_BOOKMARKS);
@@ -533,16 +740,31 @@ mod tests {
             [
                 "bookmarks",
                 "check_updates",
+                "confirm_delete",
+                "confirm_run",
+                "date_format",
+                "density",
+                "font_size",
                 "last_dir",
+                "log_poll_ms",
+                "log_tail_mib",
+                "preview_filters",
+                "preview_time_secs",
                 "profiles",
                 "recursive_preview",
                 "remote_keepalive_secs",
                 "remote_poll_secs",
                 "remote_timeout_secs",
                 "retarget_links",
+                "show_hidden",
+                "single_click_open",
+                "size_units",
                 "smb_require_encryption",
+                "terminal_font_size",
                 "terminal_shell",
                 "theme",
+                "thumb_disk_mib",
+                "thumb_memory_mib",
                 "window_geometry",
                 "window_maximized",
                 "zoom"

@@ -27,6 +27,8 @@ struct App {
     config_dir: Option<PathBuf>,
     /// `(pref, dark)` currently applied to egui; re-applied when either changes.
     applied: (ThemePreference, bool),
+    /// Tokens currently applied (accent, density and sizes included).
+    look: theme::Tokens,
     /// Set once the native window title has been explicitly sent (see `ui`).
     title_sent: bool,
     was_focused: bool,
@@ -50,11 +52,17 @@ impl App {
             ctx.set_zoom_factor(zoom);
         }
         let dark = ctx.theme() == egui::Theme::Dark;
-        if (pref, dark) == self.applied {
+        fm_ui::listing::set_display(
+            self.session.prefs.size_units,
+            self.session.prefs.date_format,
+        );
+        let look = theme::Tokens::resolve_with(&self.session.prefs, dark);
+        if (pref, dark) == self.applied && look == self.look {
             return;
         }
         self.applied = (pref, dark);
-        theme::apply_to(ctx, &theme::Tokens::resolve(pref, dark));
+        self.look = look;
+        theme::apply_to(ctx, &look);
     }
 }
 
@@ -360,13 +368,13 @@ impl eframe::App for App {
         egui::Panel::top("menu_bar").show(ui, |ui| {
             menu::menu_bar(ui, &mut self.session, &mut self.dialogs);
         });
-        let tab_tokens = theme::Tokens::resolve(self.session.prefs.theme, self.applied.1);
+        let tab_tokens = self.look;
         egui::Panel::top("workspace_tabs").show(ui, |ui| {
             fm_ui::workspaces::tab_bar(ui, &mut self.session, &tab_tokens, &mut self.dialogs);
         });
         self.persist_workspaces(&ctx, false);
 
-        let tokens = theme::Tokens::resolve(self.session.prefs.theme, self.applied.1);
+        let tokens = self.look;
         egui::Panel::bottom("status_bar").show(ui, |ui| {
             let focused = self.session.layout.focused();
             let (count, selected) = {
@@ -466,24 +474,17 @@ impl eframe::App for App {
 
         if self.session.about_open {
             let mut open = self.session.about_open;
-            egui::Window::new("About")
-                .collapsible(false)
-                .movable(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .open(&mut open)
-                .show(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        if let Some(logo) = logo_texture(&ctx) {
-                            ui.add(
-                                egui::Image::new(&logo).fit_to_exact_size(egui::vec2(96.0, 96.0)),
-                            );
-                        }
-                        ui.heading(fm_brand::APP_NAME);
-                        ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
-                        ui.label(fm_brand::ORG_NAME);
-                    });
+            fm_ui::dialog_style::window(&ctx, &tokens, "About", &mut open).show(ui, |ui| {
+                fm_ui::dialog_style::apply(ui, &tokens);
+                ui.vertical_centered(|ui| {
+                    if let Some(logo) = logo_texture(&ctx) {
+                        ui.add(egui::Image::new(&logo).fit_to_exact_size(egui::vec2(96.0, 96.0)));
+                    }
+                    ui.heading(fm_brand::APP_NAME);
+                    ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
+                    ui.label(fm_brand::ORG_NAME);
                 });
+            });
             self.session.about_open = open;
         }
 
@@ -520,6 +521,8 @@ fn main() -> eframe::Result {
         }
     };
     session.prefs = prefs;
+    session.show_hidden = session.prefs.show_hidden;
+    fm_engine::display_prefs_cmds::apply_runtime(&session.prefs, &session);
     if session.prefs.check_updates
         && let Err(err) = session.updates.check(false)
     {
@@ -529,9 +532,14 @@ fn main() -> eframe::Result {
     if let Some(dir) = &config_dir {
         session.remote.set_config_dir(dir.clone());
     }
-    session
+    if !session
         .thumbs
-        .set_cache_dir(fm_engine::prefs::default_cache_dir().map(|d| d.join("thumbs")));
+        .set_cache_dir(session.prefs.thumb_cache_path())
+    {
+        session
+            .thumbs
+            .set_cache_dir(fm_engine::prefs::default_cache_dir().map(|d| d.join("thumbs")));
+    }
     if let Some(dir) = &config_dir
         && let Some(text) = fm_engine::workspace::load_file(dir)
         && let Some(notice) = session.workspace_startup(&text)
@@ -584,11 +592,13 @@ fn main() -> eframe::Result {
             cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
             cc.egui_ctx.set_zoom_factor(session.prefs.zoom_factor());
             let dark = cc.egui_ctx.theme() == egui::Theme::Dark;
-            theme::apply_to(&cc.egui_ctx, &theme::Tokens::resolve(theme_pref, dark));
+            let look = theme::Tokens::resolve_with(&session.prefs, dark);
+            theme::apply_to(&cc.egui_ctx, &look);
             Ok(Box::new(App {
                 session,
                 config_dir,
                 applied: (theme_pref, dark),
+                look,
                 title_sent: false,
                 was_focused: true,
                 dialogs: fm_ui::dialogs::Dialogs::default(),

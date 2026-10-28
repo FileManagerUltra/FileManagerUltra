@@ -8,7 +8,6 @@ use fm_engine::Session;
 use fm_engine::remote::SftpPrompt;
 use fm_vfs::VfsUri;
 
-use crate::dialogs::frame;
 use crate::theme::Tokens;
 
 /// Input of the popup, reseeded whenever the prompt changes.
@@ -129,80 +128,80 @@ pub fn sftp_prompt_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     } else {
         "Connect to Server"
     };
-    egui::Window::new(title)
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, title, &mut open)
         .id(id.with("window"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
-            egui::Grid::new(id.with("grid"))
-                .num_columns(2)
-                .spacing([tokens.padding, tokens.padding / 2.0])
-                .show(ui, |ui| {
-                    let mut enter = false;
-                    let host = text(ui, "Host", &mut form.host, false, 240.0);
-                    if form.focus_pending {
-                        host.request_focus();
-                        form.focus_pending = false;
-                    }
-                    enter |= host.lost_focus();
-                    enter |= text(ui, "Port", &mut form.port, false, 60.0).lost_focus();
-                    enter |= text(ui, "User", &mut form.user, false, 240.0).lost_focus();
-                    ui.label("Sign in with");
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut form.use_key, false, "Password");
-                        ui.selectable_value(&mut form.use_key, true, "Key file");
-                    });
-                    ui.end_row();
-                    if form.use_key {
-                        let caption = ui.label("Key file");
+            crate::dialog_style::apply(ui, tokens);
+            crate::dialog_style::body(ui, |ui| {
+                egui::Grid::new(id.with("grid"))
+                    .num_columns(2)
+                    .spacing([tokens.padding, tokens.padding / 2.0])
+                    .show(ui, |ui| {
+                        let mut enter = false;
+                        let host = text(ui, "Host", &mut form.host, false, 240.0);
+                        if form.focus_pending {
+                            host.request_focus();
+                            form.focus_pending = false;
+                        }
+                        enter |= host.lost_focus();
+                        enter |= text(ui, "Port", &mut form.port, false, 60.0).lost_focus();
+                        enter |= text(ui, "User", &mut form.user, false, 240.0).lost_focus();
+                        ui.label("Sign in with");
                         ui.horizontal(|ui| {
-                            let r = ui
-                                .add(
-                                    TextEdit::singleline(&mut form.key_path)
-                                        .hint_text("~/.ssh/id_ed25519")
-                                        .desired_width(160.0),
-                                )
-                                .labelled_by(caption.id);
-                            enter |= r.lost_focus();
-                            if ui.button("Browse…").clicked() {
-                                let home = fm_engine::workspace::home_location();
-                                form.picker = Some(home.join(".ssh").unwrap_or(home));
-                            }
+                            ui.radio_value(&mut form.use_key, false, "Password");
+                            ui.radio_value(&mut form.use_key, true, "Key file");
                         });
                         ui.end_row();
-                        enter |=
-                            text(ui, "Passphrase", &mut form.passphrase, true, 240.0).lost_focus();
-                    } else {
-                        enter |= text(ui, "Password", &mut form.password, true, 240.0).lost_focus();
-                    }
-                    enter |=
-                        text(ui, "Start folder", &mut form.start_dir, false, 240.0).lost_focus();
-                    let caption = ui.label("Save as");
-                    ui.add_enabled(
-                        !prompt.editing,
-                        TextEdit::singleline(&mut form.save_as)
-                            .hint_text("optional")
-                            .desired_width(240.0),
-                    )
-                    .labelled_by(caption.id);
-                    ui.end_row();
-                    submit |= enter && ui.input(|i| i.key_pressed(Key::Enter));
-                });
-            ui.add_space(tokens.padding);
-            if !form.use_key {
-                ui.radio_value(&mut form.remember, false, "Forget password immediately");
-                ui.radio_value(&mut form.remember, true, "Remember password until you quit");
-            }
-            ui.label(tokens.muted("Passwords are never written to disk."));
-            ui.add_space(tokens.padding);
-            if busy {
-                ui.label(tokens.muted("Connecting…"));
-            } else if let Some(error) = &prompt.error {
-                ui.add(egui::Label::new(egui::RichText::new(error).color(tokens.error)).wrap());
-            }
+                        if form.use_key {
+                            let caption = ui.label("Key file");
+                            ui.horizontal(|ui| {
+                                let r = ui
+                                    .add(
+                                        TextEdit::singleline(&mut form.key_path)
+                                            .hint_text("~/.ssh/id_ed25519")
+                                            .desired_width(160.0),
+                                    )
+                                    .labelled_by(caption.id);
+                                enter |= r.lost_focus();
+                                if ui.button("Browse…").clicked() {
+                                    let home = fm_engine::workspace::home_location();
+                                    form.picker = Some(home.join(".ssh").unwrap_or(home));
+                                }
+                            });
+                            ui.end_row();
+                            enter |= text(ui, "Passphrase", &mut form.passphrase, true, 240.0)
+                                .lost_focus();
+                        } else {
+                            enter |=
+                                text(ui, "Password", &mut form.password, true, 240.0).lost_focus();
+                        }
+                        enter |= text(ui, "Start folder", &mut form.start_dir, false, 240.0)
+                            .lost_focus();
+                        let caption = ui.label("Save as");
+                        ui.add_enabled(
+                            !prompt.editing,
+                            TextEdit::singleline(&mut form.save_as)
+                                .hint_text("optional")
+                                .desired_width(240.0),
+                        )
+                        .labelled_by(caption.id);
+                        ui.end_row();
+                        submit |= enter && ui.input(|i| i.key_pressed(Key::Enter));
+                    });
+                ui.add_space(tokens.padding);
+                if !form.use_key {
+                    ui.radio_value(&mut form.remember, false, "Forget password immediately");
+                    ui.radio_value(&mut form.remember, true, "Remember password until you quit");
+                }
+                crate::dialog_style::hint(ui, tokens, "Passwords are never written to disk.");
+                ui.add_space(tokens.padding);
+                if busy {
+                    crate::dialog_style::hint(ui, tokens, "Connecting…");
+                } else if let Some(error) = &prompt.error {
+                    ui.add(egui::Label::new(egui::RichText::new(error).color(tokens.error)).wrap());
+                }
+            });
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(!busy, egui::Button::new("Connect"))
@@ -228,7 +227,7 @@ pub fn sftp_prompt_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         // Escape closes the picker first, not the whole popup.
         cancel = false;
     }
-    if cancel {
+    if cancel || !open {
         ctx.data_mut(|d| d.remove::<SftpForm>(id));
         s.dispatch_or_notice("remote.connect.cancel", &Value::Null);
         return;
@@ -288,22 +287,19 @@ fn key_picker(ctx: &Context, s: &mut Session, tokens: &Tokens, dir: &VfsUri) -> 
         };
     }
     let entries = s.dirs.entries(dir);
-    egui::Window::new("Choose Key File")
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Choose Key File", &mut open)
         .id(Id::NULL.with("fm-key-picker"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
-            ui.label(tokens.muted(display_path(dir)));
+            crate::dialog_style::apply(ui, tokens);
+            crate::dialog_style::hint(ui, tokens, display_path(dir));
             ui.add_space(tokens.padding);
             egui::ScrollArea::vertical()
                 .max_height(260.0)
                 .min_scrolled_width(320.0)
                 .show(ui, |ui| {
                     if let Some(parent) = dir.parent()
-                        && ui.selectable_label(false, "📁 ..").clicked()
+                        && ui.selectable_label(false, "../").clicked()
                     {
                         out = Picked::Go(parent);
                     }
@@ -317,9 +313,9 @@ fn key_picker(ctx: &Context, s: &mut Session, tokens: &Tokens, dir: &VfsUri) -> 
                     for e in rows {
                         let dir_like = e.is_dir_like();
                         let label = if dir_like {
-                            format!("📁 {}", e.name)
+                            format!("{}/", e.name)
                         } else {
-                            format!("    {}", e.name)
+                            e.name.clone()
                         };
                         if ui.selectable_label(false, label).clicked() {
                             out = if dir_like {
@@ -330,7 +326,7 @@ fn key_picker(ctx: &Context, s: &mut Session, tokens: &Tokens, dir: &VfsUri) -> 
                         }
                     }
                     if matches!(state, DirState::Loading { .. }) {
-                        ui.label(tokens.muted("Loading…"));
+                        crate::dialog_style::hint(ui, tokens, "Loading…");
                     }
                 });
             ui.add_space(tokens.padding);
@@ -338,7 +334,7 @@ fn key_picker(ctx: &Context, s: &mut Session, tokens: &Tokens, dir: &VfsUri) -> 
                 out = Picked::Close;
             }
         });
-    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+    if !open || ctx.input(|i| i.key_pressed(Key::Escape)) {
         out = Picked::Close;
     }
     out

@@ -1,7 +1,7 @@
 //! Workspace tab bar and the saved-workspaces section of Preferences. Pure view over
 //! `Session::workspaces`: every action is a `workspace.*` command.
 
-use egui::{Rect, RichText, Sense, Ui};
+use egui::{Rect, Sense, Ui};
 use serde_json::{Value, json};
 
 use fm_engine::Session;
@@ -154,9 +154,10 @@ pub fn tab_bar(ui: &mut Ui, s: &mut Session, tokens: &Tokens, dialogs: &mut Dial
 
 /// Preferences: the saved workspaces and their startup behaviour.
 pub fn prefs_section(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
-    ui.label(RichText::new("Workspaces").color(tokens.accent).strong());
     if s.workspaces.saved.is_empty() {
-        ui.label(tokens.muted("No saved workspaces (Workspace ▸ Save)."));
+        ui.label(
+            egui::RichText::new("No saved workspaces (Workspace > Save).").color(tokens.text_muted),
+        );
         return;
     }
     let mut actions: Vec<Action> = Vec::new();
@@ -165,17 +166,25 @@ pub fn prefs_section(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
         .spacing([tokens.padding * 2.0, tokens.padding])
         .show(ui, |ui| {
             for h in ["Name", "Auto-save", "At startup", "Default", ""] {
-                ui.label(tokens.muted(h));
+                ui.label(egui::RichText::new(h).color(tokens.text_muted));
             }
             ui.end_row();
             for w in &s.workspaces.saved {
                 ui.label(&w.name);
-                for (id, mut on) in [
-                    ("workspace.autosave", w.auto_save),
-                    ("workspace.startup", w.open_at_startup),
-                    ("workspace.default", w.default),
+                for (id, label, mut on) in [
+                    ("workspace.autosave", "Auto-save", w.auto_save),
+                    ("workspace.startup", "At startup", w.open_at_startup),
+                    ("workspace.default", "Default", w.default),
                 ] {
-                    if ui.checkbox(&mut on, "").changed() {
+                    let response = ui.checkbox(&mut on, "");
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::Role::CheckBox,
+                            response.enabled(),
+                            format!("{} {label}", w.name),
+                        )
+                    });
+                    if response.changed() {
                         actions.push((id, json!({ "name": w.name, "on": on })));
                     }
                 }
@@ -185,10 +194,13 @@ pub fn prefs_section(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
                 ui.end_row();
             }
         });
-    ui.label(tokens.muted(format!(
-        "{} of {MAX_SAVED} saved. With none marked for startup, the default workspace opens.",
-        s.workspaces.saved.len()
-    )));
+    ui.label(
+        egui::RichText::new(format!(
+            "{} of {MAX_SAVED} saved. With none marked for startup, the default workspace opens.",
+            s.workspaces.saved.len()
+        ))
+        .color(tokens.text_muted),
+    );
     for (id, params) in actions {
         s.dispatch_or_notice(id, &params);
     }

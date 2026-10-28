@@ -23,7 +23,6 @@ use crate::session::Session;
 /// Selection changes settle this long before a preview is rendered.
 pub const DEBOUNCE: Duration = Duration::from_millis(120);
 /// Follow re-checks the file this often.
-pub const FOLLOW_EVERY: Duration = Duration::from_millis(500);
 /// A render that takes longer is abandoned with an error card.
 pub const RENDER_BUDGET: Duration = Duration::from_secs(15);
 
@@ -109,6 +108,10 @@ impl LogView {
 
     pub fn is_busy(&self) -> bool {
         self.busy
+    }
+
+    pub(crate) fn reschedule_follow(&mut self) {
+        self.next_follow = Instant::now();
     }
 }
 
@@ -476,6 +479,8 @@ impl Session {
     fn start_render(&mut self, pane: PaneId) -> bool {
         let token = self.previews.token();
         let recursive = self.prefs.recursive_preview;
+        let log_limits = self.prefs.log_limits();
+        let filters = self.prefs.preview_filters.clone();
         let Some(slot) = self.previews.slots.get_mut(&pane) else {
             return false;
         };
@@ -518,7 +523,9 @@ impl Session {
             .map(|e| &e.uri)
             .ne(entries.iter().map(|e| &e.uri))
         {
-            slot.multi_window = LogLimits::default().initial_tail;
+            slot.multi_window = log_limits
+                .initial_tail
+                .min(crate::preview_multi::MAX_WINDOW);
         }
         slot.key = Some(entries.iter().map(|e| key_of(e, recursive)).collect());
         slot.subjects = entries.clone();
@@ -543,6 +550,7 @@ impl Session {
             }
         };
         let inbox = self.previews.inbox.clone();
+        let budget = self.prefs.preview_budget();
         if entries.len() > 1 {
             let window = slot.multi_window;
             if entries.len() > crate::preview_multi::MAX_SOURCES {
@@ -556,7 +564,14 @@ impl Session {
             let flag = cancel.0.clone();
             slot.scan = Some(cancel);
             self.jobs.submit(lane_for(entry.uri.scheme()), move |_ctx| {
-                let body = crate::preview_multi::render(vfs, entries, window, flag.clone());
+                let body = crate::preview_multi::render(
+                    vfs,
+                    entries,
+                    window,
+                    flag.clone(),
+                    filters,
+                    budget,
+                );
                 if !flag.load(std::sync::atomic::Ordering::Relaxed) {
                     PreviewHub::push(&inbox, Msg::BatchRendered { pane, token, body });
                 }
@@ -620,7 +635,7 @@ impl Session {
             return true;
         }
         self.jobs.submit(lane_for(entry.uri.scheme()), move |_ctx| {
-            let preview = render_budgeted(vfs, entry, recursive);
+            let preview = render_budgeted(vfs, entry, recursive, log_limits, filters, budget);
             PreviewHub::push(
                 &inbox,
                 Msg::Rendered {
@@ -655,11 +670,12 @@ impl Session {
             return false;
         };
         view.busy = true;
-        view.next_follow = now + FOLLOW_EVERY;
+        view.next_follow = now + self.prefs.log_poll();
         let doc = view.doc.clone();
         let inbox = self.previews.inbox.clone();
+        let lim = self.prefs.log_limits();
         self.jobs.submit(lane_for(entry.uri.scheme()), move |_ctx| {
-            let (limits, lim) = (Limits::default(), LogLimits::default());
+            let limits = Limits::default();
             let update = match doc.read() {
                 Ok(d) => log::follow_poll(&*vfs, &entry, &d, &limits, &lim),
                 Err(_) => Ok(FollowUpdate::Unchanged),
@@ -983,13 +999,26 @@ fn no_log() -> FmError {
     FmError::InvalidParams("the preview is not showing a log".to_string())
 }
 
-fn render_budgeted(vfs: Arc<dyn Vfs>, entry: Entry, recursive: bool) -> Preview {
-    run_budgeted(RENDER_BUDGET, move || {
-        fm_preview::render_with(
+fn render_budgeted(
+    vfs: Arc<dyn Vfs>,
+    entry: Entry,
+    recursive: bool,
+    logs: LogLimits,
+    filters: crate::preview_types::PreviewFilters,
+    budget: Duration,
+) -> Preview {
+    run_budgeted(budget, move || {
+        let rules = match filters.compile() {
+            Ok(rules) => rules,
+            Err(error) => return Preview::Error(error.to_string()),
+        };
+        fm_preview::render_configured(
             &*vfs,
             &entry,
             &Limits::default(),
             fm_preview::RenderOpts { recursive },
+            &logs,
+            rules.kind(&entry.name),
         )
     })
     .unwrap_or_else(|| Preview::Error("the preview took too long and was abandoned".into()))
@@ -1530,5 +1559,56 @@ mod tests {
         });
         assert_eq!(slow, None);
         assert_eq!(run_budgeted(Duration::from_secs(2), || 7), Some(7));
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn live_tail_schedules_configured_interval_and_changes_reschedule() {
+        let fs = fm_testkit::MemFs::new();
+        fs.put_str("/a.log", b"2024-05-01 10:00:00 INFO a\n")
+            .expect("file");
+        let uri = VfsUri::parse("/a.log").expect("uri");
+        let entry = fs.stat(&uri).expect("stat");
+        let doc = log::open_doc(&fs, &entry, &Limits::default()).expect("doc");
+        let mut s = Session::new().expect("session");
+        s.backends.register(Arc::new(fs));
+        let mut slot = PreviewSlot::new();
+        slot.subject = Some(entry);
+        slot.body = Body::Log(Box::new(LogView::new(doc)));
+        slot.log_mut().expect("log").follow = true;
+        s.previews.slots.insert(1, slot);
+        s.dispatch("prefs.preview.log", &serde_json::json!({"poll_ms": 2500}))
+            .expect("setting");
+        let now = Instant::now();
+        s.tick_log(1, now);
+        let view = s
+            .previews
+            .slots
+            .get_mut(&1)
+            .expect("slot")
+            .log_mut()
+            .expect("log");
+        assert_eq!(view.next_follow, now + Duration::from_millis(2500));
+        view.busy = false;
+        s.tick_log(1, now + Duration::from_millis(2499));
+        assert!(
+            !s.previews
+                .slot(1)
+                .expect("slot")
+                .log()
+                .expect("log")
+                .is_busy()
+        );
+        s.dispatch("prefs.preview.log", &serde_json::json!({"poll_ms": 100}))
+            .expect("setting");
+        s.tick_log(1, Instant::now());
+        assert!(
+            s.previews
+                .slot(1)
+                .expect("slot")
+                .log()
+                .expect("log")
+                .is_busy()
+        );
     }
 }

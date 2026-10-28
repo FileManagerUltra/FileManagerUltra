@@ -516,7 +516,11 @@ fn item(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs, id: &st
         button = button.shortcut_text(shortcut);
     }
     if ui.add_enabled(enabled, button).clicked() {
-        dispatch(session, dialogs, id);
+        if id == TERM_PASTE {
+            fm_ui::terminal::request_paste(ui.ctx());
+        } else {
+            dispatch(session, dialogs, id);
+        }
         ui.close();
     }
 }
@@ -755,6 +759,11 @@ pub fn consume_shortcuts(
     let files_focused = session.focused_kind().is_none_or(|k| k.is_files());
     for (id, shortcut) in table {
         if terminal && !terminal_shortcut(&shortcut) {
+            continue;
+        }
+        // Clipboard shortcuts arrive as `Event::Copy` / `Event::Paste`; the terminal widget
+        // needs those events (and their text/modifiers) to distinguish copy from shell input.
+        if terminal && (id == TERM_COPY || id == TERM_PASTE) {
             continue;
         }
         if typing && (id.starts_with("term.") || id.starts_with("pane.resize.")) {
@@ -1009,8 +1018,10 @@ mod tests {
                 "{key:?} {m:?}"
             );
         }
+        let copy = chord(&ctx, &mut session, Key::C, ctrl_shift);
+        assert!(copy.is_empty());
         let paste = chord(&ctx, &mut session, Key::V, ctrl_shift);
-        assert_eq!(paste, vec![TERM_PASTE]);
+        assert!(paste.is_empty());
         let swap = chord(&ctx, &mut session, Key::Tab, ctrl_shift);
         assert_eq!(swap, vec![PANE_SWAP]);
     }

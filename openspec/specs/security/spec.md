@@ -31,9 +31,11 @@ All parsers and entry points that touch attacker-controlled data — `VfsUri` pa
 The scaffolded preferences file SHALL contain only non-secret settings (theme, window state). Passwords, passphrases, private keys and session tokens SHALL NOT be serializable into it, and error/reporting paths SHALL redact credentials.
 
 #### Scenario: Prefs schema has no secret slots
+- **AND** log preview configuration stores only non-secret numeric `log_poll_ms` and `log_tail_mib`; zero tail size does not bypass preview safety caps, and hand-edited numeric values are clamped before scheduling or allocating
 - **WHEN** the `Prefs` type and its serialized form are inspected by test
 - **THEN** no field can hold a password/passphrase/token (the type is closed: theme + window fields only)
 - **AND** saved window geometry contains only bounded numeric size, position and scale-factor fields, using the existing owner-only atomic preferences writer
+- **AND** preview filters contain only non-secret filename patterns in 13 closed type groups, bounded to 256 bytes per pattern, 64 patterns and 1024 bytes per group, with no paths, list separators or control characters
 
 #### Scenario: Redaction in errors
 - **WHEN** a backend error message is constructed from a URI or connection string containing `user:password@host`

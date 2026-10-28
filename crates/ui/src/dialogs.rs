@@ -159,7 +159,7 @@ impl Dialogs {
             Dialog::Mkdir { dir, name } => {
                 let verdict = file_cmds::validate_new_name(s, dir, name, None);
                 let (go, cancel) = name_dialog(ctx, tokens, "New folder", name, &verdict, focus);
-                if (go || enter) && verdict.is_ok() {
+                if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         "file.mkdir",
                         &json!({"name": name.as_str(), "parent": dir.to_string()}),
@@ -172,7 +172,7 @@ impl Dialogs {
             Dialog::NewFile { dir, name } => {
                 let verdict = file_cmds::validate_new_name(s, dir, name, None);
                 let (go, cancel) = name_dialog(ctx, tokens, "New file", name, &verdict, focus);
-                if (go || enter) && verdict.is_ok() {
+                if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         "file.newfile",
                         &json!({"name": name.as_str(), "parent": dir.to_string()}),
@@ -185,7 +185,7 @@ impl Dialogs {
             Dialog::Rename { dir, current, name } => {
                 let verdict = file_cmds::validate_new_name(s, dir, name, Some(current));
                 let (go, cancel) = name_dialog(ctx, tokens, "Rename", name, &verdict, focus);
-                if (go || enter) && verdict.is_ok() {
+                if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     if name != current
                         && let Ok(uri) = dir.join(current)
                     {
@@ -205,7 +205,7 @@ impl Dialogs {
                     .map_err(|_| "1-40 characters, no control characters".to_string());
                 let (go, cancel) =
                     name_dialog(ctx, tokens, "Rename workspace", name, &verdict, focus);
-                if (go || enter) && verdict.is_ok() {
+                if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         "workspace.rename",
                         &json!({"tab": *tab, "name": name.as_str()}),
@@ -225,7 +225,7 @@ impl Dialogs {
                 };
                 let (go, cancel) =
                     name_dialog(ctx, tokens, "Rename bookmark", name, &verdict, focus);
-                if (go || enter) && verdict.is_ok() {
+                if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         "bookmark.rename",
                         &json!({"uri": uri.as_str(), "name": name.trim()}),
@@ -240,7 +240,7 @@ impl Dialogs {
                     .map(|_| ())
                     .map_err(|e| e.to_string());
                 let (go, cancel) = pattern_dialog(ctx, tokens, pattern, mode, &verdict, focus);
-                if (go || enter) && verdict.is_ok() {
+                if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         "edit.select_pattern",
                         &json!({"pattern": pattern.as_str(), "mode": *mode}),
@@ -251,7 +251,11 @@ impl Dialogs {
                 }
             }
             Dialog::ConfirmDelete { sources } => {
-                let (go, cancel) = confirm_delete(ctx, tokens, sources.len());
+                let (go, cancel) = if s.prefs.confirm_delete {
+                    confirm_delete(ctx, tokens, sources.len())
+                } else {
+                    (true, false)
+                };
                 if go {
                     let list: Vec<String> = sources.iter().map(|u| u.to_string()).collect();
                     s.dispatch_or_notice(
@@ -264,7 +268,11 @@ impl Dialogs {
                 }
             }
             Dialog::ConfirmRun { uri, name } => {
-                let (choice, cancel) = confirm_run(ctx, tokens, name);
+                let (choice, cancel) = if s.prefs.confirm_run {
+                    confirm_run(ctx, tokens, name)
+                } else {
+                    (Some(true), false)
+                };
                 let uri_s = uri.to_string();
                 match choice {
                     Some(run) => {
@@ -298,7 +306,7 @@ impl Dialogs {
                     "Move to"
                 };
                 let (go, cancel) = name_dialog(ctx, tokens, title, dest, &verdict, focus);
-                if (go || enter) && valid {
+                if !cancel && !esc && (go || enter) && valid {
                     let list: Vec<String> = sources.iter().map(|u| u.to_string()).collect();
                     s.dispatch_or_notice(command, &json!({"sources": list, "dest": dest.as_str()}));
                     false
@@ -331,15 +339,12 @@ fn name_dialog(
     focus: bool,
 ) -> (bool, bool) {
     let (mut go, mut cancel) = (false, false);
-    egui::Window::new(title)
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, title, &mut open)
         .id(Id::NULL.with("fm-name-dialog"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
-            let caption = ui.label(RichText::new(title).color(tokens.text).font(tokens.font()));
+            crate::dialog_style::apply(ui, tokens);
+            let caption = ui.label(RichText::new(title).color(tokens.text));
             let edit = ui.add(egui::TextEdit::singleline(text).desired_width(280.0));
             let edit = edit.labelled_by(caption.id);
             if focus {
@@ -350,7 +355,7 @@ fn name_dialog(
                     ui.label(" ");
                 }
                 Err(msg) => {
-                    ui.label(RichText::new(msg).color(tokens.error).font(tokens.font()));
+                    ui.label(RichText::new(msg).color(tokens.error));
                 }
             }
             ui.horizontal(|ui| {
@@ -365,7 +370,7 @@ fn name_dialog(
                 }
             });
         });
-    (go, cancel)
+    (go && open, cancel || !open)
 }
 
 /// Select by pattern: the pattern plus whether it replaces, extends or trims the selection.
@@ -378,18 +383,14 @@ fn pattern_dialog(
     focus: bool,
 ) -> (bool, bool) {
     let (mut go, mut cancel) = (false, false);
-    egui::Window::new("Select by pattern")
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Select by pattern", &mut open)
         .id(Id::NULL.with("fm-pattern-dialog"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
             let caption = ui.label(
                 RichText::new("Names matching (* ? [a-z], alternatives split by ;)")
-                    .color(tokens.text)
-                    .font(tokens.font()),
+                    .color(tokens.text),
             );
             let edit = ui.add(egui::TextEdit::singleline(pattern).desired_width(280.0));
             let edit = edit.labelled_by(caption.id);
@@ -414,7 +415,7 @@ fn pattern_dialog(
                     ui.label(" ");
                 }
                 Err(msg) => {
-                    ui.label(RichText::new(msg).color(tokens.error).font(tokens.font()));
+                    ui.label(RichText::new(msg).color(tokens.error));
                 }
             }
             ui.horizontal(|ui| {
@@ -429,7 +430,7 @@ fn pattern_dialog(
                 }
             });
         });
-    (go, cancel)
+    (go && open, cancel || !open)
 }
 
 /// Quitting or closing a workspace tab that has changes the user has not saved.
@@ -439,24 +440,17 @@ fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     };
     let quitting = prompt.after == fm_engine::workspace::AfterPrompt::Quit;
     let mut choice: Option<&str> = None;
-    egui::Window::new("Unsaved workspace changes")
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Unsaved workspace changes", &mut open)
         .id(Id::NULL.with("fm-unsaved-workspaces"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
             let noun = if prompt.names.len() == 1 {
                 "workspace has"
             } else {
                 "workspaces have"
             };
-            ui.label(
-                RichText::new(format!("These {noun} unsaved changes:"))
-                    .color(tokens.text)
-                    .font(tokens.font()),
-            );
+            ui.label(RichText::new(format!("These {noun} unsaved changes:")).color(tokens.text));
             for name in &prompt.names {
                 ui.label(RichText::new(format!("  {name}")).color(tokens.warning));
             }
@@ -479,7 +473,7 @@ fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 }
             });
         });
-    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+    if !open || ctx.input(|i| i.key_pressed(Key::Escape)) {
         choice = Some("cancel");
     }
     if let Some(choice) = choice {
@@ -493,24 +487,17 @@ fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
 
 fn confirm_delete(ctx: &Context, tokens: &Tokens, count: usize) -> (bool, bool) {
     let (mut go, mut cancel) = (false, false);
-    egui::Window::new("Delete permanently")
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Delete permanently", &mut open)
         .id(Id::NULL.with("fm-confirm-delete"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
             let noun = if count == 1 { "item" } else { "items" };
             ui.label(
-                RichText::new(format!("Permanently delete {count} {noun}?"))
-                    .color(tokens.text)
-                    .font(tokens.font()),
+                RichText::new(format!("Permanently delete {count} {noun}?")).color(tokens.text),
             );
             ui.label(
-                RichText::new("This cannot be undone and bypasses the trash.")
-                    .color(tokens.error)
-                    .font(tokens.font()),
+                RichText::new("This cannot be undone and bypasses the trash.").color(tokens.error),
             );
             ui.horizontal(|ui| {
                 if ui.button("Delete").clicked() {
@@ -521,30 +508,19 @@ fn confirm_delete(ctx: &Context, tokens: &Tokens, count: usize) -> (bool, bool) 
                 }
             });
         });
-    (go, cancel)
+    (go && open, cancel || !open)
 }
 
 /// `Some(true)` = run, `Some(false)` = open with the default application.
 fn confirm_run(ctx: &Context, tokens: &Tokens, name: &str) -> (Option<bool>, bool) {
     let (mut choice, mut cancel) = (None, false);
-    egui::Window::new("Run program?")
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Run program?", &mut open)
         .id(Id::NULL.with("fm-confirm-run"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
-            ui.label(
-                RichText::new(format!("\"{name}\" is a program."))
-                    .color(tokens.text)
-                    .font(tokens.font()),
-            );
-            ui.label(
-                RichText::new("Only run programs you trust.")
-                    .color(tokens.warning)
-                    .font(tokens.font()),
-            );
+            crate::dialog_style::apply(ui, tokens);
+            ui.label(RichText::new(format!("\"{name}\" is a program.")).color(tokens.text));
+            ui.label(RichText::new("Only run programs you trust.").color(tokens.warning));
             ui.horizontal(|ui| {
                 if ui.button("Run").clicked() {
                     choice = Some(true);
@@ -557,7 +533,7 @@ fn confirm_run(ctx: &Context, tokens: &Tokens, name: &str) -> (Option<bool>, boo
                 }
             });
         });
-    (choice, cancel)
+    (if open { choice } else { None }, cancel || !open)
 }
 
 /// Asks before a pane type switch ends a terminal that is running a command.
@@ -567,26 +543,18 @@ fn kind_switch_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     };
     let esc = ctx.input(|i| i.key_pressed(Key::Escape));
     let (mut go, mut cancel) = (false, esc);
-    egui::Window::new("End running process?")
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "End running process?", &mut open)
         .id(Id::NULL.with("fm-confirm-kind-switch"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
-            ui.label(
-                RichText::new("This terminal is running a command.")
-                    .color(tokens.text)
-                    .font(tokens.font()),
-            );
+            crate::dialog_style::apply(ui, tokens);
+            ui.label(RichText::new("This terminal is running a command.").color(tokens.text));
             ui.label(
                 RichText::new(format!(
                     "Switching to {} ends the terminal and everything running in it.",
                     kind.label()
                 ))
-                .color(tokens.error)
-                .font(tokens.font()),
+                .color(tokens.error),
             );
             ui.horizontal(|ui| {
                 if ui.button("End and switch").clicked() {
@@ -597,13 +565,13 @@ fn kind_switch_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 }
             });
         });
-    if go {
+    if !open || cancel {
+        s.pending_kind = None;
+    } else if go {
         s.dispatch_or_notice(
             "pane.kind.set",
             &json!({"kind": kind.as_str(), "pane": pane, "confirm": true}),
         );
-        s.pending_kind = None;
-    } else if cancel {
         s.pending_kind = None;
     }
 }
@@ -621,19 +589,15 @@ fn conflict_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         d.get_temp::<bool>(Id::NULL.with("fm-conflict-all"))
             .unwrap_or(false)
     });
-    egui::Window::new("File exists")
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "File exists", &mut open)
         .id(Id::NULL.with("fm-conflict-dialog"))
-        .collapsible(false)
-        .movable(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame(tokens))
         .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
             let name = conflict.existing.uri.file_name().unwrap_or("item");
             ui.label(
                 RichText::new(format!("\"{name}\" already exists in the destination."))
-                    .color(tokens.text)
-                    .font(tokens.font()),
+                    .color(tokens.text),
             );
             for (label, side) in [
                 ("Existing", &conflict.existing),
@@ -647,7 +611,7 @@ fn conflict_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     .modified
                     .map(crate::listing::format_mtime)
                     .unwrap_or_default();
-                ui.label(tokens.muted(format!("{label}: {size}  {when}")));
+                crate::dialog_style::hint(ui, tokens, format!("{label}: {size}  {when}"));
             }
             ui.checkbox(&mut all, "Apply to all");
             ui.horizontal(|ui| {
@@ -663,7 +627,7 @@ fn conflict_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 }
             });
         });
-    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+    if !open || ctx.input(|i| i.key_pressed(Key::Escape)) {
         choice = Some("cancel");
     }
     ctx.data_mut(|d| d.insert_temp(Id::NULL.with("fm-conflict-all"), all));

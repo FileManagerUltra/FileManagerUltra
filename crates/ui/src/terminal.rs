@@ -12,6 +12,14 @@ use fm_term::{MouseAction, MouseButton, MouseEvent, Snapshot};
 use crate::theme::Tokens;
 
 const PAD: f32 = 4.0;
+pub const MENU_PASTE_REQUESTED: &str = "fm-terminal-menu-paste-requested";
+
+pub fn request_paste(ctx: &egui::Context) {
+    ctx.data_mut(|data| {
+        data.insert_persisted(Id::NULL.with(MENU_PASTE_REQUESTED), true);
+    });
+    ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+}
 
 /// xterm modifier parameter: 1 + shift + 2*alt + 4*ctrl.
 fn mod_param(m: Modifiers) -> u8 {
@@ -121,7 +129,7 @@ struct Metrics {
 fn metrics(ui: &Ui, tokens: &Tokens) -> Metrics {
     let galley = ui
         .painter()
-        .layout_no_wrap("M".to_string(), tokens.font(), tokens.text);
+        .layout_no_wrap("M".to_string(), tokens.term_font(), tokens.text);
     Metrics {
         cw: galley.size().x.max(1.0),
         ch: galley.size().y.max(1.0),
@@ -218,7 +226,23 @@ fn forward_input(ui: &Ui, s: &mut Session, pane: PaneId, snap: &Snapshot) {
                 modifiers,
                 ..
             } => {
-                if modifiers.shift && !modifiers.ctrl && matches!(key, Key::PageUp | Key::PageDown)
+                if modifiers.shift
+                    && (modifiers.ctrl || modifiers.command || modifiers.mac_cmd)
+                    && !modifiers.alt
+                    && key == Key::C
+                {
+                    flush(s, &mut data);
+                    s.dispatch_or_notice("term.copy", &serde_json::Value::Null);
+                } else if modifiers.shift
+                    && (modifiers.ctrl || modifiers.command || modifiers.mac_cmd)
+                    && !modifiers.alt
+                    && key == Key::V
+                {
+                    flush(s, &mut data);
+                    request_paste(ui.ctx());
+                } else if modifiers.shift
+                    && !modifiers.ctrl
+                    && matches!(key, Key::PageUp | Key::PageDown)
                 {
                     scroll += if key == Key::PageUp {
                         i32::from(snap.rows) - 1
@@ -229,23 +253,32 @@ fn forward_input(ui: &Ui, s: &mut Session, pane: PaneId, snap: &Snapshot) {
                     data.push_str(&String::from_utf8_lossy(&bytes));
                 }
             }
-            // egui-winit turns Ctrl/Cmd+C/X/V into these events and drops the key press, so on
-            // platforms where Ctrl is not the clipboard modifier they must reach the shell as
-            // control bytes. On macOS Cmd+C/V stay copy/paste (Ctrl+C arrives as a key).
+            // egui-winit turns Ctrl/Cmd+C/X/V into these events and drops the key press.
             Event::Copy if cfg!(target_os = "macos") => {
                 flush(s, &mut data);
                 s.dispatch_or_notice("term.copy", &serde_json::Value::Null);
             }
             Event::Copy => data.push('\u{3}'),
             Event::Cut => data.push('\u{18}'),
-            Event::Paste(text) if cfg!(target_os = "macos") || mods.shift => {
-                flush(s, &mut data);
-                s.dispatch_or_notice(
-                    "term.paste",
-                    &serde_json::json!({ "pane": pane, "text": text }),
-                );
+            Event::Paste(text) => {
+                let menu_requested = ui.ctx().data_mut(|data| {
+                    let id = Id::NULL.with(MENU_PASTE_REQUESTED);
+                    let requested = data.get_persisted::<bool>(id).unwrap_or(false);
+                    if requested {
+                        data.insert_persisted(id, false);
+                    }
+                    requested
+                });
+                if cfg!(target_os = "macos") || menu_requested {
+                    flush(s, &mut data);
+                    s.dispatch_or_notice(
+                        "term.paste",
+                        &serde_json::json!({ "pane": pane, "text": text }),
+                    );
+                } else {
+                    data.push('\u{16}');
+                }
             }
-            Event::Paste(_) => data.push('\u{16}'),
             _ => {}
         }
     }
@@ -477,7 +510,7 @@ fn paint(
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 0.0, tokens.term_bg);
     let origin = rect.min + vec2(PAD, PAD);
-    let font = tokens.font();
+    let font = tokens.term_font();
     let selection = s.terminal_selection.filter(|x| x.pane == pane).map(|x| {
         if x.anchor <= x.head {
             (x.anchor, x.head)
@@ -578,7 +611,7 @@ fn paint(
             rect.right_top() + vec2(-PAD - 2.0, PAD),
             Align2::RIGHT_TOP,
             label,
-            tokens.font(),
+            tokens.term_font(),
             tokens.warning,
         );
     }
@@ -1000,6 +1033,136 @@ mod tests {
             egui::CentralPanel::default().show(ui, |ui| show(ui, s, 1, &tokens, true));
         });
         out.textures_delta.clear();
+    }
+
+    fn record_terminal_command(
+        s: &mut Session,
+        id: &str,
+        params: &fm_engine::Params,
+        key: Option<&str>,
+    ) -> Result<(), fm_vfs::FmError> {
+        let value = key
+            .and_then(|key| params.get(key))
+            .and_then(fm_engine::Params::as_str)
+            .unwrap_or_default();
+        s.clipboard_outbox = Some(format!("{id}:{value}"));
+        Ok(())
+    }
+
+    fn record_input(s: &mut Session, params: &fm_engine::Params) -> Result<(), fm_vfs::FmError> {
+        record_terminal_command(s, "term.input", params, Some("data"))
+    }
+
+    fn record_copy(s: &mut Session, params: &fm_engine::Params) -> Result<(), fm_vfs::FmError> {
+        record_terminal_command(s, "term.copy", params, None)
+    }
+
+    fn record_paste(s: &mut Session, params: &fm_engine::Params) -> Result<(), fm_vfs::FmError> {
+        record_terminal_command(s, "term.paste", params, Some("text"))
+    }
+
+    fn forwarded_input(events: Vec<Event>, modifiers: Modifiers) -> Option<String> {
+        forwarded_input_with_menu_paste(events, modifiers, false)
+    }
+
+    fn forwarded_input_with_menu_paste(
+        events: Vec<Event>,
+        modifiers: Modifiers,
+        menu_paste: bool,
+    ) -> Option<String> {
+        use fm_engine::{CommandSpec, Registry};
+
+        let mut s = Session::default();
+        s.registry = Registry::from_specs(vec![
+            CommandSpec {
+                id: "term.input",
+                label: "Terminal input test",
+                menu: &[],
+                shortcut: None,
+                params: "test",
+                enabled: |_| true,
+                run: record_input,
+            },
+            CommandSpec {
+                id: "term.copy",
+                label: "Terminal copy test",
+                menu: &[],
+                shortcut: None,
+                params: "test",
+                enabled: |_| true,
+                run: record_copy,
+            },
+            CommandSpec {
+                id: "term.paste",
+                label: "Terminal paste test",
+                menu: &[],
+                shortcut: None,
+                params: "test",
+                enabled: |_| true,
+                run: record_paste,
+            },
+        ])
+        .expect("registry");
+
+        let ctx = egui::Context::default();
+        if menu_paste {
+            request_paste(&ctx);
+        }
+        let events = std::iter::once(Event::ModifiersChanged(modifiers))
+            .chain(events)
+            .collect();
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| forward_input(ui, &mut s, 1, &Snapshot::default()),
+        );
+        out.textures_delta.clear();
+        s.clipboard_outbox
+    }
+
+    #[test]
+    fn clipboard_events_distinguish_terminal_shortcuts_from_control_input() {
+        let ctrl = Modifiers::CTRL;
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+
+        assert_eq!(
+            forwarded_input(vec![key(Key::C, ctrl_shift)], ctrl_shift).as_deref(),
+            Some("term.copy:")
+        );
+        assert_eq!(
+            forwarded_input(
+                vec![key(Key::V, ctrl_shift), Event::Paste("pasted".into()),],
+                ctrl_shift
+            )
+            .as_deref(),
+            Some("term.paste:pasted")
+        );
+        assert_eq!(
+            forwarded_input_with_menu_paste(vec![Event::Paste("menu pasted".into())], ctrl, true)
+                .as_deref(),
+            Some("term.paste:menu pasted")
+        );
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                forwarded_input(vec![Event::Copy], Modifiers::MAC_CMD).as_deref(),
+                Some("term.copy:")
+            );
+            assert_eq!(
+                forwarded_input(vec![Event::Paste("pasted".into())], Modifiers::MAC_CMD).as_deref(),
+                Some("term.paste:pasted")
+            );
+        } else {
+            assert_eq!(
+                forwarded_input(vec![Event::Copy], ctrl).as_deref(),
+                Some("term.input:\u{3}")
+            );
+            assert_eq!(
+                forwarded_input(vec![Event::Paste("pasted".into())], ctrl).as_deref(),
+                Some("term.input:\u{16}")
+            );
+        }
     }
 
     fn key(key: Key, modifiers: Modifiers) -> Event {

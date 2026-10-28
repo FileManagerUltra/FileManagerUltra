@@ -22,11 +22,30 @@ Reading and rendering SHALL happen off the UI thread, debounced while the cursor
 - **THEN** no frame waits on I/O and only the final entry's preview is shown
 
 ### Requirement: Content is identified by sniffing
-The renderer SHALL be chosen from magic bytes and text validity first and the extension only as a hint; unknown or binary content SHALL fall back to a hex dump with a metadata card.
+The renderer SHALL use the first matching configured filename association, with text validity protecting text-based renderers from binary input. Unmatched files SHALL use magic bytes and content detection without restoring removed filename associations; unknown binary content SHALL fall back to a hex dump with a metadata card.
 
 #### Scenario: Misleading extension
 - **WHEN** a PNG file is named `notes.txt`
 - **THEN** it is previewed as an image
+
+### Requirement: Configurable preview filename filters
+Preferences > Preview SHALL show, for each of Logs, Images, Video, Audio, PDF, Markdown, JSON, YAML, TOML, XML, HTML, CSV and Text, a collapsible group with a table of persisted filename patterns. Each pattern row is one case-insensitive full-filename glob (`*`, `?`, character classes or an exact name) that users can edit, add and remove. Groups SHALL be checked from top to bottom and the first match SHALL win; users SHALL be able to move groups up and down to change priority. A group with no rows disables filename matching for that type, not content detection. HTML and CSV SHALL use existing text rendering, not execute markup or introduce table rendering.
+
+Defaults SHALL cover supported extensions and common system logs (`syslog`, `messages`, `secure`, `maillog`, `cron`, `debug`, `dmesg`), including gzip and numeric/date rotations. Rotation patterns SHALL match a numeric-starting suffix using globs, not an exact rotation-name parser. Settings are stored as an ordered list of `{type, patterns}` groups; the older one-string-per-type form SHALL migrate automatically and missing or unreadable groups SHALL use defaults. A restore action SHALL reset all groups and order.
+
+#### Scenario: Custom associations apply immediately
+- **WHEN** the user removes the Logs rows and adds `*.trace` and `server-output`
+- **THEN** matching files use log preview and removed `.log` associations are not reapplied by filename fallback
+- **AND** existing single and multi-file previews refresh, and directory thumbnails follow configured image/video associations
+- **AND** all existing read, decoder, memory and time limits remain enforced
+
+#### Scenario: Overlap, invalid input and reset
+- **WHEN** the same filename matches multiple rows
+- **THEN** the first displayed group wins, and moving a group up or down changes the result
+- **WHEN** a row is empty, longer than 256 bytes, contains path separators, list separators (`;` `,` `|`) or control characters, or a group exceeds 64 rows or 1024 bytes in total
+- **THEN** it is rejected visibly without partially changing saved preferences
+- **WHEN** the user restores default file filters
+- **THEN** every category and its editable field returns to its default
 
 ### Requirement: Supported previews
 The preview SHALL render: text and source with syntax highlighting; JSON, YAML, TOML and XML as raw highlighted text with an optional pretty-printed view; Markdown; png, jpeg, gif (animated), webp, bmp, ico and svg images; audio and PDF metadata; video with playback; a directory summary; and a hex dump for everything else.
@@ -105,6 +124,8 @@ The preview SHALL follow selected entries in file-pane display order, falling ba
 - **THEN** the loaded document or grid stays unchanged instead of automatically reloading
 - **AND** a Reload button appears only when newer content is detected
 - **AND** Reload or View > Reload Selected Files Preview loads current sources on a worker, preserving filters, ordering and display settings
+- **AND** multi-file logs show Refresh instead of Live tail in the filter toolbar, available even before source changes are detected; it reloads all selected sources through the same command, preserving filters, ordering and display settings
+- **AND** single-file logs retain Live tail; Refresh is disabled while a multi-file log operation is busy
 - **AND** changing the selection still loads its preview normally
 
 ### Requirement: Log mode
@@ -122,6 +143,17 @@ When the previewed file is a log (by name, location or content), the preview SHA
 #### Scenario: Follow survives rotation
 - **WHEN** Follow is on and the file is truncated or replaced
 - **THEN** the view reindexes and keeps following without error
+
+#### Scenario: Live tail help and configuration
+- **WHEN** the user hovers Live tail
+- **THEN** help explains background size checks on local, SFTP and SMB files, no content download when size is unchanged, and offset-based reads of appended bytes
+- **AND** it explains initial header/tail loading, markers surviving appends but resetting on shrink/reload, same-size replacements not being detected, and scrolling up pausing follow
+- **AND** it points to Preferences > Preview for the polling interval and initial tail size
+- **WHEN** the user changes log settings in Preferences > Preview
+- **THEN** `prefs.preview.log` validates and persists a polling interval of 100..60000 ms (default 500) and initial tail size of 1..64 MiB (default 8), or zero for an explicit Unlimited initial-tail option
+- **AND** Unlimited removes only the initial-window limit: reads remain bounded to the 64 MiB single-log safety window or 32 MiB shared multi-file window, with existing parser/count/time limits retained; larger logs still start at the tail
+- **AND** interval changes reschedule active follow polls, while initial size changes apply to newly opened or reloaded logs (including follow reload after shrink), not by automatically reloading the current view
+- **AND** invalid settings return an error without partially changing preferences, and missing saved fields restore the bounded defaults
 
 #### Scenario: Choosing a log time range
 - **WHEN** the user opens Time in the preview's expandable filter row, including in a narrow pane

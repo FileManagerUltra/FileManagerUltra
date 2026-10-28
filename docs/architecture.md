@@ -182,6 +182,15 @@ The product name must be changeable in one commit. Therefore:
 
 ## 6. Engine: session, commands, state
 
+### Dialog presentation
+
+`fm-ui::dialog_style` owns common floating-window chrome and locally scoped
+typography; the app's About dialog uses it too. Windows start centered (Jobs starts
+bottom-right), are draggable rather than anchored, and always expose a title-bar
+close button. Each caller maps closing to its existing cancel/dismiss command,
+never to an affirmative action. See [the dialog style guide](style-guide.md).
+The main interface retains its existing typography.
+
 ### Release checks
 
 `engine::Updates` owns one bounded-result worker for startup/manual GitHub release
@@ -279,7 +288,7 @@ UI thread (eframe)                 engine workers                backends
 - **Conflicts** are resolved *during* the job: the worker parks on a decision channel and the UI shows the dialog from `FileOps::pending_conflict()`, answering with `job.resolve_conflict {job, choice, apply_to_all?}`. Cancel (or a dropped channel) resolves as Cancel, so a parked worker is never leaked.
 - **Undo/trash:** delete (F8) moves local entries to the platform trash and records an `UndoRecord` (created / moved / trashed / renamed); `edit.undo` replays it with an actionable error when stale. Remote URIs never fall back to a permanent delete; `file.delete_permanent` needs `confirm: true`. macOS cannot restore from trash (documented).
 - **UI contract:** dialogs and the jobs panel (`fm-ui::dialogs`, `fm-ui::jobs`) only dispatch command ids; dispatch failures surface as `Session::notice` in the status bar.
-- **Thumbnails (`thumbnails-and-open`):** `engine::thumbs::ThumbService` owns its own pool (≤ 4 workers, *not* a job lane — a folder of images must not queue behind file copies) and a per-pane generation counter. The grid reports the visible window (`preview.thumbs.visible`); the engine queues visible entries, then one screenful after and one before, and drops results whose generation is stale. Decoded RGBA lives in a 192 MiB LRU; PNGs go to `<cache>/thumbs` (256 MiB cap, `0600`/`0700`, temp + rename). Only `file://` entries are thumbnailed.
+- **Thumbnails (`thumbnails-and-open`):** `engine::thumbs::ThumbService` owns its own pool (≤ 4 workers, *not* a job lane — a folder of images must not queue behind file copies) and a per-pane generation counter. The grid reports the visible window (`preview.thumbs.visible`); the engine queues visible entries, then one screenful after and one before, and drops results whose generation is stale. Decoded RGBA lives in a 192 MiB LRU; PNGs go to `<cache>/thumbs` (cache parent configurable via `thumb_cache_dir`; 256 MiB default cap, configurable; `0600`/`0700`, temp + rename). Only `file://` entries are thumbnailed.
 
 - **Walkers outside the lanes:** Properties folder sizes (`props_cmds`, thread `fm-props`), Find Files (`search_cmds`, `fm-search`) and the Open With application scan (`openwith_cmds`, `fm-apps`) run on their own short-lived threads so a long walk never queues behind file jobs. Each publishes into a `Mutex` the UI reads every frame and stops on an `AtomicBool` set by its owner's `Drop` (closing the window cancels the walk). Walks never follow symlinks, are capped (5 M entries / depth 256 for sizes; 10 k results, depth 64 and 64 MiB read per file for search) and skip SMB, which must stay on its lane.
 
@@ -358,7 +367,7 @@ only loaded records and selecting a preset performs no additional log scanning o
 
 Dark mode is a v1 feature, not a later polish pass: **every widget is built against semantic tokens from day one, so both themes are always renderable.**
 
-- **Tokens, not colours.** `fm-ui/src/theme.rs` defines one `Tokens` struct of *semantic* roles — `bg`, `panel`, `text`, `text_muted`, `accent`, `border`, `selection_bg/selection_text`, `hover_bg`, `error`, `warning`, `success` — plus non-colour metrics (row height, padding, corner radius, border width, font size). Widgets take `&Tokens`; a widget that asks egui for `Color32::GRAY` is a bug and fails CI grep.
+- **Tokens, not colours.** `fm-ui/src/theme.rs` defines one `Tokens` struct of *semantic* roles — `bg`, `panel`, `text`, `text_muted`, `accent`, `border`, `selection_bg/selection_text`, `hover_bg`, `error`, `warning`, `success` — plus non-colour metrics (row height, padding, corner radius, border width, font size, terminal font size). `Tokens::resolve_with(&Prefs, dark)` layers the user's accent, density and text sizes on the palette; `apply_to` scales text styles from egui's defaults so repeated changes never compound. Size and date formats reach the UI through a thread-local set each frame (`listing::set_display`). Single-value settings go through `prefs.set` (`display_prefs_cmds.rs`). Widgets take `&Tokens`; a widget that asks egui for `Color32::GRAY` is a bug and fails CI grep.
 - **Two token sets.** `Tokens::dark()` and `Tokens::light()` are exhaustive siblings with the same field list, so adding a token forces both palettes to be defined (a compile-time guarantee — no `..Default::default()` escapes).
 - **Preference model.** `Session::prefs.theme: egui::ThemePreference` = `System` (default) | `Light` | `Dark`. At startup and on change, `fm-app` calls `ctx.set_theme(pref)`; `ctx.system_theme()` supplies the resolved theme when `System` is selected. egui's `Theme`/`ThemePreference` types are used directly rather than a home-grown enum, so system-following works for free on all three platforms.
 - **Commands** (so the switch is scriptable later): `view.theme.dark`, `view.theme.light`, `view.theme.system`, `view.theme.toggle` — registered in the engine like every other behaviour, menu path `View ▸ Theme`, shortcut `Ctrl+Shift+T` for toggle. They mutate `Prefs` only; the next frame re-renders.
@@ -424,6 +433,8 @@ Change 3 extends `security` with drag & drop and `ops` rules (destination contai
 | 2026-10-22 | Added §12 security threat model; `security` is a first-class capability of change 1 with test-backed requirements. |
 
 ### Preview pane (`pane-preview`)
+
+`engine::preview_types` compiles persisted filename filters into a fixed-priority rule set for single/multi-file render workers and thumbnail candidacy. `prefs.preview.filters` validates an atomic replacement of the ordered `{type, patterns}` groups (array order is priority) or a reset, invalidates thumbnail associations and marks preview slots stale. `fm-preview::render_configured` accepts an optional renderer association, protects text renderers from binary input and uses content-only fallback when unmatched; the standalone legacy renderer retains its built-in classifier. HTML/CSV associations use text previews.
 
 `fm-preview` (L1) turns a `Vfs` entry into a pure `Preview` model (text/structured/markdown/image/hex/dir/log/meta/error): magic-byte sniffing, syntect highlighting mapped to semantic `Class`es, capped reads, `catch_unwind` containment. `engine::preview_cmds` owns a `PreviewHub` of per-pane `PreviewSlot`s: the target is the Files pane's selected entries in display order, falling back to its cursor (or a pinned pane). Changes are debounced (120 ms), rendered on the pane's lane with a 15 s budget, and results come back through an inbox tagged with a token so stale renders are dropped. Single log files become a `LogView` over `Arc<RwLock<LogDoc>>`: tail-first 8 MiB window, "Load earlier" chunks (64 MiB cap), filters run as jobs and are accepted only for the matching `rev`, Follow polls every 500 ms and survives truncate/rotation. `fm-ui::preview` only draws; colours come from `Tokens::{syntax, level, status}`. Commands: `view.preview.toggle`, `pane.preview.source`, `preview.{zoom,toggle_wrap,toggle_pretty}`, `preview.log.*`.
 

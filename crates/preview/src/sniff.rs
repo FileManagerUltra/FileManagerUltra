@@ -170,6 +170,52 @@ pub fn sniff(path: &str, head: &[u8]) -> Kind {
     Kind::Text(lang)
 }
 
+/// Content fallback for configured filename associations. Does not reapply built-in
+/// filename associations that the user may have removed.
+pub fn content(path: &str, head: &[u8]) -> Kind {
+    if let Some(kind) = magic(head) {
+        return kind;
+    }
+    if head.starts_with(&[0, 0, 1, 0]) {
+        return Kind::Image("ico");
+    }
+    if head.starts_with(b"BM") {
+        return Kind::Image("bmp");
+    }
+    if head.starts_with(&[0x1f, 0x8b]) || !is_text(head) {
+        return Kind::Binary;
+    }
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let text = String::from_utf8_lossy(head);
+    if (!name.contains('.') && log::detect_text(&text).is_some())
+        || (path.replace('\\', "/").contains("/var/report/") && head.first() == Some(&b'{'))
+    {
+        return Kind::Log;
+    }
+    let ext = ext_of(name);
+    Kind::Text(if ext.is_empty() {
+        name.to_string()
+    } else {
+        ext
+    })
+}
+
+/// Associations choose a renderer, but do not turn binary input into text.
+pub fn configured(path: &str, head: &[u8], association: Option<Kind>) -> Kind {
+    match association {
+        Some(Kind::Log) if head.starts_with(&[0x1f, 0x8b]) => Kind::Log,
+        Some(kind @ (Kind::Log | Kind::Markdown | Kind::Structured(_) | Kind::Text(_))) => {
+            if is_text(head) {
+                kind
+            } else {
+                content(path, head)
+            }
+        }
+        Some(kind) => kind,
+        None => content(path, head),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +311,43 @@ mod tests {
         mp4.extend_from_slice(b"ftypisom");
         assert_eq!(sniff("a.mp4", &mp4), Kind::Video);
         assert_eq!(sniff("a.mp3", b"ID3\x03"), Kind::Audio);
+    }
+
+    #[test]
+    fn configured_associations_fall_back_to_content_not_removed_names() {
+        assert_eq!(
+            configured("a.log", b"plain text", None),
+            Kind::Text("log".into())
+        );
+        assert_eq!(
+            configured("syslog", b"plain text", None),
+            Kind::Text("syslog".into())
+        );
+        assert_eq!(
+            configured("Makefile", b"all:\n\techo done\n", None),
+            Kind::Text("Makefile".into())
+        );
+        assert_eq!(configured("app.trace", b"line", Some(Kind::Log)), Kind::Log);
+        assert_eq!(
+            configured("app.trace.gz", &[0x1f, 0x8b], Some(Kind::Log)),
+            Kind::Log
+        );
+        assert_eq!(
+            configured("wtmp", &[0, 0, 1, 2], Some(Kind::Log)),
+            Kind::Binary
+        );
+        assert_eq!(
+            configured("a.json", &[0, 1, 0], Some(Kind::Structured(Format::Json))),
+            Kind::Binary
+        );
+        assert_eq!(
+            configured("photo.blob", &[0x89, b'P', b'N', b'G', 0], None),
+            Kind::Image("png")
+        );
+        assert_eq!(configured("data.blob", b"ID3", None), Kind::Audio);
+        assert_eq!(
+            configured("data", b"[2024-05-01 10:00:00] main.INFO: started\n", None),
+            Kind::Log
+        );
     }
 }

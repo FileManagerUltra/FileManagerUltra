@@ -232,7 +232,43 @@ pub fn render_with_log_limits(
     opts: RenderOpts,
     logs: &log::LogLimits,
 ) -> Preview {
-    let run = std::panic::AssertUnwindSafe(|| render_inner(vfs, entry, limits, opts, logs));
+    render_caught(vfs, entry, limits, opts, logs, Detection::Builtin)
+}
+
+/// Render using user filename associations, with content-only fallback when unmatched.
+pub fn render_configured(
+    vfs: &dyn Vfs,
+    entry: &Entry,
+    limits: &Limits,
+    opts: RenderOpts,
+    logs: &log::LogLimits,
+    association: Option<Kind>,
+) -> Preview {
+    render_caught(
+        vfs,
+        entry,
+        limits,
+        opts,
+        logs,
+        Detection::Configured(association),
+    )
+}
+
+enum Detection {
+    Builtin,
+    Configured(Option<Kind>),
+}
+
+fn render_caught(
+    vfs: &dyn Vfs,
+    entry: &Entry,
+    limits: &Limits,
+    opts: RenderOpts,
+    logs: &log::LogLimits,
+    detection: Detection,
+) -> Preview {
+    let run =
+        std::panic::AssertUnwindSafe(|| render_inner(vfs, entry, limits, opts, logs, detection));
     match std::panic::catch_unwind(run) {
         Ok(Ok(p)) => p,
         Ok(Err(e)) => Preview::Error(e.to_string()),
@@ -246,6 +282,7 @@ fn render_inner(
     limits: &Limits,
     opts: RenderOpts,
     logs: &log::LogLimits,
+    detection: Detection,
 ) -> Result<Preview, FmError> {
     if entry.is_dir_like() {
         return dir::summarize(vfs, entry, limits, opts.recursive).map(Preview::Dir);
@@ -259,7 +296,12 @@ fn render_inner(
         }));
     }
     let head = read_head(vfs, entry, 8192)?;
-    let kind = sniff::sniff(entry.uri.path_str(), &head);
+    let kind = match detection {
+        Detection::Configured(association) => {
+            sniff::configured(entry.uri.path_str(), &head, association)
+        }
+        Detection::Builtin => sniff::sniff(entry.uri.path_str(), &head),
+    };
     match kind {
         Kind::Image(_) => image_prev::render(vfs, entry, limits),
         Kind::Log => log::open_doc_with(vfs, entry, limits, logs).map(Preview::Log),

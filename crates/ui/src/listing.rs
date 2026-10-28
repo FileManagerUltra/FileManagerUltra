@@ -1007,7 +1007,8 @@ fn entry_row_ui(
         state.tree.active = false;
         state.listing.select_only(Some(&entry.name), row);
     }
-    let mut open = if response.double_clicked() {
+    let plain_click = response.clicked() && ui.input(|i| i.modifiers.is_none());
+    let mut open = if response.double_clicked() || (s.prefs.single_click_open && plain_click) {
         Some(entry.uri.clone())
     } else {
         None
@@ -1153,18 +1154,33 @@ fn paint_cell(
         );
 }
 
+thread_local! {
+    /// Size and date style, set by the app each frame from the preferences (UI thread only).
+    static DISPLAY: std::cell::Cell<(fm_engine::SizeUnits, fm_engine::DateFormat)> =
+        const { std::cell::Cell::new((fm_engine::SizeUnits::Binary, fm_engine::DateFormat::Iso)) };
+}
+
+/// Choose how sizes and dates are written everywhere in the UI.
+pub fn set_display(units: fm_engine::SizeUnits, dates: fm_engine::DateFormat) {
+    DISPLAY.with(|d| d.set((units, dates)));
+}
+
 pub(crate) fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let (units, _) = DISPLAY.with(std::cell::Cell::get);
+    let (base, names): (f64, [&str; 5]) = match units {
+        fm_engine::SizeUnits::Binary => (1024.0, ["B", "KiB", "MiB", "GiB", "TiB"]),
+        fm_engine::SizeUnits::Decimal => (1000.0, ["B", "kB", "MB", "GB", "TB"]),
+        fm_engine::SizeUnits::Bytes => return format!("{bytes} B"),
+    };
     let mut value = bytes as f64;
     let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
+    while value >= base && unit < names.len() - 1 {
+        value /= base;
         unit += 1;
     }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
+    match names.get(unit) {
+        Some(name) if unit > 0 => format!("{value:.1} {name}"),
+        _ => format!("{bytes} B"),
     }
 }
 
@@ -1178,10 +1194,28 @@ pub(crate) fn type_label(kind: &EntryKind) -> &'static str {
 }
 
 pub(crate) fn format_mtime(t: SystemTime) -> String {
+    let (_, format) = DISPLAY.with(std::cell::Cell::get);
     match t.duration_since(SystemTime::UNIX_EPOCH) {
         Ok(d) => {
-            let (y, mo, day, h, mi) = civil_from_unix(d.as_secs() as i64);
-            format!("{y:04}-{mo:02}-{day:02} {h:02}:{mi:02}")
+            let secs = d.as_secs() as i64;
+            let (y, mo, day, h, mi) = civil_from_unix(secs);
+            let sec = secs.rem_euclid(60);
+            match format {
+                fm_engine::DateFormat::Iso => format!("{y:04}-{mo:02}-{day:02} {h:02}:{mi:02}"),
+                fm_engine::DateFormat::IsoSeconds => {
+                    format!("{y:04}-{mo:02}-{day:02} {h:02}:{mi:02}:{sec:02}")
+                }
+                fm_engine::DateFormat::Eu => format!("{day:02}/{mo:02}/{y:04} {h:02}:{mi:02}"),
+                fm_engine::DateFormat::Us => {
+                    let (h12, suffix) = match h {
+                        0 => (12, "AM"),
+                        1..=11 => (h, "AM"),
+                        12 => (12, "PM"),
+                        _ => (h - 12, "PM"),
+                    };
+                    format!("{mo:02}/{day:02}/{y:04} {h12}:{mi:02} {suffix}")
+                }
+            }
         }
         Err(_) => "—".to_string(),
     }
@@ -1548,6 +1582,21 @@ mod tests {
             type_label(&EntryKind::Symlink { target: "x".into() }),
             "Link"
         );
+    }
+
+    #[test]
+    fn display_preferences_change_sizes_and_dates() {
+        use fm_engine::{DateFormat, SizeUnits};
+        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(13 * 3600 + 5 * 60 + 9);
+        set_display(SizeUnits::Decimal, DateFormat::Us);
+        assert_eq!(human_size(2_000_000), "2.0 MB");
+        assert_eq!(format_mtime(t), "01/01/1970 1:05 PM");
+        set_display(SizeUnits::Bytes, DateFormat::IsoSeconds);
+        assert_eq!(human_size(2048), "2048 B");
+        assert_eq!(format_mtime(t), "1970-01-01 13:05:09");
+        set_display(SizeUnits::Binary, DateFormat::Eu);
+        assert_eq!(format_mtime(t), "01/01/1970 13:05");
+        set_display(SizeUnits::Binary, DateFormat::Iso);
     }
 
     #[test]
