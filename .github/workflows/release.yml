@@ -48,7 +48,7 @@ jobs:
         run: |
           cargo xtask packager-config
           cargo packager --config target/Packager.toml --release --formats ${{ matrix.formats }}
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: filemanagerultra-${{ matrix.name }}
           path: |
@@ -63,11 +63,11 @@ jobs:
     needs: package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true

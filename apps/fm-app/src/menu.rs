@@ -676,7 +676,20 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, TERM_RESTART);
         });
         ui.menu_button("View", |ui| {
-            check_item(ui, session, dialogs, VIEW_HIDDEN, session.show_hidden);
+            // Unlike Ctrl+H and the status bar (this session only), the menu item also saves
+            // the choice as the startup default.
+            let mut shown = session.show_hidden;
+            if ui
+                .checkbox(&mut shown, "Show Hidden Files (remember)")
+                .on_hover_text("Ctrl+H toggles for this session only")
+                .clicked()
+            {
+                session.dispatch_or_notice(
+                    "prefs.set",
+                    &serde_json::json!({"key": "show_hidden", "value": shown}),
+                );
+                ui.close();
+            }
             check_item(ui, session, dialogs, VIEW_LINKS, session.show_link_targets);
             ui.separator();
             item(ui, session, dialogs, VIEW_FILTER);
