@@ -50,6 +50,25 @@ Defaults SHALL cover supported extensions and common system logs (`syslog`, `mes
 ### Requirement: Supported previews
 The preview SHALL render: text and source with syntax highlighting; JSON, YAML, TOML and XML as raw highlighted text with an optional pretty-printed view; Markdown; png, jpeg, gif (animated), webp, bmp, ico and svg images; audio and PDF metadata; video with playback; a directory summary; and a hex dump for everything else.
 
+Directory and file-information summaries SHALL use the dialog style guide's
+proportional text, neutral section headings, muted labels, aligned wrapping values
+and flat spacing, without changing document/code/log fonts. Directory summaries
+SHALL separate subfolder totals from the overview. When the previewed directory
+is on a listed device, Preview SHALL show its name, mount location, filesystem,
+capacity, free space and a used-space indicator (when capacity is known), using
+only cached device data. Nested mounts SHALL use the closest containing volume.
+Unavailable capacity and unsupported removal explanations SHALL remain explicit.
+Thumbnail mode SHALL retain volume information in an expandable section.
+Read-only summary rows SHALL use compact spacing, not dialog-control heights.
+Subfolder totals SHALL use a compact Name / Size / Files table with single-line
+truncated folder names and full-name hover text.
+
+#### Scenario: Preview a mounted directory
+- **WHEN** a mounted device or a directory inside it is previewed
+- **THEN** its volume information appears above the folder summary
+- **AND** long values wrap within narrow panes and details update with the cached mount list
+- **AND** directories outside listed volumes retain their normal summary without a volume section
+
 #### Scenario: Structured files open raw
 - **WHEN** a minified `.json` file is previewed
 - **THEN** it is shown exactly as stored, and a Pretty button is available in the preview header

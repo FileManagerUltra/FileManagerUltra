@@ -61,21 +61,42 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(100));
             }
-            Body::Static(p) if slot.thumbs && matches!(&**p, Preview::Dir(_)) => {
+            Body::Static(p) if matches!(&**p, Preview::Dir(_)) => {
                 if let Preview::Dir(d) = &**p {
-                    thumb_grid(
-                        ui,
-                        s,
-                        pane,
-                        tokens,
-                        d,
-                        slot.thumb_size,
-                        slot.thumb_window,
-                        &mut actions,
-                        &mut open,
-                        slot.subject.as_ref().map(|e| e.uri.clone()),
-                        &mut published,
-                    );
+                    let volume = slot.subject.as_ref().and_then(|entry| {
+                        s.volumes
+                            .entries()
+                            .iter()
+                            .filter(|device| device.mount.is_same_or_descendant_of(&entry.uri))
+                            .max_by_key(|device| device.mount.to_string().len())
+                    });
+                    if slot.thumbs {
+                        if let Some(volume) = volume {
+                            ui.collapsing("Volume information", |ui| {
+                                volume_card(ui, tokens, volume)
+                            });
+                        }
+                        thumb_grid(
+                            ui,
+                            s,
+                            pane,
+                            tokens,
+                            d,
+                            slot.thumb_size,
+                            slot.thumb_window,
+                            &mut actions,
+                            &mut open,
+                            slot.subject.as_ref().map(|e| e.uri.clone()),
+                            &mut published,
+                        );
+                    } else {
+                        scrolled(ui, pane, "dir", |ui| {
+                            if let Some(volume) = volume {
+                                volume_card(ui, tokens, volume);
+                            }
+                            dir_card(ui, tokens, d);
+                        });
+                    }
                 }
             }
             Body::Static(p) if slot.video.is_some() => {
@@ -760,25 +781,101 @@ fn hex(ui: &mut Ui, tokens: &Tokens, h: &HexDoc) {
 }
 
 fn card_rows(ui: &mut Ui, tokens: &Tokens, id: &str, rows: &[(String, String)]) {
+    let label_width = (ui.available_width() * 0.3).clamp(80.0, 140.0);
+    let value_width = (ui.available_width() - label_width - 16.0).max(20.0);
     egui::Grid::new(id)
         .num_columns(2)
-        .spacing([16.0, 4.0])
+        .min_row_height(tokens.font_size + 4.0)
+        .spacing([16.0, 6.0])
         .show(ui, |ui| {
             for (k, v) in rows {
-                ui.label(tokens.muted(k));
-                ui.label(v);
+                let height = |text: &str, width| {
+                    ui.painter()
+                        .layout(
+                            text.to_owned(),
+                            FontId::proportional(tokens.font_size),
+                            tokens.text,
+                            width,
+                        )
+                        .size()
+                        .y
+                };
+                let row_height = height(k, label_width).max(height(v, value_width));
+                ui.allocate_ui_with_layout(
+                    vec2(label_width, row_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.add(egui::Label::new(RichText::new(k).color(tokens.text_muted)).wrap());
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    vec2(value_width, row_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.add(egui::Label::new(v).wrap().selectable(true));
+                    },
+                );
                 ui.end_row();
             }
         });
 }
 
+fn information(ui: &mut Ui, tokens: &Tokens, title: &str, body: impl FnOnce(&mut Ui)) {
+    ui.scope(|ui| {
+        crate::dialog_style::apply(ui, tokens);
+        ui.spacing_mut().interact_size.y = tokens.font_size + 4.0;
+        ui.spacing_mut().item_spacing.y = 6.0;
+        egui::Frame::NONE
+            .inner_margin(tokens.padding)
+            .show(ui, |ui| {
+                crate::dialog_style::section_heading(ui, tokens, title);
+                body(ui);
+            });
+    });
+}
+
+fn volume_card(ui: &mut Ui, tokens: &Tokens, device: &fm_engine::devices::Device) {
+    use fm_engine::devices::{Removal, display_label};
+    let size =
+        |bytes: Option<u64>| bytes.map_or_else(|| "Unavailable".into(), crate::listing::human_size);
+    information(ui, tokens, "Volume", |ui| {
+        card_rows(
+            ui,
+            tokens,
+            "pv-volume",
+            &[
+                ("Name".into(), display_label(&device.name)),
+                (
+                    "Mounted at".into(),
+                    display_label(&fm_engine::item_cmds::display_path(&device.mount)),
+                ),
+                ("Filesystem".into(), display_label(&device.filesystem)),
+                ("Capacity".into(), size(device.total)),
+                ("Free space".into(), size(device.free)),
+            ],
+        );
+        if let (Some(free), Some(total)) = (device.free, device.total)
+            && total > 0
+        {
+            let used = total.saturating_sub(free);
+            ui.add(
+                egui::ProgressBar::new((used as f64 / total as f64) as f32)
+                    .text(format!("{} used", crate::listing::human_size(used))),
+            );
+        }
+        if let Removal::Unsupported(reason) = &device.removal {
+            crate::dialog_style::hint(ui, tokens, reason);
+        }
+    });
+}
+
 fn meta_card(ui: &mut Ui, tokens: &Tokens, m: &MetaDoc) {
-    ui.add_space(8.0);
-    card_rows(ui, tokens, "pv-meta", &m.rows);
-    if let Some(h) = &m.hint {
-        ui.add_space(8.0);
-        ui.label(tokens.muted(h));
-    }
+    information(ui, tokens, "File information", |ui| {
+        card_rows(ui, tokens, "pv-meta", &m.rows);
+        if let Some(h) = &m.hint {
+            crate::dialog_style::hint(ui, tokens, h);
+        }
+    });
 }
 
 /// A playable video: the newest frame (or the poster before one arrives), a play/seek bar
@@ -1283,7 +1380,12 @@ fn thumb_grid(
 const SUBDIRS_SHOWN: usize = 12;
 
 fn dir_card(ui: &mut Ui, tokens: &Tokens, d: &DirDoc) {
-    ui.add_space(8.0);
+    information(ui, tokens, "Folder summary", |ui| {
+        dir_details(ui, tokens, d)
+    });
+}
+
+fn dir_details(ui: &mut Ui, tokens: &Tokens, d: &DirDoc) {
     let mut rows = vec![
         ("Files".to_string(), d.files.to_string()),
         ("Folders".to_string(), d.dirs.to_string()),
@@ -1318,33 +1420,67 @@ fn dir_card(ui: &mut Ui, tokens: &Tokens, d: &DirDoc) {
     if let Some((name, _)) = &d.oldest {
         rows.push(("Oldest".to_string(), name.clone()));
     }
-    let mut subdirs: Vec<(&String, &(usize, u64))> = d.subdirs.iter().collect();
-    subdirs.sort_by(|a, b| b.1.1.cmp(&a.1.1).then(a.0.cmp(b.0)));
-    let more = subdirs.len().saturating_sub(SUBDIRS_SHOWN);
-    for (name, (n, bytes)) in subdirs.into_iter().take(SUBDIRS_SHOWN) {
-        rows.push((
-            format!("{name}/"),
-            format!(
-                "{} ({n} {})",
-                crate::listing::human_size(*bytes),
-                if *n == 1 { "file" } else { "files" }
-            ),
-        ));
-    }
-    if more > 0 {
-        rows.push(("…".to_string(), format!("and {more} more folders")));
-    }
     if d.recursive {
         rows.push(("Scope".to_string(), "all subfolders".to_string()));
     }
     card_rows(ui, tokens, "pv-dir", &rows);
+    let mut subdirs: Vec<(&String, &(usize, u64))> = d.subdirs.iter().collect();
+    subdirs.sort_by(|a, b| b.1.1.cmp(&a.1.1).then(a.0.cmp(b.0)));
+    let more = subdirs.len().saturating_sub(SUBDIRS_SHOWN);
+    if !subdirs.is_empty() {
+        ui.add_space(tokens.padding);
+        crate::dialog_style::section_heading(ui, tokens, "Subfolders");
+        let width = ui.available_width();
+        let size_width = tokens.font_size * 5.5;
+        let count_width = tokens.font_size * 3.0;
+        let name_width = (width - size_width - count_width - 24.0).max(20.0);
+        egui::Grid::new("pv-subdirs")
+            .num_columns(3)
+            .min_row_height(tokens.font_size + 4.0)
+            .spacing([12.0, 5.0])
+            .show(ui, |ui| {
+                for (title, width) in [
+                    ("Name", name_width),
+                    ("Size", size_width),
+                    ("Files", count_width),
+                ] {
+                    ui.allocate_ui_with_layout(
+                        vec2(width, tokens.font_size + 4.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.label(RichText::new(title).color(tokens.text_muted));
+                        },
+                    );
+                }
+                ui.end_row();
+                for (name, (count, bytes)) in subdirs.into_iter().take(SUBDIRS_SHOWN) {
+                    ui.allocate_ui_with_layout(
+                        vec2(name_width, tokens.font_size + 4.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.add(egui::Label::new(format!("{name}/")).truncate())
+                                .on_hover_text(name);
+                        },
+                    );
+                    ui.label(crate::listing::human_size(*bytes));
+                    ui.label(count.to_string());
+                    ui.end_row();
+                }
+            });
+        if more > 0 {
+            crate::dialog_style::hint(ui, tokens, format!("and {more} more folders"));
+        }
+    }
     if d.unreadable > 0 {
-        ui.label(tokens.muted(format!("{} folder(s) could not be read", d.unreadable)));
+        ui.label(
+            RichText::new(format!("{} folder(s) could not be read", d.unreadable))
+                .color(tokens.warning),
+        );
     }
     if d.scanning {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(tokens.muted("Still scanning; totals so far"));
+            crate::dialog_style::hint(ui, tokens, "Still scanning; totals so far");
         });
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(500));
@@ -1355,7 +1491,7 @@ fn dir_card(ui: &mut Ui, tokens: &Tokens, d: &DirDoc) {
         } else {
             "Only the first entries were counted"
         };
-        ui.label(tokens.muted(why));
+        crate::dialog_style::hint(ui, tokens, why);
     }
 }
 

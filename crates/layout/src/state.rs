@@ -569,10 +569,11 @@ pub struct PaneState {
     pub places: PlacesState,
 }
 
-/// Collapse state of the Places sections above the tree. Both start expanded.
+/// Collapse state of the Places sections above the tree. All start expanded.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PlacesState {
+    pub devices_collapsed: bool,
     pub places_collapsed: bool,
     pub bookmarks_collapsed: bool,
 }
@@ -806,9 +807,11 @@ mod tests {
         let mut p = PaneState::new(VfsUri::parse("/d").expect("uri"));
         assert_eq!(p.places, PlacesState::default());
         p.places.bookmarks_collapsed = true;
+        p.places.devices_collapsed = true;
         let json = serde_json::to_string(&p).expect("ser");
         let back: PaneState = serde_json::from_str(&json).expect("de");
         assert!(back.places.bookmarks_collapsed && !back.places.places_collapsed);
+        assert!(back.places.devices_collapsed);
         let mut v = serde_json::to_value(&p).expect("value");
         if let Some(o) = v.as_object_mut() {
             o.remove("places");

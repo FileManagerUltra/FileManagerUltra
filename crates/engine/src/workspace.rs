@@ -251,6 +251,27 @@ pub fn home_location() -> VfsUri {
 }
 
 impl Session {
+    pub(crate) fn evacuate_volume(&mut self, mount: &VfsUri, home: &VfsUri) {
+        fn evacuate(layout: &mut Layout, mount: &VfsUri, home: &VfsUri) {
+            for id in layout.panes() {
+                if let Some(pane) = layout.state_mut(id)
+                    && mount.is_same_or_descendant_of(&pane.location)
+                {
+                    pane.navigate(home.clone());
+                    if !pane.tree.root.is_same_or_descendant_of(home) {
+                        pane.tree = fm_layout::TreeState::new(VfsUri::root_file());
+                    }
+                    pane.reveal_location();
+                }
+            }
+        }
+        evacuate(&mut self.layout, mount, home);
+        for tab in &mut self.workspaces.tabs {
+            if let Some(layout) = &mut tab.layout {
+                evacuate(layout, mount, home);
+            }
+        }
+    }
     fn tab_layout(&self, ix: usize) -> Option<&Layout> {
         if ix == self.workspaces.active {
             Some(&self.layout)

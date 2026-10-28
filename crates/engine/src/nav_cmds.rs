@@ -61,6 +61,12 @@ pub fn open() -> CommandSpec {
             let raw = uri_param(params)?;
             let to = VfsUri::parse(&raw)
                 .map_err(|_| FmError::invalid_uri(format!("nav.open: {raw}")))?;
+            if s.volumes.blocks(&to) {
+                return Err(FmError::backend(
+                    "devices",
+                    "This volume is disconnected or being removed",
+                ));
+            }
             if s.needs_sftp_login_to(&to, true) {
                 return Ok(());
             }

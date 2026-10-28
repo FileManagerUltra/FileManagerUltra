@@ -292,6 +292,35 @@ UI thread (eframe)                 engine workers                backends
 
 - **Walkers outside the lanes:** Properties folder sizes (`props_cmds`, thread `fm-props`), Find Files (`search_cmds`, `fm-search`) and the Open With application scan (`openwith_cmds`, `fm-apps`) run on their own short-lived threads so a long walk never queues behind file jobs. Each publishes into a `Mutex` the UI reads every frame and stops on an `AtomicBool` set by its owner's `Drop` (closing the window cancels the walk). Walks never follow symlinks, are capped (5 M entries / depth 256 for sizes; 10 k results, depth 64 and 64 MiB read per file for search) and skip SMB, which must stay on its lane.
 
+### Mounted devices and volumes
+
+`Session::volumes` (`engine::devices`) caches mounted removable and user volumes,
+separately from `Session::devices` (the drag/drop same-device cache). The shell
+calls `devices_tick(focused)` and schedules repaint without input. A single-flight
+`devices-scan` worker polls every 2 s focused / 10 s unfocused and on focus regain;
+`poll()` applies snapshots and connection notices. Failed or >1 s scans retain the
+last list; a hung worker is not replaced until it exits, so it cannot starve the
+local job lane or accumulate threads.
+
+Linux reads bounded mountinfo plus sysinfo capacity and volume labels; macOS uses
+sysinfo and diskutil plist metadata; Windows uses fixed PowerShell/CIM queries.
+System/pseudo mounts are excluded, but virtual/encrypted mounts are not excluded
+solely for being non-removable. Unavailable capacity is explicit.
+
+Files panes and Go show Devices only when nonempty. `devices.refresh`,
+`devices.eject {uri}` and `devices.dismount {uri}` own behaviour. Removal runs on
+the local lane, validates the mount identity again, refuses active file transfers,
+moves affected open/parked workspace panes Home, and confirms disappearance.
+Linux only powers off a verified external disk when no sibling mount uses it;
+macOS uses volume-scoped unmount, and Windows eject is limited to identified
+removable drives. Unknown encrypted/virtual volumes remain browseable with a
+disabled Dismount action directing users to VeraCrypt/OS tools. No unlocking,
+force removal, passwords or generic hardware eject of encrypted mappings.
+
+Disappearance invalidates stale/in-flight listings and blocks new file operations
+below the old mount point until reconnection, rather than copying into its now
+unmounted backing directory.
+
 ### Watching
 
 `DirCache::invalidate(uri)` (revision bump) is the only mutation path — the cache is invalidated, never patched. The `notify`-based watcher (non-recursive, per watched directory, 100 ms debounce) lands with the ops change; until then panes refresh via `nav.refresh` (`Ctrl+R`), and remotes will refresh on focus regain + a 5 s poll while visible.

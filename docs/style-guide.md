@@ -3,6 +3,18 @@
 Preferences is the reference for application dialogs. Use this guide for new dialogs
 and changes to existing ones, in both dark and light themes.
 
+Preview information summaries reuse this typography and flat section hierarchy
+inside the pane, not floating-window chrome. Keep metadata labels muted, values
+left-aligned and selectable, and wrap long paths/filenames within the pane.
+Volume details belong here rather than in extra Devices sidebar rows. Document,
+code, hex and log content retain their renderer-specific typography.
+Read-only Preview summaries use compact 6-point row spacing rather than dialog
+control heights. Subfolder totals use a dense Name / Size / Files table;
+use 5-point row spacing and truncate long folder names to one line with the full
+name available on hover.
+Give subfolder names all remaining pane width after compact size/count columns,
+not the narrow label width used by overview fields.
+
 ## Shared implementation
 
 Construct every floating dialog with `fm_ui::dialog_style::window`, passing an open

@@ -332,6 +332,13 @@ impl eframe::App for App {
         import_os_drops(&ctx, &mut self.session);
         self.sync_theme(&ctx);
         let _ = self.session.poll();
+        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
+        self.session.devices_tick(focused);
+        ctx.request_repaint_after(if self.session.volumes.scanning() {
+            std::time::Duration::from_millis(100)
+        } else {
+            fm_engine::devices::SCAN_INTERVAL
+        });
         // egui only repaints on input; keep frames flowing while jobs run.
         if self.session.is_busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));

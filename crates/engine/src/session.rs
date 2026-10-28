@@ -107,6 +107,8 @@ pub struct Session {
     pub properties: Option<crate::props_cmds::Properties>,
     /// Home, Documents, Downloads… resolved at start-up (capability `places`).
     pub standard_places: crate::places_cmds::StandardPlaces,
+    /// Mounted removable and user volumes (separate from the drag/drop device cache).
+    pub volumes: crate::devices::Devices,
     pub(crate) devices: DeviceCache,
     /// Staged read results, written by workers, drained by [`Session::poll`].
     inbox: Arc<Mutex<HashMap<VfsUri, ReadOutcome>>>,
@@ -127,6 +129,7 @@ impl Default for Session {
         )));
         Self {
             standard_places: crate::places_cmds::StandardPlaces::detect(),
+            volumes: Default::default(),
             properties: None,
             search: None,
             open_with: None,
@@ -214,6 +217,15 @@ impl Session {
     /// Read `uri` unless it is already fresh or in flight. Returns the job id
     /// when a read was submitted.
     pub fn ensure_read(&mut self, uri: VfsUri) -> Result<Option<JobId>, FmError> {
+        if self.volumes.unavailable(&uri) {
+            if !matches!(self.dirs.state(&uri), DirState::Failed { .. }) {
+                self.dirs.set_failed(
+                    &uri,
+                    "This volume was disconnected. Reconnect it or choose another folder.".into(),
+                );
+            }
+            return Ok(None);
+        }
         match self.dirs.state(&uri) {
             DirState::Ready { .. } | DirState::Loading { .. } => Ok(None),
             DirState::Absent | DirState::Failed { .. } => {
@@ -229,6 +241,12 @@ impl Session {
     /// immediately; dedups in-flight reads of the same uri (capability
     /// `directory-cache`).
     pub fn submit_read(&mut self, uri: VfsUri) -> Result<JobId, FmError> {
+        if self.volumes.unavailable(&uri) {
+            return Err(FmError::backend("devices", "This volume was disconnected"));
+        }
+        if self.volumes.blocks(&uri) {
+            return Err(FmError::backend("devices", "This volume is being removed"));
+        }
         if let Some(id) = self.inflight.get(&uri) {
             return Ok(*id);
         }
@@ -265,6 +283,15 @@ impl Session {
         Ok(job)
     }
 
+    pub(crate) fn forget_volume_reads(&mut self, mount: &VfsUri) {
+        self.reads
+            .retain(|_, uri| !mount.is_same_or_descendant_of(uri));
+        self.inflight
+            .retain(|uri, _| !mount.is_same_or_descendant_of(uri));
+        self.dirs
+            .invalidate_where(|uri| mount.is_same_or_descendant_of(uri));
+    }
+
     /// Invalidate `uri` and re-read it (nav.refresh / watcher path).
     pub fn refresh_read(&mut self, uri: VfsUri) -> Result<JobId, FmError> {
         if let Some(old) = self.inflight.remove(&uri) {
@@ -277,7 +304,8 @@ impl Session {
 
     /// Whether background work is in flight, so the app must keep polling without user input.
     pub fn is_busy(&self) -> bool {
-        self.updates.checking()
+        self.volumes.removing()
+            || self.updates.checking()
             || self.updates.browser_job.is_some()
             || !self.inflight.is_empty()
             || self.remote.is_busy()
@@ -295,6 +323,7 @@ impl Session {
         let term_changed = self.close_exited_terminals() || term_changed;
         let mut changed = !events.is_empty() || term_changed;
         changed |= self.pump_updates();
+        changed |= self.pump_devices();
         changed |= self.pump_remote_lost();
         changed |= self.pump_trash();
         self.sync_servers();
@@ -302,6 +331,9 @@ impl Session {
         self.remote_tick();
         changed |= self.refresh_previews();
         for ev in &events {
+            if self.finish_device_removal(ev) {
+                continue;
+            }
             if self.updates.finish_browser(ev) {
                 if let JobEvent::Failed { message, .. } = ev {
                     self.notice = Some(message.clone());

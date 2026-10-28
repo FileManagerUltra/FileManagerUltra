@@ -254,6 +254,31 @@ In Preferences > Preview, scroll to File type filters. In both themes, press Sho
 
 Preferences > Appearance / Files / Terminal / Advanced (all through `prefs.set`): pick an accent preset and a custom `#rrggbb` (invalid text is ignored; Default restores the theme colour); switch density and change text size up and down repeatedly (sizes must track the value, not shrink cumulatively). In Files, toggle show-hidden (the same setting as View > Show Hidden Files (remember), which saves it; Ctrl+H and the status-bar button change only the current session), single-click open, size units and date formats (listing, Properties and Search all follow), and turn off the delete/run prompts to confirm they proceed directly. Terminal font size applies to open terminals. In Advanced > Thumbnails check the "Stored in" path, set a parent folder (relative paths and unwritable folders are rejected with the old one kept), press Clear thumbnail cache, and lower the caps; the preview time limit applies to the next render.
 
+### Devices and mounted-volume checks
+
+- With no eligible mounted volumes, there is no Devices heading in a Files pane
+  or Go menu. Mount a USB stick: within 5 s while focused, its label, path and
+  free/total appear. Background polling is 10 s; regaining focus refreshes now.
+- Open the row, navigate into subfolders, and copy/drop files onto it. Collapse
+  Devices, save a workspace and reopen it: the collapse state survives.
+- Mount VeraCrypt externally, including a container on an internal disk. Its
+  volume appears even when non-removable; the locked container does not.
+  Unsupported Dismount explains that VeraCrypt/OS tools must be used. The app
+  never asks for a password or powers off the container's host disk.
+- Start a transfer from or to the device and try removal: it must fail before
+  moving panes Home. After finishing, Eject/Dismount must move affected panes
+  (including parked workspaces) Home and confirm the volume disappears.
+- Unplug while browsing: the row disappears and the pane shows unavailable, not
+  an empty mount directory. A new copy to that old location is refused until the
+  volume reappears. Already-running OS I/O may fail normally.
+- Linux requires `udisksctl` for block-device removal (`umount` for network mounts).
+  Other mounted partitions prevent whole-disk power-off. macOS currently offers
+  volume-only Dismount for identified physical volumes. Windows offers Eject for
+  identified removable drive letters; fixed/virtual mappings remain browse-only.
+  Test real media and VeraCrypt on each OS before considering the change archived.
+- Test both themes, a long/hostile label, a busy mount, a missing tool and a network
+  mount with unavailable capacity. Errors must be visible without blocking frames.
+
 ## Dev log
 
 Append to `log/devlog.md` at the end of every working session (what landed, numbers, what is still open). It is gitignored and exists so the next session can pick up cold.

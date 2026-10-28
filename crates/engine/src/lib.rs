@@ -11,6 +11,8 @@ pub mod backends;
 pub mod clipboard_cmds;
 pub mod column_cmds;
 pub mod commands;
+pub mod devices;
+mod devices_cmds;
 pub mod dircache;
 pub mod display_prefs_cmds;
 pub mod dnd_cmds;

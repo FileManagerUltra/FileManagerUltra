@@ -2002,6 +2002,187 @@ fn filter_bar_and_places_dark_light() {
 }
 
 #[test]
+fn volume_preview_dark_light() {
+    use egui_kittest::kittest::Queryable;
+    use fm_engine::devices::{Device, Removal};
+    use fm_engine::preview_cmds::Body;
+    use fm_preview::Preview;
+
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for width in [420, 280] {
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let filename = "A descriptive filename that should wrap inside the preview.txt";
+            let (mut session, pane) = preview_fixture(filename, b"example", false);
+            let fs = MemFs::new();
+            fs.mkdirs_str("/home/alice").expect("root");
+            fs.put_str(&format!("/home/alice/{filename}"), b"example")
+                .expect("file");
+            for name in [
+                "Projects",
+                "Photos",
+                "A long subfolder name that should stay on one line",
+            ] {
+                fs.mkdirs_str(&format!("/home/alice/{name}"))
+                    .expect("folder");
+                fs.put_str(&format!("/home/alice/{name}/sample.txt"), b"sample")
+                    .expect("child");
+            }
+            session.backends.register(Arc::new(fs));
+            session.prefs.recursive_preview = true;
+            session
+                .layout
+                .state_mut(1)
+                .expect("files pane")
+                .listing
+                .on_current = true;
+            let volume = Device {
+                name: "USB backup".into(),
+                mount: VfsUri::parse("/home/alice").expect("mount"),
+                filesystem: "exfat".into(),
+                total: Some(128 << 30),
+                free: Some(96 << 30),
+                identity: "usb-42".into(),
+                removal: Removal::Eject,
+            };
+            session.volumes.replace(vec![
+                Device {
+                    name: "Outer volume".into(),
+                    mount: VfsUri::parse("/home").expect("outer mount"),
+                    ..volume.clone()
+                },
+                volume.clone(),
+            ]);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                session.poll();
+                if session.preview_slot(pane).is_some_and(|slot| {
+                    matches!(&slot.body, Body::Static(p) if matches!(&**p, Preview::Dir(d) if !d.scanning))
+                }) {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "directory preview never settled");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let mut h = Harness::builder()
+                .renderer(renderer)
+                .with_accessibility_check(false)
+                .with_size(egui::vec2(width as f32, 900.0))
+                .build_ui_state(
+                    move |ui, session| {
+                        theme::apply_to(ui.ctx(), &tokens);
+                        ui.ctx().set_theme(if tokens.dark {
+                            egui::Theme::Dark
+                        } else {
+                            egui::Theme::Light
+                        });
+                        fm_ui::preview::show(ui, session, pane, &tokens);
+                    },
+                    session,
+                );
+            h.run();
+            h.get_by_label("Volume");
+            h.get_by_label("USB backup");
+            assert!(h.query_by_label("Outer volume").is_none());
+            h.get_by_label("/home/alice");
+            h.get_by_label("96.0 GiB");
+            h.get_by_label("Folder summary");
+            h.get_by_label("Subfolders");
+            let first = h.get_by_label("Projects/").rect();
+            let second = h.get_by_label("Photos/").rect();
+            assert!((first.top() - second.top()).abs() <= tokens.font_size + 10.0);
+            let long = h
+                .get_by_label("A long subfolder name that should stay on one line/")
+                .rect();
+            assert!(long.height() <= tokens.font_size + 4.0);
+            assert!(long.right() <= width as f32);
+            if width >= 420 {
+                assert!(long.width() > width as f32 * 0.5);
+            }
+            assert!(h.query_all_by_label(filename).count() > 0);
+            for label in h.query_all_by_label(filename) {
+                assert!(label.rect().right() <= width as f32);
+                assert!(label.rect().bottom() <= h.get_by_label("Scope").rect().top());
+            }
+            h.snapshot(format!("volume_preview_{width}_{theme}"));
+            let mut unknown = volume;
+            unknown.free = None;
+            h.state_mut().volumes.replace(vec![unknown]);
+            h.run();
+            h.get_by_label("Unavailable");
+            h.state_mut()
+                .dispatch("preview.thumbs.toggle", &serde_json::json!({"pane": pane}))
+                .expect("thumbnails");
+            h.run();
+            h.get_by_label("Volume information").click();
+            h.run();
+            h.get_by_label("USB backup");
+            h.get_by_label("Unavailable");
+            h.state_mut()
+                .dispatch("preview.thumbs.toggle", &serde_json::json!({"pane": pane}))
+                .expect("summary");
+            h.state_mut().volumes.replace(Vec::new());
+            h.run();
+            assert!(h.query_by_label("Volume").is_none());
+            h.get_by_label("Folder summary");
+            results.extend_harness(&mut h);
+        }
+    }
+}
+
+#[test]
+fn devices_section_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = commanded_fixture();
+        session.volumes.replace(vec![
+            fm_engine::devices::Device {
+                name: "USB backup".into(),
+                mount: VfsUri::parse("/media/Backup").expect("uri"),
+                filesystem: "exfat".into(),
+                total: Some(128 << 30),
+                free: Some(96 << 30),
+                identity: "usb-42".into(),
+                removal: fm_engine::devices::Removal::Eject,
+            },
+            fm_engine::devices::Device {
+                name: "Private files".into(),
+                mount: VfsUri::parse("/media/veracrypt1").expect("uri"),
+                filesystem: "ext4".into(),
+                total: Some(16 << 30),
+                free: Some(8 << 30),
+                identity: "virtual-42".into(),
+                removal: fm_engine::devices::Removal::Unsupported(
+                    "Dismount this volume in VeraCrypt".into(),
+                ),
+            },
+        ]);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(400.0, 900.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                let _ = fm_ui::places::show(ui, &mut session, 1, &tokens);
+            });
+        h.run_steps(3);
+        h.snapshot(format!("devices_section_{theme}"));
+        results.extend_harness(&mut h);
+    }
+}
+
+#[test]
 fn the_filter_bar_takes_typing_and_esc_clears_it() {
     let tokens = Tokens::dark();
     let mut fixture = commanded_fixture();

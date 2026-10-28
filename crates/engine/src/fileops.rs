@@ -317,6 +317,8 @@ pub struct OpJob {
     pub summary: Option<OpSummary>,
     kind: Option<OpKind>,
     touched: Vec<VfsUri>,
+    /// Sources and destinations, including read-only sources, for safe device removal.
+    uris: Vec<VfsUri>,
     shared: Arc<Mutex<Shared>>,
     resolver: Sender<Decision>,
 }
@@ -328,6 +330,14 @@ pub struct FileOps {
 }
 
 impl FileOps {
+    pub(crate) fn uses_volume(&self, mount: &VfsUri) -> bool {
+        self.jobs.iter().any(|job| {
+            job.state.is_running()
+                && job.uris.iter().any(|uri| {
+                    mount.is_same_or_descendant_of(uri) || uri.is_same_or_descendant_of(mount)
+                })
+        })
+    }
     pub fn jobs(&self) -> &[OpJob] {
         &self.jobs
     }
@@ -508,6 +518,12 @@ impl Session {
     /// lane of the destination (or source) and reports through [`Session::poll`].
     pub fn submit_op(&mut self, request: OpRequest) -> Result<JobId, FmError> {
         let uris = request.uris();
+        if uris.iter().any(|uri| self.volumes.blocks(uri)) {
+            return Err(FmError::backend(
+                "devices",
+                "This volume is disconnected or being removed. Reconnect it or wait for removal to finish.",
+            ));
+        }
         if uris.len() > MAX_SOURCES + 1 {
             return Err(FmError::InvalidParams(format!(
                 "too many items (limit {MAX_SOURCES})"
@@ -548,6 +564,7 @@ impl Session {
             summary: None,
             kind,
             touched,
+            uris,
             shared,
             resolver,
         });

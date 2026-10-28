@@ -171,3 +171,25 @@ A remote file opened with its default application SHALL be downloaded to an owne
 
 ### Requirement: Search, sizes and Open With are bounded
 Find Files and Properties walks SHALL NOT follow symlinks and SHALL be capped (see `file-search`; sizes stop at 5 M entries or depth 256). Wildcard patterns are capped at 1024 bytes and 64 alternatives and matched without backtracking blow-up. Open With SHALL parse `.desktop` `Exec` lines without a shell, drop field codes other than `%f %F %u %U %%`, cap arguments at 256 and launch detached; chmod masks modes to `0o7777` and refuses to change a symlink.
+
+### Requirement: Mounted-volume removal is identity-checked and non-forced
+Eject/Dismount SHALL derive arguments from a currently listed OS mount, revalidate
+its identity before acting and refuse malformed, stale or unsupported targets.
+Tools SHALL use fixed argument arrays; required PowerShell source SHALL be fixed
+with separately validated arguments, never interpolated mount names. Tool output
+and runtime SHALL be bounded. Display labels SHALL be capped, stripped of control
+characters and redacted; raw operation identities SHALL remain separate.
+
+#### Scenario: A mount point is reused
+- **WHEN** another volume replaces the one selected for removal
+- **THEN** removal is refused without executing its tool
+
+### Requirement: Encrypted volume discovery requires no secrets
+Discovery/removal SHALL NOT unlock containers, request or store credentials,
+inspect locked contents or log raw operation identities. Unknown encrypted/virtual
+mounts SHALL stay browseable with an explanatory disabled Dismount action.
+Dismount SHALL never power off the underlying disk or sibling volumes.
+
+#### Scenario: VeraCrypt container on a USB disk
+- **WHEN** no verified volume-manager adapter exists
+- **THEN** the app directs the user to VeraCrypt instead of attempting hardware eject

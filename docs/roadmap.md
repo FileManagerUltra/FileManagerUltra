@@ -19,6 +19,11 @@ Out of scope until after these five: archives, previews, tabs, full-text search,
 
 ## Current focus
 
+`devices-section` is implemented with conditional Devices navigation, background
+mount detection, volume information and guarded removal. Real USB/VeraCrypt smoke
+checks on Linux, macOS and Windows remain open in its task list; the change is not
+archived.
+
 `pane-preview`, `pane-arrange`, `thumbnails-and-open`, `current-folder-row` and `workspaces` are implemented, smoke-tested in a real window and archived (their specs live in `openspec/specs/`). Change 4 (`sftp-backend`) is implemented and archived; 4b (`smb-backend`, with Network discovery) is implemented and archived; next up: change 5 (`live-watch-and-packaging`).
 
 ## Ideas for future changes

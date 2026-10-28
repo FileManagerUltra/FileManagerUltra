@@ -586,6 +586,43 @@ fn places_menu(ui: &mut egui::Ui, session: &mut Session) {
     });
 }
 
+fn devices_menu(ui: &mut egui::Ui, session: &mut Session) {
+    let devices = session.volumes.entries().to_vec();
+    if devices.is_empty() {
+        return;
+    }
+    ui.menu_button("Devices", |ui| {
+        for device in &devices {
+            ui.menu_button(fm_engine::devices::display_label(&device.name), |ui| {
+                ui.label(fm_engine::devices::display_label(
+                    &fm_engine::item_cmds::display_path(&device.mount),
+                ));
+                if ui.button("Open").clicked() {
+                    session.dispatch_or_notice(
+                        "nav.open",
+                        &serde_json::json!({"uri": device.mount.to_string()}),
+                    );
+                    ui.close();
+                }
+                if fm_ui::places::device_removal(ui, session, device) {
+                    ui.close();
+                }
+            });
+        }
+        ui.separator();
+        if ui
+            .add_enabled(
+                !session.volumes.scanning() && !session.volumes.removing(),
+                egui::Button::new("Refresh Devices"),
+            )
+            .clicked()
+        {
+            session.dispatch_or_notice("devices.refresh", &serde_json::Value::Null);
+            ui.close();
+        }
+    });
+}
+
 /// The top menu bar (File / Panes / View / Help).
 pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs) {
     egui::menu::MenuBar::new().ui(ui, |ui| {
@@ -640,6 +677,7 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             ui.separator();
             item(ui, session, dialogs, BOOKMARK_ADD);
             places_menu(ui, session);
+            devices_menu(ui, session);
         });
         ui.menu_button("Workspace", |ui| {
             item(ui, session, dialogs, WS_NEW);

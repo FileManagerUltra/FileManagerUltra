@@ -38,6 +38,22 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         .auto_shrink([false, true])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
+            let devices = s.volumes.entries().to_vec();
+            if !devices.is_empty() {
+                let (expanded, _, toggled) =
+                    section(ui, tokens, "Devices", !collapsed.devices_collapsed, None);
+                if toggled && let Some(st) = s.layout.state_mut(pane) {
+                    st.places.devices_collapsed = !expanded;
+                }
+                if expanded {
+                    for device in &devices {
+                        if device_row(ui, s, pane, tokens, device, location.as_ref()) {
+                            open = Some(device.mount.clone());
+                        }
+                    }
+                }
+                ui.add_space(tokens.padding * 0.5);
+            }
             let (expanded, _, toggled) =
                 section(ui, tokens, "Places", !collapsed.places_collapsed, None);
             if toggled && let Some(st) = s.layout.state_mut(pane) {
@@ -81,6 +97,99 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     open
 }
 
+fn device_row(
+    ui: &mut Ui,
+    s: &mut Session,
+    pane: PaneId,
+    tokens: &Tokens,
+    device: &fm_engine::devices::Device,
+    location: Option<&VfsUri>,
+) -> bool {
+    let name = fm_engine::devices::display_label(&device.name);
+    let path = fm_engine::devices::display_label(&display_path(&device.mount));
+    let space = match (device.free, device.total) {
+        (Some(free), Some(total)) => format!(
+            "{} free of {}",
+            crate::listing::human_size(free),
+            crate::listing::human_size(total),
+        ),
+        _ => "Capacity unavailable".to_string(),
+    };
+    let tooltip = format!("{name}\n{path}\n{}\n{space}", device.filesystem);
+    let current = location.is_some_and(|uri| device.mount.is_same_or_descendant_of(uri));
+    let mut clicked = false;
+    let group = ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            let (icon, _) =
+                ui.allocate_exact_size(vec2(tokens.font_size, tokens.row_height), Sense::hover());
+            paint_icon(
+                ui.painter(),
+                PlaceKind::Computer,
+                icon.center(),
+                tokens.font_size * 0.45,
+                tokens.text_muted,
+            );
+            let response = ui
+                .add_sized(
+                    [
+                        (ui.available_width() - tokens.font_size * 6.5).max(20.0),
+                        tokens.row_height,
+                    ],
+                    egui::Button::selectable(current, "")
+                        .left_text(&name)
+                        .truncate(),
+                )
+                .on_hover_text(&tooltip);
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
+            clicked = response.clicked();
+            response.context_menu(|ui| {
+                if ui.button("Open").clicked() {
+                    clicked = true;
+                    ui.close();
+                }
+                if device_removal(ui, s, device) {
+                    ui.close();
+                }
+            });
+            device_removal(ui, s, device);
+        });
+    });
+    crate::dnd::register_zone(
+        ui.ctx(),
+        group.response.rect,
+        device.mount.clone(),
+        crate::dnd::ZONE_ROW,
+    );
+    if clicked {
+        let _ = s.layout.focus_pane(pane);
+    }
+    clicked
+}
+
+/// Shared by the sidebar and Go menu. Unsupported volume managers remain browseable.
+pub fn device_removal(ui: &mut Ui, s: &mut Session, device: &fm_engine::devices::Device) -> bool {
+    use fm_engine::devices::Removal;
+    let enabled = !s.volumes.removing() && !matches!(device.removal, Removal::Unsupported(_));
+    let tip = match &device.removal {
+        Removal::Unsupported(reason) => reason.as_str(),
+        Removal::Eject => "Unmount and safely eject this drive",
+        Removal::Dismount => "Unmount this volume without powering off its host disk",
+    };
+    if ui
+        .add_enabled(enabled, egui::Button::new(device.removal.label()))
+        .on_disabled_hover_text(tip)
+        .on_hover_text(tip)
+        .clicked()
+    {
+        s.dispatch_or_notice(
+            device.removal.command(),
+            &json!({"uri": device.mount.to_string()}),
+        );
+        return true;
+    }
+    false
+}
+
 /// Paint one line of `text` at `x` inside `rect`, truncated with `…` to the row width and
 /// clipped to it, so long names never spill into the neighbouring column.
 fn label(
@@ -119,6 +228,7 @@ fn section(
     let height = tokens.row_height;
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, title));
     let plus = add.map(|_| {
         Rect::from_center_size(
             Pos2::new(
@@ -382,6 +492,7 @@ fn paint_icon(painter: &Painter, kind: PlaceKind, c: Pos2, r: f32, color: Color3
                 egui::StrokeKind::Middle,
             );
         }
+
         PlaceKind::Desktop => {
             painter.rect_stroke(
                 Rect::from_min_max(p(-0.9, -0.75), p(0.9, 0.4)),
@@ -477,6 +588,91 @@ fn paint_icon(painter: &Painter, kind: PlaceKind, c: Pos2, r: f32, color: Color3
                 ],
                 stroke,
             ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::{
+        Harness,
+        kittest::{NodeT, Queryable},
+    };
+    use fm_engine::devices::{Device, Removal};
+
+    fn device() -> Device {
+        Device {
+            name: "Encrypted files".into(),
+            mount: VfsUri::parse("/media/veracrypt1").expect("uri"),
+            filesystem: "exfat".into(),
+            total: Some(64 << 30),
+            free: Some(32 << 30),
+            identity: "virtual-42".into(),
+            removal: Removal::Unsupported("Dismount this volume in VeraCrypt".into()),
+        }
+    }
+
+    #[test]
+    fn devices_are_conditional_and_collapse_independently_in_both_themes() {
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            let mut s = Session::new().expect("session");
+            s.standard_places.0.clear();
+            let mem = fm_testkit::MemFs::new();
+            mem.mkdirs_str("/media/veracrypt1").expect("mount");
+            s.backends.register(std::sync::Arc::new(mem));
+            let mut h = Harness::builder()
+                .with_size(vec2(450.0, 800.0))
+                .build_ui_state(
+                    move |ui, s| {
+                        crate::theme::apply_to(ui.ctx(), &tokens);
+                        ui.ctx().set_theme(if tokens.dark {
+                            egui::Theme::Dark
+                        } else {
+                            egui::Theme::Light
+                        });
+                        if let Some(uri) = show(ui, s, 1, &tokens) {
+                            s.dispatch_or_notice("nav.open", &json!({"uri": uri.to_string()}));
+                        }
+                    },
+                    s,
+                );
+            assert!(h.query_by_label("Devices").is_none());
+            h.state_mut().volumes.replace(vec![device()]);
+            h.run();
+            h.get_by_label("Devices");
+            h.get_by_label("Encrypted files");
+            assert!(h.query_by_label("32.0 GiB free of 64.0 GiB").is_none());
+            assert!(h.query_by_label("/media/veracrypt1").is_none());
+            assert!(h.get_by_label("Dismount").accesskit_node().is_disabled());
+            h.get_by_label("Encrypted files").click();
+            h.run();
+            assert_eq!(
+                h.state().layout.state(1).expect("pane").location,
+                device().mount
+            );
+            let mut unknown = device();
+            unknown.total = None;
+            unknown.free = None;
+            h.state_mut().volumes.replace(vec![unknown]);
+            h.run();
+            assert!(h.query_by_label("Capacity unavailable").is_none());
+            h.get_by_label("Devices").click();
+            h.run();
+            assert!(
+                h.state()
+                    .layout
+                    .state(1)
+                    .expect("pane")
+                    .places
+                    .devices_collapsed
+            );
+            assert!(h.query_by_label("Encrypted files").is_none());
+            h.get_by_label("Devices");
+            h.get_by_label("Places");
+            h.state_mut().volumes.replace(Vec::new());
+            h.run();
+            assert!(h.query_by_label("Devices").is_none());
         }
     }
 }
