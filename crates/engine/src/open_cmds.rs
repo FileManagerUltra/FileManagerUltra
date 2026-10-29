@@ -326,9 +326,13 @@ fn private_temp_dir() -> Result<PathBuf, FmError> {
         SEQ.fetch_add(1, Ordering::Relaxed)
     );
     let dir = std::env::temp_dir().join(name);
-    let mut builder = std::fs::DirBuilder::new();
+    let builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    let builder = {
+        let mut builder = builder;
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder
+    };
     builder.create(&dir).map_err(FmError::Io)?;
     Ok(dir)
 }

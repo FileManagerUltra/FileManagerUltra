@@ -71,6 +71,19 @@ Holding Shift SHALL bypass application mouse input for local text selection and 
 ### Requirement: Copy, paste, scrollback
 `Ctrl+Shift+C` SHALL copy the selection and `Ctrl+Shift+V` SHALL paste (bracketed when the app enabled it). Scrollback MUST be capped (10 000 lines). Paste larger than 1 MiB is rejected with a notice.
 
+Selections SHALL be anchored in retained buffer rows, not viewport rows. Mouse
+wheel and Shift+PageUp/PageDown SHALL preserve selection, and dragging near the
+top/bottom edge SHALL scroll to extend it beyond one viewport. Shift-click SHALL
+extend an existing selection. Copy SHALL include off-screen selected text without
+moving the view. Application mouse reporting SHALL retain its existing Shift
+bypass. Resizing, buffer resets or eviction of selected history MAY clear selection
+to avoid copying different text.
+
+#### Scenario: Copy more than one screen
+- **WHEN** the user drags a selection, scrolls into history and extends it
+- **THEN** the anchor stays on its original buffer text and copying includes every selected row
+- **AND** scrolling alone neither clears nor relocates the selection
+
 #### Scenario: Oversized paste
 - **WHEN** more than 1 MiB is pasted
 - **THEN** nothing is sent and a notice explains why

@@ -31,11 +31,6 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let kind = state.kind;
     let tree_active = state.tree.active;
 
-    let stroke = if focused {
-        egui::Stroke::new(tokens.border_width.max(2.5), tokens.accent)
-    } else {
-        egui::Stroke::new(tokens.border_width, tokens.border)
-    };
     let mut open = None;
     if kind.is_files() && focused && !tree_active {
         crate::locationbar::type_to_go(ui.ctx(), s, pane);
@@ -51,7 +46,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     }
     let frame = egui::Frame::NONE
         .fill(tokens.bg)
-        .stroke(stroke)
+        .stroke(egui::Stroke::new(tokens.border_width, tokens.border))
         .inner_margin(egui::Margin::same(tokens.padding as i8))
         .show(ui, |ui| {
             // A frame only wraps its content; make it fill the slot it was given, however the
@@ -61,13 +56,8 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
             if kind.is_files() && crate::locationbar::is_editing(s, pane) {
                 crate::locationbar::show_editor(ui, s, pane, tokens);
             } else {
-                egui::Frame::NONE
+                let header = egui::Frame::NONE
                     .fill(tokens.panel)
-                    .stroke(if focused {
-                        egui::Stroke::new(1.5, tokens.accent)
-                    } else {
-                        egui::Stroke::NONE
-                    })
                     .corner_radius(tokens.corner_radius)
                     .inner_margin(egui::Margin::symmetric(tokens.padding as i8, 2))
                     .show(ui, |ui| {
@@ -106,6 +96,14 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             },
                         );
                     });
+                if focused {
+                    ui.painter().rect_stroke(
+                        header.response.rect,
+                        tokens.corner_radius,
+                        egui::Stroke::new(1.5, tokens.accent),
+                        egui::StrokeKind::Inside,
+                    );
+                }
             }
             ui.separator();
 
@@ -177,6 +175,14 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 );
             });
         });
+    if focused {
+        ui.painter().rect_stroke(
+            frame.response.rect,
+            0.0,
+            egui::Stroke::new(tokens.border_width.max(2.5), tokens.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
     border_grip(ui, tokens, pane, frame.response.rect);
 
     if pressed_inside {
@@ -317,6 +323,68 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         s
+    }
+
+    #[test]
+    fn focus_outlines_do_not_move_content() {
+        fn text_positions(shapes: &[egui::epaint::ClippedShape]) -> Vec<(String, egui::Pos2)> {
+            fn collect(shape: &egui::Shape, output: &mut Vec<(String, egui::Pos2)>) {
+                match shape {
+                    egui::Shape::Text(text) => {
+                        output.push((text.galley.text().to_owned(), text.pos));
+                    }
+                    egui::Shape::Vec(shapes) => {
+                        for shape in shapes {
+                            collect(shape, output);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let mut output = Vec::new();
+            for shape in shapes {
+                collect(&shape.shape, &mut output);
+            }
+            output
+        }
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            for kind in PaneKind::ALL {
+                let mut s = ready_session();
+                let other = s
+                    .layout
+                    .split(1, fm_layout::Axis::Horizontal, 0.5)
+                    .expect("split");
+                s.layout.state_mut(1).expect("pane").kind = kind;
+                let ctx = egui::Context::default();
+                crate::theme::apply_to(&ctx, &tokens);
+                let mut render = |focused| {
+                    s.layout.focus_pane(focused).expect("focus");
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(800.0, 600.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ctx| {
+                            egui::CentralPanel::default().show(ctx, |ui| {
+                                let _ = show(ui, &mut s, 1, &tokens);
+                            });
+                        },
+                    );
+                    output.textures_delta.clear();
+                    text_positions(&output.shapes)
+                };
+                render(other);
+                let inactive = render(other);
+                render(1);
+                let active = render(1);
+                assert!(!active.is_empty(), "{kind:?}");
+                assert_eq!(inactive, active, "{kind:?}: focus moved pane text");
+                assert_eq!(active, render(other), "{kind:?}: blur moved pane text");
+            }
+        }
     }
 
     #[test]

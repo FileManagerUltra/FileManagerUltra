@@ -65,6 +65,13 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    pub fn buffer_cell(&self, cell: (u16, u16)) -> (usize, u16) {
+        (
+            self.scrollback_len.saturating_sub(self.scrollback_offset) + usize::from(cell.0),
+            cell.1,
+        )
+    }
+
     pub fn cell(&self, row: u16, col: u16) -> Option<&Cell> {
         if row >= self.rows || col >= self.cols {
             return None;
@@ -211,6 +218,49 @@ impl Emulator {
 
     pub fn clear_scrollback(&mut self) {
         self.parser.screen_mut().clear_scrollback();
+    }
+
+    /// Copy retained buffer cells without changing the displayed scroll position.
+    pub fn text_between(&mut self, a: (usize, u16), b: (usize, u16)) -> String {
+        let (start, end) = if a <= b { (a, b) } else { (b, a) };
+        let history = self.parser.screen().scrollback_len();
+        let offset = self.parser.screen().scrollback();
+        let (rows, cols) = self.size();
+        let last = history + usize::from(rows) - 1;
+        let mut out = String::new();
+        for row in start.0..=end.0.min(last) {
+            let screen_row = if row < history {
+                self.parser.screen_mut().set_scrollback(history - row);
+                0
+            } else {
+                self.parser.screen_mut().set_scrollback(0);
+                (row - history) as u16
+            };
+            let from = if row == start.0 { start.1 } else { 0 };
+            let to = if row == end.0 {
+                end.1.min(cols - 1)
+            } else {
+                cols - 1
+            };
+            let mut line = String::new();
+            for col in from..=to {
+                if let Some(cell) = self.parser.screen().cell(screen_row, col)
+                    && !cell.is_wide_continuation()
+                {
+                    if cell.contents().is_empty() {
+                        line.push(' ');
+                    } else {
+                        line.push_str(cell.contents());
+                    }
+                }
+            }
+            if row > start.0 {
+                out.push('\n');
+            }
+            out.push_str(line.trim_end());
+        }
+        self.parser.screen_mut().set_scrollback(offset);
+        out
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -376,11 +426,35 @@ mod tests {
     }
 
     #[test]
+    fn selection_spans_history_and_live_screen_without_moving_the_view() {
+        let mut e = Emulator::new(4, 20);
+        for n in 0..20 {
+            e.feed(format!("line{n:02}\r\n").as_bytes());
+        }
+        e.scroll(8);
+        let before = e.snapshot();
+        let anchor = before.buffer_cell((0, 0));
+        e.scroll(-5);
+        let after = e.snapshot();
+        let head = after.buffer_cell((3, 19));
+        let expected = (anchor.0..=head.0)
+            .map(|n| format!("line{n:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(e.text_between(anchor, head), expected);
+        assert_eq!(e.text_between(head, anchor), expected);
+        assert_eq!(e.snapshot(), after, "copy must not move the viewport");
+        assert!(head.0 - anchor.0 > usize::from(after.rows));
+        assert!(e.text_between((usize::MAX, 0), (usize::MAX, 10)).is_empty());
+    }
+
+    #[test]
     fn selection_text_skips_wide_continuations_and_trims() {
         let mut e = Emulator::new(2, 10);
         e.feed("a漢b  ".as_bytes());
         let s = e.snapshot();
         assert_eq!(s.text_between((0, 0), (0, 9)), "a漢b");
+        assert_eq!(e.text_between((0, 0), (0, 9)), "a漢b");
         assert_eq!(
             s.text_between((0, 9), (0, 0)),
             "a漢b",

@@ -10,7 +10,7 @@ A cross-platform (Linux · macOS · Windows), multi-pane file manager written in
 - **File operations as background jobs** with progress, conflict handling and cancel
 - **Trash with undo**, **live directory updates**, commander-style shortcuts (F5–F8, Tab)
 - **Content-fitted, elastic file columns** with smooth divider resizing and remembered widths
-- **Terminal panes** with application mouse support (mc/btop); hold Shift for local selection and scrollback
+- **Terminal panes** with application mouse support (mc/btop), multi-screen text selection and copy; hold Shift for local selection and scrollback
 - **Log previews** with Live tail, search/severity filters and UTC time ranges: quick presets from 5 minutes to 7 days, or custom dates and times
 
 ## Status

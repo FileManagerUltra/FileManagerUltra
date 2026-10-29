@@ -41,6 +41,11 @@ All pane topology changes SHALL be engine commands; the UI never mutates the lay
 - **WHEN** `pane.focus.next` runs
 - **THEN** focus advances to the next leaf in tree order, wrapping at the end
 
+#### Scenario: Focus does not resize pane content
+- **WHEN** focus moves between panes
+- **THEN** accent outlines change without changing pane, header or content geometry
+- **AND** the same invariant holds in both themes and for every pane kind
+
 ### Requirement: Pane state survives splits and closes
 Tree expansion, listing sort, selection, scroll and history SHALL live in `fm-layout`'s per-pane state, keyed by `PaneId`, so topology changes never reset a pane's view.
 

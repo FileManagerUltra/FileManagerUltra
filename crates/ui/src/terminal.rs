@@ -163,7 +163,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused
     }
     s.terminal_resize(pane, rows, cols);
 
-    let Some(snap) = s.terminal_snapshot(pane) else {
+    let Some(mut snap) = s.terminal_snapshot(pane) else {
         ui.painter().rect_filled(rect, 0.0, tokens.term_bg);
         return;
     };
@@ -185,9 +185,15 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused
             );
         });
         forward_input(ui, s, pane, &snap);
+        if let Some(updated) = s.terminal_snapshot(pane) {
+            snap = updated;
+        }
     }
     if exited.is_none() && s.pending_kind.is_none() {
         handle_pointer(ui, s, pane, &response, rect, &m, &snap);
+        if let Some(updated) = s.terminal_snapshot(pane) {
+            snap = updated;
+        }
     }
     paint(
         ui,
@@ -480,11 +486,32 @@ fn handle_pointer(
         }
         return;
     };
-    let cell = cell_at(rect, m, snap, pos);
+    let mut snap = s.terminal_snapshot(pane).unwrap_or_else(|| snap.clone());
+    if response.dragged() && (pos.y < rect.top() + m.ch || pos.y > rect.bottom() - m.ch) {
+        let id = response.id.with("selection-scroll");
+        let now = ui.input(|i| i.time);
+        let last = ui
+            .ctx()
+            .data(|d| d.get_temp::<f64>(id))
+            .unwrap_or(now - 1.0);
+        if now - last >= 0.05 {
+            s.terminal_scroll(pane, if pos.y < rect.center().y { 1 } else { -1 });
+            ui.ctx().data_mut(|d| d.insert_temp(id, now));
+            if let Some(updated) = s.terminal_snapshot(pane) {
+                snap = updated;
+            }
+        }
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(50));
+    }
+    let cell = snap.buffer_cell(cell_at(rect, m, &snap, pos));
     if response.drag_started() {
+        let anchor = ui
+            .input(|i| i.pointer.press_origin())
+            .map_or(cell, |pos| snap.buffer_cell(cell_at(rect, m, &snap, pos)));
         s.terminal_select(Some(TermSelection {
             pane,
-            anchor: cell,
+            anchor,
             head: cell,
         }));
     } else if response.dragged()
@@ -492,7 +519,13 @@ fn handle_pointer(
     {
         s.terminal_select(Some(TermSelection { head: cell, ..sel }));
     } else if response.clicked() {
-        s.terminal_select(None);
+        if mods.shift
+            && let Some(sel) = s.terminal_selection.filter(|sel| sel.pane == pane)
+        {
+            s.terminal_select(Some(TermSelection { head: cell, ..sel }));
+        } else {
+            s.terminal_select(None);
+        }
     }
 }
 
@@ -569,7 +602,8 @@ fn paint(
             if bg != tokens.term_bg {
                 painter.rect_filled(cell_rect, 0.0, bg);
             }
-            if selection.is_some_and(|(a, b)| (row, col) >= a && (row, col) <= b) {
+            let buffer_cell = snap.buffer_cell((row, col));
+            if selection.is_some_and(|(a, b)| buffer_cell >= a && buffer_cell <= b) {
                 painter.rect_filled(cell_rect, 0.0, tokens.term_selection);
             }
             if snap.cursor == Some((row, col)) {

@@ -235,6 +235,10 @@ impl TermSession {
         self.emulator.scroll(lines);
     }
 
+    pub fn text_between(&mut self, a: (usize, u16), b: (usize, u16)) -> String {
+        self.emulator.text_between(a, b)
+    }
+
     pub fn clear_scrollback(&mut self) {
         self.emulator.clear_scrollback();
     }

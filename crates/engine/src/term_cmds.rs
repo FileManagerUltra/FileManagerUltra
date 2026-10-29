@@ -18,12 +18,12 @@ pub const MAX_PASTE_BYTES: usize = 1024 * 1024;
 const DEFAULT_ROWS: u16 = 24;
 const DEFAULT_COLS: u16 = 80;
 
-/// A text selection in screen cells of one terminal pane.
+/// A text selection in retained buffer cells (history followed by the live screen).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TermSelection {
     pub pane: PaneId,
-    pub anchor: (u16, u16),
-    pub head: (u16, u16),
+    pub anchor: (usize, u16),
+    pub head: (usize, u16),
 }
 
 fn local_dir(uri: &VfsUri) -> Option<String> {
@@ -87,9 +87,11 @@ impl Session {
     /// Resize the pane's pty to the cells the UI can show.
     pub fn terminal_resize(&mut self, pane: PaneId, rows: u16, cols: u16) {
         if let Some(t) = self.terminals.get_mut(&pane) {
-            let before = t.snapshot().rows;
+            let before = (t.snapshot().rows, t.snapshot().cols);
             t.resize(rows, cols);
-            if t.snapshot().rows != before {
+            if (t.snapshot().rows, t.snapshot().cols) != before
+                && self.terminal_selection.is_some_and(|sel| sel.pane == pane)
+            {
                 self.terminal_selection = None;
             }
         }
@@ -98,7 +100,6 @@ impl Session {
     pub fn terminal_scroll(&mut self, pane: PaneId, lines: i32) {
         if let Some(t) = self.terminals.get_mut(&pane) {
             t.scroll(lines);
-            self.terminal_selection = None;
         }
     }
 
@@ -124,8 +125,21 @@ impl Session {
     /// Drain terminal output into the parsers. Returns `(changed, backlog)`.
     pub(crate) fn pump_terminals(&mut self) -> (bool, bool) {
         let mut total = Pump::default();
-        for t in self.terminals.values_mut() {
+        for (&pane, t) in &mut self.terminals {
+            let selected = self.terminal_selection.is_some_and(|sel| sel.pane == pane);
+            let before = selected.then(|| t.snapshot());
             let p = t.pump();
+            if p.changed
+                && let Some(before) = before
+            {
+                let after = t.snapshot();
+                if before.alternate_screen != after.alternate_screen
+                    || before.scrollback_len > after.scrollback_len
+                    || after.scrollback_len == fm_term::SCROLLBACK
+                {
+                    self.terminal_selection = None;
+                }
+            }
             total.changed |= p.changed;
             total.backlog |= p.backlog;
         }
@@ -312,10 +326,11 @@ pub fn copy() -> CommandSpec {
             else {
                 return Ok(()); // nothing selected: the menu entry is greyed out
             };
-            let snap = s
-                .terminal_snapshot(sel.pane)
+            let terminal = s
+                .terminals
+                .get_mut(&sel.pane)
                 .ok_or(FmError::Unsupported("terminal is not running"))?;
-            let text = snap.text_between(sel.anchor, sel.head);
+            let text = terminal.text_between(sel.anchor, sel.head);
             if !text.is_empty() {
                 s.clipboard_out = Some(text);
             }

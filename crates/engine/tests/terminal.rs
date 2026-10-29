@@ -122,6 +122,51 @@ fn terminal_starts_in_the_pane_directory_and_echoes_input() {
 }
 
 #[test]
+#[cfg(unix)]
+fn selection_survives_scrolling_and_copies_offscreen_history() {
+    use fm_engine::term_cmds::TermSelection;
+    let dir = tempfile::tempdir().expect("tmp");
+    let mut s = session_in(dir.path());
+    if !has_pty(&mut s) {
+        return;
+    }
+    let pane = s.layout.focused();
+    s.terminal_resize(pane, 8, 80);
+    s.dispatch("term.input", &json!({
+        "data": "i=0; while [ \"$i\" -lt 40 ]; do printf 'selected-row-%02d\\n' \"$i\"; i=$((i+1)); done\r"
+    })).expect("output");
+    assert!(wait_for(&mut s, pane, "selected-row-39"));
+    s.terminal_scroll(pane, 1000);
+    let top = s.terminal_snapshot(pane).expect("top");
+    let mut selection = TermSelection {
+        pane,
+        anchor: top.buffer_cell((0, 0)),
+        head: top.buffer_cell((top.rows - 1, top.cols - 1)),
+    };
+    s.terminal_select(Some(selection));
+    s.terminal_scroll(pane, -1000);
+    assert_eq!(s.terminal_selection, Some(selection));
+    let bottom = s.terminal_snapshot(pane).expect("bottom");
+    selection.head = bottom.buffer_cell((bottom.rows - 1, bottom.cols - 1));
+    s.terminal_select(Some(selection));
+    s.terminal_scroll(pane, 5);
+    let offset = s
+        .terminal_snapshot(pane)
+        .expect("scrolled")
+        .scrollback_offset;
+    s.dispatch("term.copy", &json!(null)).expect("copy");
+    let copied = s.clipboard_out.take().expect("clipboard");
+    for row in 0..40 {
+        assert!(copied.contains(&format!("selected-row-{row:02}")), "{row}");
+    }
+    assert_eq!(s.terminal_selection, Some(selection));
+    assert_eq!(
+        s.terminal_snapshot(pane).expect("after").scrollback_offset,
+        offset
+    );
+}
+
+#[test]
 fn file_commands_are_disabled_on_a_terminal_pane() {
     let dir = tempfile::tempdir().expect("tmp");
     std::fs::write(dir.path().join("a"), b"a").expect("file");
