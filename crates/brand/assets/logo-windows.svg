@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 160 160">
+  <defs>
+    <linearGradient id="yellow" x2=".8" y2="1">
+      <stop stop-color="#ffe48a"/><stop offset="1" stop-color="#edb52f"/>
+    </linearGradient>
+    <linearGradient id="blue" x2=".7" y2="1">
+      <stop stop-color="#62bcff"/><stop offset="1" stop-color="#3476e5"/>
+    </linearGradient>
+    <linearGradient id="back" x2="0" y2="1">
+      <stop stop-color="#326c98"/><stop offset="1" stop-color="#20466f"/>
+    </linearGradient>
+    <filter id="shadow" x="-.3" y="-.3" width="1.6" height="1.7" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="5"/>
+      <feOffset dy="6"/>
+      <feComponentTransfer><feFuncA type="linear" slope=".28"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <path d="M17 44Q17 37 27 37H61L76 45H133Q143 45 143 55V122Q143 133 132 133H28Q17 133 17 122Z" fill="url(#back)"/>
+    <path d="M17 44Q17 37 27 37H61L76 45V51H17Z" fill="#d49a27"/>
+    <path d="M17 60Q17 51 27 51H76V133H28Q17 133 17 122Z" fill="url(#yellow)"/>
+    <path d="M84 51H133Q143 51 143 61V122Q143 133 132 133H84Z" fill="url(#blue)"/>
+    <path d="M27 53H75M86 53H132" stroke="#fff" stroke-opacity=".35" stroke-width="2" stroke-linecap="round"/>
+  </g>
+</svg>

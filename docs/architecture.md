@@ -178,6 +178,12 @@ The product name must be changeable in one commit. Therefore:
 - `cargo xtask rename "NewName"` rewrites `crates/brand`, the `[[bin]]` name, desktop/NSIS/DMG identifiers, and runs `cargo xtask brand-check`.
 - `cargo xtask brand-check` fails if the previous name appears anywhere outside `openspec/` and `log/`.
 
+The application mark is a yellow/blue split folder with a shallow gold tab and dark
+central seam. `fm-brand::ICON_PNG` selects the platform's 256 px artwork: flat
+silhouette on Linux, shaded silhouette on Windows, rounded light tile on macOS.
+SVG masters and the regeneration script live in `crates/brand/assets`; generated
+packaging assets use those same treatments (Linux PNG/SVG, Windows ICO, macOS ICNS).
+
 ---
 
 ## 6. Engine: session, commands, state

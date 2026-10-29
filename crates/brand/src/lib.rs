@@ -27,8 +27,17 @@ pub const WINDOW_CLASS: &str = APP_SLUG;
 /// Public release source; organisation and repository names need not follow a product rename.
 pub const RELEASE_REPOSITORY: &str = "FileManagerUltra/FileManagerUltra";
 
-/// Application icon (256 px PNG) for the window and installers; source art is `assets/logo.svg`.
+/// Platform-specific application icon (256 px PNG); source art lives in `assets/`.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const ICON_PNG: &[u8] = include_bytes!("../assets/icon-256.png");
+
+#[cfg(target_os = "windows")]
+/// Windows gradient split-folder icon (256 px PNG).
+pub const ICON_PNG: &[u8] = include_bytes!("../assets/icon-windows-256.png");
+
+#[cfg(target_os = "macos")]
+/// macOS rounded-tile split-folder icon (256 px PNG).
+pub const ICON_PNG: &[u8] = include_bytes!("../assets/icon-macos-256.png");
 
 /// Free-desktop entry template filled from the constants above.
 ///
@@ -56,6 +65,106 @@ Terminal=false
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn png_size(bytes: &[u8]) -> (u32, u32) {
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(&bytes[12..16], b"IHDR");
+        (
+            u32::from_be_bytes(bytes[16..20].try_into().expect("width")),
+            u32::from_be_bytes(bytes[20..24].try_into().expect("height")),
+        )
+    }
+
+    #[test]
+    fn platform_icons_are_complete_and_packaging_matches() {
+        let linux = include_bytes!("../assets/icon-256.png");
+        let windows = include_bytes!("../assets/icon-windows-256.png");
+        let macos = include_bytes!("../assets/icon-macos-256.png");
+        for icon in [
+            linux.as_slice(),
+            windows.as_slice(),
+            macos.as_slice(),
+            ICON_PNG,
+        ] {
+            assert_eq!(png_size(icon), (256, 256));
+        }
+        assert_ne!(linux.as_slice(), windows.as_slice());
+        assert_ne!(linux.as_slice(), macos.as_slice());
+        #[cfg(target_os = "windows")]
+        assert_eq!(ICON_PNG, windows);
+        #[cfg(target_os = "macos")]
+        assert_eq!(ICON_PNG, macos);
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        assert_eq!(ICON_PNG, linux);
+        assert_eq!(
+            png_size(include_bytes!("../../../packaging/icon.png")),
+            (512, 512)
+        );
+        assert_eq!(
+            include_bytes!("../assets/logo.svg").as_slice(),
+            include_bytes!("../../../packaging/logo.svg").as_slice()
+        );
+    }
+
+    #[test]
+    fn windows_installer_icon_has_all_launcher_sizes() {
+        let ico = include_bytes!("../../../packaging/icon.ico");
+        assert_eq!(&ico[..6], &[0, 0, 1, 0, 6, 0]);
+        let mut sizes = Vec::new();
+        for entry in ico[6..102].as_chunks::<16>().0 {
+            let width = if entry[0] == 0 {
+                256
+            } else {
+                u16::from(entry[0])
+            };
+            let height = if entry[1] == 0 {
+                256
+            } else {
+                u16::from(entry[1])
+            };
+            assert_eq!(width, height);
+            let length = u32::from_le_bytes(entry[8..12].try_into().expect("length")) as usize;
+            let offset = u32::from_le_bytes(entry[12..16].try_into().expect("offset")) as usize;
+            assert!(
+                !ico.get(offset..offset + length)
+                    .expect("image data")
+                    .is_empty()
+            );
+            sizes.push(width);
+        }
+        sizes.sort_unstable();
+        assert_eq!(sizes, [16, 32, 48, 64, 128, 256]);
+    }
+
+    #[test]
+    fn macos_bundle_icon_has_standard_and_retina_pngs() {
+        let icns = include_bytes!("../../../packaging/icon.icns");
+        assert_eq!(&icns[..4], b"icns");
+        assert_eq!(
+            u32::from_be_bytes(icns[4..8].try_into().expect("length")) as usize,
+            icns.len()
+        );
+        let mut chunks = &icns[8..];
+        for (kind, size) in [
+            (b"icp4", 16),
+            (b"icp5", 32),
+            (b"icp6", 64),
+            (b"ic07", 128),
+            (b"ic08", 256),
+            (b"ic09", 512),
+            (b"ic10", 1024),
+            (b"ic11", 32),
+            (b"ic12", 64),
+            (b"ic13", 256),
+            (b"ic14", 512),
+        ] {
+            assert_eq!(&chunks[..4], kind);
+            let length = u32::from_be_bytes(chunks[4..8].try_into().expect("chunk")) as usize;
+            assert_eq!(png_size(&chunks[8..length]), (size, size));
+            chunks = &chunks[length..];
+        }
+        assert!(chunks.is_empty());
+    }
 
     #[test]
     fn identity_constants_are_non_empty() {

@@ -35,6 +35,15 @@ See `AGENTS.md` §2. `docs/architecture.md` explains why each crate exists and h
 
 ## Platform notes
 
+- **Application artwork**: the yellow/blue split-folder masters live in
+  `crates/brand/assets/logo.svg` (flat Linux), `logo-windows.svg` (shaded), and
+  `logo-macos.svg` (rounded tile). After editing them, run
+  `python3 crates/brand/assets/generate-icons.py` with Inkscape and ImageMagick
+  (`magick`) installed. This regenerates all three 256 px runtime/About PNGs,
+  packaging PNG/SVG, the six-size Windows ICO and standard/Retina macOS ICNS.
+  These tools are only required for artwork changes, not normal builds.
+  `cargo test -p fm-brand` checks asset dimensions and container representations.
+
 - **Linux development icon**: `cargo run` sets the window icon but does not install
   an icon-theme entry or desktop launcher. GNOME/Wayland docks need those to show
   the application icon. Run `cargo xtask desktop-install` once, then restart the

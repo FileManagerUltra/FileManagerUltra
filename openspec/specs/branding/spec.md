@@ -46,3 +46,15 @@ The desktop entry, file-association metadata and window class SHALL derive from 
 #### Scenario: Desktop file generation
 - **WHEN** packaging metadata is generated (later changes build on this)
 - **THEN** its `Name`, `Exec` and `StartupWMClass` fields come from `APP_NAME`, `EXECUTABLE` and `APP_SLUG`
+
+### Requirement: Recognisable platform-specific application icon
+The application icon SHALL be the approved split folder with a shallow gold tab,
+yellow left panel, blue right panel and a dark central seam. Linux SHALL use a flat
+free silhouette, Windows a subtly shaded free silhouette, and macOS an inset
+symbol on a light rounded-square tile. Window/About icons and platform packaging
+SHALL use the corresponding treatment, with editable sources owned by `fm-brand`.
+
+#### Scenario: Consistent installed and running identity
+- **WHEN** the app runs or is installed on Linux, Windows or macOS
+- **THEN** its window/About icon and launcher/bundle icon use the same platform treatment
+- **AND** Windows ICO includes 16 through 256 px representations and macOS ICNS includes standard and Retina representations through 1024 px

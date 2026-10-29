@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1530" viewBox="0 0 1200 1530">
+  <defs>
+    <linearGradient id="yellow" x2=".8" y2="1">
+      <stop stop-color="#ffe48a"/><stop offset="1" stop-color="#edb52f"/>
+    </linearGradient>
+    <linearGradient id="teal" x2=".8" y2="1">
+      <stop stop-color="#65ead4"/><stop offset="1" stop-color="#20b9be"/>
+    </linearGradient>
+    <linearGradient id="blue" x2=".7" y2="1">
+      <stop stop-color="#62bcff"/><stop offset="1" stop-color="#3476e5"/>
+    </linearGradient>
+    <linearGradient id="back" x2="0" y2="1">
+      <stop stop-color="#326c98"/><stop offset="1" stop-color="#20466f"/>
+    </linearGradient>
+    <linearGradient id="tile" x2=".6" y2="1">
+      <stop stop-color="#f8fbff"/><stop offset="1" stop-color="#d9e3f0"/>
+    </linearGradient>
+    <filter id="shadow" x="-.3" y="-.3" width="1.6" height="1.7" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="5"/>
+      <feOffset dy="6"/>
+      <feComponentTransfer><feFuncA type="linear" slope=".28"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <symbol id="split" viewBox="0 0 160 160">
+      <path d="M17 44Q17 37 27 37H61L76 45H133Q143 45 143 55V122Q143 133 132 133H28Q17 133 17 122Z" fill="url(#back)"/>
+      <path d="M17 44Q17 37 27 37H61L76 45V51H17Z" fill="#d49a27"/>
+      <path d="M17 60Q17 51 27 51H76V133H28Q17 133 17 122Z" fill="url(#yellow)"/>
+      <path d="M84 51H133Q143 51 143 61V122Q143 133 132 133H84Z" fill="url(#blue)"/>
+      <path d="M27 53H75M86 53H132" stroke="#fff" stroke-opacity=".35" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="twins" viewBox="0 0 160 160">
+      <path d="M12 37Q12 28 21 28H50L63 41H102Q111 41 111 50V103Q111 113 101 113H22Q12 113 12 103Z" fill="url(#blue)"/>
+      <path d="M37 67Q37 57 47 57H77L91 71H139Q149 71 149 81V127Q149 138 138 138H48Q37 138 37 127Z" fill="url(#back)"/>
+      <path d="M37 82Q37 74 47 74H139Q149 74 149 83V127Q149 138 138 138H48Q37 138 37 127Z" fill="url(#teal)"/>
+      <path d="M48 76H138" stroke="#fff" stroke-opacity=".35" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="sidebar" viewBox="0 0 160 160">
+      <path d="M17 39Q17 29 27 29H61L76 45H133Q143 45 143 55V122Q143 133 132 133H28Q17 133 17 122Z" fill="url(#back)"/>
+      <path d="M17 61Q17 51 27 51H55V133H28Q17 133 17 122Z" fill="url(#teal)"/>
+      <path d="M62 51H133Q143 51 143 61V122Q143 133 132 133H62Z" fill="url(#blue)"/>
+      <rect x="76" y="69" width="49" height="13" rx="4" fill="#ecf8ff"/>
+      <rect x="76" y="92" width="35" height="8" rx="4" fill="#c6e7ff"/>
+      <rect x="76" y="109" width="43" height="8" rx="4" fill="#c6e7ff"/>
+    </symbol>
+    <symbol id="monogram" viewBox="0 0 160 160">
+      <path d="M17 39Q17 29 27 29H61L76 45H133Q143 45 143 55V122Q143 133 132 133H28Q17 133 17 122Z" fill="url(#back)"/>
+      <path d="M27 51H133Q143 51 143 61V122Q143 133 132 133H28Q17 133 17 122V61Q17 51 27 51ZM55 69V119H70V101H104V88H70V82H118V69Z" fill="url(#teal)" fill-rule="evenodd"/>
+      <path d="M126 51H133Q143 51 143 61V122Q143 133 132 133H126Z" fill="url(#blue)"/>
+    </symbol>
+    <symbol id="organiser" viewBox="0 0 160 160">
+      <path d="M12 48Q12 38 22 38H48L59 49L76 54V139L23 125Q12 122 12 111Z" fill="url(#back)"/>
+      <path d="M84 54L101 49L112 38H138Q148 38 148 48V111Q148 122 137 125L84 139Z" fill="url(#back)"/>
+      <path d="M12 64Q12 54 22 57L71 70V138L23 125Q12 122 12 111Z" fill="url(#teal)"/>
+      <path d="M89 70L138 57Q148 54 148 64V111Q148 122 137 125L89 138Z" fill="url(#blue)"/>
+      <path d="M80 68V137" stroke="#9de9ed" stroke-width="4" stroke-linecap="round"/>
+    </symbol>
+    <style>
+      text { font-family: "DejaVu Sans", sans-serif; }
+      .title { fill:#f1f5ff; font-size:32px; font-weight:700; }
+      .sub { fill:#aabbd2; font-size:15px; }
+      .column { fill:#dce7f8; font-size:18px; font-weight:700; text-anchor:middle; }
+      .label { fill:#f1f5ff; font-size:20px; font-weight:700; }
+      .note { fill:#aabbd2; font-size:13px; }
+      .panel { fill:#202e44; stroke:#33445e; }
+    </style>
+  </defs>
+  <rect width="1200" height="1530" fill="#121d2e"/>
+  <text x="44" y="61" class="title">FileManagerUltra / icon directions</text>
+  <text x="44" y="91" class="sub">Five original concepts. One identity, platform-sensitive finishes. Current app icon stays unchanged.</text>
+  <text x="428" y="143" class="column">Windows</text>
+  <text x="716" y="143" class="column">macOS</text>
+  <text x="1004" y="143" class="column">Linux</text>
+  <text x="428" y="165" class="note" text-anchor="middle">Free silhouette / soft depth</text>
+  <text x="716" y="165" class="note" text-anchor="middle">Rounded tile / inset symbol</text>
+  <text x="1004" y="165" class="note" text-anchor="middle">Free silhouette / flat colour</text>
+
+  <g id="direction-1">
+    <rect x="28" y="188" width="1144" height="242" rx="18" class="panel"/>
+    <text x="49" y="234" class="label">01 / Split folder</text>
+    <text x="49" y="264" class="note">Familiar yellow folder.</text>
+    <text x="49" y="285" class="note">Blue twin-panel identity.</text>
+    <text x="49" y="318" class="note">Selected direction / colour study.</text>
+    <use href="#split" x="344" y="212" width="168" height="168" filter="url(#shadow)"/>
+    <rect x="632" y="212" width="168" height="168" rx="38" fill="url(#tile)" filter="url(#shadow)"/>
+    <use href="#split" x="645" y="225" width="142" height="142"/>
+    <svg x="920" y="212" width="168" height="168" viewBox="0 0 160 160">
+      <path d="M17 44Q17 37 27 37H61L76 45H133Q143 45 143 55V122Q143 133 132 133H28Q17 133 17 122Z" fill="#295779"/>
+      <path d="M17 44Q17 37 27 37H61L76 45V51H17Z" fill="#d49a27"/>
+      <path d="M17 60Q17 51 27 51H76V133H28Q17 133 17 122Z" fill="#f3c64e"/>
+      <path d="M84 51H133Q143 51 143 61V122Q143 133 132 133H84Z" fill="#4594ed"/>
+    </svg>
+    <use href="#split" x="412" y="388" width="32" height="32"/>
+    <rect x="700" y="388" width="32" height="32" rx="7" fill="#e7eef6"/><use href="#split" x="702" y="390" width="28" height="28"/>
+    <use href="#split" x="988" y="388" width="32" height="32"/>
+  </g>
+  <g id="direction-2">
+    <rect x="28" y="442" width="1144" height="242" rx="18" class="panel"/>
+    <text x="49" y="488" class="label">02 / Twin folders</text>
+    <text x="49" y="518" class="note">Browse between locations.</text>
+    <text x="49" y="539" class="note">Layered and approachable.</text>
+    <use href="#twins" x="344" y="466" width="168" height="168" filter="url(#shadow)"/>
+    <rect x="632" y="466" width="168" height="168" rx="38" fill="url(#tile)" filter="url(#shadow)"/>
+    <use href="#twins" x="645" y="479" width="142" height="142"/>
+    <path d="M933 505Q933 495 943 495H973L987 509H1028Q1037 509 1037 518V574Q1037 585 1026 585H944Q933 585 933 574Z" fill="#4594ed"/>
+    <path d="M959 536Q959 526 969 526H1001L1015 541H1066Q1076 541 1076 551V599Q1076 611 1064 611H971Q959 611 959 599Z" fill="#45d2c3"/>
+    <use href="#twins" x="412" y="642" width="32" height="32"/>
+    <rect x="700" y="642" width="32" height="32" rx="7" fill="#e7eef6"/><use href="#twins" x="702" y="644" width="28" height="28"/>
+    <use href="#twins" x="988" y="642" width="32" height="32"/>
+  </g>
+  <g id="direction-3">
+    <rect x="28" y="696" width="1144" height="242" rx="18" class="panel"/>
+    <text x="49" y="742" class="label">03 / Folder + sidebar</text>
+    <text x="49" y="772" class="note">Closest to today's icon.</text>
+    <text x="49" y="793" class="note">A simpler file-browser cue.</text>
+    <use href="#sidebar" x="344" y="720" width="168" height="168" filter="url(#shadow)"/>
+    <rect x="632" y="720" width="168" height="168" rx="38" fill="url(#tile)" filter="url(#shadow)"/>
+    <use href="#sidebar" x="645" y="733" width="142" height="142"/>
+    <path d="M938 761Q938 750 948 750H984L1000 767H1060Q1070 767 1070 778V848Q1070 860 1058 860H950Q938 860 938 848Z" fill="#295779"/>
+    <path d="M938 784Q938 774 948 774H978V860H950Q938 860 938 848Z" fill="#45d2c3"/>
+    <path d="M985 774H1060Q1070 774 1070 785V848Q1070 860 1058 860H985Z" fill="#4594ed"/>
+    <rect x="1000" y="794" width="51" height="13" rx="4" fill="#ecf8ff"/>
+    <rect x="1000" y="819" width="36" height="8" rx="4" fill="#c6e7ff"/>
+    <rect x="1000" y="837" width="45" height="8" rx="4" fill="#c6e7ff"/>
+    <use href="#sidebar" x="412" y="896" width="32" height="32"/>
+    <rect x="700" y="896" width="32" height="32" rx="7" fill="#e7eef6"/><use href="#sidebar" x="702" y="898" width="28" height="28"/>
+    <use href="#sidebar" x="988" y="896" width="32" height="32"/>
+  </g>
+  <g id="direction-4">
+    <rect x="28" y="950" width="1144" height="242" rx="18" class="panel"/>
+    <text x="49" y="996" class="label">04 / Folder monogram</text>
+    <text x="49" y="1026" class="note">An F cut into the folder.</text>
+    <text x="49" y="1047" class="note">The strongest brand stamp.</text>
+    <use href="#monogram" x="344" y="974" width="168" height="168" filter="url(#shadow)"/>
+    <rect x="632" y="974" width="168" height="168" rx="38" fill="url(#tile)" filter="url(#shadow)"/>
+    <use href="#monogram" x="645" y="987" width="142" height="142"/>
+    <path d="M938 1015Q938 1004 948 1004H984L1000 1021H1060Q1070 1021 1070 1032V1102Q1070 1114 1058 1114H950Q938 1114 938 1102Z" fill="#295779"/>
+    <path d="M948 1028H1060Q1070 1028 1070 1038V1102Q1070 1114 1058 1114H950Q938 1114 938 1102V1038Q938 1028 948 1028ZM978 1047V1100H994V1081H1030V1067H994V1061H1044V1047Z" fill="#45d2c3" fill-rule="evenodd"/>
+    <path d="M1052 1028H1060Q1070 1028 1070 1038V1102Q1070 1114 1058 1114H1052Z" fill="#4594ed"/>
+    <use href="#monogram" x="412" y="1150" width="32" height="32"/>
+    <rect x="700" y="1150" width="32" height="32" rx="7" fill="#e7eef6"/><use href="#monogram" x="702" y="1152" width="28" height="28"/>
+    <use href="#monogram" x="988" y="1150" width="32" height="32"/>
+  </g>
+  <g id="direction-5">
+    <rect x="28" y="1204" width="1144" height="242" rx="18" class="panel"/>
+    <text x="49" y="1250" class="label">05 / Open organiser</text>
+    <text x="49" y="1280" class="note">Two open folder panels.</text>
+    <text x="49" y="1301" class="note">Balanced, distinctive shape.</text>
+    <use href="#organiser" x="344" y="1228" width="168" height="168" filter="url(#shadow)"/>
+    <rect x="632" y="1228" width="168" height="168" rx="38" fill="url(#tile)" filter="url(#shadow)"/>
+    <use href="#organiser" x="645" y="1241" width="142" height="142"/>
+    <path d="M933 1278Q933 1268 943 1268H970L982 1279L1000 1285V1374L945 1359Q933 1356 933 1345Z" fill="#295779"/>
+    <path d="M1008 1285L1026 1279L1038 1268H1065Q1075 1268 1075 1278V1345Q1075 1356 1063 1359L1008 1374Z" fill="#295779"/>
+    <path d="M933 1295Q933 1285 943 1288L995 1302V1373L945 1359Q933 1356 933 1345Z" fill="#45d2c3"/>
+    <path d="M1013 1302L1065 1288Q1075 1285 1075 1295V1345Q1075 1356 1063 1359L1013 1373Z" fill="#4594ed"/>
+    <path d="M1004 1300V1372" stroke="#9de9ed" stroke-width="4" stroke-linecap="round"/>
+    <use href="#organiser" x="412" y="1404" width="32" height="32"/>
+    <rect x="700" y="1404" width="32" height="32" rx="7" fill="#e7eef6"/><use href="#organiser" x="702" y="1406" width="28" height="28"/>
+    <use href="#organiser" x="988" y="1404" width="32" height="32"/>
+  </g>
+  <text x="44" y="1486" class="sub">Large: silhouette and finish. Small: 32 px taskbar-scale preview. Concept studies, not final production assets.</text>
+  <text x="44" y="1510" class="note">Selected direction: yellow + blue split folder. Other studies retain teal + blue. No copied OS file-manager marks.</text>
+</svg>
