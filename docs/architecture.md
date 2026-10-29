@@ -387,6 +387,13 @@ running terminal. Protocol encoding happens in `fm-term` so legacy raw bytes are
 UTF-8 converted by `term.input`; the existing bounded writer queue keeps pty I/O off the
 UI thread. Shift bypasses application mouse tracking for selection and scrollback.
 
+Terminal resizing uses a focused vendored `vt100` patch (see `vendor/FM-VENDORED.md`):
+normal-screen soft wraps and retained history reflow at the new column count,
+preserving attributes, hard breaks and cursor positions. The packer streams rows
+within the 10 000-row history plus screen bound, preserving the scrolled logical-line
+anchor where retained. Alternate-screen applications keep the upstream grid resize
+and redraw themselves after the pty resize. Grid-size changes still clear selection.
+
 Listing column widths are preferred widths in `PaneState.col_widths` (zero means
 content-fit), changed through `view.columns.resize`. The UI caches bounded content
 measurements by directory revision and font/scale, leaves Name flexible, and fits the

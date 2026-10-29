@@ -108,6 +108,7 @@ opt-level = 3
 [patch.crates-io]
 sspi = { path = "vendor/sspi" }
 smb-transport = { path = "vendor/smb-transport" }
+vt100 = { path = "vendor/vt100" }
 
 [profile.release]
 lto = "thin"

@@ -28,9 +28,26 @@ Reading and writing the pty SHALL happen off the UI thread; each frame the UI on
 ### Requirement: Rendering
 The terminal SHALL render the visible grid (text, 16/256/true colour, bold/italic/underline/inverse, cursor) with a monospace font and theme-token default colours, in both dark and light. Cells are virtualised to the visible size; resizing the pane resizes the pty (rows/cols) with a minimum of 2×2.
 
+Width changes SHALL reflow normal-screen content and retained scrollback at character-cell
+boundaries, joining soft wraps but preserving explicit line breaks, attributes and
+wide/combining characters. The cursor and saved cursor SHALL follow their content;
+an existing scrolled view SHALL remain anchored to its logical line while retained.
+History remains bounded to 10 000 visual rows; narrowing may evict oldest history.
+As with height resizing, excess bottom rows may be discarded to keep the cursor visible.
+Alternate-screen applications SHALL NOT be reflowed: they redraw after the pty resize.
+Existing text selections may be cleared when grid dimensions change.
+
 #### Scenario: Resize
 - **WHEN** the pane is resized
 - **THEN** the pty and parser grid are resized to the new rows/cols
+
+#### Scenario: Narrow and widen shell output
+- **WHEN** long normal-screen output is narrowed and widened again within the retained-history limit
+- **THEN** soft-wrapped text and scrollback reflow without losing characters or merging hard newlines, and subsequent typing continues at the mapped cursor
+
+#### Scenario: Resize a full-screen application
+- **WHEN** an alternate-screen application such as vim is resized
+- **THEN** its grid is resized without reflow and the application can redraw; the hidden normal buffer reflows for restoration on exit
 
 #### Scenario: Line-drawing boxes
 - **WHEN** a curses/dialog program designates the DEC Special Graphics set (`ESC ( 0`, or `ESC ) 0` + SO) and prints `lqqk`/`x`/`mqqj`

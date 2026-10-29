@@ -123,6 +123,30 @@ fn terminal_starts_in_the_pane_directory_and_echoes_input() {
 
 #[test]
 #[cfg(unix)]
+fn terminal_resize_reflows_real_shell_output() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let mut s = session_in(dir.path());
+    if !has_pty(&mut s) {
+        return;
+    }
+    let pane = s.layout.focused();
+    s.terminal_resize(pane, 20, 80);
+    s.dispatch(
+        "term.input",
+        &json!({
+            "data": "printf '\\033[2J\\033[Habcdefghijklmnopqrstuvwx\\r\\nREFLOW_%s\\r\\n' 42\r"
+        }),
+    )
+    .expect("output");
+    assert!(wait_for(&mut s, pane, "REFLOW_42"));
+    s.terminal_resize(pane, 20, 8);
+    assert!(screen_text(&s, pane).contains("abcdefgh\nijklmnop\nqrstuvwx"));
+    s.terminal_resize(pane, 20, 80);
+    assert!(screen_text(&s, pane).contains("abcdefghijklmnopqrstuvwx\nREFLOW_42"));
+}
+
+#[test]
+#[cfg(unix)]
 fn selection_survives_scrolling_and_copies_offscreen_history() {
     use fm_engine::term_cmds::TermSelection;
     let dir = tempfile::tempdir().expect("tmp");

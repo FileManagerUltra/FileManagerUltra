@@ -376,6 +376,157 @@ mod tests {
     }
 
     #[test]
+    fn resizing_reflows_soft_wraps_but_preserves_hard_newlines() {
+        let mut e = Emulator::new(8, 12);
+        e.feed(b"abcdefghijklmnopqrst\r\nhard break\r\nnext");
+        e.resize(8, 6);
+        assert_eq!(text(&e), "abcdef\nghijkl\nmnopqr\nst\nhard b\nreak\nnext");
+        e.resize(8, 20);
+        assert_eq!(text(&e), "abcdefghijklmnopqrst\nhard break\nnext");
+        e.feed(b"!");
+        assert!(text(&e).ends_with("next!"), "cursor follows reflowed text");
+        for width in [7, 30, 2, 12, 20] {
+            e.resize(12, width);
+        }
+        assert_eq!(text(&e), "abcdefghijklmnopqrst\nhard break\nnext!");
+    }
+
+    #[test]
+    fn reflow_preserves_attributes_wide_characters_and_combining_marks() {
+        let mut e = Emulator::new(12, 8);
+        e.feed("\x1b[31;1mabc漢e\u{301}語xyz\x1b[0m\r\nend".as_bytes());
+        e.resize(12, 4);
+        e.resize(12, 30);
+        let snap = e.snapshot();
+        assert_eq!(text(&e), "abc漢e\u{301}語xyz\nend");
+        let wide = snap.cell(0, 3).expect("wide");
+        assert_eq!(wide.text, "漢");
+        assert!(wide.bold);
+        assert_eq!(wide.fg, Color::Indexed(1));
+        assert!(snap.cell(0, 4).expect("continuation").wide_continuation);
+        assert_eq!(snap.cell(0, 5).expect("combining").text, "e\u{301}");
+        assert_eq!(snap.cell(1, 0).expect("reset").fg, Color::Default);
+    }
+
+    #[test]
+    fn alternate_screen_is_not_reflowed_and_normal_buffer_survives() {
+        let mut e = Emulator::new(8, 12);
+        e.feed(b"abcdefghijklmnop\x1b[?1049h\x1b[Habcdefghijkl");
+        e.resize(8, 6);
+        assert!(e.snapshot().alternate_screen);
+        assert_eq!(text(&e), "abcdef");
+        e.feed(b"\x1b[?1049l");
+        e.resize(8, 20);
+        assert_eq!(text(&e), "abcdefghijklmnop");
+        e.feed(b"!");
+        assert_eq!(text(&e), "abcdefghijklmnop!");
+    }
+
+    #[test]
+    fn reflow_keeps_scrollback_text_and_view_anchor() {
+        let mut e = Emulator::new(4, 12);
+        for n in 0..30 {
+            e.feed(format!("row-{n:02}-abcdefgh\r\n").as_bytes());
+        }
+        e.scroll(10);
+        let original = e.snapshot();
+        let top_line = (original.scrollback_len - original.scrollback_offset) / 2;
+        e.resize(4, 6);
+        assert!(e.snapshot().scrollback_offset > 0);
+        e.resize(4, 20);
+        let wide = e.snapshot();
+        assert!(wide.scrollback_offset > 0);
+        assert_eq!(
+            wide.text_between((0, 0), (0, 19)),
+            format!("row-{top_line:02}-abcdefgh"),
+        );
+        let all = e.text_between((0, 0), (usize::MAX, u16::MAX));
+        for n in 0..30 {
+            assert!(all.contains(&format!("row-{n:02}-abcdefgh")), "{n}");
+        }
+    }
+
+    #[test]
+    fn reflow_preserves_pending_wrap_saved_cursor_and_explicit_blank_lines() {
+        let mut e = Emulator::new(12, 12);
+        e.feed(b"abcdefghijkl\x1b7\r\n\r\nhard\r\n");
+        e.resize(12, 4);
+        e.resize(12, 20);
+        assert_eq!(text(&e), "abcdefghijkl\n\nhard");
+        e.feed(b"\x1b8!");
+        assert!(text(&e).starts_with("abcdefghijkl!"));
+
+        let mut exact = Emulator::new(4, 12);
+        exact.feed(b"abcdefghijkl");
+        exact.resize(4, 4);
+        assert_eq!(exact.snapshot().cursor, Some((2, 4)));
+        exact.resize(5, 4);
+        exact.feed(b"!");
+        exact.resize(5, 20);
+        assert_eq!(text(&exact), "abcdefghijkl!");
+    }
+
+    #[test]
+    fn reflow_keeps_cursor_on_the_same_character_when_not_at_the_end() {
+        let mut e = Emulator::new(10, 12);
+        e.feed(b"abcdefghijklmnop\r\nsecond\x1b[1;6H");
+        e.resize(10, 4);
+        e.feed(b"X");
+        e.resize(10, 20);
+        assert_eq!(text(&e), "abcdeXghijklmnop\nsecond");
+    }
+
+    #[test]
+    fn reflow_capacity_stays_bounded_when_history_expands() {
+        let mut e = Emulator::new(3, 60);
+        for n in 0..1200 {
+            e.feed(format!("entry-{n:04}-{}\r\n", "a".repeat(40)).as_bytes());
+        }
+        e.resize(3, 2);
+        let small = e.snapshot();
+        assert_eq!(small.scrollback_len, SCROLLBACK);
+        e.resize(3, 60);
+        assert!(e.snapshot().scrollback_len <= SCROLLBACK);
+        let retained = e.text_between((0, 0), (usize::MAX, u16::MAX));
+        assert!(retained.contains("entry-1199-"));
+        assert!(
+            !retained.contains("entry-0000-"),
+            "oldest rows were evicted"
+        );
+        e.feed(b"after resize");
+        assert!(text(&e).contains("after resize"));
+    }
+
+    #[test]
+    fn reflow_does_not_evict_the_cursor_when_discarding_excess_bottom_rows() {
+        let mut e = Emulator::new(60, 600);
+        for _ in 0..40 {
+            e.feed(format!("{}\r\n", "a".repeat(580)).as_bytes());
+        }
+        e.feed(b"\x1b[H");
+        e.resize(60, 2);
+        let snap = e.snapshot();
+        assert_eq!(snap.cursor, Some((0, 0)));
+        assert_eq!(snap.scrollback_len, 0);
+        assert_eq!(snap.cell(0, 0).expect("top").text, "a");
+        assert_eq!(snap.cell(59, 1).expect("bottom").text, "a");
+        e.resize(60, 600);
+        assert_eq!(text(&e), "a".repeat(120));
+    }
+
+    #[test]
+    fn height_growth_preserves_soft_wraps_on_trimmed_wide_history_rows() {
+        let mut e = Emulator::new(12, 40);
+        let line = "漢".repeat(10);
+        e.feed(line.as_bytes());
+        e.resize(2, 5);
+        assert!(e.snapshot().scrollback_len > 0);
+        e.resize(12, 5);
+        e.resize(12, 40);
+        assert_eq!(text(&e), line);
+    }
+
+    #[test]
     fn sizes_are_clamped() {
         let mut e = Emulator::new(0, 0);
         assert_eq!(e.size(), (MIN_SIZE, MIN_SIZE));
@@ -464,10 +615,48 @@ mod tests {
 
     proptest::proptest! {
         #[test]
+        fn width_roundtrip_preserves_plaintext(
+            lines in proptest::collection::vec("[a-zA-Z0-9 ]{0,55}", 1..8),
+            narrow in 2u16..32,
+        ) {
+            let mut e = Emulator::new(40, 60);
+            e.feed(lines.join("\r\n").as_bytes());
+            let before = text(&e);
+            let cursor = e.snapshot().cursor;
+            e.resize(40, narrow);
+            e.resize(40, 60);
+            proptest::prop_assert_eq!(text(&e), before);
+            proptest::prop_assert_eq!(e.snapshot().cursor, cursor);
+        }
+
+        #[test]
+        fn width_roundtrip_preserves_unicode(
+            lines in proptest::collection::vec("[ab 漢語é😀]{0,40}", 1..8),
+            narrow in 2u16..20,
+            middle in 2u16..32,
+        ) {
+            let mut e = Emulator::new(40, 100);
+            e.feed(lines.join("\r\n").as_bytes());
+            let before = text(&e);
+            let cursor = e.snapshot().cursor;
+            e.resize(15, narrow);
+            e.resize(27, middle);
+            e.resize(40, 100);
+            proptest::prop_assert_eq!(text(&e), before);
+            proptest::prop_assert_eq!(e.snapshot().cursor, cursor);
+        }
+
+        #[test]
         fn arbitrary_bytes_never_panic(bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..4096)) {
             let mut e = Emulator::new(10, 30);
-            e.feed(&bytes);
+            for (index, chunk) in bytes.chunks(37).enumerate() {
+                e.feed(chunk);
+                e.resize((index % 17 + 2) as u16, (index % 43 + 2) as u16);
+            }
             e.resize(4, 7);
+            e.resize(10, 30);
+            e.resize(2, 2);
+            e.resize(12, 40);
             let _ = e.snapshot();
         }
     }
