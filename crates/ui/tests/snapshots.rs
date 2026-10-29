@@ -418,6 +418,7 @@ fn preferences_dialog_dark_light() {
             "Files",
             "Copy and move",
             "Preview",
+            "Terminal",
             "Connections",
             "Workspaces",
             "Advanced",
@@ -544,6 +545,351 @@ fn preview_fixture(name: &str, bytes: &[u8], vanish: bool) -> (Session, u64) {
         std::thread::sleep(Duration::from_millis(5));
     }
     (s, pane)
+}
+
+#[test]
+fn text_and_markdown_select_all_copy_includes_offscreen_rows() {
+    for (name, source, expected) in [
+        (
+            "all.txt",
+            (0..100)
+                .map(|n| format!("row-{n:03}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            (0..100)
+                .map(|n| format!("row-{n:03}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        (
+            "all.md",
+            "# Heading\n\nHello **world**.\n\nLast paragraph.".into(),
+            "Heading\nHello world.\nLast paragraph.".into(),
+        ),
+    ] {
+        let (mut s, pane) = preview_fixture(name, source.as_bytes(), false);
+        s.layout.focus_pane(pane).expect("focus preview");
+        let ctx = egui::Context::default();
+        let tokens = Tokens::light();
+        let frame = |s: &mut Session, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0, 180.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    fm_ui::preview::show(ui, s, pane, &tokens);
+                },
+            );
+            out.textures_delta.clear();
+        };
+        frame(&mut s, vec![]);
+        frame(
+            &mut s,
+            vec![egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+        );
+        assert!(fm_engine::preview_text_cmds::selected(&s, pane));
+        s.preferences_open = true;
+        frame(&mut s, vec![egui::Event::Copy]);
+        assert!(s.clipboard_out.is_none(), "Preferences owns copy");
+        s.preferences_open = false;
+        frame(&mut s, vec![egui::Event::Copy]);
+        assert_eq!(s.clipboard_out.take().expect("copied text"), expected);
+        frame(
+            &mut s,
+            vec![egui::Event::Key {
+                key: egui::Key::C,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+        );
+        assert_eq!(s.clipboard_out.take().expect("copied text"), expected);
+    }
+}
+
+#[test]
+fn markdown_document_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for (case, width, scale, selected) in [
+            ("document", 850.0, 1.0, false),
+            ("narrow", 400.0, 1.0, false),
+            ("zoomed", 850.0, 1.44, false),
+            ("selected", 850.0, 1.0, true),
+        ] {
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let (mut s, pane) =
+                preview_fixture("document.md", include_bytes!("fixtures/markdown.md"), false);
+            s.layout.focus_pane(pane).expect("focus");
+            s.previews.slots.get_mut(&pane).expect("slot").scale = scale;
+            if selected {
+                s.dispatch("preview.text.select_all", &serde_json::Value::Null)
+                    .expect("select");
+            }
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, 1150.0))
+                .renderer(renderer)
+                .build_ui_state(
+                    move |ui, s: &mut Session| {
+                        theme::apply_to(ui.ctx(), &tokens);
+                        ui.ctx().set_theme(if tokens.dark {
+                            egui::Theme::Dark
+                        } else {
+                            egui::Theme::Light
+                        });
+                        fm_ui::preview::show(ui, s, pane, &tokens);
+                    },
+                    s,
+                );
+            harness.run_steps(4);
+            harness.snapshot(format!("markdown_{case}_{theme}"));
+            results.extend_harness(&mut harness);
+        }
+    }
+}
+
+#[test]
+fn markdown_tables_have_aligned_rows_and_natural_text() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for (case, width, scale) in [
+            ("", 720.0, 1.0),
+            ("_narrow", 360.0, 1.0),
+            ("_zoomed", 720.0, 1.44),
+        ] {
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let (mut s, pane) = preview_fixture(
+                "table.md",
+                include_bytes!("fixtures/markdown-table.md"),
+                false,
+            );
+            s.previews.slots.get_mut(&pane).expect("slot").scale = scale;
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, 900.0))
+                .renderer(renderer)
+                .build_ui_state(
+                    move |ui, s: &mut Session| {
+                        theme::apply_to(ui.ctx(), &tokens);
+                        ui.ctx().set_theme(if tokens.dark {
+                            egui::Theme::Dark
+                        } else {
+                            egui::Theme::Light
+                        });
+                        fm_ui::preview::show(ui, s, pane, &tokens);
+                    },
+                    s,
+                );
+            harness.run_steps(4);
+            let mut previous_bottom = None;
+            for (left, right) in [
+                ("Symptom", "Cause / fix"),
+                (
+                    "Dashboard still says \"isn't eligible\"",
+                    "Wrong source selected in the dashboard header, or the dashboard's time range predates the first scrape. Widen to 24h.",
+                ),
+                (
+                    "node_* absent from Extract metrics",
+                    "Vector isn't scraping: ss -tnp '( dport = :9100 )', then journalctl -u vector and grep -i prometheus.",
+                ),
+                (
+                    "connection refused in Vector logs",
+                    "node_exporter not running: systemctl status prometheus-node-exporter.",
+                ),
+            ] {
+                let a = harness.get_by_label(left).rect();
+                let b = harness.get_by_label(right).rect();
+                assert!(
+                    (a.top() - b.top()).abs() < 1.0,
+                    "{left}: table cells must share a top edge"
+                );
+                assert!(a.right() < b.left(), "columns must not overlap");
+                if let Some(bottom) = previous_bottom {
+                    assert!(
+                        a.top() > bottom,
+                        "next row must clear the tallest previous cell"
+                    );
+                }
+                previous_bottom = Some(a.bottom().max(b.bottom()));
+            }
+            harness.snapshot(format!("markdown_table{case}_{theme}"));
+            results.extend_harness(&mut harness);
+        }
+    }
+}
+
+#[test]
+fn preview_zoom_shortcuts_scale_each_renderer_without_changing_ui() {
+    fn largest_font(shape: &egui::Shape) -> f32 {
+        match shape {
+            egui::Shape::Text(text) => text
+                .galley
+                .job
+                .sections
+                .iter()
+                .map(|s| s.format.font_id.size)
+                .fold(0.0, f32::max),
+            egui::Shape::Vec(shapes) => shapes.iter().map(largest_font).fold(0.0, f32::max),
+            _ => 0.0,
+        }
+    }
+    fn largest_image(shape: &egui::Shape) -> f32 {
+        match shape {
+            egui::Shape::Rect(rect) if rect.brush.is_some() => rect.rect.width(),
+            egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::Managed(0) => {
+                mesh.calc_bounds().width()
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().map(largest_image).fold(0.0, f32::max),
+            _ => 0.0,
+        }
+    }
+    for (name, bytes) in [
+        ("all.txt", b"first\nsecond".as_slice()),
+        ("all.md", b"# Heading\n\nParagraph".as_slice()),
+        ("all.json", b"{\"a\":1}".as_slice()),
+        ("all.bin", b"\0\x01\x02\x03".as_slice()),
+        ("all.log", b"2026-01-01 INFO first\n".as_slice()),
+        ("all.meta", b"metadata fixture".as_slice()),
+        ("all.video", b"video fixture".as_slice()),
+        (
+            "all.png",
+            include_bytes!("../../brand/assets/icon-256.png").as_slice(),
+        ),
+    ] {
+        let (mut s, pane) = preview_fixture(name, bytes, false);
+        s.layout.focus_pane(pane).expect("focus");
+        if matches!(name, "all.meta" | "all.video") {
+            let video = (name == "all.video").then(|| fm_preview::VideoInfo {
+                path: "/nonexistent-preview-test.mp4".into(),
+                width: 640,
+                height: 360,
+                fps: 24.0,
+                duration: 42.0,
+            });
+            s.previews.slots.get_mut(&pane).expect("slot").body =
+                fm_engine::preview_cmds::Body::Static(Arc::new(fm_preview::Preview::Meta(
+                    fm_preview::MetaDoc {
+                        rows: vec![("Name".into(), name.into())],
+                        hint: None,
+                        poster: None,
+                        video,
+                    },
+                )));
+            // Initialise state before the UI supplies a decode width; no decoder is spawned.
+            s.poll();
+            if name == "all.video" {
+                let video = s
+                    .previews
+                    .slots
+                    .get_mut(&pane)
+                    .expect("slot")
+                    .video
+                    .as_mut()
+                    .expect("video state");
+                video.playing = false;
+                video.frame = Some(Arc::new(fm_preview::player::Frame {
+                    width: 32,
+                    height: 18,
+                    rgba: vec![128; 32 * 18 * 4],
+                    seq: 1,
+                }));
+            }
+        }
+        let ctx = egui::Context::default();
+        let global_zoom = s.prefs.zoom;
+        let frame = |s: &mut Session, key: Option<egui::Key>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(650.0, 400.0),
+                    )),
+                    events: key
+                        .map(|key| egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::COMMAND,
+                        })
+                        .into_iter()
+                        .collect(),
+                    ..Default::default()
+                },
+                |ui| {
+                    let before = ui.style().text_styles.clone();
+                    fm_ui::preview::show(ui, s, pane, &Tokens::light());
+                    assert_eq!(
+                        before,
+                        ui.style().text_styles,
+                        "zoom must not leak into other widgets"
+                    );
+                },
+            );
+            let font = out
+                .shapes
+                .iter()
+                .map(|shape| largest_font(&shape.shape))
+                .fold(0.0, f32::max);
+            let image = out
+                .shapes
+                .iter()
+                .map(|shape| largest_image(&shape.shape))
+                .fold(0.0, f32::max);
+            out.textures_delta.clear();
+            (font, image)
+        };
+        frame(&mut s, None);
+        let before = frame(&mut s, None);
+        let after = frame(&mut s, Some(egui::Key::Equals));
+        if name != "all.video" {
+            assert!(
+                after.0 > before.0 * 1.1,
+                "{name}: rendered body fonts must grow ({before:?} -> {after:?})"
+            );
+        }
+        if matches!(name, "all.png" | "all.video") {
+            assert!(
+                after.1 > before.1 * 1.1,
+                "{name}: actual image dimensions must grow ({before:?} -> {after:?})"
+            );
+        }
+        assert_eq!(s.preview_slot(pane).expect("slot").scale, 1.2, "{name}");
+        assert_eq!(s.prefs.zoom, global_zoom);
+        assert_eq!(ctx.zoom_factor(), 1.0);
+        s.preferences_open = true;
+        frame(&mut s, Some(egui::Key::Equals));
+        assert_eq!(
+            s.preview_slot(pane).expect("slot").scale,
+            1.2,
+            "Preferences owns keyboard"
+        );
+        s.preferences_open = false;
+        frame(&mut s, Some(egui::Key::Minus));
+        assert!((s.preview_slot(pane).expect("slot").scale - 1.0).abs() < 0.001);
+        frame(&mut s, Some(egui::Key::Equals));
+        frame(&mut s, Some(egui::Key::Num0));
+        assert_eq!(s.preview_slot(pane).expect("slot").scale, 1.0);
+        assert!(s.notice.is_none(), "{name}: {:?}", s.notice);
+    }
 }
 
 fn multi_preview_fixture(files: &[(&str, &[u8])]) -> (Session, u64) {
@@ -2128,6 +2474,20 @@ fn volume_preview_dark_light() {
             h.run();
             assert!(h.query_by_label("Volume").is_none());
             h.get_by_label("Folder summary");
+            let before = h.get_by_label("Folder summary").rect().height();
+            let global = h.state().prefs.zoom;
+            h.get_by_label("+").click();
+            h.run();
+            assert!(h.get_by_label("Folder summary").rect().height() > before * 1.1);
+            assert_eq!(h.state().prefs.zoom, global);
+            h.state_mut()
+                .dispatch("preview.thumbs.toggle", &serde_json::json!({"pane": pane}))
+                .expect("thumbnails");
+            h.run();
+            h.get_by_label("+").click();
+            h.run();
+            assert!(h.state().preview_slot(pane).expect("slot").scale > 1.4);
+            assert_eq!(h.state().prefs.zoom, global);
             results.extend_harness(&mut h);
         }
     }
@@ -2137,7 +2497,19 @@ fn volume_preview_dark_light() {
 fn devices_section_dark_light() {
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();
-    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+    let pale_accent = fm_engine::Prefs {
+        theme: fm_engine::ThemePreference::Light,
+        accent: Some("#68b7dc".into()),
+        ..Default::default()
+    };
+    for (tokens, theme) in [
+        (Tokens::dark(), "dark"),
+        (Tokens::light(), "light"),
+        (
+            Tokens::resolve_with(&pale_accent, false),
+            "light_pale_accent",
+        ),
+    ] {
         let Some(renderer) = renderer_or_skip() else {
             return;
         };

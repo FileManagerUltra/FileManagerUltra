@@ -81,6 +81,96 @@ truncated folder names and full-name hover text.
 - **WHEN** a `.json` file is not valid JSON
 - **THEN** it is shown raw, and Pretty is disabled with a "not valid JSON" tooltip
 
+### Requirement: Native document-quality Markdown
+Markdown SHALL be rendered natively, without a webview or editor, using a bounded
+CommonMark document tree with tables, task lists and strikethrough enabled.
+Paragraphs SHALL use a proportional reading face with real regular/bold weights,
+italic, combined emphasis, inline-code styling, link styling and preserved hard
+line breaks. Headings SHALL have distinct scale/weight and document spacing;
+soft breaks SHALL flow as spaces. Document width SHALL be limited for readability.
+
+Lists SHALL preserve nesting, ordered start numbers, multiple paragraphs and
+embedded blocks. Task checkboxes SHALL show their checked state without permitting
+edits. Blockquotes SHALL retain nested paragraphs/blocks with an accent edge.
+Fenced code SHALL show its language token and semantic syntax highlighting
+computed on the preview worker, with a plain-text fallback for unknown languages
+and overlong lines. Code SHALL preserve whitespace and support wrapping or
+horizontal scrolling.
+
+Tables SHALL retain header cells, rows, inline formatting and Markdown column
+alignment. Each row SHALL have one shared height derived from its tallest cell,
+continuous column boundaries and top-aligned cell text. Text SHALL NOT be
+justified or letter-spaced to fill cells. Narrow panes SHALL scroll tables
+horizontally rather than squeeze columns below a readable minimum.
+
+HTML SHALL remain literal inert text and images SHALL remain labelled alt-text
+placeholders. No link/image resource SHALL be fetched or opened.
+Markdown SHALL enforce a 1 MiB source cap, the configured text-line cap,
+5 000 block/list-item nodes, nesting depth below 32, 30 000 inline spans,
+4 096 table cells and 64 columns. Exceeding any cap SHALL show truncation.
+
+#### Scenario: Preserve document structure
+- **WHEN** Markdown includes a loose nested ordered list, checked/unchecked tasks,
+  nested blockquotes, a table and fenced Rust code
+- **THEN** all structures remain distinct, ordered numbers are preserved, tasks are
+  read-only and the code is highlighted without UI-thread parsing
+- **AND** Ctrl+A/Ctrl+C includes all loaded blocks, task markers and tab-separated
+  table cells in document order without formatting syntax
+
+#### Scenario: Uneven table cells
+- **WHEN** one table column has short symptoms and another has multi-line explanations with inline code
+- **THEN** both cells start at the same row top, the next row starts below the
+  taller cell, borders remain connected, and ordinary word spacing is preserved
+- **AND** resizing or zooming does not cause staggered rows or overlapping columns
+
+### Requirement: Pane-local preview magnification
+Every Preview body SHALL support independent 50%-400% magnification in 20% steps
+through `preview.scale.in`, `preview.scale.out` and `preview.scale.reset`.
+The toolbar SHALL expose minus, percentage/reset and plus controls in every view
+type, including text, Markdown, structured text, logs, images, hex, metadata,
+folder summaries, thumbnails, multi-file cards and video.
+Only that pane's content SHALL scale; pane chrome, other panes and the application
+zoom preference SHALL remain unchanged. Scale SHALL survive changes of previewed
+file within the same pane. Images SHALL retain Fit/Actual modes; choosing either
+SHALL reset additional magnification. Zoom SHALL NOT increase file/decode limits.
+
+A focused Preview SHALL accept Ctrl/Cmd+= (or +), Ctrl/Cmd+- and Ctrl/Cmd+0.
+Existing Ctrl/Cmd+Shift zoom shortcuts SHALL target preview magnification when
+a Preview owns the keyboard; elsewhere they retain application-wide behavior.
+Dialogs, popups and focused text fields SHALL retain keyboard ownership.
+Commands SHALL reject malformed parameters and invalid explicit panes.
+
+#### Scenario: Zoom without changing the app
+- **WHEN** a focused Preview is zoomed in, out or reset
+- **THEN** its body changes size while the toolbar, Files panes, other previews,
+  global zoom preference and egui zoom factor remain unchanged
+- **AND** minimum/maximum scales are enforced and bad parameters return an error
+
+### Requirement: Select and copy loaded preview text
+A focused single text, source, structured-text or Markdown preview SHALL support
+`Ctrl+A` (`Cmd+A` on macOS) followed by `Ctrl+C` (`Cmd+C`) to copy all loaded
+document text, including rows outside the viewport. The commands
+`preview.text.select_all` and `preview.text.copy` SHALL also be available in the
+Preview menu, reject non-null parameters and report unsupported or missing selections.
+Selection SHALL be highlighted in both themes. Clicking document content or Escape
+SHALL restore ordinary selection; dialogs, popups and focused text fields retain
+their own shortcuts.
+
+Copy SHALL omit line-number gutters and follow the current raw/pretty view.
+Markdown SHALL copy rendered text, code and list markers rather than Markdown source
+formatting. Existing preview size/line/block caps SHALL remain unchanged: truncated
+previews copy only their loaded content, without additional reads. Changing document
+identity or raw/pretty mode SHALL invalidate a previous whole-document selection.
+
+#### Scenario: Copy offscreen text
+- **WHEN** a text preview has more loaded rows than fit in the viewport and the user presses Ctrl+A then Ctrl+C
+- **THEN** the clipboard includes every loaded row, not just visible labels
+- **AND** selecting another file prevents copying the old document selection
+
+#### Scenario: Copy rendered Markdown
+- **WHEN** a Markdown preview containing a heading, formatted paragraph and code block is selected and copied
+- **THEN** their rendered text is copied in document order without heading or emphasis syntax
+
 ### Requirement: Hostile files are bounded
 Previews SHALL enforce size, line, dimension, frame and time limits, check image dimensions before allocating, never follow links or load external resources, and convert any decoder panic, error or timeout into an error card.
 

@@ -771,6 +771,24 @@ fn ready_rows(
             }
         }
     });
+    let rows_bottom = output.inner_rect.top() + total as f32 * pitch
+        - ui.spacing().item_spacing.y
+        - output.state.clamped_offset().y;
+    let empty = egui::Rect::from_min_max(
+        egui::pos2(
+            output.inner_rect.left(),
+            rows_bottom.max(output.inner_rect.top()),
+        ),
+        output.inner_rect.max,
+    );
+    if empty.is_positive() {
+        let response = ui.interact(
+            empty,
+            ui.make_persistent_id(("listing-folder-menu", pane)),
+            egui::Sense::click(),
+        );
+        crate::context_menu::attach_folder(&response, s, pane, None);
+    }
     if let Some(state) = s.layout.state_mut(pane) {
         state.listing.scroll = output.state.clamped_offset().y;
         if focus_parent {
@@ -883,6 +901,7 @@ fn current_row(
         state.listing.focus_current();
     }
     response.clone().on_hover_text("Current folder");
+    crate::context_menu::attach_folder(&response, s, pane, None);
     if focused {
         ui.painter().rect_filled(rect, 0.0, tokens.selection_bg);
     } else if response.hovered() {
@@ -1037,7 +1056,7 @@ fn entry_row_ui(
     let text_color = if selected {
         tokens.selection_text
     } else if entry.is_dir_like() {
-        tokens.accent
+        tokens.accent_text
     } else if entry.is_symlink() {
         tokens.text_muted
     } else {

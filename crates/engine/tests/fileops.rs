@@ -600,6 +600,29 @@ fn paste_refuses_when_the_os_clipboard_changed_or_params_are_bad() {
     );
     assert!(s.clipboard.is_none());
     assert!(dispatch(&mut s, "file.clip_paste", json!({"os_text": 5})).is_err());
+    assert!(dispatch(&mut s, "file.clip_paste", json!({"dest": 5})).is_err());
+    assert!(dispatch(&mut s, "file.clip_paste", json!({"dest": ""})).is_err());
+}
+
+#[test]
+fn folder_menu_paste_uses_explicit_destination_not_listing_location() {
+    let fs = MemFs::new();
+    fs.put_str("/src/a.txt", b"hello").expect("file");
+    fs.mkdirs_str("/target").expect("target");
+    let mut s = session_on(Arc::new(fs.clone()));
+    let pane = s.layout.state_mut(s.layout.focused()).expect("pane");
+    pane.location = uri("/src");
+    pane.listing.select_only(Some("a.txt"), 0);
+    dispatch(&mut s, "file.clip_copy", Params::Null).expect("copy");
+    dispatch(&mut s, "file.clip_paste", json!({"dest": "/target"})).expect("paste");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert_eq!(fs.get_str("/target/a.txt").expect("copied"), b"hello");
+    assert_eq!(
+        s.layout.state(s.layout.focused()).expect("pane").location,
+        uri("/src")
+    );
+    assert!(fs.get_str("/src/a (2).txt").is_err());
 }
 
 #[test]

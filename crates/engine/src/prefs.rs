@@ -155,6 +155,9 @@ pub struct Prefs {
     /// Shell for new terminal panes.
     #[serde(default)]
     pub terminal_shell: TerminalShell,
+    /// Retained visual rows for newly opened terminal sessions.
+    #[serde(default = "default_terminal_scrollback")]
+    pub terminal_scrollback_rows: u64,
     /// Accent colour as `#rrggbb`; `None` keeps the theme's own.
     #[serde(default)]
     pub accent: Option<String>,
@@ -282,6 +285,10 @@ fn default_remote_timeout() -> u64 {
 }
 fn default_remote_keepalive() -> u64 {
     fm_fs_sftp::DEFAULT_KEEPALIVE_SECS
+}
+
+fn default_terminal_scrollback() -> u64 {
+    10_000
 }
 
 impl Prefs {
@@ -441,6 +448,7 @@ impl Default for Prefs {
             zoom: default_zoom(),
             bookmarks: Vec::new(),
             terminal_shell: TerminalShell::default(),
+            terminal_scrollback_rows: default_terminal_scrollback(),
             accent: None,
             density: Density::default(),
             font_size: default_font_size(),
@@ -460,6 +468,9 @@ impl Default for Prefs {
 }
 
 impl Prefs {
+    pub fn terminal_scrollback_rows(&self) -> usize {
+        self.terminal_scrollback_rows.clamp(5_000, 1_000_000) as usize
+    }
     fn clamp_f32(value: f32, default: f32) -> f32 {
         if value.is_finite() {
             value.clamp(*FONT_SIZE_RANGE.start(), *FONT_SIZE_RANGE.end())
@@ -761,6 +772,7 @@ mod tests {
                 "size_units",
                 "smb_require_encryption",
                 "terminal_font_size",
+                "terminal_scrollback_rows",
                 "terminal_shell",
                 "theme",
                 "thumb_disk_mib",

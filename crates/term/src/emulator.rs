@@ -115,6 +115,7 @@ fn dim(v: u16, max: u16) -> NonZeroU16 {
 
 /// The VT parser and screen model. Pure data: feed it bytes, read snapshots.
 pub struct Emulator {
+    scrollback_capacity: usize,
     parser: Parser,
     charsets: Charsets,
     scratch: Vec<u8>,
@@ -127,9 +128,19 @@ pub struct Emulator {
 const MAX_REPLIES: usize = 4096;
 
 impl Emulator {
+    pub fn scrollback_capacity(&self) -> usize {
+        self.scrollback_capacity
+    }
+
     pub fn new(rows: u16, cols: u16) -> Self {
+        Self::with_scrollback(rows, cols, SCROLLBACK)
+    }
+
+    pub fn with_scrollback(rows: u16, cols: u16, capacity: usize) -> Self {
+        let capacity = capacity.clamp(5_000, 1_000_000);
         Self {
-            parser: Parser::new(dim(rows, MAX_ROWS), dim(cols, MAX_COLS), SCROLLBACK),
+            scrollback_capacity: capacity,
+            parser: Parser::new(dim(rows, MAX_ROWS), dim(cols, MAX_COLS), capacity),
             charsets: Charsets::default(),
             queries: Queries::default(),
             replies: Vec::new(),
@@ -209,7 +220,7 @@ impl Emulator {
         };
         self.parser
             .screen_mut()
-            .set_scrollback(next.min(SCROLLBACK));
+            .set_scrollback(next.min(self.scrollback_capacity));
     }
 
     pub fn scroll_to_bottom(&mut self) {
@@ -524,6 +535,26 @@ mod tests {
         e.resize(12, 5);
         e.resize(12, 40);
         assert_eq!(text(&e), line);
+    }
+
+    #[test]
+    fn configurable_scrollback_retains_and_copies_beyond_the_old_limit() {
+        for capacity in [5_000, 15_000] {
+            let mut e = Emulator::with_scrollback(2, 20, capacity);
+            for n in 0..16_000 {
+                e.feed(format!("row-{n:05}\r\n").as_bytes());
+            }
+            assert_eq!(e.snapshot().scrollback_len, capacity);
+            e.scroll(i32::MAX);
+            assert_eq!(e.snapshot().scrollback_offset, capacity);
+            let first = 16_000 - capacity - 1;
+            assert_eq!(e.text_between((0, 0), (0, 19)), format!("row-{first:05}"));
+            e.resize(2, 10);
+            assert!(e.snapshot().scrollback_len <= capacity);
+        }
+        let e = Emulator::with_scrollback(2, 2, 1_000_000);
+        assert_eq!(e.scrollback_capacity(), 1_000_000);
+        assert_eq!(e.snapshot().scrollback_len, 0);
     }
 
     #[test]

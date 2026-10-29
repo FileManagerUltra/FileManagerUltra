@@ -139,6 +139,8 @@ pub struct PreviewSlot {
     pub pretty: bool,
     pub wrap: bool,
     pub zoom: Zoom,
+    /// Magnification for this pane's content, separate from image fit mode and UI zoom.
+    pub scale: f32,
     /// Directory thumbnail grid instead of the summary card.
     pub thumbs: bool,
     /// Index into [`fm_preview::thumbs::EDGES`].
@@ -172,6 +174,7 @@ impl PreviewSlot {
             pretty: false,
             wrap: false,
             zoom: Zoom::Fit,
+            scale: 1.0,
             thumbs: false,
             thumb_size: 0,
             thumb_window: None,
@@ -1166,6 +1169,9 @@ pub fn zoom() -> CommandSpec {
                     ));
                 }
             };
+            if matches!(mode, "fit" | "actual") {
+                slot.scale = 1.0;
+            }
             Ok(())
         },
     }

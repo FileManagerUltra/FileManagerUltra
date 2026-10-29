@@ -13,7 +13,7 @@ use crate::registry::CommandSpec;
 use crate::session::Session;
 
 const KEYS: &str = "accent (\"default\"|\"#rrggbb\"), density (compact|normal|comfortable), \
-    font_size 9-24, terminal_font_size 9-24, size_units (binary|decimal|bytes), \
+    font_size 9-24, terminal_font_size 9-24, terminal_scrollback_rows 5000-1000000, size_units (binary|decimal|bytes), \
     date_format (iso|isoseconds|us|eu), show_hidden, single_click_open, confirm_delete, \
     confirm_run (bool), thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
 
@@ -69,6 +69,9 @@ pub fn set(s: &mut Session, key: &str, value: &Value) -> Result<(), FmError> {
         }
         "font_size" => s.prefs.font_size = font(key, value)?,
         "terminal_font_size" => s.prefs.terminal_font_size = font(key, value)?,
+        "terminal_scrollback_rows" => {
+            s.prefs.terminal_scrollback_rows = ranged(key, value, &(5_000..=1_000_000))?;
+        }
         "size_units" => {
             s.prefs.size_units = match choice(key, value, &["binary", "decimal", "bytes"])? {
                 "decimal" => SizeUnits::Decimal,
@@ -167,6 +170,40 @@ mod tests {
 
     fn set_via(s: &mut Session, key: &str, value: Value) -> Result<(), FmError> {
         s.dispatch("prefs.set", &json!({"key": key, "value": value}))
+    }
+
+    #[test]
+    fn scrollback_range_persists_and_hand_edited_values_are_bounded() {
+        let mut s = Session::new().expect("session");
+        assert_eq!(s.prefs.terminal_scrollback_rows(), 10_000);
+        for rows in [5_000, 10_000, 100_000, 1_000_000] {
+            set_via(&mut s, "terminal_scrollback_rows", json!(rows)).expect("set");
+            let encoded = toml::to_string(&s.prefs).expect("serialize");
+            let decoded: Prefs = toml::from_str(&encoded).expect("deserialize");
+            assert_eq!(decoded.terminal_scrollback_rows(), rows as usize);
+        }
+        for bad in [
+            json!(4999),
+            json!(1_000_001),
+            json!(-1),
+            json!(5000.5),
+            json!("10000"),
+            json!(null),
+        ] {
+            let before = s.prefs.clone();
+            assert!(set_via(&mut s, "terminal_scrollback_rows", bad).is_err());
+            assert_eq!(s.prefs, before);
+        }
+        s.prefs.terminal_scrollback_rows = u64::MAX;
+        assert_eq!(s.prefs.terminal_scrollback_rows(), 1_000_000);
+        s.prefs.terminal_scrollback_rows = 0;
+        assert_eq!(s.prefs.terminal_scrollback_rows(), 5_000);
+        assert_eq!(
+            toml::from_str::<Prefs>("")
+                .expect("old preferences")
+                .terminal_scrollback_rows(),
+            10_000
+        );
     }
 
     #[test]

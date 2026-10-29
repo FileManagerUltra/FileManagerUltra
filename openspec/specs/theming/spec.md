@@ -54,10 +54,24 @@ Every widget SHALL derive its colours from the `fm-ui` theme token set; colour l
 - **WHEN** UI snapshot tests run
 - **THEN** each captured state exists in both dark and light variants
 
+### Requirement: Readable accent text
+Places, Bookmarks and Devices headings SHALL retain the user's unmodified accent
+colour and use visibly heavier lettering for small-size readability in both themes,
+rather than darkening the accent toward black.
+Other accent-coloured text SHALL have
+at least 4.5:1 contrast against normal, panel and hover surfaces in both themes.
+Custom accent preferences SHALL retain their original colour for decoration;
+a separate semantic text colour SHALL be adjusted toward the theme's foreground
+only when necessary for readability.
+
+#### Scenario: Pale custom accent in the light theme
+- **WHEN** the user chooses a pale accent and uses the light theme
+- **THEN** sidebar headings retain the accent with heavier lettering, while accent links use a darker readable variant
+- **AND** focus borders and selection tints retain the chosen accent
+
 ### Requirement: Interface zoom
 The View menu SHALL offer Zoom In, Zoom Out and Reset Zoom (`view.zoom.in|out|reset`, Ctrl+Shift +/-/0). The factor SHALL stay within 0.5-3.0 and be stored in preferences and restored at start-up.
 
 #### Scenario: Zoom persists
 - **WHEN** the user zooms in and restarts the app
 - **THEN** the interface opens at the same zoom
-

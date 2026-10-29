@@ -17,6 +17,7 @@ A Terminal pane SHALL own one pty-backed shell session, started on first show in
 #### Scenario: Close terminates child
 - **WHEN** a Terminal pane is closed
 - **THEN** the child process has exited and its pty is closed
+- **AND** the remainder of that frame does not render or restart the removed pane or report a stale pane-not-found error
 
 ### Requirement: Non-blocking I/O
 Reading and writing the pty SHALL happen off the UI thread; each frame the UI only drains an already-buffered, size-bounded queue. Output flooding (e.g. `yes`) MUST NOT stall frames.
@@ -32,7 +33,7 @@ Width changes SHALL reflow normal-screen content and retained scrollback at char
 boundaries, joining soft wraps but preserving explicit line breaks, attributes and
 wide/combining characters. The cursor and saved cursor SHALL follow their content;
 an existing scrolled view SHALL remain anchored to its logical line while retained.
-History remains bounded to 10 000 visual rows; narrowing may evict oldest history.
+History remains bounded to the session's configured visual-row limit; narrowing may evict oldest history.
 As with height resizing, excess bottom rows may be discarded to keep the cursor visible.
 Alternate-screen applications SHALL NOT be reflowed: they redraw after the pty resize.
 Existing text selections may be cleared when grid dimensions change.
@@ -54,6 +55,10 @@ Existing text selections may be cleared when grid dimensions change.
 - **THEN** the cells hold `┌──┐`/`│`/`└──┘`, and light box characters are painted edge to edge so borders join without gaps
 
 ### Requirement: Input routing
+Preferences and other open forms, or a focused text editor, SHALL own keyboard and
+clipboard input ahead of an underlying Terminal pane. Copy/cut/paste in a dialog
+SHALL NOT send control bytes or pasted text to the shell.
+
 While a Terminal pane is focused, text, Enter, Backspace, Tab, arrows, Home/End, PageUp/Down, Delete, F1–F12 and `Ctrl+<letter>` SHALL be sent to the shell. Only `Ctrl+Shift+…` chords and `Ctrl+Shift+Tab` are handled as app shortcuts. Mouse wheel scrolls scrollback unless the application requested mouse reporting; typing returns to the live screen.
 
 #### Scenario: Ctrl+C
@@ -86,7 +91,14 @@ Holding Shift SHALL bypass application mouse input for local text selection and 
 - **THEN** it returns an error without writing to the shell or panicking
 
 ### Requirement: Copy, paste, scrollback
-`Ctrl+Shift+C` SHALL copy the selection and `Ctrl+Shift+V` SHALL paste (bracketed when the app enabled it). Scrollback MUST be capped (10 000 lines). Paste larger than 1 MiB is rejected with a notice.
+`Ctrl+Shift+C` SHALL copy the selection and `Ctrl+Shift+V` SHALL paste (bracketed when the app enabled it). Scrollback MUST be capped by the persisted `terminal_scrollback_rows` preference: integer values from 5 000 through 1 000 000 visual rows, default 10 000, excluding the visible screen. Preferences > Terminal SHALL expose this through `prefs.set` and explain the memory cost of large histories. Rows SHALL allocate as output arrives, not upfront. Changes SHALL apply only to new or restarted terminals, leaving running sessions unchanged. Invalid command values SHALL fail without changing preferences; hand-edited out-of-range values SHALL be bounded when used. Paste larger than 1 MiB is rejected with a notice.
+
+#### Scenario: Configure terminal history
+- **WHEN** the user changes scrollback to 5 000 or 1 000 000 rows
+- **THEN** the value persists and new or restarted terminals use that limit
+- **AND** already-running terminals retain their previous limit
+- **WHEN** the command receives 4 999, 1 000 001, a fraction or a non-number
+- **THEN** it returns an error and preserves the previous setting
 
 Selections SHALL be anchored in retained buffer rows, not viewport rows. Mouse
 wheel and Shift+PageUp/PageDown SHALL preserve selection, and dragging near the

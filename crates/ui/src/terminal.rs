@@ -169,7 +169,12 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused
     };
 
     let exited = exit_code(s, pane);
-    if focused && exited.is_none() && s.pending_kind.is_none() {
+    if focused
+        && exited.is_none()
+        && s.pending_kind.is_none()
+        && !crate::dialogs::window_owns_keyboard(s)
+        && (!ui.ctx().text_edit_focused() || response.clicked())
+    {
         if response.clicked() || !ui.ctx().text_edit_focused() {
             response.request_focus();
         }
@@ -212,6 +217,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused
 }
 
 fn forward_input(ui: &Ui, s: &mut Session, pane: PaneId, snap: &Snapshot) {
+    if crate::dialogs::window_owns_keyboard(s) || ui.ctx().text_edit_focused() {
+        return;
+    }
     let (events, mods) = ui.input(|i| (i.events.clone(), i.modifiers));
     let mut data = String::new();
     let mut scroll = 0i32;
@@ -1154,6 +1162,36 @@ mod tests {
         );
         out.textures_delta.clear();
         s.clipboard_outbox
+    }
+
+    #[test]
+    fn preferences_keep_clipboard_and_typing_events_out_of_the_terminal() {
+        let ctx = egui::Context::default();
+        let mut s = Session::default();
+        s.preferences_open = true;
+        let events = vec![
+            Event::Copy,
+            Event::Cut,
+            Event::Paste("#68b7dc".into()),
+            Event::Text("edited".into()),
+            key(Key::Enter, Modifiers::NONE),
+        ];
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: events.clone(),
+                ..Default::default()
+            },
+            |ui| {
+                forward_input(ui, &mut s, 1, &Snapshot::default());
+                assert_eq!(ui.input(|i| i.events.clone()), events);
+            },
+        );
+        output.textures_delta.clear();
+        assert!(
+            s.notice.is_none(),
+            "no command may reach the underlying terminal"
+        );
+        assert!(s.clipboard_out.is_none());
     }
 
     #[test]

@@ -361,6 +361,13 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                         crate::context_menu::attach_server(
                             &response, s, &row.name, &row.uri, &mut open,
                         );
+                    } else if row.uri.scheme() != fm_vfs::Scheme::Servers
+                        && row.uri.scheme() != fm_vfs::Scheme::Network
+                    {
+                        crate::context_menu::attach_folder(&response, s, pane, Some(&row.uri));
+                        if response.secondary_clicked() {
+                            remembered = Some(row.uri.clone());
+                        }
                     }
                 });
             }

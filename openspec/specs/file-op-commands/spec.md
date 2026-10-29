@@ -79,6 +79,11 @@ An entry classified as a program SHALL NOT start unless the caller passes `mode:
 - **WHEN** a file is cut and pasted into another folder
 - **THEN** it exists there, is gone from the source, and the clipboard is empty
 
+#### Scenario: Explicit folder-menu destination
+- **WHEN** `file.clip_paste` receives an optional `dest` URI from a folder context menu
+- **THEN** it pastes into that folder instead of the focused listing's location
+- **AND** malformed destination values fail before any work is submitted
+
 ### Requirement: Navigation from a preview targets its Files pane
 `nav.open` dispatched while a Preview pane is focused (e.g. double-clicking a folder thumbnail) SHALL navigate the Files pane the preview shows.
 

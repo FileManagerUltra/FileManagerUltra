@@ -80,8 +80,12 @@ pub fn indicator(ui: &mut Ui, s: &Session, tokens: &Tokens) {
     }
     if ui
         .add(
-            egui::Button::new(RichText::new(text).color(tokens.accent).font(tokens.font()))
-                .frame(false),
+            egui::Button::new(
+                RichText::new(text)
+                    .color(tokens.accent_text)
+                    .font(tokens.font()),
+            )
+            .frame(false),
         )
         .clicked()
     {

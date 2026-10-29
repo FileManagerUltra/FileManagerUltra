@@ -39,6 +39,8 @@ pub mod preview_multi;
 pub mod preview_order_cmds;
 mod preview_prefs_cmds;
 pub mod preview_reload_cmds;
+pub mod preview_scale_cmds;
+pub mod preview_text_cmds;
 pub mod preview_types;
 pub mod props_cmds;
 pub mod registry;

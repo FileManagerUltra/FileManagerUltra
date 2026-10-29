@@ -9,12 +9,13 @@ use fm_engine::Session;
 use fm_engine::preview_cmds::{Body, LogView, Zoom};
 use fm_layout::{PaneId, PreviewSource};
 use fm_preview::log::{Level, LogDoc, LogRecord};
-use fm_preview::markdown::{Inline, MdBlock};
 use fm_preview::{DirDoc, HexDoc, ImageDoc, MetaDoc, Preview, Span, StructDoc, TextDoc};
 use serde_json::{Value, json};
 
 use crate::theme::Tokens;
 
+#[path = "preview_markdown.rs"]
+mod markdown;
 #[path = "preview_time.rs"]
 mod time;
 
@@ -35,6 +36,71 @@ fn mono(tokens: &Tokens) -> FontId {
 
 /// Render the preview pane body.
 pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Option<fm_vfs::VfsUri> {
+    let keyboard = s.layout.focused() == pane
+        && !crate::dialogs::window_owns_keyboard(s)
+        && !ui.ctx().text_edit_focused()
+        && ui.is_enabled()
+        && ui.ctx().memory(|m| m.is_above_modal_layer(ui.layer_id()))
+        && !ui.any_popup_open();
+    if keyboard {
+        for (key, id) in [
+            (egui::Key::Plus, "preview.scale.in"),
+            (egui::Key::Equals, "preview.scale.in"),
+            (egui::Key::Minus, "preview.scale.out"),
+            (egui::Key::Num0, "preview.scale.reset"),
+        ] {
+            if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, key)) {
+                s.dispatch_or_notice(id, &json!({ "pane": pane }));
+            }
+        }
+        if ui.input(|i| {
+            i.pointer.any_pressed()
+                && i.pointer
+                    .interact_pos()
+                    .is_some_and(|p| ui.available_rect_before_wrap().contains(p))
+        }) && ui
+            .ctx()
+            .pointer_hover_pos()
+            .and_then(|p| ui.ctx().layer_id_at(p))
+            .is_none_or(|layer| layer == ui.layer_id())
+        {
+            s.preview_text_selection = None;
+        }
+        if fm_engine::preview_text_cmds::selected(s, pane)
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            s.preview_text_selection = None;
+        }
+        if s.command_enabled("preview.text.select_all")
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::A))
+        {
+            s.dispatch_or_notice("preview.text.select_all", &Value::Null);
+        }
+        if fm_engine::preview_text_cmds::selected(s, pane) {
+            let copy = ui.input_mut(|i| {
+                let mut copy = false;
+                i.events.retain(|event| {
+                    if matches!(event, egui::Event::Copy) {
+                        copy = true;
+                        false
+                    } else {
+                        true
+                    }
+                });
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::C) || copy
+            });
+            if copy {
+                s.dispatch_or_notice("preview.text.copy", &Value::Null);
+                ui.ctx().request_repaint();
+            }
+        }
+    }
+    ui.data_mut(|d| {
+        d.insert_temp(
+            Id::NULL.with("pv-all-selected"),
+            fm_engine::preview_text_cmds::selected(s, pane),
+        )
+    });
     let mut actions: Vec<Action> = Vec::new();
     let mut open: Option<fm_vfs::VfsUri> = None;
     let mut published: Option<fm_engine::file_cmds::GridSelection> = None;
@@ -53,77 +119,102 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         d.insert_temp(Id::NULL.with("pv-can-page"), can_page);
         d.insert_temp(Id::NULL.with("pv-page-used"), false);
     });
-    if let Some(slot) = s.preview_slot(pane) {
-        match &slot.body {
-            Body::Empty => centered(ui, tokens, "Select a file to preview it"),
-            Body::Loading => {
-                ui.centered_and_justified(|ui| ui.spinner());
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_millis(100));
+    let scale = s.preview_slot(pane).map_or(1.0, |slot| slot.scale);
+    let original_style = ui.style().clone();
+    {
+        let mut content_tokens = *tokens;
+        content_tokens.font_size *= scale;
+        content_tokens.row_height *= scale;
+        content_tokens.padding *= scale;
+        if scale != 1.0 {
+            let style = ui.style_mut();
+            for font in style.text_styles.values_mut() {
+                font.size *= scale;
             }
-            Body::Static(p) if matches!(&**p, Preview::Dir(_)) => {
-                if let Preview::Dir(d) = &**p {
-                    let volume = slot.subject.as_ref().and_then(|entry| {
-                        s.volumes
-                            .entries()
-                            .iter()
-                            .filter(|device| device.mount.is_same_or_descendant_of(&entry.uri))
-                            .max_by_key(|device| device.mount.to_string().len())
-                    });
-                    if slot.thumbs {
-                        if let Some(volume) = volume {
-                            ui.collapsing("Volume information", |ui| {
-                                volume_card(ui, tokens, volume)
+            if let Some(font) = &mut style.override_font_id {
+                font.size *= scale;
+            }
+            style.spacing.interact_size *= scale;
+            style.spacing.item_spacing *= scale;
+            style.spacing.button_padding *= scale;
+        }
+        let tokens = &content_tokens;
+        ui.data_mut(|d| d.insert_temp(Id::NULL.with("pv-content-scale"), scale));
+        if let Some(slot) = s.preview_slot(pane) {
+            match &slot.body {
+                Body::Empty => centered(ui, tokens, "Select a file to preview it"),
+                Body::Loading => {
+                    ui.centered_and_justified(|ui| ui.spinner());
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(100));
+                }
+                Body::Static(p) if matches!(&**p, Preview::Dir(_)) => {
+                    if let Preview::Dir(d) = &**p {
+                        let volume = slot.subject.as_ref().and_then(|entry| {
+                            s.volumes
+                                .entries()
+                                .iter()
+                                .filter(|device| device.mount.is_same_or_descendant_of(&entry.uri))
+                                .max_by_key(|device| device.mount.to_string().len())
+                        });
+                        if slot.thumbs {
+                            if let Some(volume) = volume {
+                                ui.collapsing("Volume information", |ui| {
+                                    volume_card(ui, tokens, volume)
+                                });
+                            }
+                            thumb_grid(
+                                ui,
+                                s,
+                                pane,
+                                tokens,
+                                d,
+                                slot.thumb_size,
+                                slot.thumb_window,
+                                &mut actions,
+                                &mut open,
+                                slot.subject.as_ref().map(|e| e.uri.clone()),
+                                &mut published,
+                            );
+                        } else {
+                            scrolled(ui, pane, "dir", |ui| {
+                                if let Some(volume) = volume {
+                                    volume_card(ui, tokens, volume);
+                                }
+                                dir_card(ui, tokens, d);
                             });
                         }
-                        thumb_grid(
-                            ui,
-                            s,
-                            pane,
-                            tokens,
-                            d,
-                            slot.thumb_size,
-                            slot.thumb_window,
-                            &mut actions,
-                            &mut open,
-                            slot.subject.as_ref().map(|e| e.uri.clone()),
-                            &mut published,
-                        );
-                    } else {
-                        scrolled(ui, pane, "dir", |ui| {
-                            if let Some(volume) = volume {
-                                volume_card(ui, tokens, volume);
-                            }
-                            dir_card(ui, tokens, d);
-                        });
                     }
                 }
-            }
-            Body::Static(p) if slot.video.is_some() => {
-                if let (Preview::Meta(m), Some(v)) = (&**p, &slot.video) {
-                    video_body(ui, pane, tokens, p, m, v, &mut actions);
-                }
-            }
-            Body::Static(p) => {
-                let p = p.clone();
-                static_body(ui, pane, tokens, &p, slot.pretty, slot.wrap, slot.zoom);
-            }
-            Body::Grid(items) => multi_grid(ui, pane, tokens, items),
-            Body::Log(v) => {
-                log_body(ui, pane, tokens, v, &mut actions);
-                let id = Id::NULL.with(("pv-logui", pane));
-                let mut st: LogUi = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
-                if let Some(picker) = &mut st.time {
-                    picker.show(ui.ctx(), pane, tokens, &mut actions);
-                    if !picker.open {
-                        st.time = None;
+                Body::Static(p) if slot.video.is_some() => {
+                    if let (Preview::Meta(m), Some(v)) = (&**p, &slot.video) {
+                        video_body(ui, pane, tokens, p, m, v, &mut actions);
                     }
                 }
-                ui.data_mut(|d| d.insert_temp(id, st));
+                Body::Static(p) => {
+                    let p = p.clone();
+                    static_body(ui, pane, tokens, &p, slot.pretty, slot.wrap, slot.zoom);
+                }
+                Body::Grid(items) => multi_grid(ui, pane, tokens, items),
+                Body::Log(v) => {
+                    log_body(ui, pane, tokens, v, &mut actions);
+                    let id = Id::NULL.with(("pv-logui", pane));
+                    let mut st: LogUi = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
+                    if let Some(picker) = &mut st.time {
+                        picker.show(ui.ctx(), pane, tokens, &mut actions);
+                        if !picker.open {
+                            st.time = None;
+                        }
+                    }
+                    ui.data_mut(|d| d.insert_temp(id, st));
+                }
             }
         }
     }
+    ui.set_style(original_style);
+    ui.data_mut(|d| d.insert_temp(Id::NULL.with("pv-content-scale"), 1.0_f32));
     ui.data_mut(|d| d.insert_temp(Id::NULL.with("pv-can-page"), false));
+    ui.data_mut(|d| d.insert_temp(Id::NULL.with("pv-all-selected"), false));
     for (id, params) in actions {
         let mut params = params;
         if let Some(o) = params.as_object_mut() {
@@ -250,12 +341,7 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                 }
                 Preview::Text(_) | Preview::Markdown(_) => wrap_pretty(ui, actions),
                 Preview::Image(_) => {
-                    for (label, mode) in [
-                        ("Fit", "fit"),
-                        ("100%", "actual"),
-                        ("+", "in"),
-                        ("−", "out"),
-                    ] {
+                    for (label, mode) in [("Fit", "fit"), ("100%", "actual")] {
                         if ui.button(label).clicked() {
                             actions.push(("preview.zoom", json!({ "mode": mode })));
                         }
@@ -344,6 +430,31 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
             });
         }
     });
+    ui.horizontal(|ui| {
+        if ui
+            .button("−")
+            .on_hover_text("Zoom preview out (Ctrl+-)")
+            .clicked()
+        {
+            actions.push(("preview.scale.out", json!({})));
+        }
+        let reset = ui
+            .button(format!("{:.0}%", slot.scale * 100.0))
+            .on_hover_text("Reset preview zoom (Ctrl+0)");
+        reset.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Button, true, "Reset preview zoom")
+        });
+        if reset.clicked() {
+            actions.push(("preview.scale.reset", json!({})));
+        }
+        if ui
+            .button("+")
+            .on_hover_text("Zoom preview in (Ctrl+=)")
+            .clicked()
+        {
+            actions.push(("preview.scale.in", json!({})));
+        }
+    });
     if let Body::Log(v) = &slot.body
         && ui
             .data(|d| d.get_temp::<LogUi>(Id::NULL.with(("pv-logui", pane))))
@@ -372,7 +483,7 @@ fn source_picker(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Actio
         PreviewSource::Follow => "Active pane".to_string(),
         PreviewSource::Pane(id) => format!("Pane {id}"),
     };
-    egui::ComboBox::from_id_salt(("pv-source", pane))
+    let response = egui::ComboBox::from_id_salt(("pv-source", pane))
         .selected_text(current)
         .width(100.0)
         .show_ui(ui, |ui| {
@@ -391,7 +502,11 @@ fn source_picker(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Actio
                     actions.push(("pane.preview.source", json!({ "source": id })));
                 }
             }
-        });
+        })
+        .response;
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::ComboBox, response.enabled(), "Preview source")
+    });
 }
 
 fn static_body(
@@ -406,7 +521,7 @@ fn static_body(
     match &**p {
         Preview::Text(d) => text_view(ui, pane, tokens, d, wrap),
         Preview::Structured(d) => structured(ui, pane, tokens, d, pretty, wrap),
-        Preview::Markdown(m) => markdown(ui, tokens, &m.blocks, m.truncated, wrap),
+        Preview::Markdown(m) => markdown::show(ui, pane, tokens, m, wrap),
         Preview::Image(i) => image(ui, pane, tokens, p, i, zoom),
         Preview::Hex(h) => hex(ui, tokens, h),
         Preview::Dir(d) => scrolled(ui, pane, "dir", |ui| dir_card(ui, tokens, d)),
@@ -450,7 +565,8 @@ fn static_body(
 }
 
 fn multi_grid(ui: &mut Ui, pane: PaneId, tokens: &Tokens, items: &[(fm_vfs::Entry, Arc<Preview>)]) {
-    let columns = ((ui.available_width() / 300.0).floor() as usize).clamp(1, 4);
+    let scale = content_scale(ui);
+    let columns = ((ui.available_width() / (300.0 * scale)).floor() as usize).clamp(1, 4);
     let output = paged_scroll(ui, ScrollArea::vertical(), ("pv-multi-grid", pane)).show(ui, |ui| {
         for row in items.chunks(columns) {
             ui.columns(columns, |uis| {
@@ -462,7 +578,7 @@ fn multi_grid(ui: &mut Ui, pane: PaneId, tokens: &Tokens, items: &[(fm_vfs::Entr
                             )
                             .on_hover_text(entry.uri.to_string());
                             ui.separator();
-                            ui.allocate_ui(vec2(ui.available_width(), 240.0), |ui| {
+                            ui.allocate_ui(vec2(ui.available_width(), 240.0 * scale), |ui| {
                                 ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
                                 static_body(ui, pane, tokens, preview, false, false, Zoom::Fit);
                             });
@@ -492,6 +608,19 @@ fn spans_job(tokens: &Tokens, spans: &[Span], wrap: bool, width: f32) -> LayoutJ
         job.append(&sp.text, 0.0, format);
     }
     job.wrap.max_width = if wrap { width } else { f32::INFINITY };
+    job
+}
+
+fn selection_job(ui: &Ui, tokens: &Tokens, mut job: LayoutJob) -> LayoutJob {
+    if ui
+        .data(|d| d.get_temp::<bool>(Id::NULL.with("pv-all-selected")))
+        .unwrap_or(false)
+    {
+        for section in &mut job.sections {
+            section.format.background = tokens.selection_bg;
+            section.format.color = tokens.selection_text;
+        }
+    }
     job
 }
 
@@ -540,7 +669,14 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
                         )
                         .selectable(false),
                     );
-                    ui.add(egui::Label::new(spans_job(tokens, line, true, 0.0)).wrap());
+                    ui.add(
+                        egui::Label::new(selection_job(
+                            ui,
+                            tokens,
+                            spans_job(tokens, line, true, 0.0),
+                        ))
+                        .wrap(),
+                    );
                 });
             }
         })
@@ -559,7 +695,14 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
                         )
                         .selectable(false),
                     );
-                    ui.add(egui::Label::new(spans_job(tokens, line, false, 0.0)).extend());
+                    ui.add(
+                        egui::Label::new(selection_job(
+                            ui,
+                            tokens,
+                            spans_job(tokens, line, false, 0.0),
+                        ))
+                        .extend(),
+                    );
                 });
             }
         })
@@ -576,95 +719,6 @@ fn structured(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &StructDoc, pretty:
         _ => &d.raw,
     };
     text_view(ui, pane, tokens, doc, wrap);
-}
-
-fn inline_job(tokens: &Tokens, parts: &[Inline], base: f32) -> LayoutJob {
-    let mut job = LayoutJob::default();
-    for p in parts {
-        let font = if p.code {
-            FontId::monospace(base)
-        } else {
-            FontId::proportional(base)
-        };
-        let color = if p.link.is_some() {
-            tokens.accent
-        } else {
-            tokens.text
-        };
-        let mut f = TextFormat::simple(font, color);
-        f.italics = p.italic;
-        if p.bold {
-            f.color = tokens.text;
-            f.underline = egui::Stroke::NONE;
-        }
-        if p.link.is_some() {
-            f.underline = egui::Stroke::new(1.0, tokens.accent);
-        }
-        if p.code {
-            f.background = tokens.panel;
-        }
-        job.append(&p.text, 0.0, f);
-    }
-    job
-}
-
-fn markdown(ui: &mut Ui, tokens: &Tokens, blocks: &[MdBlock], truncated: bool, wrap: bool) {
-    let output = paged_scroll(ui, ScrollArea::vertical(), "pv-md")
-        .auto_shrink(false)
-        .show(ui, |ui| {
-            for (i, b) in blocks.iter().enumerate() {
-                match b {
-                    MdBlock::Heading(l, parts) => {
-                        ui.add_space(6.0);
-                        let size = tokens.font_size * (2.0 - (*l as f32 - 1.0) * 0.18).max(1.0);
-                        ui.label(inline_job(tokens, parts, size));
-                    }
-                    MdBlock::Para(parts) => {
-                        ui.label(inline_job(tokens, parts, tokens.font_size));
-                        ui.add_space(4.0);
-                    }
-                    MdBlock::Code(c) => {
-                        egui::Frame::NONE
-                            .fill(tokens.panel)
-                            .inner_margin(6.0)
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                let text = RichText::new(c.trim_end()).font(mono(tokens));
-                                if wrap {
-                                    ui.add(egui::Label::new(text).wrap());
-                                } else {
-                                    ScrollArea::horizontal().id_salt(("pv-md-code", i)).show(
-                                        ui,
-                                        |ui| {
-                                            ui.add(egui::Label::new(text).extend());
-                                        },
-                                    );
-                                }
-                            });
-                    }
-                    MdBlock::Item(depth, marker, parts) => {
-                        ui.horizontal_top(|ui| {
-                            ui.add_space(16.0 * *depth as f32);
-                            ui.label(marker);
-                            ui.label(inline_job(tokens, parts, tokens.font_size));
-                        });
-                    }
-                    MdBlock::Quote(parts) => {
-                        ui.horizontal_top(|ui| {
-                            ui.label(tokens.muted("▎"));
-                            ui.label(inline_job(tokens, parts, tokens.font_size));
-                        });
-                    }
-                    MdBlock::Rule => {
-                        ui.separator();
-                    }
-                }
-            }
-            if truncated {
-                ui.label(tokens.muted("… truncated"));
-            }
-        });
-    remember_scroll(ui, &output);
 }
 
 fn image(ui: &mut Ui, pane: PaneId, tokens: &Tokens, p: &Arc<Preview>, img: &ImageDoc, zoom: Zoom) {
@@ -715,13 +769,14 @@ fn image(ui: &mut Ui, pane: PaneId, tokens: &Tokens, p: &Arc<Preview>, img: &Ima
     let (ow, oh) = img.original;
     let avail = ui.available_size() - vec2(0.0, 22.0);
     let natural = vec2(ow.max(1) as f32, oh.max(1) as f32);
-    let scale = match zoom {
-        Zoom::Fit => (avail.x / natural.x)
-            .min(avail.y / natural.y)
-            .clamp(0.01, 1.0),
-        Zoom::Actual => 1.0,
-        Zoom::Scale(v) => v,
-    };
+    let scale = content_scale(ui)
+        * match zoom {
+            Zoom::Fit => (avail.x / natural.x)
+                .min(avail.y / natural.y)
+                .clamp(0.01, 1.0),
+            Zoom::Actual => 1.0,
+            Zoom::Scale(v) => v,
+        };
     let output = paged_scroll(ui, ScrollArea::both(), ("pv-img", pane))
         .auto_shrink(false)
         .max_height(avail.y)
@@ -739,6 +794,11 @@ fn image(ui: &mut Ui, pane: PaneId, tokens: &Tokens, p: &Arc<Preview>, img: &Ima
             ""
         }
     )));
+}
+
+fn content_scale(ui: &Ui) -> f32 {
+    ui.data(|d| d.get_temp::<f32>(Id::NULL.with("pv-content-scale")))
+        .unwrap_or(1.0)
 }
 
 fn hex(ui: &mut Ui, tokens: &Tokens, h: &HexDoc) {
@@ -895,7 +955,7 @@ fn video_body(
     if v.width != Some(bucket) {
         actions.push(("preview.video.fit", json!({ "width": avail.x * ppp })));
     }
-    let output = paged_scroll(ui, ScrollArea::vertical(), ("pv-video", pane))
+    let output = paged_scroll(ui, ScrollArea::both(), ("pv-video", pane))
         .auto_shrink(false)
         .show(ui, |ui| {
             let controls_h = ui.spacing().interact_size.y + ui.spacing().item_spacing.y * 2.0;
@@ -903,7 +963,7 @@ fn video_body(
             let w = avail
                 .x
                 .min(((avail.y - controls_h) / aspect.max(0.01)).max(64.0));
-            let size = vec2(w, w * aspect);
+            let size = vec2(w, w * aspect) * content_scale(ui);
             if let Some(f) = &v.frame {
                 let id = Id::NULL.with(("pv-video-tex", pane));
                 let ctx = ui.ctx().clone();
@@ -928,7 +988,8 @@ fn video_body(
                     ),
                 };
                 ctx.data_mut(|d| d.insert_temp(id, (key, tex.clone())));
-                let (rect, resp) = ui.allocate_exact_size(vec2(avail.x, size.y), Sense::click());
+                let (rect, resp) =
+                    ui.allocate_exact_size(vec2(avail.x.max(size.x), size.y), Sense::click());
                 let at = egui::Rect::from_center_size(rect.center(), size);
                 egui::Image::new((tex.id(), size)).paint_at(ui, at);
                 if resp.clicked() {
@@ -1098,7 +1159,7 @@ fn thumb_grid(
     let gap = tokens.padding;
     let label_h = ui.fonts_mut(|f| f.row_height(&tokens.font())) + 2.0;
     let width = ui.available_width();
-    let cell = (edge as f32).min((width - gap).max(32.0));
+    let cell = (edge as f32 * content_scale(ui)).min((width - gap).max(32.0));
     let cols = (((width + gap) / (cell + gap)).floor() as usize).max(1);
     let rows = d.items.len().div_ceil(cols);
     let row_h = cell + label_h + gap;
@@ -1859,7 +1920,7 @@ fn marker_rule(ui: &mut Ui, tokens: &Tokens, n: usize, row_h: f32) {
         egui::Align2::LEFT_TOP,
         format!("marker {n}"),
         egui::FontId::proportional(9.0),
-        tokens.accent,
+        tokens.accent_text,
     );
 }
 

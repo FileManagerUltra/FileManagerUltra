@@ -3,6 +3,26 @@
 ## Purpose
 TBD - created by archiving change multi-pane-ui. Update Purpose after archive.
 ## Requirements
+### Requirement: Folder context menus target the pointed folder
+Right-clicking blank Files-listing space or the current-folder (`.`) row SHALL show
+a folder context menu with New Folder, New File, Paste, Refresh, Copy Path, Copy Name,
+Add Bookmark and Properties. Right-clicking an ordinary folder in the tree SHALL show
+the same menu, targeting that folder without navigating into it. Labels, shortcuts
+and availability SHALL come from registered commands; virtual locations SHALL not
+offer enabled file-creation or paste actions. Saved-server entries retain their
+Connect/Edit/Delete menu.
+
+#### Scenario: Background menu in an unfocused pane
+- **WHEN** a user right-clicks unused listing space in a Files pane
+- **THEN** that pane becomes focused, its file selection is cleared, and folder actions target its current location
+- **AND** file-row context menus are unchanged, including in populated and filtered listings
+
+#### Scenario: Tree folder actions
+- **WHEN** a user right-clicks a tree folder and chooses New Folder, New File or Paste
+- **THEN** the dialog or operation targets the clicked folder rather than the listing's location or selection
+- **AND** Refresh, Copy Path, Copy Name, Add Bookmark and Properties also target that folder
+- **AND** opening the menu does not change location, navigation history or expansion
+
 ### Requirement: The window shows a navigable pane tree
 The central area SHALL render the session's `Layout` recursively: each leaf is a pane (location bar, file tree, file listing) and each split is a pair of panes separated by a draggable handle; at least one pane always exists.
 

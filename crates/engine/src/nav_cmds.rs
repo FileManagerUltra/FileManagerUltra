@@ -165,19 +165,26 @@ pub fn forward() -> CommandSpec {
     }
 }
 
-/// `nav.refresh` — invalidate and re-read the focused pane's directory.
+/// `nav.refresh` — invalidate and re-read the focused pane's directory or an explicit folder.
 pub fn refresh() -> CommandSpec {
     CommandSpec {
         id: "nav.refresh",
         label: "Refresh",
         menu: &["Go", "Refresh"],
         shortcut: Some("Ctrl+R"),
-        params: "none",
+        params: "{uri?: string}",
         enabled: |_s| true,
-        run: |s, _p: &Params| {
-            let focused = s.layout.focused();
-            let loc = match s.layout.state(focused) {
-                Some(p) => p.location.clone(),
+        run: |s, params: &Params| {
+            let explicit = crate::file_cmds::object(params)?
+                .and_then(|m| m.get("uri"))
+                .map(crate::file_cmds::parse_uri)
+                .transpose()?;
+            let loc = match explicit.or_else(|| {
+                s.layout
+                    .state(s.layout.focused())
+                    .map(|p| p.location.clone())
+            }) {
+                Some(loc) => loc,
                 None => return Ok(()),
             };
             s.backends.require(&loc)?;
@@ -311,6 +318,30 @@ mod tests {
         wait_ready(&mut s, &home);
         let (entries, _) = s.pane_view(1).expect("view");
         assert_eq!(entries.len(), 3, "fresh listing includes new.txt");
+    }
+
+    #[test]
+    fn refresh_can_target_a_tree_folder_without_navigation() {
+        let (mut s, mem, home) = mem_session();
+        let docs = home.join("docs").expect("folder");
+        mem.put_str("/home/alice/docs/new.txt", b"new")
+            .expect("file");
+        (refresh().run)(&mut s, &serde_json::json!({"uri": docs.to_string()})).expect("refresh");
+        wait_ready(&mut s, &docs);
+        assert!(
+            s.dirs
+                .entries(&docs)
+                .expect("entries")
+                .iter()
+                .any(|e| e.name == "new.txt")
+        );
+        assert_eq!(s.layout.state(1).expect("pane").location, home);
+        for bad in [
+            serde_json::json!({"uri": 7}),
+            serde_json::json!({"uri": ""}),
+        ] {
+            assert!((refresh().run)(&mut s, &bad).is_err());
+        }
     }
 
     #[test]

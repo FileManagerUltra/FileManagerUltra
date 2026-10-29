@@ -48,8 +48,8 @@ The desktop entry, file-association metadata and window class SHALL derive from 
 - **THEN** its `Name`, `Exec` and `StartupWMClass` fields come from `APP_NAME`, `EXECUTABLE` and `APP_SLUG`
 
 ### Requirement: Recognisable platform-specific application icon
-The application icon SHALL be the approved split folder with a shallow gold tab,
-yellow left panel, blue right panel and a dark central seam. Linux SHALL use a flat
+The application icon SHALL be the approved yellow folder with a shallow gold tab
+and an inset blue right panel enclosed by a continuous yellow frame. Linux SHALL use a flat
 free silhouette, Windows a subtly shaded free silhouette, and macOS an inset
 symbol on a light rounded-square tile. Window/About icons and platform packaging
 SHALL use the corresponding treatment, with editable sources owned by `fm-brand`.

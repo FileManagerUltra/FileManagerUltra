@@ -74,11 +74,12 @@ impl Session {
             .map(|p| p.location.clone())
             .ok_or_else(|| FmError::NotFound(format!("pane {pane}")))?;
         let cwd = local_dir(&location).or_else(home_dir);
-        let session = TermSession::spawn(
+        let session = TermSession::spawn_with_scrollback(
             self.prefs.terminal_shell.to_term(),
             cwd.as_deref(),
             DEFAULT_ROWS,
             DEFAULT_COLS,
+            self.prefs.terminal_scrollback_rows(),
         )?;
         self.terminals.insert(pane, session);
         Ok(())
@@ -135,7 +136,7 @@ impl Session {
                 let after = t.snapshot();
                 if before.alternate_screen != after.alternate_screen
                     || before.scrollback_len > after.scrollback_len
-                    || after.scrollback_len == fm_term::SCROLLBACK
+                    || after.scrollback_len >= t.scrollback_capacity()
                 {
                     self.terminal_selection = None;
                 }
@@ -433,7 +434,37 @@ pub fn specs() -> Vec<CommandSpec> {
 
 #[cfg(test)]
 mod paste_tests {
-    use super::sanitize_paste;
+    use super::*;
+
+    #[test]
+    fn scrollback_preference_changes_new_and_restarted_sessions_only() {
+        let mut s = Session::new().expect("session");
+        let pane = s.layout.focused();
+        s.layout.state_mut(pane).expect("pane").kind = PaneKind::Terminal;
+        s.prefs.terminal_scrollback_rows = 5_000;
+        s.ensure_terminal(pane).expect("start");
+        assert_eq!(
+            s.terminal(pane).expect("terminal").scrollback_capacity(),
+            5_000
+        );
+        s.dispatch(
+            "prefs.set",
+            &serde_json::json!({
+                "key": "terminal_scrollback_rows", "value": 1_000_000
+            }),
+        )
+        .expect("set");
+        s.ensure_terminal(pane).expect("keep existing");
+        assert_eq!(
+            s.terminal(pane).expect("terminal").scrollback_capacity(),
+            5_000
+        );
+        s.dispatch("term.restart", &Params::Null).expect("restart");
+        assert_eq!(
+            s.terminal(pane).expect("terminal").scrollback_capacity(),
+            1_000_000
+        );
+    }
 
     #[test]
     fn a_rebuilt_bracket_terminator_cannot_survive() {

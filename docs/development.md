@@ -250,7 +250,7 @@ Seems to work, but Ctrl-c ctlv-v, ctrl-x to copy, paste, move a file does not, t
 Double click a folder in the thumbnail view should open that folder (also affects the connected Files panel)
 Files panel: Single click on a selected file selects the file, another single click on that file should deselect that file and select the current directory (.)
 
-6. Right-click a row or thumbnail: the same context menu in both views; entries are greyed when not applicable.
+6. Right-click a row or thumbnail: the same item context menu in both views; entries are greyed when not applicable. Right-click blank Files-listing space or `.` for current-folder actions (New Folder, New File, Paste, Refresh, Copy Path/Name, Add Bookmark, Properties). The same folder menu on a tree folder targets that folder without navigating into it; saved-server entries retain their Connect/Edit/Delete menu.
 Works as expected
 
 7. Every pane header has a `×` (hidden on the last pane).
@@ -260,6 +260,43 @@ Works as expected
 ### Preview file-filter checks
 
 In Preferences > Preview, scroll to File type filters. In both themes, press Show on Logs, add `*.trace` (Enter or Add) and confirm a selected `.trace` file changes to log preview immediately. Edit a row and leave the field to save; Remove rows to drop name associations (unmatched files still use content detection). Add `*.trace` to CSV too and confirm Logs wins; press Up on CSV and confirm CSV now wins. Try `../*.log` or `a;b` and confirm an inline error preserves the previous setting. Restore default file filters, verify every field resets, then restart to check persistence. Check custom image extensions in both individual previews and directory thumbnails. HTML/CSV remain text previews.
+
+Focus a long `.txt`/source or `.md` preview, press Ctrl+A then Ctrl+C (Cmd on macOS)
+and paste elsewhere: all loaded text, including offscreen rows, should copy without
+line numbers. Markdown copies rendered text/code, not source formatting; structured
+text copies the current raw/pretty view. Check selected colours in both themes,
+Escape/click to resume normal selection, file changes invalidating selection, and
+Preferences/text fields retaining their own select-all/copy shortcuts. Truncated
+previews copy only their loaded portion.
+
+Markdown document checks: preview `crates/ui/tests/fixtures/markdown.md` and
+`markdown-table.md` in dark/light themes. Check real bold and combined emphasis,
+strikethrough, preserved hard breaks, nested ordered/bullet lists and read-only
+tasks, multi-paragraph/nested quotes, fenced code highlighting and language labels.
+Tables must have aligned top edges/shared row heights and continuous borders,
+including short symptoms alongside long explanations with inline code. Narrow the
+pane: columns retain readable widths and scroll horizontally, never justify letters
+or stagger rows. Select/copy includes tasks, nested blocks and tab-separated cells.
+Links, raw HTML and image descriptions remain inert, with no external loads.
+
+Preview-only zoom: use its `- / percentage / +` controls or focus it and press
+Ctrl+= / Ctrl+- / Ctrl+0 (Cmd on macOS; Shift zoom chords also target a focused
+Preview). Verify text/Markdown, raw/pretty, logs, image Fit/Actual, hex, metadata,
+folder summaries/thumbnails, mixed selections and video. Content scales between
+50% and 400%; the toolbar, other panes and application zoom stay unchanged.
+Open Preferences or focus a text field and verify its keyboard ownership.
+
+Markdown fonts are unmodified Atkinson Hyperlegible regular/bold from
+<https://github.com/google/fonts/tree/main/ofl/atkinsonhyperlegible>, distributed
+with their OFL copyright/license. SHA-256: regular
+`7fb917c89019896d0b52ee84b7cbb3304c18cb90b19a62f5e32712bd23e97669`,
+bold `5a3b0c8cc8ca545155150b4512a1fa248298df121c50d6557e651e61fbdab92f`.
+
+Preferences > Terminal > Scrollback rows accepts 5,000-1,000,000 visual rows
+(default 10,000). Change it with a terminal running, then open/restart another:
+only new/restarted sessions adopt the new cap. Restart the app to check persistence.
+The terminal resize smoke check above uses the configured cap (10,000 by default);
+wrapped lines count as multiple rows and large histories consume substantial memory.
 
 Preferences > Appearance / Files / Terminal / Advanced (all through `prefs.set`): pick an accent preset and a custom `#rrggbb` (invalid text is ignored; Default restores the theme colour); switch density and change text size up and down repeatedly (sizes must track the value, not shrink cumulatively). In Files, toggle show-hidden (the same setting as View > Show Hidden Files (remember), which saves it; Ctrl+H and the status-bar button change only the current session), single-click open, size units and date formats (listing, Properties and Search all follow), and turn off the delete/run prompts to confirm they proceed directly. Terminal font size applies to open terminals. In Advanced > Thumbnails check the "Stored in" path, set a parent folder (relative paths and unwritable folders are rejected with the old one kept), press Clear thumbnail cache, and lower the caps; the preview time limit applies to the next render.
 

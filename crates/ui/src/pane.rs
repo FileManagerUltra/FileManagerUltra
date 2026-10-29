@@ -105,6 +105,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     );
                 }
             }
+            if s.layout.state(pane).is_none_or(|state| state.kind != kind) {
+                return;
+            }
             ui.separator();
 
             if kind.is_files() {
@@ -175,6 +178,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 );
             });
         });
+    s.layout.state(pane)?;
     if focused {
         ui.painter().rect_stroke(
             frame.response.rect,
@@ -323,6 +327,41 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         s
+    }
+
+    #[test]
+    fn closing_a_terminal_does_not_render_or_restart_the_removed_pane() {
+        use egui_kittest::kittest::Queryable;
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            let mut s = ready_session();
+            s.registry =
+                fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+            s.layout
+                .split(1, fm_layout::Axis::Horizontal, 0.5)
+                .expect("split");
+            s.layout.state_mut(1).expect("pane").kind = PaneKind::Terminal;
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(640.0, 480.0))
+                .build_ui_state(
+                    move |ui, s: &mut Session| {
+                        crate::theme::apply_to(ui.ctx(), &tokens);
+                        let _ = show(ui, s, 1, &tokens);
+                    },
+                    s,
+                );
+            harness.run_steps(2);
+            harness.state_mut().notice = None;
+            harness.get_by_label("×").click();
+            harness.run_steps(2);
+            let s = harness.state();
+            assert!(s.layout.state(1).is_none());
+            assert!(s.terminal(1).is_none());
+            assert!(
+                s.notice.is_none(),
+                "unexpected close notice: {:?}",
+                s.notice
+            );
+        }
     }
 
     #[test]

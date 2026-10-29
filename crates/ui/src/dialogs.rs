@@ -73,6 +73,18 @@ pub fn queue(ctx: &Context, dialog: Dialog) {
     ctx.data_mut(|d| d.insert_temp(queue_id(), Some(dialog)));
 }
 
+/// Session-owned windows take keyboard input before the pane underneath them.
+pub fn window_owns_keyboard(s: &Session) -> bool {
+    s.preferences_open
+        || s.about_open
+        || s.open_with.is_some()
+        || s.search.is_some()
+        || s.properties.is_some()
+        || s.unsaved_prompt.is_some()
+        || s.remote.sftp_prompt.is_some()
+        || s.remote.login_prompt.is_some()
+}
+
 /// The dialog a command needs before it can run, if any. The app calls this for shortcuts and
 /// menu items; `None` means dispatch the command directly.
 pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {

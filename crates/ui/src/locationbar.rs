@@ -63,7 +63,7 @@ pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, f
     };
     let text = RichText::new(&path).font(tokens.font());
     let text = if focused {
-        text.color(tokens.accent).strong()
+        text.color(tokens.accent_text).strong()
     } else {
         text.color(tokens.text_muted)
     };

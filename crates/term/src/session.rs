@@ -55,8 +55,22 @@ pub struct TermSession {
 }
 
 impl TermSession {
+    pub fn scrollback_capacity(&self) -> usize {
+        self.emulator.scrollback_capacity()
+    }
+
     /// Start `shell` in `cwd` (or the shell's default directory).
     pub fn spawn(shell: Shell, cwd: Option<&str>, rows: u16, cols: u16) -> Result<Self, FmError> {
+        Self::spawn_with_scrollback(shell, cwd, rows, cols, crate::SCROLLBACK)
+    }
+
+    pub fn spawn_with_scrollback(
+        shell: Shell,
+        cwd: Option<&str>,
+        rows: u16,
+        cols: u16,
+        scrollback: usize,
+    ) -> Result<Self, FmError> {
         let (program, dialect) = shell.resolve()?;
         let rows = rows.clamp(MIN_SIZE, MAX_ROWS);
         let cols = cols.clamp(MIN_SIZE, MAX_COLS);
@@ -121,7 +135,7 @@ impl TermSession {
             .map_err(FmError::Io)?;
 
         Ok(Self {
-            emulator: Emulator::new(rows, cols),
+            emulator: Emulator::with_scrollback(rows, cols, scrollback),
             master: pair.master,
             child,
             output,

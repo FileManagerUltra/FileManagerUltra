@@ -39,6 +39,11 @@ pub const TERM_CLEAR: &str = "term.clear_scrollback";
 pub const VIEW_PREVIEW: &str = "view.preview.toggle";
 pub const PREVIEW_PRETTY: &str = "preview.toggle_pretty";
 pub const PREVIEW_WRAP: &str = "preview.toggle_wrap";
+pub const PREVIEW_SELECT_ALL: &str = "preview.text.select_all";
+pub const PREVIEW_COPY_TEXT: &str = "preview.text.copy";
+pub const PREVIEW_SCALE_IN: &str = "preview.scale.in";
+pub const PREVIEW_SCALE_OUT: &str = "preview.scale.out";
+pub const PREVIEW_SCALE_RESET: &str = "preview.scale.reset";
 pub const LOG_FOLLOW: &str = "preview.log.follow";
 pub const LOG_COLUMNS: &str = "preview.log.columns";
 pub const LOG_MARK: &str = "preview.log.mark";
@@ -132,6 +137,11 @@ pub fn all_ids() -> &'static [&'static str] {
         VIEW_PREVIEW,
         PREVIEW_PRETTY,
         PREVIEW_WRAP,
+        PREVIEW_SELECT_ALL,
+        PREVIEW_COPY_TEXT,
+        PREVIEW_SCALE_IN,
+        PREVIEW_SCALE_OUT,
+        PREVIEW_SCALE_RESET,
         LOG_FOLLOW,
         LOG_COLUMNS,
         LOG_MARK,
@@ -445,6 +455,39 @@ pub(crate) fn dispatch(session: &mut Session, dialogs: &mut Dialogs, id: &str) {
     }
 }
 
+pub(crate) fn dispatch_folder(
+    session: &mut Session,
+    dialogs: &mut Dialogs,
+    action: fm_ui::context_menu::FolderAction,
+) {
+    use fm_ui::dialogs::Dialog;
+    let folder = action.folder;
+    let dialog = match action.id {
+        FILE_MKDIR => Some(Dialog::Mkdir {
+            dir: folder.clone(),
+            name: String::new(),
+        }),
+        FILE_NEWFILE => Some(Dialog::NewFile {
+            dir: folder.clone(),
+            name: String::new(),
+        }),
+        _ => None,
+    };
+    if let Some(dialog) = dialog {
+        dialogs.request(dialog);
+        return;
+    }
+    let folder = folder.to_string();
+    let params = match action.id {
+        "file.clip_paste" => serde_json::json!({ "dest": folder }),
+        "nav.refresh" | "bookmark.add" => serde_json::json!({ "uri": folder }),
+        _ => serde_json::json!({ "sources": [folder] }),
+    };
+    if let Err(err) = session.dispatch(action.id, &params) {
+        session.notice = Some(err.to_string());
+    }
+}
+
 /// Switch / open-saved / delete-saved submenus; the lists are data, so they are not constants.
 fn workspace_lists(ui: &mut egui::Ui, session: &mut Session) {
     let mut run: Option<(&'static str, serde_json::Value)> = None;
@@ -739,6 +782,11 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             ui.separator();
             item(ui, session, dialogs, VIEW_PREVIEW);
             ui.menu_button("Preview", |ui| {
+                item(ui, session, dialogs, PREVIEW_SELECT_ALL);
+                item(ui, session, dialogs, PREVIEW_COPY_TEXT);
+                item(ui, session, dialogs, PREVIEW_SCALE_IN);
+                item(ui, session, dialogs, PREVIEW_SCALE_OUT);
+                item(ui, session, dialogs, PREVIEW_SCALE_RESET);
                 item(ui, session, dialogs, PREVIEW_PRETTY);
                 item(ui, session, dialogs, PREVIEW_WRAP);
                 ui.separator();
@@ -799,14 +847,14 @@ pub fn consume_shortcuts(
     let mut fired = Vec::new();
     // File and bare-key shortcuts (Backspace, Tab) must not fire while a dialog or text field owns the keyboard.
     // The SFTP connect popup is a form too: Tab walks its fields instead of swapping panes.
-    let on_form = session.remote.sftp_prompt.is_some();
+    let on_form = fm_ui::dialogs::window_owns_keyboard(session);
     let typing = dialogs.is_open() || ctx.text_edit_focused() || on_form;
     // Most modifiers first, so Cmd+Backspace wins over plain Backspace.
     let mut table = shortcuts();
     table.sort_by_key(|(_, sc)| std::cmp::Reverse(modifier_count(&sc.modifiers)));
     // A focused terminal owns the keyboard: Ctrl+<key>, Backspace, Tab, F-keys and friends
     // belong to the shell. Only Cmd/Ctrl+Shift chords (and macOS Cmd) stay app shortcuts.
-    let terminal = !dialogs.is_open() && session.focused_kind() == Some(PaneKind::Terminal);
+    let terminal = !typing && session.focused_kind() == Some(PaneKind::Terminal);
     let files_focused = session.focused_kind().is_none_or(|k| k.is_files());
     for (id, shortcut) in table {
         if terminal && !terminal_shortcut(&shortcut) {
@@ -833,6 +881,16 @@ pub fn consume_shortcuts(
         }
         let consumed = ctx.input_mut(|input| input.consume_shortcut(&shortcut));
         if consumed {
+            let id = if !typing && session.focused_kind() == Some(PaneKind::Preview) {
+                match id {
+                    ZOOM_IN => PREVIEW_SCALE_IN,
+                    ZOOM_OUT => PREVIEW_SCALE_OUT,
+                    ZOOM_RESET => PREVIEW_SCALE_RESET,
+                    _ => id,
+                }
+            } else {
+                id
+            };
             dispatch(session, dialogs, id);
             fired.push(id);
             if id == PANE_SWAP {
@@ -880,6 +938,62 @@ pub fn consume_shortcuts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_context_commands_keep_the_explicit_folder_target() {
+        use fm_ui::{context_menu::FolderAction, dialogs::Dialog};
+        let mut s = Session::new().expect("session");
+        let folder = fm_vfs::VfsUri::parse("/clicked/subfolder").expect("uri");
+        let mut dialogs = Dialogs::default();
+        dispatch_folder(
+            &mut s,
+            &mut dialogs,
+            FolderAction {
+                id: FILE_MKDIR,
+                folder: folder.clone(),
+            },
+        );
+        assert_eq!(
+            dialogs.open,
+            Some(Dialog::Mkdir {
+                dir: folder.clone(),
+                name: String::new()
+            })
+        );
+        dispatch_folder(
+            &mut s,
+            &mut dialogs,
+            FolderAction {
+                id: FILE_NEWFILE,
+                folder: folder.clone(),
+            },
+        );
+        assert_eq!(
+            dialogs.open,
+            Some(Dialog::NewFile {
+                dir: folder.clone(),
+                name: String::new()
+            })
+        );
+        dispatch_folder(
+            &mut s,
+            &mut dialogs,
+            FolderAction {
+                id: "file.copy_path",
+                folder: folder.clone(),
+            },
+        );
+        assert_eq!(s.clipboard_out.as_deref(), Some("/clicked/subfolder"));
+        dispatch_folder(
+            &mut s,
+            &mut dialogs,
+            FolderAction {
+                id: "file.copy_name",
+                folder,
+            },
+        );
+        assert_eq!(s.clipboard_out.as_deref(), Some("subfolder"));
+    }
 
     #[test]
     fn clipboard_events_become_file_clipboard_commands() {
@@ -1037,6 +1151,59 @@ mod tests {
         });
         out.textures_delta.clear();
         fired
+    }
+
+    #[test]
+    fn focused_preview_zoom_chords_never_change_global_zoom() {
+        let mut s = Session::new().expect("session");
+        let pane = s.layout.focused();
+        s.layout.state_mut(pane).expect("pane").kind = PaneKind::Preview;
+        let global = s.prefs.zoom;
+        let ctx = egui::Context::default();
+        for (key, id) in [
+            (egui::Key::Plus, PREVIEW_SCALE_IN),
+            (egui::Key::Minus, PREVIEW_SCALE_OUT),
+            (egui::Key::Num0, PREVIEW_SCALE_RESET),
+        ] {
+            assert_eq!(
+                chord(
+                    &ctx,
+                    &mut s,
+                    key,
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+                ),
+                [id]
+            );
+            assert_eq!(s.prefs.zoom, global);
+        }
+        assert_eq!(s.preview_slot(pane).expect("slot").scale, 1.0);
+    }
+
+    #[test]
+    fn preferences_over_a_terminal_leave_clipboard_events_for_the_form() {
+        let mut session = Session::new().expect("session");
+        let pane = session.layout.focused();
+        session.layout.state_mut(pane).expect("pane").kind = PaneKind::Terminal;
+        session.preferences_open = true;
+        let ctx = egui::Context::default();
+        let mut dialogs = Dialogs::default();
+        let events = vec![
+            egui::Event::Copy,
+            egui::Event::Cut,
+            egui::Event::Paste("#68b7dc".into()),
+        ];
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events: events.clone(),
+                ..Default::default()
+            },
+            |ui| {
+                assert!(consume_shortcuts(ui.ctx(), &mut session, &mut dialogs).is_empty());
+                assert_eq!(ui.input(|i| i.events.clone()), events);
+            },
+        );
+        out.textures_delta.clear();
+        assert!(session.notice.is_none());
     }
 
     #[test]

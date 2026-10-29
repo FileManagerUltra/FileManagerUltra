@@ -26,6 +26,8 @@ pub struct Tokens {
     pub text_muted: Color32,
     /// Accent (focus rings, active toggles, links).
     pub accent: Color32,
+    /// Accent text adjusted for at least 4.5:1 contrast on normal UI surfaces.
+    pub accent_text: Color32,
     /// Hairlines and separators.
     pub border: Color32,
     /// Selected row background.
@@ -71,6 +73,7 @@ impl Tokens {
             text: Color32::from_rgb(0xe6, 0xe8, 0xeb),
             text_muted: Color32::from_rgb(0x9a, 0xa0, 0xa8),
             accent: Color32::from_rgb(0x5c, 0xb2, 0xff),
+            accent_text: Color32::from_rgb(0x5c, 0xb2, 0xff),
             border: Color32::from_rgb(0x33, 0x38, 0x42),
             selection_bg: Color32::from_rgb(0x2b, 0x4a, 0x6e),
             selection_text: Color32::from_rgb(0xff, 0xff, 0xff),
@@ -120,6 +123,7 @@ impl Tokens {
             text: Color32::from_rgb(0x1b, 0x1e, 0x23),
             text_muted: Color32::from_rgb(0x63, 0x69, 0x73),
             accent: Color32::from_rgb(0x0b, 0x62, 0xd6),
+            accent_text: Color32::from_rgb(0x0b, 0x62, 0xd6),
             border: Color32::from_rgb(0xd5, 0xd9, 0xdf),
             selection_bg: Color32::from_rgb(0xcf, 0xe4, 0xff),
             selection_text: Color32::from_rgb(0x10, 0x14, 0x18),
@@ -169,7 +173,7 @@ impl Tokens {
             C::Keyword => self.ansi[5],
             C::Function => self.ansi[4],
             C::Type => self.ansi[6],
-            C::Key => self.accent,
+            C::Key => self.accent_text,
             C::Tag => self.ansi[1],
         }
     }
@@ -191,7 +195,7 @@ impl Tokens {
         match status {
             500.. => self.error,
             400..=499 => self.warning,
-            300..=399 => self.accent,
+            300..=399 => self.accent_text,
             200..=299 => self.success,
             _ => self.text_muted,
         }
@@ -248,6 +252,7 @@ impl Tokens {
         if let Some([r, g, b]) = prefs.accent_rgb() {
             let accent = Color32::from_rgb(r, g, b);
             t.accent = accent;
+            t.accent_text = readable_accent(accent, t.text, [t.bg, t.panel, t.hover_bg], 4.5);
             t.term_cursor = accent;
             // Selection reads as a tint of the accent over the panel.
             let mix = |a: u8, b: u8| ((u16::from(a) * 35 + u16::from(b) * 65) / 100) as u8;
@@ -288,9 +293,51 @@ impl Tokens {
     }
 }
 
+fn luminance(color: Color32) -> f64 {
+    let linear = |channel: u8| {
+        let value = f64::from(channel) / 255.0;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
+}
+
+fn contrast(a: Color32, b: Color32) -> f64 {
+    let a = luminance(a);
+    let b = luminance(b);
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+fn readable_accent(
+    accent: Color32,
+    text: Color32,
+    surfaces: [Color32; 3],
+    minimum: f64,
+) -> Color32 {
+    for step in 0..=255u16 {
+        let mix = |a: u8, b: u8| ((u16::from(a) * (255 - step) + u16::from(b) * step) / 255) as u8;
+        let candidate = Color32::from_rgb(
+            mix(accent.r(), text.r()),
+            mix(accent.g(), text.g()),
+            mix(accent.b(), text.b()),
+        );
+        if surfaces
+            .iter()
+            .all(|bg| contrast(candidate, *bg) >= minimum)
+        {
+            return candidate;
+        }
+    }
+    text
+}
+
 /// Seed egui's per-theme visuals and spacing from tokens, overriding only
 /// token-backed fields.
 pub fn apply_to(ctx: &Context, tokens: &Tokens) {
+    crate::markdown_fonts::install(ctx);
     let theme = if tokens.dark {
         egui::Theme::Dark
     } else {
@@ -317,7 +364,7 @@ pub fn apply_to(ctx: &Context, tokens: &Tokens) {
     let rounding = egui::CornerRadius::same(tokens.corner_radius.round() as u8);
     visuals.window_corner_radius = rounding;
     visuals.menu_corner_radius = rounding;
-    visuals.hyperlink_color = tokens.accent;
+    visuals.hyperlink_color = tokens.accent_text;
     visuals.warn_fg_color = tokens.warning;
     visuals.error_fg_color = tokens.error;
     ctx.set_visuals_of(theme, visuals);
@@ -358,6 +405,40 @@ pub fn swatch(hex: &str) -> Option<Color32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn accent_text_has_readable_contrast_without_changing_the_chosen_accent() {
+        for theme in [ThemePreference::Light, ThemePreference::Dark] {
+            for r in [0, 64, 128, 192, 255] {
+                for g in [0, 64, 128, 192, 255] {
+                    for b in [0, 64, 128, 192, 255] {
+                        let prefs = fm_engine::Prefs {
+                            theme,
+                            accent: Some(format!("#{r:02x}{g:02x}{b:02x}")),
+                            ..Default::default()
+                        };
+                        let t = Tokens::resolve_with(&prefs, false);
+                        assert_eq!(t.accent, Color32::from_rgb(r, g, b));
+                        for surface in [t.bg, t.panel, t.hover_bg] {
+                            assert!(
+                                contrast(t.accent_text, surface) >= 4.5,
+                                "{theme:?} {r} {g} {b}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        for t in [Tokens::light(), Tokens::dark()] {
+            for surface in [t.bg, t.panel, t.hover_bg] {
+                assert!(contrast(t.accent_text, surface) >= 4.5);
+            }
+            assert_eq!(
+                readable_accent(t.accent, t.text, [t.bg, t.panel, t.hover_bg], 4.5),
+                t.accent
+            );
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -464,6 +545,7 @@ mod tests {
                 text,
                 text_muted,
                 accent,
+                accent_text,
                 border,
                 selection_bg,
                 selection_text,
@@ -489,6 +571,7 @@ mod tests {
                 ("text", text),
                 ("text_muted", text_muted),
                 ("accent", accent),
+                ("accent_text", accent_text),
                 ("border", border),
                 ("selection_bg", selection_bg),
                 ("selection_text", selection_text),

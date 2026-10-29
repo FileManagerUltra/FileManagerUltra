@@ -15,9 +15,20 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 
 **Security is a standing concern, not a change.** The `security` OpenSpec capability starts in change 1 (hostile input, secrets, state-file permissions, symlink policy, no `unsafe`) and each change that adds a behaviour area extends it in the same change: change 3 adds drag & drop / `ops` containment and overwrite rules; change 4 adds credentials, host keys and remote listing caps. A change that adds security-relevant behaviour without a spec + failing-test proof is not done.
 
-Out of scope until after these five: archives, previews, tabs, full-text search, plugins, CLI/MCP automation (the command registry lands in change 1 so nothing has to be re-wired later).
+Additional capabilities have landed alongside these milestones: previews, workspace
+tabs, file/content search and terminal panes. Archives, plugins and CLI/MCP automation
+remain future work (the command registry is already in place).
 
 ## Current focus
+
+Recent interaction improvements include rich native Markdown previews (nested lists,
+tasks, highlighted code and aligned tables), full-loaded-document selection/copy,
+per-preview 50%-400% zoom, configurable terminal scrollback (5,000-1,000,000 rows,
+applied to new/restarted terminals), and shared folder menus for listing backgrounds
+and tree folders. Preferences clipboard routing and terminal-close notices are fixed.
+The approved yellow-outline/blue-panel icon is applied across platform assets.
+Automated coverage is in place; interactive confirmation of the latest preview and
+context-menu changes and installed Windows/macOS icon smoke checks remain open.
 
 `devices-section` is implemented with conditional Devices navigation, background
 mount detection, volume information and guarded removal. Real USB/VeraCrypt smoke

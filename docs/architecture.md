@@ -178,8 +178,8 @@ The product name must be changeable in one commit. Therefore:
 - `cargo xtask rename "NewName"` rewrites `crates/brand`, the `[[bin]]` name, desktop/NSIS/DMG identifiers, and runs `cargo xtask brand-check`.
 - `cargo xtask brand-check` fails if the previous name appears anywhere outside `openspec/` and `log/`.
 
-The application mark is a yellow/blue split folder with a shallow gold tab and dark
-central seam. `fm-brand::ICON_PNG` selects the platform's 256 px artwork: flat
+The application mark is a yellow folder with a shallow gold tab and an inset blue
+right panel enclosed by a continuous yellow frame. `fm-brand::ICON_PNG` selects the platform's 256 px artwork: flat
 silhouette on Linux, shaded silhouette on Windows, rounded light tile on macOS.
 SVG masters and the regeneration script live in `crates/brand/assets`; generated
 packaging assets use those same treatments (Linux PNG/SVG, Windows ICO, macOS ICNS).
@@ -396,9 +396,21 @@ UI thread. Shift bypasses application mouse tracking for selection and scrollbac
 Terminal resizing uses a focused vendored `vt100` patch (see `vendor/FM-VENDORED.md`):
 normal-screen soft wraps and retained history reflow at the new column count,
 preserving attributes, hard breaks and cursor positions. The packer streams rows
-within the 10 000-row history plus screen bound, preserving the scrolled logical-line
+within the configured history plus screen bound, preserving the scrolled logical-line
 anchor where retained. Alternate-screen applications keep the upstream grid resize
 and redraw themselves after the pty resize. Grid-size changes still clear selection.
+`prefs.set` validates `terminal_scrollback_rows` from 5 000 to 1 000 000 visual rows
+(default 10 000); new/restarted `TermSession`s capture that capacity, and selection
+eviction checks use each session's limit. History allocation remains lazy.
+
+Accent text uses a separate `Tokens::accent_text` colour: custom accents are blended
+toward the theme foreground only as needed for WCAG 4.5:1 contrast against normal,
+panel and hover surfaces. Sidebar headings instead retain the original accent and
+use a small horizontal overstrike for visibly heavier lettering with the bundled
+monospace font (which has no bold face), without darkening the chosen colour.
+Accent-labelled paths, directory text
+and links use it; focus strokes, selection tints and decorative accents retain the
+user's original `accent` colour.
 
 Listing column widths are preferred widths in `PaneState.col_widths` (zero means
 content-fit), changed through `view.columns.resize`. The UI caches bounded content
@@ -501,6 +513,36 @@ so search/severity/time filters span all loaded sources without duplicating
 their contents. Live tail is single-file only. Source filenames and fold controls
 are excluded from text selection; log bodies use selectable labels and a
 virtualized cumulative row index for multiline expansion.
+
+Whole-document preview selection is model-backed in `engine::preview_text_cmds`,
+not egui's visible-label selection: `preview.text.select_all` captures the loaded
+document identity and raw/pretty mode; `preview.text.copy` exports its full bounded
+text, excluding gutters and Markdown formatting. The UI highlights loaded text
+and routes Ctrl/Cmd+A and copy only while the preview owns the keyboard.
+Document replacement or mode changes make stale selections unavailable.
+
+Markdown uses `pulldown-cmark` to build a bounded recursive document tree in
+`fm-preview::markdown`: nested lists/items/quotes, aligned table cells, hard breaks,
+task state and inline strong/emphasis/strike/link/code runs. Code syntax spans
+reuse `fm-preview::highlight` on the worker. Source/line, node, inline, depth and
+table budgets set an explicit truncation flag. `fm-ui::preview_markdown` lays out
+readable proportional documents, top-aligned fixed-column tables with shared row
+heights, read-only task boxes, inset quotes and code panels. Tables scroll when
+their minimum column widths exceed the pane. No HTML execution, URL activation or
+image fetching is introduced. Clipboard export traverses the same tree; table
+cells are separated with tabs and task markers retain their checked state.
+Document-only Atkinson Hyperlegible regular/bold faces are bundled under the SIL
+Open Font License in `crates/ui/assets/fonts/OFL.txt`; named font families leave
+the application's normal UI/terminal faces unchanged.
+
+`PreviewSlot::scale` holds pane-local 50%-400% content magnification, independent
+of image Fit/Actual mode and `Prefs::zoom`. `preview.scale.{in,out,reset}` commands
+drive common toolbar controls and focused-preview keyboard chords. Content uses
+scaled tokens and a temporarily scoped egui style (restored before returning);
+image/video sizes, thumbnail cells and multi-file cards also use the pane scale.
+Source reads and decoded-image limits do not change. Existing Shift zoom chords
+are routed to preview magnification only while a Preview owns the keyboard;
+application-wide zoom remains available through the normal View menu.
 
 ### Thumbnails and file activation (`thumbnails-and-open`)
 

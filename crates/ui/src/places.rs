@@ -279,17 +279,24 @@ fn section(
         expanded,
         color,
     );
-    painter.text(
-        rect.left_center() + vec2(tokens.padding * 2.0 + tokens.font_size * 0.7, 0.0),
-        egui::Align2::LEFT_CENTER,
-        title,
-        egui::TextStyle::Button.resolve(ui.style()),
-        color,
+    let galley = egui::WidgetText::from(egui::RichText::new(title).color(color).strong())
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Button,
+        );
+    let pos = egui::pos2(
+        rect.left() + tokens.padding * 2.0 + tokens.font_size * 0.7,
+        rect.center().y - galley.size().y * 0.5,
     );
+    // The bundled monospace font has no bold face; a small overstrike adds weight.
+    painter.galley(pos, galley.clone(), color);
+    painter.galley(pos + vec2(0.6, 0.0), galley, color);
     if let (Some(r), Some(enabled)) = (plus, add) {
         let color = match (enabled, on_plus) {
             (false, _) => tokens.border,
-            (true, true) => tokens.accent,
+            (true, true) => tokens.accent_text,
             (true, false) => tokens.text_muted,
         };
         if enabled && on_plus {
@@ -346,7 +353,7 @@ fn row(
     let icon_color = if current {
         tokens.selection_text
     } else if place.bookmark {
-        tokens.accent
+        tokens.accent_text
     } else {
         tokens.text_muted
     };

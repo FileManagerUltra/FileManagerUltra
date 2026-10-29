@@ -96,9 +96,13 @@ pub fn paste() -> CommandSpec {
         label: "Paste",
         menu: &["Edit", "Paste"],
         shortcut: Some("Ctrl+V"),
-        params: "os_text?: string",
+        params: "{os_text?: string, dest?: uri}",
         enabled: can_paste,
         run: |s, params: &Params| {
+            let explicit_dest = object(params)?
+                .and_then(|m| m.get("dest"))
+                .map(crate::file_cmds::parse_uri)
+                .transpose()?;
             let os_text = match object(params)?.and_then(|m| m.get("os_text")) {
                 Some(value) => Some(
                     value
@@ -116,7 +120,8 @@ pub fn paste() -> CommandSpec {
                     "the clipboard changed outside the file manager; nothing to paste".to_string(),
                 ));
             }
-            let dest = focused_dir(s)
+            let dest = explicit_dest
+                .or_else(|| focused_dir(s))
                 .ok_or_else(|| FmError::NotFound("a folder to paste into".to_string()))?;
             let count = plural(clip.sources.len());
             let policy = ConflictPolicy::Ask;

@@ -450,6 +450,26 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                 tokens,
                 "Running terminals keep their current shell. Restart a terminal to use this setting.",
             );
+            ui.horizontal(|ui| {
+                let caption = ui.label("Scrollback rows");
+                let mut rows = s.prefs.terminal_scrollback_rows() as u64;
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut rows)
+                            .range(5_000..=1_000_000)
+                            .speed(1_000),
+                    )
+                    .labelled_by(caption.id)
+                    .changed()
+                {
+                    set(s, "terminal_scrollback_rows", json!(rows));
+                }
+            });
+            hint(
+                ui,
+                tokens,
+                "5,000-1,000,000 visual rows per terminal. Applies to new or restarted terminals. Large histories can use substantial memory; rows allocate as output arrives.",
+            );
             ui.add_space(18.0);
             section_heading(ui, tokens, "Text");
             size_row(

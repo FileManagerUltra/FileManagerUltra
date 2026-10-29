@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="420" viewBox="0 0 1000 420">
+  <defs>
+    <symbol id="folder" viewBox="0 0 160 160">
+      <path d="M17 34Q17 27 27 27H61L76 35H133Q143 35 143 45V132Q143 143 132 143H28Q17 143 17 132Z" fill="#d49a27"/>
+      <path d="M17 50Q17 41 27 41H133Q143 41 143 51V132Q143 143 132 143H28Q17 143 17 132Z" fill="#f3c64e"/>
+      <path d="M80 47H133Q137 47 137 51V133Q137 137 133 137H80Z" fill="#4594ed"/>
+      <path d="M82 49H132" fill="none" stroke="#acd9ff" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M27 43H132" fill="none" stroke="#fff1b7" stroke-width="2.5" stroke-linecap="round"/>
+    </symbol>
+  </defs>
+  <rect width="1000" height="420" rx="20" fill="#182538"/>
+  <g font-family="DejaVu Sans, sans-serif">
+    <text x="32" y="46" font-size="25" font-weight="700" fill="#f1f5ff">Yellow frame / blue right panel</text>
+    <text x="32" y="74" font-size="14" fill="#b9c9df">Continuous yellow folder silhouette, with the blue panel inset inside its border.</text>
+    <rect x="30" y="100" width="290" height="260" rx="16" fill="#25364d"/>
+    <rect x="355" y="100" width="290" height="260" rx="16" fill="#f0f3f8"/>
+    <use href="#folder" x="65" y="112" width="220" height="220"/>
+    <use href="#folder" x="390" y="112" width="220" height="220"/>
+    <text x="175" y="345" text-anchor="middle" font-size="13" fill="#b9c9df">Dark background</text>
+    <text x="500" y="345" text-anchor="middle" font-size="13" fill="#34445a">Light background</text>
+    <use href="#folder" x="709" y="145" width="64" height="64"/>
+    <use href="#folder" x="812" y="161" width="32" height="32"/>
+    <use href="#folder" x="901" y="165" width="24" height="24"/>
+    <text x="741" y="241" text-anchor="middle" font-size="13" fill="#b9c9df">64 px</text>
+    <text x="828" y="241" text-anchor="middle" font-size="13" fill="#b9c9df">32 px</text>
+    <text x="913" y="241" text-anchor="middle" font-size="13" fill="#b9c9df">24 px</text>
+    <text x="698" y="296" font-size="13" fill="#b9c9df">Gold tab, yellow outer frame.</text>
+    <text x="698" y="318" font-size="13" fill="#b9c9df">Blue panel stays within the folder.</text>
+    <text x="32" y="397" font-size="13" fill="#b9c9df">Concept only. Current app and packaging icons are unchanged.</text>
+  </g>
+</svg>

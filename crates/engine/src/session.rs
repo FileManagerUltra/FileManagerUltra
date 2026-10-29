@@ -74,6 +74,7 @@ pub struct Session {
     pub terminal_selection: Option<crate::term_cmds::TermSelection>,
     /// Preview pane contents and their background jobs (capability `preview-pane`).
     pub previews: crate::preview_cmds::PreviewHub,
+    pub preview_text_selection: Option<crate::preview_text_cmds::TextSelection>,
     /// Thumbnails for directory previews (own worker pool, memory + disk cache).
     pub thumbs: crate::thumbs::ThumbService,
     /// Text a command wants on the system clipboard; the app shell drains it.
@@ -153,6 +154,7 @@ impl Default for Session {
             terminals: HashMap::new(),
             terminal_selection: None,
             previews: Default::default(),
+            preview_text_selection: None,
             thumbs: Default::default(),
             clipboard_out: None,
             pending_kind: None,

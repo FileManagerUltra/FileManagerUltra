@@ -463,6 +463,9 @@ impl eframe::App for App {
                 if let Some(id) = fm_ui::context_menu::take_command(ui.ctx()) {
                     menu::dispatch(&mut self.session, &mut self.dialogs, id);
                 }
+                if let Some(action) = fm_ui::context_menu::take_folder_action(ui.ctx()) {
+                    menu::dispatch_folder(&mut self.session, &mut self.dialogs, action);
+                }
                 if let Some(text) = self.session.clipboard_outbox.take() {
                     ui.ctx().copy_text(text);
                 }

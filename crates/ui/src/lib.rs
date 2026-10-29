@@ -10,6 +10,7 @@ pub mod dnd;
 pub mod jobs;
 pub mod listing;
 pub mod locationbar;
+mod markdown_fonts;
 pub mod open_with;
 pub mod pane;
 pub mod places;
