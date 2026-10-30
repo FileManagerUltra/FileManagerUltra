@@ -41,6 +41,7 @@ pub const PREVIEW_PRETTY: &str = "preview.toggle_pretty";
 pub const PREVIEW_WRAP: &str = "preview.toggle_wrap";
 pub const PREVIEW_SELECT_ALL: &str = "preview.text.select_all";
 pub const PREVIEW_COPY_TEXT: &str = "preview.text.copy";
+pub const PREVIEW_FIND: &str = "preview.find.open";
 pub const PREVIEW_SCALE_IN: &str = "preview.scale.in";
 pub const PREVIEW_SCALE_OUT: &str = "preview.scale.out";
 pub const PREVIEW_SCALE_RESET: &str = "preview.scale.reset";
@@ -789,6 +790,7 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
                 item(ui, session, dialogs, PREVIEW_SCALE_RESET);
                 item(ui, session, dialogs, PREVIEW_PRETTY);
                 item(ui, session, dialogs, PREVIEW_WRAP);
+                item(ui, session, dialogs, PREVIEW_FIND);
                 ui.separator();
                 item(ui, session, dialogs, THUMBS_TOGGLE);
                 item(ui, session, dialogs, THUMBS_SIZE);
@@ -871,6 +873,12 @@ pub fn consume_shortcuts(
         if !files_focused && id.starts_with("file.clip_") {
             continue;
         }
+        if id == VIEW_FILTER
+            && session.focused_kind() == Some(PaneKind::Preview)
+            && (dialogs.is_open() || on_form)
+        {
+            continue;
+        }
         if typing
             && (id.starts_with("file.")
                 || id.starts_with("edit.")
@@ -881,6 +889,15 @@ pub fn consume_shortcuts(
         }
         let consumed = ctx.input_mut(|input| input.consume_shortcut(&shortcut));
         if consumed {
+            let id = if id == VIEW_FILTER
+                && session.focused_kind() == Some(PaneKind::Preview)
+                && !dialogs.is_open()
+                && !on_form
+            {
+                PREVIEW_FIND
+            } else {
+                id
+            };
             let id = if !typing && session.focused_kind() == Some(PaneKind::Preview) {
                 match id {
                     ZOOM_IN => PREVIEW_SCALE_IN,
@@ -1185,6 +1202,45 @@ mod tests {
     }
 
     #[test]
+    fn preview_find_chord_is_routed_away_from_files_even_while_typing() {
+        let mut s = Session::new().expect("session");
+        s.dispatch("view.preview.toggle", &serde_json::Value::Null)
+            .expect("preview");
+        let pane = s
+            .layout
+            .panes()
+            .into_iter()
+            .find(|p| s.pane_kind(*p) == Some(PaneKind::Preview))
+            .expect("preview pane");
+        s.layout.focus_pane(pane).expect("focus");
+        let ctx = egui::Context::default();
+        // Loading/empty previews reject find gracefully, but must never trigger the Files filter.
+        assert_eq!(
+            chord(&ctx, &mut s, egui::Key::F, egui::Modifiers::COMMAND),
+            [PREVIEW_FIND]
+        );
+        let mut value = String::new();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            ui.add(egui::TextEdit::singleline(&mut value))
+                .request_focus();
+        });
+        output.textures_delta.clear();
+        assert_eq!(
+            chord(&ctx, &mut s, egui::Key::F, egui::Modifiers::COMMAND),
+            [PREVIEW_FIND]
+        );
+        assert!(s.layout.state(1).expect("files").listing.filter.is_none());
+        s.preferences_open = true;
+        assert!(chord(&ctx, &mut s, egui::Key::F, egui::Modifiers::COMMAND).is_empty());
+        s.preferences_open = false;
+        s.layout.focus_pane(1).expect("focus files");
+        assert_eq!(
+            chord(&ctx, &mut s, egui::Key::F, egui::Modifiers::COMMAND),
+            [VIEW_FILTER]
+        );
+    }
+
+    #[test]
     fn focused_preview_zoom_chords_never_change_global_zoom() {
         let mut s = Session::new().expect("session");
         let pane = s.layout.focused();
@@ -1258,6 +1314,7 @@ mod tests {
             (Key::Tab, Modifiers::NONE),
             (Key::F5, Modifiers::NONE),
             (Key::L, ctrl),
+            (Key::F, ctrl),
             (Key::C, ctrl),
             (Key::D, ctrl),
             (Key::R, ctrl),

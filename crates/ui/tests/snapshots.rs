@@ -620,6 +620,328 @@ fn text_and_markdown_select_all_copy_includes_offscreen_rows() {
 }
 
 #[test]
+fn preview_find_navigates_offscreen_text_and_keeps_keyboard_in_the_query() {
+    use egui_kittest::kittest::Queryable;
+    for (tokens, wrap) in [(Tokens::dark(), false), (Tokens::light(), true)] {
+        let body = (0..180)
+            .map(|row| {
+                if row == 155 {
+                    format!("row {row}: {}needle", "long-line ".repeat(30))
+                } else if row == 5 {
+                    format!("row {row}: needle")
+                } else {
+                    format!("row {row}: ordinary text")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (mut s, pane) = preview_fixture("find.txt", body.as_bytes(), false);
+        s.layout.focus_pane(pane).expect("focus preview");
+        s.previews.slots.get_mut(&pane).expect("slot").wrap = wrap;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(850.0, 360.0))
+            .build_ui_state(
+                move |ui, (s, offset, horizontal): &mut (Session, f32, f32)| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    fm_ui::preview::show(ui, s, pane, &tokens);
+                    let id = ui.make_persistent_id(egui::IdSalt::new(("pv-text", pane)));
+                    let scroll = egui::scroll_area::State::load(ui.ctx(), id)
+                        .expect("scroll")
+                        .clamped_offset();
+                    *offset = scroll.y;
+                    *horizontal = scroll.x;
+                },
+                (s, 0.0, 0.0),
+            );
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::F);
+        harness.run();
+        harness.get_by_label("Find in preview").type_text("needle");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            harness.run_steps(2);
+            if harness
+                .state()
+                .0
+                .preview_slot(pane)
+                .expect("slot")
+                .find
+                .matches
+                .is_some()
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        harness.run_steps(3);
+        assert_eq!(
+            harness
+                .state()
+                .0
+                .preview_slot(pane)
+                .expect("slot")
+                .find
+                .matches
+                .as_ref()
+                .expect("matches")
+                .hits
+                .len(),
+            2
+        );
+        let first = harness.state().1;
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(4);
+        assert_eq!(
+            harness
+                .state()
+                .0
+                .preview_slot(pane)
+                .expect("slot")
+                .find
+                .current,
+            1
+        );
+        assert!(
+            harness.state().1 > first + 1000.0,
+            "jump to offscreen match"
+        );
+        if !wrap {
+            assert!(
+                harness.state().2 > 1000.0,
+                "reveal a match beyond the right edge"
+            );
+        }
+        assert_eq!(
+            harness.ctx.memory(|m| m.focused()),
+            Some(egui::Id::NULL.with(("pv-find-query", pane)))
+        );
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F3);
+        harness.run_steps(4);
+        assert_eq!(
+            harness
+                .state()
+                .0
+                .preview_slot(pane)
+                .expect("slot")
+                .find
+                .current,
+            0
+        );
+        assert!(harness.state().1 < first + 50.0, "jump back");
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(
+            !harness
+                .state()
+                .0
+                .preview_slot(pane)
+                .expect("slot")
+                .find
+                .open
+        );
+        assert!(
+            harness
+                .state()
+                .0
+                .layout
+                .state(1)
+                .expect("files")
+                .listing
+                .filter
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn preview_find_logs_focuses_existing_filters_and_preserves_them_on_escape() {
+    use egui_kittest::kittest::Queryable;
+    let (mut s, pane) = preview_fixture(
+        "find.log",
+        b"2026-10-30T12:00:00Z INFO ready\n2026-10-30T12:00:01Z ERROR broken\n",
+        false,
+    );
+    s.layout.focus_pane(pane).expect("focus preview");
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 450.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                fm_ui::preview::show(ui, s, pane, &Tokens::dark());
+            },
+            s,
+        );
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::F);
+    harness.run();
+    assert_eq!(
+        harness.ctx.memory(|m| m.focused()),
+        Some(egui::Id::NULL.with(("pv-log-query", pane)))
+    );
+    harness
+        .get_by_label("Search log records")
+        .type_text("broken");
+    harness.run_steps(4);
+    assert_eq!(
+        harness
+            .state()
+            .preview_slot(pane)
+            .expect("slot")
+            .log()
+            .expect("log")
+            .filter
+            .query,
+        "broken"
+    );
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert!(harness.query_by_label("Search log records").is_none());
+    assert_eq!(
+        harness
+            .state()
+            .preview_slot(pane)
+            .expect("slot")
+            .log()
+            .expect("log")
+            .filter
+            .query,
+        "broken"
+    );
+}
+
+#[test]
+fn preview_find_markdown_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, palette) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let (mut s, pane) = preview_fixture("find.md", b"# Finding **needles**\n\nA needle spans **needle** formatting.\n\n> A quoted needle.\n\n```rust\nlet needle = \"needle\";\n```\n\n| Item | Result |\n| --- | --- |\n| needle | found |\n", false);
+        s.layout.focus_pane(pane).expect("focus preview");
+        s.dispatch("preview.find.open", &serde_json::Value::Null)
+            .expect("open");
+        s.dispatch(
+            "preview.find.set",
+            &serde_json::json!({"query": "needle", "whole_word": true}),
+        )
+        .expect("query");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            fm_engine::preview_find_cmds::prepare(&mut s, pane);
+            if s.preview_slot(pane).expect("slot").find.matches.is_some() {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            s.preview_slot(pane)
+                .expect("slot")
+                .find
+                .matches
+                .as_ref()
+                .expect("matches")
+                .hits
+                .len(),
+            6
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 700.0))
+            .renderer(renderer)
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    fm_ui::preview::show(ui, s, pane, &tokens);
+                },
+                s,
+            );
+        harness.run_steps(4);
+        harness.snapshot(format!("preview_find_markdown_{palette}"));
+        for expected in [1, 2, 3, 4, 5, 0] {
+            harness.key_press(egui::Key::F3);
+            harness.run_steps(3);
+            let find = &harness.state().preview_slot(pane).expect("slot").find;
+            assert_eq!(find.current, expected);
+            let reveal = harness
+                .ctx
+                .data(|d| d.get_temp::<u64>(egui::Id::NULL.with(("pv-find-reveal", pane))));
+            assert_eq!(
+                reveal,
+                Some(find.reveal),
+                "active Markdown match was rendered and revealed"
+            );
+        }
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
+fn preview_find_options_recompute_and_report_invalid_regex() {
+    use egui_kittest::kittest::Queryable;
+    let (mut s, pane) = preview_fixture("find-options.txt", b"Needle needle needles", false);
+    s.layout.focus_pane(pane).expect("focus preview");
+    s.dispatch("preview.find.open", &serde_json::Value::Null)
+        .expect("open");
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(850.0, 400.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                fm_ui::preview::show(ui, s, pane, &Tokens::dark());
+            },
+            s,
+        );
+    harness.get_by_label("Find in preview").type_text("needle");
+    for (toggle, expected) in [(None, 3), (Some("Aa"), 2), (Some("Word"), 1)] {
+        if let Some(toggle) = toggle {
+            harness.get_by_label(toggle).click();
+        }
+        harness.run_steps(2);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            harness.run_steps(2);
+            let find = &harness.state().preview_slot(pane).expect("slot").find;
+            if !find.busy
+                && let Some(matches) = &find.matches
+            {
+                assert_eq!(matches.hits.len(), expected);
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    harness.get_by_label(".*").click();
+    harness.run_steps(2);
+    harness.get_by_label("Find in preview").click();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.get_by_label("Find in preview").type_text("[");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        harness.run_steps(2);
+        if harness
+            .state()
+            .preview_slot(pane)
+            .expect("slot")
+            .find
+            .error
+            .is_some()
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        harness.state().preview_text_selection.is_none(),
+        "query Ctrl+A must not select the document"
+    );
+}
+
+#[test]
 fn markdown_document_dark_light() {
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();

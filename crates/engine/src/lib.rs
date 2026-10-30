@@ -36,6 +36,7 @@ pub mod prefs_cmds;
 pub mod preview_cmds;
 pub mod preview_code_cmds;
 pub mod preview_filter_cmds;
+pub mod preview_find_cmds;
 pub mod preview_multi;
 pub mod preview_open_cmds;
 pub mod preview_order_cmds;

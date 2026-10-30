@@ -1773,6 +1773,7 @@ dependencies = [
  "opener",
  "plist",
  "proptest",
+ "regex",
  "reqwest",
  "semver",
  "serde",

@@ -5,7 +5,7 @@ use egui::{Align, FontId, Id, Layout, RichText, ScrollArea, Stroke, TextFormat, 
 use fm_layout::PaneId;
 use fm_preview::markdown::{Alignment, CodeBlock, Inline, MdBlock, MdDoc, Table};
 
-use super::{paged_scroll, remember_scroll, selection_job};
+use super::{find, paged_scroll, remember_scroll, selection_job};
 use crate::{markdown_fonts, theme::Tokens};
 
 fn inline_job(ui: &Ui, tokens: &Tokens, parts: &[Inline], size: f32, strong: bool) -> LayoutJob {
@@ -39,7 +39,12 @@ fn inline_job(ui: &Ui, tokens: &Tokens, parts: &[Inline], size: f32, strong: boo
 }
 
 fn inline(ui: &mut Ui, tokens: &Tokens, parts: &[Inline], size: f32, strong: bool) {
-    let response = ui.add(egui::Label::new(inline_job(ui, tokens, parts, size, strong)).wrap());
+    let response = find::label(
+        ui,
+        tokens,
+        inline_job(ui, tokens, parts, size, strong),
+        true,
+    );
     if response.hovered() {
         let links = parts
             .iter()
@@ -136,12 +141,12 @@ fn code(ui: &mut Ui, tokens: &Tokens, code: &CodeBlock, wrap: bool, path: Id) ->
             }
             let job = selection_job(ui, tokens, job);
             if wrap {
-                ui.add(egui::Label::new(job).wrap());
+                find::label(ui, tokens, job, true);
             } else {
                 ScrollArea::horizontal()
                     .id_salt(path.with("code"))
                     .show(ui, |ui| {
-                        ui.add(egui::Label::new(job).extend());
+                        find::label(ui, tokens, job, false);
                     });
             }
         });
@@ -184,12 +189,13 @@ fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id) {
                             Some(Alignment::Right) => Align::RIGHT,
                             _ => Align::LEFT,
                         };
-                        ui.fonts_mut(|f| f.layout_job(job))
+                        let (job, active) = find::format(ui, tokens, job);
+                        (ui.fonts_mut(|f| f.layout_job(job)), active)
                     })
                     .collect();
                 let height = cells
                     .iter()
-                    .map(|g| g.size().y)
+                    .map(|(g, _)| g.size().y)
                     .fold(tokens.font_size * 1.55, f32::max)
                     + padding * 2.0;
                 let (rect, _) = ui.allocate_exact_size(
@@ -208,7 +214,7 @@ fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id) {
                     stroke,
                     egui::StrokeKind::Inside,
                 );
-                for (col, galley) in cells.into_iter().enumerate() {
+                for (col, (galley, active)) in cells.into_iter().enumerate() {
                     let left = rect.left() + col as f32 * cell_width;
                     if col > 0 {
                         ui.painter().vline(left, rect.y_range(), stroke);
@@ -224,7 +230,8 @@ fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id) {
                             .layout(Layout::top_down(galley.job.halign)),
                     );
                     child.set_clip_rect(cell.intersect(ui.clip_rect()));
-                    child.add(egui::Label::new(galley).selectable(true));
+                    let response = child.add(egui::Label::new(galley.clone()).selectable(true));
+                    find::reveal(&child, response.rect, &galley, active);
                 }
             }
         });

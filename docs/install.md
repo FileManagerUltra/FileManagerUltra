@@ -37,7 +37,18 @@ The AppImage needs FUSE 2 (`sudo apt install libfuse2`, or run it with `--appima
 
 ## Building from source
 
-See [development.md](development.md).
+With the Rust toolchain installed, build an optimized executable locally without
+using GitHub Actions minutes:
+
+```sh
+cargo build --release --locked -p fm-app
+./target/release/filemanagerultra
+```
+
+These commands target the current operating system and architecture. On Windows,
+the executable is `target/release/filemanagerultra.exe`. This builds the app, not
+an installer. See [development.md](development.md) for prerequisites and platform
+notes.
 
 ## Updating
 

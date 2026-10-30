@@ -3,6 +3,43 @@
 ## Purpose
 TBD - created by archiving change pane-preview. Update Purpose after archive.
 ## Requirements
+### Requirement: Preview has pane-local Find
+`Ctrl+F`, the Preview menu and a toolbar Find button SHALL open/focus Find in the
+focused Preview, without opening the Files-pane filter. Text, structured text
+(including raw/pretty mode) and rendered Markdown SHALL offer a query field,
+case-sensitive, whole-word and regular-expression options, a current/total match
+counter, Previous/Next buttons, and distinct current/other match highlighting in
+both themes. Searches SHALL use already-loaded content only, not read files or
+search hidden Markdown syntax. Text is searched per source line; Markdown is
+searched per rendered paragraph/heading, code block or table cell.
+
+#### Scenario: Navigate matches without leaving Find
+- **WHEN** a query has matches and the user presses Enter/F3 or Shift+Enter/Shift+F3
+- **THEN** the next/previous match is revealed vertically and horizontally, wrapping at either end
+- **AND** Enter/Shift+Enter work while the query retains keyboard focus
+- **AND** Escape/Close hides Find and its highlights without changing the document or its copyable text
+- **AND** line-number gutters, code-language labels, copy buttons and other UI chrome are not searched
+
+#### Scenario: Bounded asynchronous matching and content changes
+- **WHEN** a query, option, loaded document or raw/pretty mode changes
+- **THEN** matching runs off the UI thread, at most one worker per pane, and results for obsolete inputs are discarded
+- **AND** the current match resets and match locations are recomputed for the new displayed content
+- **AND** text rendering remains virtualized when wrapping is off
+- **AND** queries are limited to 1024 Unicode characters, regex compilation is bounded, and at most 10 000 matches are retained with a visible `+` when more exist
+- **AND** invalid patterns and worker failures are shown inline; empty/no-match queries disable navigation
+
+#### Scenario: Content-specific search and keyboard ownership
+- **WHEN** Ctrl+F is used in a log preview
+- **THEN** the existing record-filter panel opens and its search field gains focus, retaining severity/time/regex controls and applied filters
+- **AND** Escape hides that panel without clearing its filters
+- **WHEN** the Preview is an image, video, folder, binary, error or multi-file card grid
+- **THEN** Find is disabled with an explanation rather than implying unavailable text/OCR/byte search
+- **AND** Files Ctrl+F, terminal input, dialogs and query-field Ctrl+A/Ctrl+C retain their existing behavior
+
+The `preview.find.{open,close,set,next,previous}` commands SHALL validate their
+parameters and remain pane-local; `set` accepts query/case/word/regex options and
+the other commands accept only an optional pane.
+
 ### Requirement: Items can be opened in an existing or new Preview pane
 The shared file-row/thumbnail context menu SHALL offer **Open in Preview Panel**
 through `preview.open {uri}`. It SHALL show the pointed item rather than a stale

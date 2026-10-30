@@ -313,6 +313,26 @@ sorting must remain chronological. Log source text and UTC log time filters are
 unchanged. If detection fails, a notice and stderr diagnostic explain the UTC
 fallback.
 
+### Preview Find checks
+
+Focus a text, structured or Markdown Preview and press Ctrl+F (or use Find in
+the toolbar/Preview menu). Check live match counts, Aa (case), Word and `.*`
+(regex), invalid patterns, no matches and clearing the query. Enter/F3 advances;
+Shift+Enter/Shift+F3 goes back, wrapping at either end. Confirm off-screen matches
+are revealed in both axes, with Wrap off/on and preview zoom changed. Markdown
+headings, formatted paragraphs, nested lists/quotes, code and table cells should
+highlight; code languages, line numbers and controls should not. Ctrl+A/Ctrl+C
+in the field affect only the query; copying document text must not include search
+chrome. Escape/Close hides Find. Switch files/raw-pretty modes while searching
+and check that stale highlights disappear and counts update.
+
+In logs, Ctrl+F opens the existing filter panel and focuses record search;
+Escape hides it without clearing filters. Images, videos, binary/folder previews
+and multi-file card grids show Find disabled. Files Ctrl+F must still filter the
+listing, terminal Ctrl+F must reach the running application, and open dialogs
+must retain keyboard ownership. Search is loaded-content-only, with at most
+10,000 retained matches (`+` indicates more).
+
 ### Markdown code-copy checks
 
 Markdown code blocks have a top-right copy icon: 50% opacity at rest, full opacity

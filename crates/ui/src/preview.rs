@@ -14,6 +14,8 @@ use serde_json::{Value, json};
 
 use crate::theme::Tokens;
 
+#[path = "preview_find.rs"]
+mod find;
 #[path = "preview_markdown.rs"]
 mod markdown;
 #[path = "preview_time.rs"]
@@ -36,6 +38,48 @@ fn mono(tokens: &Tokens) -> FontId {
 
 /// Render the preview pane body.
 pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Option<fm_vfs::VfsUri> {
+    fm_engine::preview_find_cmds::prepare(s, pane);
+    let find_keyboard = s.layout.focused() == pane
+        && !crate::dialogs::window_owns_keyboard(s)
+        && ui.is_enabled()
+        && ui.ctx().memory(|m| m.is_above_modal_layer(ui.layer_id()))
+        && !ui.any_popup_open();
+    if find_keyboard {
+        for (modifiers, key, id) in [
+            (egui::Modifiers::COMMAND, egui::Key::F, "preview.find.open"),
+            (
+                egui::Modifiers::SHIFT,
+                egui::Key::F3,
+                "preview.find.previous",
+            ),
+            (egui::Modifiers::NONE, egui::Key::F3, "preview.find.next"),
+        ] {
+            if s.command_enabled(id) && ui.input_mut(|i| i.consume_key(modifiers, key)) {
+                s.dispatch_or_notice(id, &json!({"pane": pane}));
+            }
+        }
+        if s.preview_slot(pane).is_some_and(|slot| slot.find.open)
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            s.dispatch_or_notice("preview.find.close", &json!({"pane": pane}));
+            if s.preview_slot(pane)
+                .is_some_and(|slot| matches!(slot.body, Body::Log(_)))
+            {
+                ui.data_mut(|d| {
+                    let id = Id::NULL.with(("pv-logui", pane));
+                    if let Some(mut state) = d.get_temp::<LogUi>(id) {
+                        state.filters_open = false;
+                        d.insert_temp(id, state);
+                    }
+                });
+            }
+            ui.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+        }
+    }
     let keyboard = s.layout.focused() == pane
         && !crate::dialogs::window_owns_keyboard(s)
         && !ui.ctx().text_edit_focused()
@@ -105,6 +149,8 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let mut open: Option<fm_vfs::VfsUri> = None;
     let mut published: Option<fm_engine::file_cmds::GridSelection> = None;
     toolbar(ui, s, pane, &mut actions);
+    find::bar(ui, s, pane, tokens, &mut actions);
+    find::begin(ui, s, pane);
     ui.separator();
     let can_page = s.layout.focused() == pane
         && ui.is_enabled()
@@ -216,6 +262,11 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         }
     }
     ui.set_style(original_style);
+    find::end(ui, s, pane);
+    if s.preview_slot(pane).is_some_and(|slot| slot.find.busy) {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(30));
+    }
     ui.data_mut(|d| d.insert_temp(Id::NULL.with("pv-content-scale"), 1.0_f32));
     ui.data_mut(|d| d.insert_temp(Id::NULL.with("pv-can-page"), false));
     ui.data_mut(|d| d.insert_temp(Id::NULL.with("pv-all-selected"), false));
@@ -225,6 +276,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
             o.insert("pane".into(), json!(pane));
         }
         s.dispatch_or_notice(id, &params);
+        ui.ctx().request_repaint();
     }
     match published {
         Some(g) => s.grid_selection = Some(g),
@@ -367,6 +419,16 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
         if matches!(slot.body, Body::Log(_)) || slot.subjects.len() > 1 {
             let id = Id::NULL.with(("pv-logui", pane));
             let mut st: LogUi = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
+            let focus_id = Id::NULL.with(("pv-log-find-focus", pane));
+            if matches!(slot.body, Body::Log(_)) && slot.find.open
+                && ui.data(|d| d.get_temp::<u64>(focus_id)) != Some(slot.find.focus)
+            {
+                st.filters_open = true;
+                ui.data_mut(|d| {
+                    d.insert_temp(focus_id, slot.find.focus);
+                    d.insert_temp(Id::NULL.with(("pv-log-request-focus", pane)), true);
+                });
+            }
             if matches!(slot.body, Body::Log(_)) && ui
                     .add(egui::Button::selectable(st.filters_open, RichText::new("Filter").strong()).frame_when_inactive(true))
                     .on_hover_text(
@@ -435,6 +497,18 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
         }
     });
     ui.horizontal(|ui| {
+        let can_find = matches!(&slot.body, Body::Log(_))
+            || matches!(&slot.body, Body::Static(p) if fm_engine::preview_find_cmds::searchable(p));
+        if ui
+            .add_enabled(can_find, egui::Button::new("Find"))
+            .on_hover_text("Find in loaded text or filter log records (Ctrl+F)")
+            .on_disabled_hover_text(
+                "Find is available for text, structured, Markdown and log previews.",
+            )
+            .clicked()
+        {
+            actions.push(("preview.find.open", json!({})));
+        }
         if ui
             .button("−")
             .on_hover_text("Zoom preview out (Ctrl+-)")
@@ -668,10 +742,16 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
         ScrollArea::both()
     };
     let area = paged_scroll(ui, area, ("pv-text", pane)).auto_shrink(false);
+    let area = if !wrap && let Some(line) = find::target_line(ui) {
+        area.vertical_scroll_offset(line as f32 * row_h)
+    } else {
+        area
+    };
     let output = if wrap {
         area.show(ui, |ui| {
             tight_rows(ui);
             for (i, line) in d.lines.iter().enumerate() {
+                find::set_segment(ui, i);
                 ui.horizontal_top(|ui| {
                     ui.add(
                         egui::Label::new(
@@ -682,13 +762,11 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
                         )
                         .selectable(false),
                     );
-                    ui.add(
-                        egui::Label::new(selection_job(
-                            ui,
-                            tokens,
-                            spans_job(tokens, line, true, 0.0),
-                        ))
-                        .wrap(),
+                    find::label(
+                        ui,
+                        tokens,
+                        selection_job(ui, tokens, spans_job(tokens, line, true, 0.0)),
+                        true,
                     );
                 });
             }
@@ -698,6 +776,7 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
             tight_rows(ui);
             for i in range {
                 let Some(line) = d.lines.get(i) else { continue };
+                find::set_segment(ui, i);
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::Label::new(
@@ -708,13 +787,11 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
                         )
                         .selectable(false),
                     );
-                    ui.add(
-                        egui::Label::new(selection_job(
-                            ui,
-                            tokens,
-                            spans_job(tokens, line, false, 0.0),
-                        ))
-                        .extend(),
+                    find::label(
+                        ui,
+                        tokens,
+                        selection_job(ui, tokens, spans_job(tokens, line, false, 0.0)),
+                        false,
                     );
                 });
             }
@@ -1640,14 +1717,24 @@ fn log_toolbar(ui: &mut Ui, pane: PaneId, v: &LogView, actions: &mut Vec<Action>
             ui.label("Debug < Info < Notice < Warning < Error < Critical");
         });
     });
-    ui.add(
+    let query_response = ui.add(
         egui::TextEdit::singleline(&mut st.query)
+            .id(Id::NULL.with(("pv-log-query", pane)))
             .hint_text("Search")
             .desired_width(120.0),
     )
     .on_hover_text(
         "Search loaded records across the selected files. Enable .* to use a regular expression.",
     );
+    query_response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::TextInput, true, "Search log records")
+    });
+    if ui
+        .data_mut(|d| d.remove_temp::<bool>(Id::NULL.with(("pv-log-request-focus", pane))))
+        .unwrap_or(false)
+    {
+        query_response.request_focus();
+    }
     ui.checkbox(&mut st.regex, ".*").on_hover_ui(|ui| {
         log_filter_help(ui, "Regular-expression search", |ui| {
             ui.label("On: search using patterns.");

@@ -544,6 +544,17 @@ the connected Files pane to their parent when needed. Reads and rendering use
 the existing asynchronous preview pipeline. The separate `view.preview.toggle`
 command keeps its open/close semantics.
 
+`engine::preview_find_cmds` owns transient per-slot Find options, navigation and
+bounded match indices for loaded text, structured raw/pretty text and Markdown.
+At most one worker per pane matches Unicode text/regexes; document identity,
+mode and option checks discard stale results. Queries cap at 1024 characters,
+compiled regex/DFA caches at 1 MiB each, and stored hits at 10 000. Text-line and
+Markdown render-segment indices let the UI highlight syntax sections without
+changing copyable text, retain unwrapped text virtualization, and reveal matches
+through nested scroll areas. Find never performs filesystem I/O. Ctrl+F is
+context-routed before the Files filter shortcut; in logs it opens/focuses the
+existing record filter instead. Non-text/card-grid previews disable Find.
+
 Markdown uses `pulldown-cmark` to build a bounded recursive document tree in
 `fm-preview::markdown`: nested lists/items/quotes, aligned table cells, hard breaks,
 task state and inline strong/emphasis/strike/link/code runs. Code syntax spans

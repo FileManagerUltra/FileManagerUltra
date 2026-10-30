@@ -141,6 +141,7 @@ pub struct PreviewSlot {
     pub zoom: Zoom,
     /// Magnification for this pane's content, separate from image fit mode and UI zoom.
     pub scale: f32,
+    pub find: crate::preview_find_cmds::Find,
     /// Directory thumbnail grid instead of the summary card.
     pub thumbs: bool,
     /// Index into [`fm_preview::thumbs::EDGES`].
@@ -175,6 +176,7 @@ impl PreviewSlot {
             wrap: false,
             zoom: Zoom::Fit,
             scale: 1.0,
+            find: Default::default(),
             thumbs: false,
             thumb_size: 0,
             thumb_window: None,

@@ -34,6 +34,10 @@ language labels enter text selections or document copies.
 File and thumbnail menus now offer **Open in Preview Panel**, targeting the clicked
 item and reusing an existing Preview (or creating one if absent), without changing
 the Preview toggle shortcut.
+Preview Find now provides Ctrl+F, highlighted next/previous matches, and
+case/whole-word/regex options over loaded text, structured documents and rendered
+Markdown; logs focus their existing record search. Matching is background work,
+and unwrapped text remains virtualized.
 Automated coverage is in place; interactive confirmation of the latest preview and
 context-menu changes and installed Windows/macOS icon smoke checks remain open.
 
