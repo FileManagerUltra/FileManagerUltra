@@ -373,6 +373,48 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
     let options = |ui: &mut Ui, actions: &mut Vec<Action>| {
         ui.spacing_mut().item_spacing.x = 8.0;
         ui.spacing_mut().button_padding = vec2(10.0, 3.0);
+        if !matches!(slot.body, Body::Log(_)) {
+            let can_find = matches!(&slot.body, Body::Static(p) if fm_engine::preview_find_cmds::searchable(p));
+            if ui
+                .add_enabled(can_find, egui::Button::new("Find"))
+                .on_hover_text("Find in loaded text (Ctrl+F)")
+                .on_disabled_hover_text(
+                    "Find is available for text, structured and Markdown previews.",
+                )
+                .clicked()
+            {
+                actions.push(("preview.find.open", json!({})));
+            }
+        }
+        if ui
+            .button("−")
+            .on_hover_text("Zoom preview out (Ctrl+-)")
+            .clicked()
+        {
+            actions.push(("preview.scale.out", json!({})));
+        }
+        let reset = ui
+            .button(format!("{:.0}%", slot.scale * 100.0))
+            .on_hover_text("Reset preview zoom (Ctrl+0)");
+        reset.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Button, true, "Reset preview zoom")
+        });
+        if reset.clicked() {
+            actions.push(("preview.scale.reset", json!({})));
+        }
+        if ui
+            .button("+")
+            .on_hover_text("Zoom preview in (Ctrl+=)")
+            .clicked()
+        {
+            actions.push(("preview.scale.in", json!({})));
+        }
+        if slot.updates_available && ui.button("Reload")
+            .on_hover_text("Selected files changed. Reload their preview while keeping filters and source order.")
+            .clicked()
+        {
+            actions.push(("preview.reload", json!({})));
+        }
         let wrap_pretty = |ui: &mut Ui, actions: &mut Vec<Action>| {
             if ui
                 .add(egui::Button::selectable(slot.wrap, "Wrap"))
@@ -432,36 +474,13 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
             if matches!(slot.body, Body::Log(_)) && ui
                     .add(egui::Button::selectable(st.filters_open, RichText::new("Filter").strong()).frame_when_inactive(true))
                     .on_hover_text(
-                        "Show or hide preview options. Applied filters stay active when hidden.",
+                        "Show or hide log filters, including search (Ctrl+F). Applied filters stay active when hidden.",
                     )
                     .clicked()
                 {
                     st.filters_open = !st.filters_open;
                 }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if slot.updates_available
-                    && ui.button("Reload")
-                        .on_hover_text("Selected files changed. Reload their preview while keeping filters and source order.")
-                        .clicked()
-                {
-                    actions.push(("preview.reload", json!({})));
-                }
-                let title = if slot.subjects.len() > 1 {
-                    format!("{} selected files", slot.subjects.len())
-                } else {
-                    slot.subject
-                        .as_ref()
-                        .map_or_else(String::new, |e| e.name.clone())
-                };
-                ui.add(egui::Label::new(RichText::new(title).strong()).truncate());
-            });
             ui.data_mut(|d| d.insert_temp(id, st));
-            return;
-        }
-        if slot.subjects.len() > 1 {
-            ui.label(RichText::new(format!("{} selected files", slot.subjects.len())).strong());
-        } else if let Some(e) = &slot.subject {
-            ui.label(RichText::new(&e.name).strong());
         }
         let needed = {
             let rect =
@@ -476,7 +495,19 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
             options(&mut sizing, &mut Vec::new());
             sizing.min_rect().width() + 24.0
         };
-        if needed <= ui.available_width() {
+        let inline = needed + 60.0 <= ui.available_width();
+        let controls = if inline { needed } else { 36.0 };
+        let title = if slot.subjects.len() > 1 {
+            format!("{} selected files", slot.subjects.len())
+        } else {
+            slot.subject.as_ref().map_or_else(String::new, |entry| entry.name.clone())
+        };
+        let title_width = (ui.available_width() - controls - ui.spacing().item_spacing.x).max(0.0);
+        ui.add_sized(
+            vec2(title_width, ui.spacing().interact_size.y),
+            egui::Label::new(RichText::new(&title).strong()).truncate(),
+        ).on_hover_text(&title);
+        if inline {
             // Framed buttons so view options stand apart from the title.
             ui.add_space(12.0);
             ui.separator();
@@ -486,6 +517,7 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                 let button = egui::Button::new("").min_size(vec2(28.0, 0.0));
                 let (response, _) = egui::containers::menu::MenuButton::from_button(button)
                     .ui(ui, |ui| options(ui, actions));
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "View options"));
                 // The bundled fonts have no hamburger glyph: draw it.
                 let stroke = ui.style().interact(&response).fg_stroke;
                 let c = response.rect.center();
@@ -494,43 +526,6 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                 }
                 response.on_hover_text("View options");
             });
-        }
-    });
-    ui.horizontal(|ui| {
-        let can_find = matches!(&slot.body, Body::Log(_))
-            || matches!(&slot.body, Body::Static(p) if fm_engine::preview_find_cmds::searchable(p));
-        if ui
-            .add_enabled(can_find, egui::Button::new("Find"))
-            .on_hover_text("Find in loaded text or filter log records (Ctrl+F)")
-            .on_disabled_hover_text(
-                "Find is available for text, structured, Markdown and log previews.",
-            )
-            .clicked()
-        {
-            actions.push(("preview.find.open", json!({})));
-        }
-        if ui
-            .button("−")
-            .on_hover_text("Zoom preview out (Ctrl+-)")
-            .clicked()
-        {
-            actions.push(("preview.scale.out", json!({})));
-        }
-        let reset = ui
-            .button(format!("{:.0}%", slot.scale * 100.0))
-            .on_hover_text("Reset preview zoom (Ctrl+0)");
-        reset.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::Button, true, "Reset preview zoom")
-        });
-        if reset.clicked() {
-            actions.push(("preview.scale.reset", json!({})));
-        }
-        if ui
-            .button("+")
-            .on_hover_text("Zoom preview in (Ctrl+=)")
-            .clicked()
-        {
-            actions.push(("preview.scale.in", json!({})));
         }
     });
     if let Body::Log(v) = &slot.body

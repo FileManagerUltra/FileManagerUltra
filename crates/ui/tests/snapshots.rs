@@ -2124,6 +2124,85 @@ fn selected_previews_page_the_outer_document_or_grid() {
 }
 
 #[test]
+fn preview_toolbar_keeps_controls_on_one_row_and_logs_have_only_filter() {
+    use egui_kittest::kittest::Queryable;
+    for tokens in [Tokens::dark(), Tokens::light()] {
+        for width in [1000.0, 360.0, 220.0] {
+            for log in [false, true] {
+                let (mut s, pane) = if log {
+                    preview_fixture(
+                        "long-log-filename.log",
+                        b"2026-10-30T12:00:00Z INFO ready\n",
+                        false,
+                    )
+                } else {
+                    preview_fixture(
+                        "very-long-markdown-preview-filename.md",
+                        b"# Title\n\nText",
+                        false,
+                    )
+                };
+                s.previews.slots.get_mut(&pane).expect("slot").scale = 1.44;
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(width, 420.0))
+                    .with_accessibility_check(false)
+                    .build_ui_state(
+                        move |ui, s: &mut Session| {
+                            theme::apply_to(ui.ctx(), &tokens);
+                            fm_ui::preview::show(ui, s, pane, &tokens);
+                        },
+                        s,
+                    );
+                harness.run();
+                let source = harness.get_by_label("Preview source").rect();
+                if log {
+                    let filter = harness.get_by_label("Filter").rect();
+                    assert!((filter.center().y - source.center().y).abs() < 2.0);
+                    assert!(harness.query_by_label("Find").is_none());
+                }
+                if width == 1000.0 {
+                    let zoom = harness.get_by_label("Reset preview zoom").rect();
+                    assert!((zoom.center().y - source.center().y).abs() < 2.0);
+                    assert!(zoom.right() <= width);
+                    if !log {
+                        let find = harness.get_by_label("Find").rect();
+                        assert!((find.center().y - source.center().y).abs() < 2.0);
+                        harness.get_by_label("Find").click();
+                        harness.run();
+                        harness.get_by_label("Find in preview");
+                    }
+                } else {
+                    let menu = harness.get_by_label("View options").rect();
+                    assert!((menu.center().y - source.center().y).abs() < 2.0);
+                    assert!(
+                        menu.right() <= width,
+                        "overflow stays within narrow toolbar"
+                    );
+                    assert!(harness.query_by_label("Reset preview zoom").is_none());
+                    harness.get_by_label("View options").click();
+                    harness.run();
+                    harness.get_by_label("Reset preview zoom").click();
+                    harness.run();
+                    assert_eq!(harness.state().preview_slot(pane).expect("slot").scale, 1.0);
+                    if log {
+                        assert!(harness.query_by_label("Find").is_none());
+                    } else {
+                        // Menu actions may leave the menu open.
+                        if harness.query_by_label("Find").is_none() {
+                            harness.get_by_label("View options").click();
+                            harness.run();
+                        }
+                        harness.get_by_label("Find").click();
+                        harness.run();
+                        harness.get_by_label("Find in preview");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn preview_toolbar_collapses_into_a_menu_when_narrow() {
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();
@@ -2961,7 +3040,13 @@ fn volume_preview_dark_light() {
             h.get_by_label("Folder summary");
             let before = h.get_by_label("Folder summary").rect().height();
             let global = h.state().prefs.zoom;
+            if h.query_by_label("+").is_none() {
+                h.get_by_label("View options").click();
+                h.run();
+            }
             h.get_by_label("+").click();
+            h.run();
+            h.key_press(egui::Key::Escape);
             h.run();
             assert!(h.get_by_label("Folder summary").rect().height() > before * 1.1);
             assert_eq!(h.state().prefs.zoom, global);
@@ -2969,7 +3054,13 @@ fn volume_preview_dark_light() {
                 .dispatch("preview.thumbs.toggle", &serde_json::json!({"pane": pane}))
                 .expect("thumbnails");
             h.run();
+            if h.query_by_label("+").is_none() {
+                h.get_by_label("View options").click();
+                h.run();
+            }
             h.get_by_label("+").click();
+            h.run();
+            h.key_press(egui::Key::Escape);
             h.run();
             assert!(h.state().preview_slot(pane).expect("slot").scale > 1.4);
             assert_eq!(h.state().prefs.zoom, global);

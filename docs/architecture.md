@@ -554,6 +554,10 @@ changing copyable text, retain unwrapped text virtualization, and reveal matches
 through nested scroll areas. Find never performs filesystem I/O. Ctrl+F is
 context-routed before the Files filter shortcut; in logs it opens/focuses the
 existing record filter instead. Non-text/card-grid previews disable Find.
+Find, zoom and content-specific controls share the source/title toolbar row,
+using measured sizing and a truncated title to keep the overflow menu visible
+in narrow panes. Logs keep their Filter toggle next to the source selector and
+omit the redundant Find button.
 
 Markdown uses `pulldown-cmark` to build a bounded recursive document tree in
 `fm-preview::markdown`: nested lists/items/quotes, aligned table cells, hard breaks,

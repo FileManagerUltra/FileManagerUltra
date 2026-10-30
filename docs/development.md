@@ -326,6 +326,10 @@ in the field affect only the query; copying document text must not include searc
 chrome. Escape/Close hides Find. Switch files/raw-pretty modes while searching
 and check that stale highlights disappear and counts update.
 
+Find and zoom controls should share the source/title toolbar row, with the
+filename truncated and controls in View options when the pane is narrow.
+Logs should show Filter and zoom controls, never a duplicate Find button.
+
 In logs, Ctrl+F opens the existing filter panel and focuses record search;
 Escape hides it without clearing filters. Images, videos, binary/folder previews
 and multi-file card grids show Find disabled. Files Ctrl+F must still filter the

@@ -38,6 +38,9 @@ Preview Find now provides Ctrl+F, highlighted next/previous matches, and
 case/whole-word/regex options over loaded text, structured documents and rendered
 Markdown; logs focus their existing record search. Matching is background work,
 and unwrapped text remains virtualized.
+Preview Find and zoom controls share a single source/title toolbar row, with
+view options overflowing into a menu in narrow panes. Logs expose only Filter,
+not a duplicate Find button; Ctrl+F still focuses their record search.
 Automated coverage is in place; interactive confirmation of the latest preview and
 context-menu changes and installed Windows/macOS icon smoke checks remain open.
 

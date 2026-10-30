@@ -4,7 +4,7 @@
 TBD - created by archiving change pane-preview. Update Purpose after archive.
 ## Requirements
 ### Requirement: Preview has pane-local Find
-`Ctrl+F`, the Preview menu and a toolbar Find button SHALL open/focus Find in the
+`Ctrl+F`, the Preview menu and a toolbar Find button (non-log views) SHALL open/focus Find in the
 focused Preview, without opening the Files-pane filter. Text, structured text
 (including raw/pretty mode) and rendered Markdown SHALL offer a query field,
 case-sensitive, whole-word and regular-expression options, a current/total match
@@ -31,6 +31,7 @@ searched per rendered paragraph/heading, code block or table cell.
 #### Scenario: Content-specific search and keyboard ownership
 - **WHEN** Ctrl+F is used in a log preview
 - **THEN** the existing record-filter panel opens and its search field gains focus, retaining severity/time/regex controls and applied filters
+- **AND** logs expose only the Filter toolbar button, not a duplicate Find button
 - **AND** Escape hides that panel without clearing its filters
 - **WHEN** the Preview is an image, video, folder, binary, error or multi-file card grid
 - **THEN** Find is disabled with an explanation rather than implying unavailable text/OCR/byte search
@@ -39,6 +40,12 @@ searched per rendered paragraph/heading, code block or table cell.
 The `preview.find.{open,close,set,next,previous}` commands SHALL validate their
 parameters and remain pane-local; `set` accepts query/case/word/regex options and
 the other commands accept only an optional pane.
+
+Find and preview zoom controls SHALL share the main source/title toolbar row,
+not consume a separate row. At narrow widths view controls SHALL move into the
+existing View options overflow menu; the filename SHALL truncate to keep that
+menu and the log Filter button visible. An open search/filter panel MAY appear
+below the toolbar.
 
 ### Requirement: Items can be opened in an existing or new Preview pane
 The shared file-row/thumbnail context menu SHALL offer **Open in Preview Panel**
