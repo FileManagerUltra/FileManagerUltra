@@ -535,6 +535,15 @@ text, excluding gutters and Markdown formatting. The UI highlights loaded text
 and routes Ctrl/Cmd+A and copy only while the preview owns the keyboard.
 Document replacement or mode changes make stale selections unavailable.
 
+`preview.open {uri}` (`engine::preview_open_cmds`) is the explicit, non-toggle
+item-context action. It validates the pointed URI against the loaded listing or
+thumbnail grid, selects it in its source Files pane, and reuses an existing
+Preview before creating a right split. The Preview is connected to that Files
+pane; maximized-pane mode is cleared so it is visible. Thumbnail targets navigate
+the connected Files pane to their parent when needed. Reads and rendering use
+the existing asynchronous preview pipeline. The separate `view.preview.toggle`
+command keeps its open/close semantics.
+
 Markdown uses `pulldown-cmark` to build a bounded recursive document tree in
 `fm-preview::markdown`: nested lists/items/quotes, aligned table cells, hard breaks,
 task state and inline strong/emphasis/strike/link/code runs. Code syntax spans

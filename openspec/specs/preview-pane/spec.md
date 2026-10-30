@@ -3,6 +3,30 @@
 ## Purpose
 TBD - created by archiving change pane-preview. Update Purpose after archive.
 ## Requirements
+### Requirement: Items can be opened in an existing or new Preview pane
+The shared file-row/thumbnail context menu SHALL offer **Open in Preview Panel**
+through `preview.open {uri}`. It SHALL show the pointed item rather than a stale
+selection, reusing a Preview pane in the active workspace (preferring one already
+connected to the source Files pane). If no Preview pane exists it SHALL create
+one to the right of that Files pane. The panel SHALL be connected to the source
+Files pane and subsequent selections there SHALL continue to update it.
+
+#### Scenario: Explicit preview opening is not a toggle
+- **WHEN** the action is selected with a Preview pane already open
+- **THEN** the pane is reused, retargeted to the source Files pane if necessary, and never closed
+- **AND** repeated actions do not create extra panes, and pane zoom is cleared so the Preview is visible
+- **AND** the source Files pane remains focused and only the pointed item is selected
+
+#### Scenario: Open a thumbnail in Preview
+- **WHEN** the action is selected on an item in a directory thumbnail grid
+- **THEN** the connected Files pane navigates to its parent if necessary and selects it, and an existing Preview is reused
+- **AND** all file reads and rendering remain background jobs
+
+#### Scenario: Bad or stale target
+- **WHEN** parameters are malformed or the requested URI is no longer in the source listing/grid
+- **THEN** the command returns an error without changing the layout
+- **AND** Ctrl+Shift+P retains its existing Preview toggle behavior
+
 ### Requirement: Markdown code blocks have copy controls
 Every fenced or indented code block SHALL have a top-right copy icon, including
 blocks nested in lists/quotes and Markdown multi-file cards. The control SHALL

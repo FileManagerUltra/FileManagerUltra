@@ -1019,12 +1019,21 @@ fn entry_row_ui(
         }
     }
     // Right-click acts on the row under the pointer unless it is already part of the selection.
-    if response.secondary_clicked()
-        && !selected
-        && let Some(state) = s.layout.state_mut(pane)
-    {
-        state.tree.active = false;
-        state.listing.select_only(Some(&entry.name), row);
+    if response.secondary_clicked() {
+        ui.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+        if let Err(err) = s.layout.focus_pane(pane) {
+            s.notice = Some(err.to_string());
+        }
+        if let Some(state) = s.layout.state_mut(pane) {
+            state.tree.active = false;
+            if !selected {
+                state.listing.select_only(Some(&entry.name), row);
+            }
+        }
     }
     let plain_click = response.clicked() && ui.input(|i| i.modifiers.is_none());
     let mut open = if response.double_clicked() || (s.prefs.single_click_open && plain_click) {

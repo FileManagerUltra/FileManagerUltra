@@ -250,7 +250,7 @@ Seems to work, but Ctrl-c ctlv-v, ctrl-x to copy, paste, move a file does not, t
 Double click a folder in the thumbnail view should open that folder (also affects the connected Files panel)
 Files panel: Single click on a selected file selects the file, another single click on that file should deselect that file and select the current directory (.)
 
-6. Right-click a row or thumbnail: the same item context menu in both views; entries are greyed when not applicable. Right-click blank Files-listing space or `.` for current-folder actions (New Folder, New File, Paste, Refresh, Copy Path/Name, Add Bookmark, Properties). The same folder menu on a tree folder targets that folder without navigating into it; saved-server entries retain their Connect/Edit/Delete menu.
+6. Right-click a row or thumbnail: the same item context menu in both views; entries are greyed when not applicable. **Open in Preview Panel** shows the pointed item in an existing Preview, or creates one to the right when none exists; repeated actions must never close it or add extra panes. Test another previously unfocused Files pane, multiple selected files, a Preview pinned to another Files pane, and a zoomed Files pane. A thumbnail action selects the item in its connected Files pane, navigating to its parent if needed. Ctrl+Shift+P remains a toggle. Right-click blank Files-listing space or `.` for current-folder actions (New Folder, New File, Paste, Refresh, Copy Path/Name, Add Bookmark, Properties). The same folder menu on a tree folder targets that folder without navigating into it; saved-server entries retain their Connect/Edit/Delete menu.
 Works as expected
 
 7. Every pane header has a `×` (hidden on the last pane).

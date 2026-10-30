@@ -18,6 +18,126 @@ struct Rig {
     _dir: tempfile::TempDir,
 }
 
+#[test]
+fn open_in_preview_creates_once_then_reuses_and_retargets_existing_preview() {
+    let mut r = rig(&[("a.txt", b"first"), ("b.txt", b"second")]);
+    r.select(&["a.txt", "b.txt"]);
+    let uri =
+        r.s.layout
+            .state(r.files)
+            .expect("files")
+            .location
+            .join("b.txt")
+            .expect("uri");
+    r.s.layout.close(r.preview).expect("close initial preview");
+    r.s.layout.focus_pane(r.files).expect("focus");
+    r.s.dispatch("preview.open", &json!({"uri": uri.to_string()}))
+        .expect("open");
+    assert_eq!(r.s.layout.panes().len(), 2);
+    let preview =
+        r.s.layout
+            .panes()
+            .into_iter()
+            .find(|id| r.s.pane_kind(*id) == Some(PaneKind::Preview))
+            .expect("preview");
+    assert_eq!(r.s.layout.focused(), r.files);
+    assert_eq!(
+        r.s.layout
+            .state(r.files)
+            .expect("files")
+            .listing
+            .selection()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["b.txt"],
+    );
+    assert!(pump(&mut r.s, |s| s.preview_slot(preview).is_some_and(
+        |slot| slot.subject.as_ref().is_some_and(|e| e.uri == uri)
+            && matches!(slot.body, Body::Static(_))
+    )));
+    r.s.layout.zoomed = Some(r.files);
+    r.s.dispatch("preview.open", &json!({"uri": uri.to_string()}))
+        .expect("reuse");
+    assert_eq!(r.s.layout.zoomed, None);
+    assert_eq!(r.s.layout.panes().len(), 2);
+    assert_eq!(r.s.pane_kind(preview), Some(PaneKind::Preview));
+    let other =
+        r.s.layout
+            .split(r.files, fm_layout::Axis::Vertical, 0.5)
+            .expect("split files");
+    r.s.layout
+        .state_mut(preview)
+        .expect("preview")
+        .preview_source = PreviewSource::Pane(other);
+    r.s.layout.focus_pane(r.files).expect("focus");
+    let first = uri.parent().expect("parent").join("a.txt").expect("uri");
+    r.s.dispatch("preview.open", &json!({"uri": first.to_string()}))
+        .expect("retarget");
+    assert_eq!(r.s.layout.panes().len(), 3);
+    assert_eq!(r.s.layout.preview_target(preview), Some(r.files));
+    assert!(pump(&mut r.s, |s| s.preview_slot(preview).is_some_and(
+        |slot| slot.subject.as_ref().is_some_and(|e| e.uri == first)
+            && matches!(slot.body, Body::Static(_))
+    )));
+}
+
+#[test]
+fn open_in_preview_rejects_bad_or_missing_targets_without_layout_changes() {
+    let mut r = rig(&[("a.txt", b"text")]);
+    for bad in [
+        json!(null),
+        json!({}),
+        json!({"uri": 4}),
+        json!({"uri": ""}),
+        json!({"uri": "/missing.txt"}),
+        json!([]),
+    ] {
+        let panes = r.s.layout.panes();
+        let focused = r.s.layout.focused();
+        assert!(r.s.dispatch("preview.open", &bad).is_err(), "{bad}");
+        assert_eq!(r.s.layout.panes(), panes);
+        assert_eq!(r.s.layout.focused(), focused);
+    }
+}
+
+#[test]
+fn open_in_preview_from_thumbnails_selects_the_item_and_reuses_the_panel() {
+    let mut r = rig(&[("a.txt", b"first")]);
+    std::fs::create_dir(r._dir.path().join("sub")).expect("subfolder");
+    std::fs::write(r._dir.path().join("sub/nested.txt"), b"nested").expect("file");
+    let root = r.s.layout.state(r.files).expect("files").location.clone();
+    r.s.refresh_read(root.clone()).expect("refresh");
+    assert!(pump(&mut r.s, |s| s.pane_view_ready(r.files)));
+    r.cursor("sub");
+    let doc = r.wait_static();
+    let Preview::Dir(dir) = &*doc else {
+        panic!("directory")
+    };
+    let entry = dir
+        .items
+        .iter()
+        .find(|e| e.name == "nested.txt")
+        .expect("nested file");
+    let uri = entry.uri.clone();
+    let sub = root.join("sub").expect("uri");
+    r.s.grid_selection = Some(fm_engine::file_cmds::GridSelection {
+        pane: r.preview,
+        dir: sub.clone(),
+        items: vec![uri.clone()],
+    });
+    r.s.layout.focus_pane(r.preview).expect("focus grid");
+    r.s.dispatch("preview.open", &json!({"uri": uri.to_string()}))
+        .expect("preview thumbnail");
+    assert_eq!(r.s.layout.panes().len(), 2);
+    assert_eq!(r.s.layout.state(r.files).expect("files").location, sub);
+    assert_eq!(r.s.layout.focused(), r.files);
+    assert!(pump(&mut r.s, |s| s.preview_slot(r.preview).is_some_and(
+        |slot| slot.subject.as_ref().is_some_and(|e| e.uri == uri)
+            && matches!(slot.body, Body::Static(_))
+    )));
+    assert!(matches!(&*r.wait_static(), Preview::Text(_)));
+}
+
 fn pump(s: &mut Session, mut until: impl FnMut(&mut Session) -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {

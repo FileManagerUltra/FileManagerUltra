@@ -480,7 +480,7 @@ pub(crate) fn dispatch_folder(
     let folder = folder.to_string();
     let params = match action.id {
         "file.clip_paste" => serde_json::json!({ "dest": folder }),
-        "nav.refresh" | "bookmark.add" => serde_json::json!({ "uri": folder }),
+        "nav.refresh" | "bookmark.add" | "preview.open" => serde_json::json!({ "uri": folder }),
         _ => serde_json::json!({ "sources": [folder] }),
     };
     if let Err(err) = session.dispatch(action.id, &params) {
@@ -938,6 +938,37 @@ pub fn consume_shortcuts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_context_action_dispatches_the_uri_and_does_not_open_a_dialog() {
+        use std::sync::Arc;
+        let mut s = Session::new().expect("session");
+        let mem = fm_testkit::MemFs::new();
+        mem.put_str("/d/test.txt", b"preview").expect("file");
+        let file = fm_vfs::VfsUri::parse("/d/test.txt").expect("uri");
+        let dir = file.parent().expect("parent");
+        s.backends.register(Arc::new(mem));
+        s.layout.state_mut(1).expect("pane").location = dir.clone();
+        s.submit_read(dir).expect("read");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !s.pane_view_ready(1) {
+            s.poll();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let mut dialogs = Dialogs::default();
+        dispatch_folder(
+            &mut s,
+            &mut dialogs,
+            fm_ui::context_menu::FolderAction {
+                id: "preview.open",
+                folder: file,
+            },
+        );
+        assert!(dialogs.open.is_none());
+        assert!(s.notice.is_none(), "{:?}", s.notice);
+        assert_eq!(s.layout.panes().len(), 2);
+    }
 
     #[test]
     fn folder_context_commands_keep_the_explicit_folder_target() {

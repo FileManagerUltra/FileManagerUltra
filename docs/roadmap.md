@@ -31,6 +31,9 @@ File timestamps now follow the OS timezone, including historical daylight-saving
 rules, while log filters remain UTC. Markdown code panels have translucent copy
 buttons that become opaque on hover/focus and copy only code; neither buttons nor
 language labels enter text selections or document copies.
+File and thumbnail menus now offer **Open in Preview Panel**, targeting the clicked
+item and reusing an existing Preview (or creating one if absent), without changing
+the Preview toggle shortcut.
 Automated coverage is in place; interactive confirmation of the latest preview and
 context-menu changes and installed Windows/macOS icon smoke checks remain open.
 

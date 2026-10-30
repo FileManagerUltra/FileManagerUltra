@@ -118,7 +118,7 @@ PageUp and PageDown SHALL move the focused row by one visible screenful (minus o
 - **THEN** the selection grows from the anchor through the new focused row
 
 ### Requirement: Items have a shared context menu
-Right-clicking a listing row or a thumbnail SHALL open one menu (Open, Copy, Move, Rename, New Folder, New File, Move to Trash, Delete Permanently) built from the command registry (label, shortcut, `enabled`). Choosing an entry SHALL dispatch its command through the same path as the menu bar, so input dialogs appear as for shortcuts. A right-click focuses the pane and selects the item unless it is already selected. `Delete` SHALL behave like `F8`.
+Right-clicking a listing row or a thumbnail SHALL open one menu (Open, Open in Preview Panel, Copy, Move, Rename, New Folder, New File, Move to Trash, Delete Permanently) built from the command registry (label, shortcut, `enabled`). Choosing an entry SHALL dispatch its command through the same path as the menu bar, so input dialogs appear as for shortcuts. A right-click focuses the pane and selects the item unless it is already selected. Open in Preview Panel SHALL retain the pointed URI until dispatch and preview only that item, reusing an existing Preview or creating one if absent. `Delete` SHALL behave like `F8`.
 
 #### Scenario: Registry-driven entries
 - **WHEN** a context-menu entry's id is not a registered command

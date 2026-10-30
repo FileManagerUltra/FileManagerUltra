@@ -62,6 +62,22 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
             *open = Some(uri.clone());
             ui.close();
         }
+        if let Some(spec) = s.registry.get("preview.open")
+            && ui
+                .add_enabled((spec.enabled)(s), egui::Button::new(spec.label))
+                .clicked()
+        {
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(
+                    Id::NULL.with("folder-context-command"),
+                    Some(FolderAction {
+                        id: spec.id,
+                        folder: uri.clone(),
+                    }),
+                )
+            });
+            ui.close();
+        }
         for entry in ENTRIES {
             match entry {
                 None => {
@@ -73,7 +89,7 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
     });
 }
 
-/// A folder-menu command retains its explicit target until dispatch, including for dialogs.
+/// A context command retains its explicit URI target until dispatch, including for dialogs.
 #[derive(Clone)]
 pub struct FolderAction {
     pub id: &'static str,
@@ -389,11 +405,68 @@ mod tests {
     }
 
     #[test]
+    fn file_context_preview_action_targets_the_right_clicked_file_in_an_unfocused_pane() {
+        for tokens in [crate::theme::Tokens::dark(), crate::theme::Tokens::light()] {
+            let mut s = folder_session(false);
+            let other = s
+                .layout
+                .split(1, fm_layout::Axis::Horizontal, 0.5)
+                .expect("split");
+            s.layout.focus_pane(other).expect("focus");
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(700.0, 500.0))
+                .build_ui_state(
+                    move |ui, (s, action)| {
+                        crate::theme::apply_to(ui.ctx(), &tokens);
+                        crate::listing::show(ui, s, 1, &tokens, s.layout.focused() == 1);
+                        if let Some(chosen) = take_folder_action(ui.ctx()) {
+                            *action = Some(chosen);
+                        }
+                    },
+                    (s, None),
+                );
+            harness.run();
+            let pos = harness.get_by_label("Current folder").rect().center()
+                + egui::vec2(
+                    0.0,
+                    3.0 * (tokens.row_height
+                        + harness
+                            .ctx
+                            .style_of(egui::Theme::Dark)
+                            .spacing
+                            .item_spacing
+                            .y),
+                );
+            secondary_click(&mut harness, pos);
+            assert_eq!(harness.state().0.layout.focused(), 1);
+            harness.get_by_label("Open in Preview Panel").click();
+            harness.run();
+            let action = harness.state().1.as_ref().expect("preview action");
+            assert_eq!(action.id, "preview.open");
+            assert_eq!(action.folder, VfsUri::parse("/d/file.txt").expect("uri"));
+            let params = serde_json::json!({"uri": action.folder.to_string()});
+            harness
+                .state_mut()
+                .0
+                .dispatch("preview.open", &params)
+                .expect("open preview");
+            assert_eq!(harness.state().0.layout.panes().len(), 3);
+            harness
+                .state_mut()
+                .0
+                .dispatch("preview.open", &params)
+                .expect("reuse preview");
+            assert_eq!(harness.state().0.layout.panes().len(), 3);
+        }
+    }
+
+    #[test]
     fn every_entry_is_a_registered_command() {
         let s = Session::new().expect("session");
         for id in ENTRIES.iter().chain(FOLDER_ENTRIES).flatten() {
             assert!(s.registry.contains(id), "dead context-menu id: {id}");
         }
+        assert!(s.registry.contains("preview.open"));
     }
 
     #[test]
