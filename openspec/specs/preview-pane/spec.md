@@ -3,6 +3,24 @@
 ## Purpose
 TBD - created by archiving change pane-preview. Update Purpose after archive.
 ## Requirements
+### Requirement: Markdown code blocks have copy controls
+Every fenced or indented code block SHALL have a top-right copy icon, including
+blocks nested in lists/quotes and Markdown multi-file cards. The control SHALL
+be 50% opaque at rest and fully opaque on hover or keyboard focus, scale with
+preview zoom, and reserve space so it does not cover code. Activating
+`preview.code.copy {pane?, block, item?}` SHALL copy only that loaded block's
+plain code text, without language labels, Markdown fences or UI chrome.
+
+#### Scenario: Copy code without polluting selection
+- **WHEN** a user clicks a code block's copy control
+- **THEN** the clipboard contains exactly that block's loaded code, independent of wrapping or syntax highlighting
+- **AND** the copy control and language label are not selectable text and never appear in drag-selection or Ctrl+A/Ctrl+C document copies
+- **AND** existing whole-document selection is not replaced by the control's label
+
+#### Scenario: Invalid block target
+- **WHEN** the command receives malformed parameters, an unavailable preview or an out-of-range block/grid item
+- **THEN** it returns an error without changing the clipboard or performing filesystem I/O
+
 ### Requirement: Preview follows a source Files pane
 A Preview pane SHALL display the entry focused in its source Files pane. The source SHALL default to the most recently focused Files pane and MAY be pinned to a specific Files pane from the pane header; a pinned source that closes SHALL revert to following focus. A Preview pane is never its own source.
 

@@ -226,7 +226,9 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                     }
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Dates");
+                    ui.label("Dates").on_hover_text(
+                        "File times use your operating system's timezone, detected at startup, including daylight saving. Log time filters remain UTC.",
+                    );
                     for (label, value, current) in [
                         ("2026-10-28 13:40", "iso", DateFormat::Iso),
                         ("2026-10-28 13:40:05", "isoseconds", DateFormat::IsoSeconds),

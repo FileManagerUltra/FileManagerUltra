@@ -41,6 +41,8 @@ pub struct ViewIndex {
 pub struct Session {
     pub registry: Registry,
     pub prefs: Prefs,
+    /// OS timezone captured at startup; conversions during rendering do no filesystem I/O.
+    pub file_time_zone: jiff::tz::TimeZone,
     pub jobs: JobQueue,
     /// The active workspace tab's layout; inactive tabs park theirs in `workspaces`.
     pub layout: Layout,
@@ -137,6 +139,7 @@ impl Default for Session {
             app_catalog: None,
             registry: Registry::new(),
             prefs: Prefs::default(),
+            file_time_zone: jiff::tz::TimeZone::UTC,
             jobs: JobQueue::new(),
             layout: first_layout.clone(),
             workspaces: crate::workspace::Workspaces::new(&first_layout),
@@ -177,10 +180,22 @@ impl Default for Session {
 }
 
 impl Session {
-    /// A session with the full seed command catalogue registered.
+    /// Register the command catalogue and load the OS timezone before the UI starts.
     pub fn new() -> Result<Self, FmError> {
+        let (file_time_zone, notice) = match jiff::tz::TimeZone::try_system() {
+            Ok(zone) => (zone, None),
+            Err(err) => {
+                let message = format!(
+                    "Cannot detect the system timezone; file times are shown in UTC: {err}"
+                );
+                eprintln!("{message}");
+                (jiff::tz::TimeZone::UTC, Some(message))
+            }
+        };
         Ok(Self {
             registry: Registry::from_specs(commands::specs())?,
+            file_time_zone,
+            notice,
             ..Default::default()
         })
     }
@@ -527,6 +542,48 @@ pub fn validate_params(params: &Params) -> Result<(), FmError> {
 mod tests {
     use super::*;
     use crate::registry::CommandSpec;
+
+    #[test]
+    fn file_times_follow_os_timezone_at_startup() {
+        const CHILD: &str = "FM_FILE_TIME_ZONE_TEST";
+        if let Ok(case) = std::env::var(CHILD) {
+            let session = Session::new().expect("session");
+            let timestamp: jiff::Timestamp = "2026-10-29T20:30:00Z".parse().expect("timestamp");
+            let local = session.file_time_zone.to_datetime(timestamp);
+            if case == "local" {
+                assert_eq!(local.to_string(), "2026-10-30T02:15:00");
+                assert!(session.notice.is_none());
+            } else {
+                assert_eq!(local.to_string(), "2026-10-29T20:30:00");
+                assert!(
+                    session
+                        .notice
+                        .as_deref()
+                        .is_some_and(|s| s.contains("file times are shown in UTC"))
+                );
+            }
+            return;
+        }
+        for (case, zone) in [("local", "NPT-5:45"), ("error", "not a valid timezone")] {
+            let output =
+                std::process::Command::new(std::env::current_exe().expect("test executable"))
+                    .args([
+                        "--exact",
+                        "session::tests::file_times_follow_os_timezone_at_startup",
+                        "--nocapture",
+                    ])
+                    .env(CHILD, case)
+                    .env("TZ", zone)
+                    .output()
+                    .expect("child test");
+            assert!(
+                output.status.success(),
+                "timezone {zone}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 
     #[test]
     fn new_registers_the_seed_catalogue() {

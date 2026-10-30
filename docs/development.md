@@ -300,6 +300,27 @@ wrapped lines count as multiple rows and large histories consume substantial mem
 
 Preferences > Appearance / Files / Terminal / Advanced (all through `prefs.set`): pick an accent preset and a custom `#rrggbb` (invalid text is ignored; Default restores the theme colour); switch density and change text size up and down repeatedly (sizes must track the value, not shrink cumulatively). In Files, toggle show-hidden (the same setting as View > Show Hidden Files (remember), which saves it; Ctrl+H and the status-bar button change only the current session), single-click open, size units and date formats (listing, Properties and Search all follow), and turn off the delete/run prompts to confirm they proceed directly. Terminal font size applies to open terminals. In Advanced > Thumbnails check the "Stored in" path, set a parent folder (relative paths and unwritable folders are rejected with the old one kept), press Clear thumbnail cache, and lower the caps; the preview time limit applies to the next render.
 
+### File timestamp timezone checks
+
+File times follow the OS timezone detected at startup, including historical DST
+rules; no separate application timezone preference is needed. Restart after
+changing the OS timezone. The standard `TZ` environment variable can override
+detection when launching the app (for example `TZ=Europe/Amsterdam cargo run -p fm-app`).
+Check local and remote listings, Properties and both sides of a copy conflict:
+the same instant must show the same local time everywhere and all four date
+formats must still work. Compare winter and summer dates and a time near midnight;
+sorting must remain chronological. Log source text and UTC log time filters are
+unchanged. If detection fails, a notice and stderr diagnostic explain the UTC
+fallback.
+
+### Markdown code-copy checks
+
+Markdown code blocks have a top-right copy icon: 50% opacity at rest, full opacity
+on hover/focus. Check fenced/indented code, nested lists/quotes and multi-file
+cards at narrow widths and different preview zoom levels. Copy must preserve
+the loaded code exactly, omitting language labels and fences. Drag selection and
+Ctrl+A/Ctrl+C must never include the copy control or its tooltip.
+
 ### Devices and mounted-volume checks
 
 - With no eligible mounted volumes, there is no Devices heading in a Files pane

@@ -17,6 +17,14 @@ A pane's file listing SHALL render a fixed row height and instantiate widgets on
 ### Requirement: Columns show identity, size, time and kind, and are sortable
 The listing SHALL show name, size, modified time and entry kind; clicking a column header SHALL sort by that column, toggling ascending/descending on repeat, with directories-first as a toggleable option — sorting is a command, executed over the cached entries.
 
+#### Scenario: File times use the operating system timezone
+- **WHEN** a file timestamp is displayed in a listing, Properties or a conflict dialog
+- **THEN** it uses the operating system timezone detected at startup, respecting daylight-saving rules at the file's timestamp and the selected date format
+- **AND** local and remote files use the same local display timezone; stored timestamps and sorting remain unchanged
+- **AND** timezone detection and timezone-data loading occur before rendering, never per row or per frame
+- **AND** if timezone detection fails, UTC is used with a visible notice and a diagnostic rather than silently claiming local time
+- **AND** explicitly UTC log filters and log source timestamps are unchanged
+
 #### Scenario: Header click sorts without a re-read
 - **WHEN** the user clicks the Size header
 - **THEN** the cached entries are re-sorted in memory, the header shows the sort direction, and no job is submitted

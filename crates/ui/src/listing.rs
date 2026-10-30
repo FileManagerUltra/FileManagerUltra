@@ -1177,11 +1177,18 @@ thread_local! {
     /// Size and date style, set by the app each frame from the preferences (UI thread only).
     static DISPLAY: std::cell::Cell<(fm_engine::SizeUnits, fm_engine::DateFormat)> =
         const { std::cell::Cell::new((fm_engine::SizeUnits::Binary, fm_engine::DateFormat::Iso)) };
+    static TIME_ZONE: std::cell::RefCell<jiff::tz::TimeZone> =
+        const { std::cell::RefCell::new(jiff::tz::TimeZone::UTC) };
 }
 
 /// Choose how sizes and dates are written everywhere in the UI.
 pub fn set_display(units: fm_engine::SizeUnits, dates: fm_engine::DateFormat) {
     DISPLAY.with(|d| d.set((units, dates)));
+}
+
+/// Use the engine's already-resolved OS timezone; formatting never reads timezone files.
+pub fn set_time_zone(zone: &jiff::tz::TimeZone) {
+    TIME_ZONE.with(|current| current.replace(zone.clone()));
 }
 
 pub(crate) fn human_size(bytes: u64) -> String {
@@ -1214,11 +1221,17 @@ pub(crate) fn type_label(kind: &EntryKind) -> &'static str {
 
 pub(crate) fn format_mtime(t: SystemTime) -> String {
     let (_, format) = DISPLAY.with(std::cell::Cell::get);
-    match t.duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(d) => {
-            let secs = d.as_secs() as i64;
-            let (y, mo, day, h, mi) = civil_from_unix(secs);
-            let sec = secs.rem_euclid(60);
+    match jiff::Timestamp::try_from(t) {
+        Ok(timestamp) => {
+            let date = TIME_ZONE.with(|zone| zone.borrow().to_datetime(timestamp));
+            let (y, mo, day, h, mi, sec) = (
+                date.year(),
+                date.month(),
+                date.day(),
+                date.hour(),
+                date.minute(),
+                date.second(),
+            );
             match format {
                 fm_engine::DateFormat::Iso => format!("{y:04}-{mo:02}-{day:02} {h:02}:{mi:02}"),
                 fm_engine::DateFormat::IsoSeconds => {
@@ -1236,27 +1249,8 @@ pub(crate) fn format_mtime(t: SystemTime) -> String {
                 }
             }
         }
-        Err(_) => "—".to_string(),
+        Err(err) => format!("Invalid file time: {err}"),
     }
-}
-
-/// Days-since-epoch → civil date (Howard Hinnant's algorithm, no deps).
-fn civil_from_unix(secs: i64) -> (i64, u32, u32, u32, u32) {
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400);
-    let h = rem / 3600;
-    let mi = (rem % 3600) / 60;
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m as u32, d as u32, h as u32, mi as u32)
 }
 
 #[cfg(test)]
@@ -1625,7 +1619,94 @@ mod tests {
         let future = SystemTime::UNIX_EPOCH + Duration::from_secs(2_145_916_800);
         assert!(format_mtime(future).starts_with("2038"));
         let before = SystemTime::UNIX_EPOCH - Duration::from_secs(86_400);
-        assert_eq!(format_mtime(before), "—");
+        assert_eq!(format_mtime(before), "1969-12-31 00:00");
+        let out_of_range = SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(400_000_000_000))
+            .expect("system time");
+        assert!(format_mtime(out_of_range).starts_with("Invalid file time:"));
+    }
+
+    #[test]
+    fn file_times_use_the_dates_dst_offset_not_the_current_offset() {
+        let zone = jiff::tz::TimeZone::get("Europe/Amsterdam").expect("timezone");
+        set_time_zone(&zone);
+        let format = |raw: &str| {
+            let timestamp: jiff::Timestamp = raw.parse().expect("timestamp");
+            format_mtime(timestamp.into())
+        };
+        assert_eq!(format("2026-01-15T12:00:00Z"), "2026-01-15 13:00");
+        assert_eq!(format("2026-07-15T12:00:00Z"), "2026-07-15 14:00");
+        assert_eq!(format("2026-03-29T00:59:00Z"), "2026-03-29 01:59");
+        assert_eq!(format("2026-03-29T01:00:00Z"), "2026-03-29 03:00");
+        assert_eq!(format("2026-10-25T00:59:00Z"), "2026-10-25 02:59");
+        assert_eq!(format("2026-10-25T01:00:00Z"), "2026-10-25 02:00");
+        assert_eq!(format("2026-12-31T23:30:00Z"), "2027-01-01 00:30");
+        set_time_zone(&jiff::tz::TimeZone::UTC);
+    }
+
+    #[test]
+    fn local_times_keep_date_preferences_and_support_fractional_offsets() {
+        use fm_engine::{DateFormat, SizeUnits};
+        let timestamp: jiff::Timestamp = "2026-10-29T20:30:09Z".parse().expect("timestamp");
+        let t = timestamp.into();
+        set_time_zone(&jiff::tz::TimeZone::get("Asia/Kathmandu").expect("timezone"));
+        for (style, expected) in [
+            (DateFormat::Iso, "2026-10-30 02:15"),
+            (DateFormat::IsoSeconds, "2026-10-30 02:15:09"),
+            (DateFormat::Eu, "30/10/2026 02:15"),
+            (DateFormat::Us, "10/30/2026 2:15 AM"),
+        ] {
+            set_display(SizeUnits::Binary, style);
+            assert_eq!(format_mtime(t), expected);
+        }
+        set_display(SizeUnits::Binary, DateFormat::Iso);
+        set_time_zone(&jiff::tz::TimeZone::get("America/New_York").expect("timezone"));
+        let midnight: jiff::Timestamp = "2026-01-01T00:30:00Z".parse().expect("timestamp");
+        assert_eq!(format_mtime(midnight.into()), "2025-12-31 19:30");
+        set_time_zone(&jiff::tz::TimeZone::UTC);
+    }
+
+    #[test]
+    fn listing_paints_local_times_without_changing_cached_timestamps() {
+        let timestamp: jiff::Timestamp = "2026-07-15T12:00:00Z".parse().expect("timestamp");
+        let modified = timestamp.into();
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            let (mut s, uri) = ready_session();
+            let mut entries = s.dirs.entries(&uri).expect("entries").to_vec();
+            for entry in &mut entries {
+                entry.modified = Some(modified);
+            }
+            s.dirs.refresh(&uri, entries.into()).expect("new revision");
+            set_time_zone(&jiff::tz::TimeZone::get("Europe/Amsterdam").expect("timezone"));
+            let ctx = egui::Context::default();
+            crate::theme::apply_to(&ctx, &tokens);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1000.0, 400.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        show(ui, &mut s, 1, &tokens, true);
+                    });
+                },
+            );
+            assert!(output.shapes.iter().any(|shape| matches!(
+                &shape.shape, egui::Shape::Text(text) if text.galley.job.text == "2026-07-15 14:00"
+            )), "listing must paint local time");
+            assert!(
+                s.dirs
+                    .entries(&uri)
+                    .expect("entries")
+                    .iter()
+                    .all(|e| e.modified == Some(modified))
+            );
+            output.textures_delta.clear();
+            set_time_zone(&jiff::tz::TimeZone::UTC);
+        }
     }
 
     #[test]

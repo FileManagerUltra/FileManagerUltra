@@ -10,8 +10,9 @@ A cross-platform (Linux · macOS · Windows), multi-pane file manager written in
 - **File operations as background jobs** with progress, conflict handling and cancel
 - **Trash with undo**, **live directory updates**, commander-style shortcuts (F5–F8, Tab)
 - **Content-fitted, elastic file columns** with smooth divider resizing and remembered widths
+- **Local file times** using the operating system's timezone and daylight-saving rules
 - **Terminal panes** with application mouse support (mc/btop), resize reflow, multi-screen selection and configurable 5,000–1,000,000-row scrollback; hold Shift for local selection and scrolling
-- **Rich Markdown previews** with nested lists, tasks, syntax-highlighted code and aligned tables; select/copy loaded text and zoom individual previews from 50% to 400%
+- **Rich Markdown previews** with nested lists, tasks, syntax-highlighted code, per-block copy buttons and aligned tables; select/copy loaded text without UI chrome and zoom individual previews from 50% to 400%
 - **Folder context menus** on empty listing space and tree folders, with creation, paste, refresh, bookmarking and properties actions
 - **Log previews** with Live tail, search/severity filters and UTC time ranges: quick presets from 5 minutes to 7 days, or custom dates and times
 

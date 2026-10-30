@@ -56,6 +56,7 @@ impl App {
             self.session.prefs.size_units,
             self.session.prefs.date_format,
         );
+        fm_ui::listing::set_time_zone(&self.session.file_time_zone);
         let look = theme::Tokens::resolve_with(&self.session.prefs, dark);
         if (pref, dark) == self.applied && look == self.look {
             return;

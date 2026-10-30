@@ -51,7 +51,8 @@ fn inline(ui: &mut Ui, tokens: &Tokens, parts: &[Inline], size: f32, strong: boo
     }
 }
 
-fn code(ui: &mut Ui, tokens: &Tokens, code: &CodeBlock, wrap: bool, path: Id) {
+fn code(ui: &mut Ui, tokens: &Tokens, code: &CodeBlock, wrap: bool, path: Id) -> bool {
+    let mut copied = false;
     egui::Frame::NONE
         .fill(tokens.panel)
         .stroke(Stroke::new(tokens.border_width, tokens.border))
@@ -59,14 +60,59 @@ fn code(ui: &mut Ui, tokens: &Tokens, code: &CodeBlock, wrap: bool, path: Id) {
         .inner_margin(12.0)
         .show(ui, |ui| {
             ui.set_width((ui.available_width()).max(1.0));
+            let edge = tokens.font_size * 1.5;
+            let (header, _) =
+                ui.allocate_exact_size(vec2(ui.available_width(), edge), egui::Sense::hover());
             if !code.language.is_empty() {
-                ui.label(
-                    RichText::new(&code.language)
-                        .font(markdown_fonts::font(ui.ctx(), tokens.font_size * 0.8, true))
-                        .color(tokens.text_muted),
-                );
-                ui.add_space(4.0);
+                ui.painter()
+                    .with_clip_rect(
+                        egui::Rect::from_min_max(header.min, header.max - vec2(edge + 6.0, 0.0))
+                            .intersect(ui.clip_rect()),
+                    )
+                    .text(
+                        header.left_center(),
+                        egui::Align2::LEFT_CENTER,
+                        &code.language,
+                        markdown_fonts::font(ui.ctx(), tokens.font_size * 0.8, true),
+                        tokens.text_muted,
+                    );
             }
+            let rect =
+                egui::Rect::from_min_size(header.right_top() - vec2(edge, 0.0), vec2(edge, edge));
+            let response = ui.interact(rect, path.with("copy-code"), egui::Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Button, response.enabled(), "Copy code block")
+            });
+            let mut painter = ui.painter().clone();
+            painter.multiply_opacity(if response.hovered() || response.has_focus() {
+                1.0
+            } else {
+                0.5
+            });
+            painter.rect_filled(rect, tokens.corner_radius, tokens.hover_bg);
+            let icon = rect.shrink(edge * 0.22);
+            let shift = edge * 0.16;
+            let stroke = Stroke::new(tokens.border_width.max(1.0), tokens.text);
+            painter.rect_stroke(
+                icon.translate(vec2(-shift * 0.4, -shift * 0.4))
+                    .shrink(shift * 0.5),
+                1.0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            painter.rect(
+                icon.translate(vec2(shift * 0.4, shift * 0.4))
+                    .shrink(shift * 0.5),
+                1.0,
+                tokens.hover_bg,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            copied = response.clicked();
+            response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text("Copy code block");
+            ui.add_space(4.0);
             let mut job = LayoutJob::default();
             let font = FontId::monospace(tokens.font_size * 0.88);
             for (n, line) in code.text.split('\n').enumerate() {
@@ -99,6 +145,13 @@ fn code(ui: &mut Ui, tokens: &Tokens, code: &CodeBlock, wrap: bool, path: Id) {
                     });
             }
         });
+    copied
+}
+
+#[derive(Default)]
+struct CodeActions {
+    next: usize,
+    clicked: Option<usize>,
 }
 
 fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id) {
@@ -177,7 +230,14 @@ fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id) {
         });
 }
 
-fn blocks(ui: &mut Ui, tokens: &Tokens, doc: &[MdBlock], wrap: bool, path: Id) {
+fn blocks(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    doc: &[MdBlock],
+    wrap: bool,
+    path: Id,
+    actions: &mut CodeActions,
+) {
     for (n, block) in doc.iter().enumerate() {
         let path = path.with(n);
         match block {
@@ -197,7 +257,10 @@ fn blocks(ui: &mut Ui, tokens: &Tokens, doc: &[MdBlock], wrap: bool, path: Id) {
                 ui.add_space(tokens.font_size * 0.4);
             }
             MdBlock::Code(c) => {
-                code(ui, tokens, c, wrap, path);
+                if code(ui, tokens, c, wrap, path) {
+                    actions.clicked = Some(actions.next);
+                }
+                actions.next += 1;
                 ui.add_space(tokens.font_size * 0.5);
             }
             MdBlock::List { start, items } => {
@@ -256,7 +319,7 @@ fn blocks(ui: &mut Ui, tokens: &Tokens, doc: &[MdBlock], wrap: bool, path: Id) {
                         }
                         ui.vertical(|ui| {
                             ui.set_width(ui.available_width().max(1.0));
-                            blocks(ui, tokens, &item.blocks, wrap, path.with(i));
+                            blocks(ui, tokens, &item.blocks, wrap, path.with(i), actions);
                         });
                     });
                 }
@@ -268,7 +331,7 @@ fn blocks(ui: &mut Ui, tokens: &Tokens, doc: &[MdBlock], wrap: bool, path: Id) {
                     .inner_margin(12.0)
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width().max(1.0));
-                        blocks(ui, tokens, children, wrap, path);
+                        blocks(ui, tokens, children, wrap, path, actions);
                     });
                 ui.painter().line_segment(
                     [
@@ -292,7 +355,14 @@ fn blocks(ui: &mut Ui, tokens: &Tokens, doc: &[MdBlock], wrap: bool, path: Id) {
     }
 }
 
-pub(super) fn show(ui: &mut Ui, pane: PaneId, tokens: &Tokens, doc: &MdDoc, wrap: bool) {
+pub(super) fn show(
+    ui: &mut Ui,
+    pane: PaneId,
+    tokens: &Tokens,
+    doc: &MdDoc,
+    wrap: bool,
+) -> Option<usize> {
+    let mut actions = CodeActions::default();
     markdown_fonts::install(ui.ctx());
     let mut document_tokens = *tokens;
     document_tokens.font_size *= 1.14;
@@ -315,7 +385,8 @@ pub(super) fn show(ui: &mut Ui, pane: PaneId, tokens: &Tokens, doc: &MdDoc, wrap
                                 tokens,
                                 &doc.blocks,
                                 wrap,
-                                Id::NULL.with(("md-doc", pane)),
+                                ui.make_persistent_id(("md-doc", pane)),
+                                &mut actions,
                             );
                             if doc.truncated {
                                 ui.label(tokens.muted("… truncated"));
@@ -326,11 +397,57 @@ pub(super) fn show(ui: &mut Ui, pane: PaneId, tokens: &Tokens, doc: &MdDoc, wrap
             });
         });
     remember_scroll(ui, &output);
+    actions.clicked
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_button_is_translucent_until_hovered_and_stays_inside_the_box() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            for language in ["", "rust"] {
+                let block = CodeBlock {
+                    language: language.into(),
+                    text: "content".into(),
+                    lines: Vec::new(),
+                };
+                let mut harness =
+                    Harness::builder()
+                        .with_size(vec2(320.0, 180.0))
+                        .build_ui(move |ui| {
+                            crate::theme::apply_to(ui.ctx(), &tokens);
+                            code(ui, &tokens, &block, false, Id::NULL.with("test-code"));
+                        });
+                harness.run();
+                let rect = harness.get_by_label("Copy code block").rect();
+                assert!(rect.right() <= 320.0 && rect.top() >= 0.0);
+                assert!(rect.left() > 250.0, "button belongs at the top right");
+                let fill = |harness: &Harness<'_, ()>| {
+                    harness
+                        .output()
+                        .shapes
+                        .iter()
+                        .find_map(|s| match &s.shape {
+                            egui::Shape::Rect(shape) if shape.rect == rect => Some(shape.fill),
+                            _ => None,
+                        })
+                        .expect("button background")
+                };
+                let idle = fill(&harness);
+                harness
+                    .input_mut()
+                    .events
+                    .push(egui::Event::PointerMoved(rect.center()));
+                harness.run();
+                let hovered = fill(&harness);
+                assert!(idle.a() < hovered.a());
+                assert_eq!(hovered, tokens.hover_bg);
+            }
+        }
+    }
 
     #[test]
     fn inline_formats_keep_bold_italic_strike_links_and_selection() {

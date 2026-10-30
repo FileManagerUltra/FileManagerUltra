@@ -429,6 +429,20 @@ only loaded records and selecting a preset performs no additional log scanning o
 
 ### 9.1 Theming and dark mode
 
+#### File timestamp presentation
+
+File timestamps share `listing::format_mtime` across listings, Properties and
+conflict dialogs. `Session::new` resolves the operating system timezone with Jiff
+before the UI starts; the shell supplies this already-loaded zone through
+`listing::set_time_zone`. Rendering performs only in-memory conversions, using
+the offset/DST rules at each file's timestamp rather than today's offset.
+Detection failure is reported in the status bar and stderr with an explicit UTC
+fallback. `Session::default` and standalone widget tests use UTC for deterministic
+fixtures. OS timezone changes require restarting the app; the standard `TZ`
+environment override is supported. UTC log filtering is independent.
+
+#### Theme presentation
+
 Dark mode is a v1 feature, not a later polish pass: **every widget is built against semantic tokens from day one, so both themes are always renderable.**
 
 - **Tokens, not colours.** `fm-ui/src/theme.rs` defines one `Tokens` struct of *semantic* roles — `bg`, `panel`, `text`, `text_muted`, `accent`, `border`, `selection_bg/selection_text`, `hover_bg`, `error`, `warning`, `success` — plus non-colour metrics (row height, padding, corner radius, border width, font size, terminal font size). `Tokens::resolve_with(&Prefs, dark)` layers the user's accent, density and text sizes on the palette; `apply_to` scales text styles from egui's defaults so repeated changes never compound. Size and date formats reach the UI through a thread-local set each frame (`listing::set_display`). Single-value settings go through `prefs.set` (`display_prefs_cmds.rs`). Widgets take `&Tokens`; a widget that asks egui for `Color32::GRAY` is a bug and fails CI grep.
@@ -531,6 +545,12 @@ heights, read-only task boxes, inset quotes and code panels. Tables scroll when
 their minimum column widths exceed the pane. No HTML execution, URL activation or
 image fetching is introduced. Clipboard export traverses the same tree; table
 cells are separated with tabs and task markers retain their checked state.
+Code panels reserve a header with a non-selectable language label and a painted
+copy icon (50% idle opacity, full on hover/focus). The widget reports a code-block
+ordinal to `preview.code.copy`; the engine resolves it in the loaded document,
+including nested blocks and explicitly targeted multi-file cards, and publishes
+only the code through the clipboard outbox. UI labels/tooltips are never part of
+the Markdown export or selectable text.
 Document-only Atkinson Hyperlegible regular/bold faces are bundled under the SIL
 Open Font License in `crates/ui/assets/fonts/OFL.txt`; named font families leave
 the application's normal UI/terminal faces unchanged.

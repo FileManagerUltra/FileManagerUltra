@@ -664,6 +664,169 @@ fn markdown_document_dark_light() {
 }
 
 #[test]
+fn markdown_code_copy_button_and_document_copy_exclude_chrome() {
+    use egui_kittest::kittest::Queryable;
+    for tokens in [Tokens::dark(), Tokens::light()] {
+        for scale in [0.5, 1.0, 2.0] {
+            let source = b"# Example\n\n```rust\nlet code = \"copy me\";\n```\n\nAfter.";
+            let (mut s, pane) = preview_fixture("copy.md", source, false);
+            s.layout.focus_pane(pane).expect("focus preview");
+            s.previews.slots.get_mut(&pane).expect("slot").scale = scale;
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(850.0, 700.0))
+                .build_ui_state(
+                    move |ui, s: &mut Session| {
+                        theme::apply_to(ui.ctx(), &tokens);
+                        fm_ui::preview::show(ui, s, pane, &tokens);
+                    },
+                    s,
+                );
+            harness.run();
+            let start = harness.get_by_label("Example").rect().left_center() + egui::vec2(0.5, 0.0);
+            let end = harness.get_by_label("After.").rect().right_center() - egui::vec2(0.5, 0.0);
+            harness.hover_at(start);
+            harness.run();
+            harness.drag_at(start);
+            harness.run();
+            harness.hover_at(end);
+            harness.run();
+            harness.drop_at(end);
+            harness.run();
+            harness.input_mut().events.push(egui::Event::Copy);
+            harness.step();
+            let copied = harness
+                .output()
+                .platform_output
+                .commands
+                .iter()
+                .find_map(|command| match command {
+                    egui::OutputCommand::CopyText(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .expect("drag-selection copy");
+            assert!(copied.contains("let code") && copied.contains("After."));
+            assert!(!copied.contains("Copy") && !copied.contains("rust"));
+            harness.get_by_label("Copy code block").click();
+            harness.run();
+            assert_eq!(
+                harness.state_mut().clipboard_out.take().as_deref(),
+                Some("let code = \"copy me\";")
+            );
+            harness.input_mut().events.push(egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            });
+            harness.run();
+            harness.input_mut().events.push(egui::Event::Copy);
+            harness.run();
+            assert_eq!(
+                harness.state_mut().clipboard_out.take().as_deref(),
+                Some("Example\nlet code = \"copy me\";\nAfter.")
+            );
+        }
+    }
+}
+
+#[test]
+fn markdown_code_buttons_in_nested_blocks_and_multi_file_cards() {
+    use egui_kittest::kittest::Queryable;
+    for grid in [false, true] {
+        let tokens = Tokens::dark();
+        let source = b"```\nfirst\n```\n\n> ```\n> second\n> ```";
+        let (mut s, pane) = preview_fixture("nested.md", source, false);
+        s.layout.focus_pane(pane).expect("focus preview");
+        if grid {
+            let slot = s.previews.slots.get_mut(&pane).expect("slot");
+            let doc = Arc::new(fm_preview::Preview::Markdown(fm_preview::markdown::MdDoc {
+                blocks: fm_preview::markdown::parse("```\ngrid code\n```"),
+                truncated: false,
+                total_bytes: 0,
+            }));
+            let entry = fm_vfs::Entry::new(
+                VfsUri::parse("/grid.md").expect("uri"),
+                fm_vfs::EntryKind::File,
+            );
+            let fm_engine::preview_cmds::Body::Static(first) = &slot.body else {
+                panic!("static")
+            };
+            slot.body = fm_engine::preview_cmds::Body::Grid(vec![
+                (
+                    fm_vfs::Entry::new(
+                        VfsUri::parse("/first.md").expect("uri"),
+                        fm_vfs::EntryKind::File,
+                    ),
+                    first.clone(),
+                ),
+                (entry, doc),
+            ]);
+        }
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(850.0, 700.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    fm_ui::preview::show(ui, s, pane, &tokens);
+                },
+                s,
+            );
+        harness.run();
+        let target = if grid { 2 } else { 1 };
+        harness
+            .get_all_by_label("Copy code block")
+            .nth(target)
+            .expect("target button")
+            .click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().clipboard_out.take().as_deref(),
+            Some(if grid { "grid code" } else { "second" })
+        );
+    }
+}
+
+#[test]
+fn markdown_code_copy_dark_light() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let source = b"```rust\nfn main() {\n    println!(\"Copy just this code\");\n}\n```";
+        let (s, pane) = preview_fixture("copy.md", source, false);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(550.0, 300.0))
+            .renderer(renderer)
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    fm_ui::preview::show(ui, s, pane, &tokens);
+                },
+                s,
+            );
+        harness.run();
+        harness.snapshot(format!("markdown_code_copy_idle_{theme}"));
+        let pos = harness.get_by_label("Copy code block").rect().center();
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(pos));
+        harness.run();
+        harness.snapshot(format!("markdown_code_copy_hover_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
 fn markdown_tables_have_aligned_rows_and_natural_text() {
     use egui_kittest::kittest::Queryable;
     let _gpu = lock_gpu();

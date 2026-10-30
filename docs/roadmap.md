@@ -27,6 +27,10 @@ per-preview 50%-400% zoom, configurable terminal scrollback (5,000-1,000,000 row
 applied to new/restarted terminals), and shared folder menus for listing backgrounds
 and tree folders. Preferences clipboard routing and terminal-close notices are fixed.
 The approved yellow-outline/blue-panel icon is applied across platform assets.
+File timestamps now follow the OS timezone, including historical daylight-saving
+rules, while log filters remain UTC. Markdown code panels have translucent copy
+buttons that become opaque on hover/focus and copy only code; neither buttons nor
+language labels enter text selections or document copies.
 Automated coverage is in place; interactive confirmation of the latest preview and
 context-menu changes and installed Windows/macOS icon smoke checks remain open.
 

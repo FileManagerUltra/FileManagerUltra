@@ -193,9 +193,13 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 }
                 Body::Static(p) => {
                     let p = p.clone();
-                    static_body(ui, pane, tokens, &p, slot.pretty, slot.wrap, slot.zoom);
+                    if let Some(block) =
+                        static_body(ui, pane, tokens, &p, slot.pretty, slot.wrap, slot.zoom)
+                    {
+                        actions.push(("preview.code.copy", json!({ "block": block })));
+                    }
                 }
-                Body::Grid(items) => multi_grid(ui, pane, tokens, items),
+                Body::Grid(items) => multi_grid(ui, pane, tokens, items, &mut actions),
                 Body::Log(v) => {
                     log_body(ui, pane, tokens, v, &mut actions);
                     let id = Id::NULL.with(("pv-logui", pane));
@@ -517,11 +521,11 @@ fn static_body(
     pretty: bool,
     wrap: bool,
     zoom: Zoom,
-) {
+) -> Option<usize> {
     match &**p {
         Preview::Text(d) => text_view(ui, pane, tokens, d, wrap),
         Preview::Structured(d) => structured(ui, pane, tokens, d, pretty, wrap),
-        Preview::Markdown(m) => markdown::show(ui, pane, tokens, m, wrap),
+        Preview::Markdown(m) => return markdown::show(ui, pane, tokens, m, wrap),
         Preview::Image(i) => image(ui, pane, tokens, p, i, zoom),
         Preview::Hex(h) => hex(ui, tokens, h),
         Preview::Dir(d) => scrolled(ui, pane, "dir", |ui| dir_card(ui, tokens, d)),
@@ -562,15 +566,22 @@ fn static_body(
             remember_scroll(ui, &output);
         }
     }
+    None
 }
 
-fn multi_grid(ui: &mut Ui, pane: PaneId, tokens: &Tokens, items: &[(fm_vfs::Entry, Arc<Preview>)]) {
+fn multi_grid(
+    ui: &mut Ui,
+    pane: PaneId,
+    tokens: &Tokens,
+    items: &[(fm_vfs::Entry, Arc<Preview>)],
+    actions: &mut Vec<Action>,
+) {
     let scale = content_scale(ui);
     let columns = ((ui.available_width() / (300.0 * scale)).floor() as usize).clamp(1, 4);
     let output = paged_scroll(ui, ScrollArea::vertical(), ("pv-multi-grid", pane)).show(ui, |ui| {
-        for row in items.chunks(columns) {
+        for (row_index, row) in items.chunks(columns).enumerate() {
             ui.columns(columns, |uis| {
-                for (column, (entry, preview)) in uis.iter_mut().zip(row) {
+                for (column_index, (column, (entry, preview))) in uis.iter_mut().zip(row).enumerate() {
                     column.push_id(&entry.uri, |ui| {
                         egui::Frame::group(ui.style()).show(ui, |ui| {
                             ui.add(
@@ -580,7 +591,9 @@ fn multi_grid(ui: &mut Ui, pane: PaneId, tokens: &Tokens, items: &[(fm_vfs::Entr
                             ui.separator();
                             ui.allocate_ui(vec2(ui.available_width(), 240.0 * scale), |ui| {
                                 ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
-                                static_body(ui, pane, tokens, preview, false, false, Zoom::Fit);
+                                if let Some(block) = static_body(ui, pane, tokens, preview, false, false, Zoom::Fit) {
+                                    actions.push(("preview.code.copy", json!({ "block": block, "item": row_index * columns + column_index })));
+                                }
                             });
                         });
                     });
