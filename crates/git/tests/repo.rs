@@ -159,3 +159,13 @@ fn blob_rejects_traversal_and_option_like_revisions() {
     let long = "a".repeat(300);
     assert!(fm_git::blob(d, &Rev::Commit(long), "a.txt").is_err());
 }
+
+#[test]
+fn repo_autocrlf_checkout_is_not_reported_modified() {
+    let t = fixture();
+    let d = t.path();
+    git(d, &["config", "core.autocrlf", "true"]);
+    std::fs::write(d.join("a.txt"), "one\r\n").unwrap();
+    let st = fm_git::status(d).unwrap();
+    assert_eq!(st.mark_abs(&d.join("a.txt")), None);
+}

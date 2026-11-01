@@ -466,6 +466,74 @@ mod tests {
     }
 
     #[test]
+    fn compare_with_head_from_the_file_menu_opens_a_diff_pane() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let d = dir.path();
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .current_dir(d)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        std::fs::write(d.join("edited.txt"), "1\n").expect("write");
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "i"]);
+        std::fs::write(d.join("edited.txt"), "2\n").expect("write");
+        let uri = VfsUri::parse(&d.to_string_lossy()).expect("uri");
+        let mut s = Session::new().expect("session");
+        s.layout.state_mut(1).expect("pane").location = uri.clone();
+        s.ensure_read(uri.clone()).expect("read");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !s.dirs.state(&uri).is_ready() {
+            assert!(Instant::now() < deadline);
+            s.poll();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let tokens = crate::theme::Tokens::dark();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(700.0, 1000.0))
+            .build_ui_state(
+                move |ui, (s, _)| {
+                    crate::theme::apply_to(ui.ctx(), &tokens);
+                    crate::listing::show(ui, s, 1, &tokens, true);
+                    if let Some(id) = take_command(ui.ctx()) {
+                        s.dispatch_or_notice(id, &serde_json::Value::Null);
+                    }
+                },
+                (s, None),
+            );
+        harness.run();
+        let pos = harness.get_by_label("Current folder").rect().center()
+            + egui::vec2(
+                0.0,
+                2.0 * (tokens.row_height
+                    + harness
+                        .ctx
+                        .style_of(egui::Theme::Dark)
+                        .spacing
+                        .item_spacing
+                        .y),
+            );
+        secondary_click(&mut harness, pos);
+        harness.get_by_label("Compare with HEAD").click();
+        harness.run();
+        let s = &harness.state().0;
+        assert!(s.notice.is_none(), "{:?}", s.notice);
+        assert_eq!(s.layout.panes().len(), 2);
+        assert!(
+            s.layout
+                .panes()
+                .iter()
+                .any(|p| s.pane_kind(*p) == Some(fm_layout::PaneKind::Diff))
+        );
+    }
+
+    #[test]
     fn every_entry_is_a_registered_command() {
         let s = Session::new().expect("session");
         for id in ENTRIES.iter().chain(FOLDER_ENTRIES).flatten() {

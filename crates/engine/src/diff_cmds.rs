@@ -159,7 +159,10 @@ impl Session {
     }
 
     /// Show `diff` in the focused Diff pane, or in a new pane next to the focused one.
-    pub fn open_diff(&mut self, diff: DiffState) -> Result<PaneId, FmError> {
+    pub fn open_diff(&mut self, mut diff: DiffState) -> Result<PaneId, FmError> {
+        // Committed blobs have LF endings; on Windows a CRLF checkout would differ on every line.
+        let committed = |s: &DiffSide| !matches!(s, DiffSide::File(_));
+        diff.ignore_eol |= cfg!(windows) && (committed(&diff.left) || committed(&diff.right));
         let focused = self.layout.focused();
         let reuse = self.pane_kind(focused) == Some(PaneKind::Diff);
         let pane = if reuse {

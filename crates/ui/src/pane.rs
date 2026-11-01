@@ -246,15 +246,32 @@ fn kind_menu(ui: &mut Ui, s: &mut Session, pane: PaneId, current: PaneKind) {
                     | PaneKind::Network
                     | PaneKind::Trash
                     | PaneKind::Diff
-            ) && (kind != PaneKind::Diff
-                || s.layout.state(pane).is_some_and(|st| st.diff.is_some()));
+            );
             let label = if supported {
                 kind.label().to_string()
             } else {
                 format!("{} (soon)", kind.label())
             };
             let resp = ui.add_enabled(supported, egui::Button::selectable(kind == current, label));
-            if resp.clicked() {
+            if resp.clicked() && kind == PaneKind::Diff && current != PaneKind::Diff {
+                // A Diff pane needs something to compare: use this pane's selection.
+                let _ = s.layout.focus_pane(pane);
+                let id = ["diff.compare.selected", "diff.compare.head"]
+                    .into_iter()
+                    .find(|id| s.command_enabled(id));
+                match id {
+                    Some(id) => {
+                        s.dispatch_or_notice(id, &serde_json::json!({}));
+                    }
+                    None => {
+                        s.notice = Some(
+                            "Select a file in a git repository, or two files, then choose Diff"
+                                .to_string(),
+                        );
+                    }
+                }
+                ui.close();
+            } else if resp.clicked() {
                 s.dispatch_or_notice(
                     "pane.kind.set",
                     &serde_json::json!({ "kind": kind.as_str(), "pane": pane }),

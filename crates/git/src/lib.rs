@@ -227,7 +227,18 @@ fn open(root: &Path) -> Result<gix::Repository, GitError> {
             {}
         }
     }
+    default_autocrlf(&mut repo);
     Ok(repo)
+}
+
+/// Git for Windows sets `core.autocrlf=true` system-wide, which the isolated open ignores;
+/// without it every CRLF checkout would look modified. Repo-local settings still win.
+fn default_autocrlf(repo: &mut gix::Repository) {
+    if !cfg!(windows) || repo.config_snapshot().string("core.autocrlf").is_some() {
+        return;
+    }
+    let mut snapshot = repo.config_snapshot_mut();
+    let _ = snapshot.set_raw_value("core.autocrlf", "true");
 }
 
 fn branch_of(repo: &gix::Repository) -> Option<String> {
@@ -253,6 +264,8 @@ pub fn status(root: &Path) -> Result<RepoStatus, GitError> {
         branch: branch_of(&repo),
         ..Default::default()
     };
+    let normalise = eol_normalised(&repo);
+    let mut budget = EOL_CHECKS;
     let iter = repo
         .status(gix::progress::Discard)
         .map_err(err)?
@@ -277,6 +290,14 @@ pub fn status(root: &Path) -> Result<RepoStatus, GitError> {
                 Some(Summary::Added | Summary::IntentToAdd) => Mark::Added,
                 Some(Summary::Renamed | Summary::Copied) => Mark::Renamed,
                 Some(Summary::Conflict) => Mark::Conflicted,
+                Some(Summary::Modified)
+                    if normalise && budget > 0 && {
+                        budget -= 1;
+                        same_modulo_eol(&repo, root, path)
+                    } =>
+                {
+                    continue;
+                }
                 Some(_) => Mark::Modified,
                 None => continue,
             },
@@ -287,6 +308,45 @@ pub fn status(root: &Path) -> Result<RepoStatus, GitError> {
         }
     }
     Ok(out)
+}
+
+/// Most files re-checked for line-ending-only differences per scan.
+const EOL_CHECKS: usize = 1_000;
+
+/// `core.autocrlf` is true/input: the worktree has CRLF where the index has LF.
+fn eol_normalised(repo: &gix::Repository) -> bool {
+    repo.config_snapshot()
+        .string("core.autocrlf")
+        .is_some_and(|v| matches!(v.to_string().as_str(), "true" | "input"))
+}
+
+/// Whether the worktree file equals its staged content once CRLF is folded to LF.
+fn same_modulo_eol(repo: &gix::Repository, root: &Path, rel: &str) -> bool {
+    fn fold(bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(bytes.len());
+        for (i, b) in bytes.iter().enumerate() {
+            if !(*b == b'\r' && bytes.get(i + 1) == Some(&b'\n')) {
+                out.push(*b);
+            }
+        }
+        out
+    }
+    let Ok(meta) = std::fs::symlink_metadata(root.join(rel)) else {
+        return false;
+    };
+    if !meta.is_file() || meta.len() > MAX_BLOB as u64 {
+        return false;
+    }
+    let Ok(work) = std::fs::read(root.join(rel)) else {
+        return false;
+    };
+    let Ok(id) = repo.rev_parse_single(format!(":{rel}").as_bytes().as_bstr()) else {
+        return false;
+    };
+    let Ok(obj) = repo.find_object(id.detach()) else {
+        return false;
+    };
+    obj.data.len() <= MAX_BLOB && fold(&work) == fold(&obj.data)
 }
 
 fn tree_mark(change: &gix::diff::index::Change) -> Mark {

@@ -3292,3 +3292,76 @@ fn diff_pane_split_and_unified_dark_light() {
         }
     }
 }
+
+#[test]
+fn git_markers_in_listing_dark_light() {
+    use fm_engine::git::Mark;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    let dir = tempfile::tempdir().expect("tmp");
+    let d = dir.path();
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(d)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "git {args:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    for f in ["clean.txt", "edited.txt", "removed.txt"] {
+        std::fs::write(d.join(f), "1\n").expect("write");
+    }
+    std::fs::create_dir(d.join("src")).expect("dir");
+    std::fs::write(d.join("src/lib.rs"), "1\n").expect("write");
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "i"]);
+    std::fs::write(d.join("edited.txt"), "2\n").expect("write");
+    std::fs::write(d.join("src/lib.rs"), "2\n").expect("write");
+    std::fs::remove_file(d.join("removed.txt")).expect("rm");
+    std::fs::write(d.join("new.txt"), "n\n").expect("write");
+    std::fs::write(d.join("staged.txt"), "s\n").expect("write");
+    git(&["add", "staged.txt"]);
+    for entry in std::fs::read_dir(d).expect("dir").flatten() {
+        if let Ok(f) = std::fs::File::open(entry.path()) {
+            let _ = f.set_modified(FIXED_MTIME + Duration::from_secs(86_400 * 365));
+        }
+    }
+    let uri = VfsUri::parse(&d.to_string_lossy()).expect("uri");
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = with_fixed_places(Session::new().expect("session"));
+        session.layout.state_mut(1).expect("pane").location = uri.clone();
+        session.submit_read(uri.clone()).expect("submit");
+        wait_ready(&mut session, &uri);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            session.poll();
+            if session
+                .git_view(&uri)
+                .is_some_and(|st| st.mark_abs(&d.join("edited.txt")) == Some(Mark::Modified))
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "git status never arrived");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut harness = Harness::builder()
+            .renderer(renderer)
+            .with_accessibility_check(false)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                egui::Frame::NONE.fill(tokens.panel).show(ui, |ui| {
+                    listing::show(ui, &mut session, 1, &tokens, true);
+                });
+            });
+        harness.set_size(egui::vec2(640.0, 300.0));
+        harness.run();
+        harness.snapshot(format!("listing_git_markers_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
