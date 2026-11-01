@@ -131,6 +131,15 @@ pub struct Prefs {
     pub log_tail_mib: u64,
     #[serde(default)]
     pub preview_filters: crate::preview_types::PreviewFilters,
+    /// Show git status in listings and trees (capability `git-status`).
+    #[serde(default = "default_true")]
+    pub git_enabled: bool,
+    /// Status letter in a gutter column.
+    #[serde(default = "default_true")]
+    pub git_gutter: bool,
+    /// Tint file names by git status.
+    #[serde(default = "default_true")]
+    pub git_tint: bool,
     /// Saved SFTP connections. Never holds a password or passphrase.
     #[serde(default)]
     pub profiles: Vec<Profile>,
@@ -440,6 +449,9 @@ impl Default for Prefs {
             log_poll_ms: default_log_poll_ms(),
             log_tail_mib: default_log_tail_mib(),
             preview_filters: crate::preview_types::PreviewFilters::default(),
+            git_enabled: true,
+            git_gutter: true,
+            git_tint: true,
             profiles: Vec::new(),
             remote_poll_secs: default_remote_poll(),
             remote_timeout_secs: default_remote_timeout(),
@@ -756,6 +768,9 @@ mod tests {
                 "date_format",
                 "density",
                 "font_size",
+                "git_enabled",
+                "git_gutter",
+                "git_tint",
                 "last_dir",
                 "log_poll_ms",
                 "log_tail_mib",

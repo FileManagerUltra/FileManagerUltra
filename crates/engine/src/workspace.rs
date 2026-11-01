@@ -414,7 +414,7 @@ impl Session {
             .filter(|st| {
                 !matches!(
                     st.kind,
-                    PaneKind::Terminal | PaneKind::Preview | PaneKind::Trash
+                    PaneKind::Terminal | PaneKind::Preview | PaneKind::Trash | PaneKind::Diff
                 )
             })
             .map(|st| st.location.clone())

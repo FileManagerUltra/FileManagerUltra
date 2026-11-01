@@ -401,6 +401,12 @@ impl eframe::App for App {
                 .state(focused)
                 .map(|p| p.location.clone())
                 .and_then(|uri| fm_ui::remote::free_space_label(&mut self.session, &uri));
+            let branch = self
+                .session
+                .layout
+                .state(focused)
+                .map(|p| p.location.clone())
+                .and_then(|uri| fm_ui::git_marks::branch_label(&mut self.session, &uri));
             ui.horizontal(|ui| {
                 if let Some(notice) = self.session.notice.clone() {
                     let text = egui::RichText::new(notice.clone())
@@ -435,6 +441,9 @@ impl eframe::App for App {
                 }
                 if selected > 0 {
                     ui.label(tokens.muted(format!("{selected} selected")));
+                }
+                if let Some(branch) = branch {
+                    ui.label(tokens.muted(branch));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let label = if self.session.show_hidden {

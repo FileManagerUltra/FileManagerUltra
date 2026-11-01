@@ -395,6 +395,13 @@ Run on Linux, macOS and Windows (manual smoke; the OS watchers differ per platfo
   Also try an NFS/sshfs mount (must poll, not error).
 - Remote (SFTP/SMB) panes are unchanged: refresh on focus regain and every 5 s.
 
+## Git status and diff checks
+
+1. In a git repo, open it in a pane: modified files show a tinted name and an `M` in the icon gutter, untracked `U`, folders a dot; the footer shows `git: <branch> · N changed`.
+2. Edit/save a file externally: the marker appears within about a second.
+3. Right-click a modified file > Compare with HEAD: a Diff pane opens beside it with aligned columns and word highlights; View > Compare has next/prev/swap/unified/ignore EOL.
+4. Preferences > Files > Git toggles the markers. Opening a huge repo must keep the UI responsive.
+
 ## Dev log
 
 Append to `log/devlog.md` at the end of every working session (what landed, numbers, what is still open). It is gitignored and exists so the next session can pick up cold.

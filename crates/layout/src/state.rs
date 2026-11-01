@@ -490,16 +490,19 @@ pub enum PaneKind {
     Smb,
     Network,
     Trash,
+    /// Side-by-side comparison of two files or revisions (capability `git-diff`).
+    Diff,
 }
 
 impl PaneKind {
-    pub const ALL: [PaneKind; 6] = [
+    pub const ALL: [PaneKind; 7] = [
         Self::Files,
         Self::Terminal,
         Self::Preview,
         Self::Sftp,
         Self::Network,
         Self::Trash,
+        Self::Diff,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -511,6 +514,7 @@ impl PaneKind {
             Self::Smb => "smb",
             Self::Network => "network",
             Self::Trash => "trash",
+            Self::Diff => "diff",
         }
     }
 
@@ -523,6 +527,7 @@ impl PaneKind {
             Self::Smb => "SMB",
             Self::Network => "Network",
             Self::Trash => "Trash",
+            Self::Diff => "Diff",
         }
     }
 
@@ -567,6 +572,73 @@ pub struct PaneState {
     /// Which Places sections are collapsed (persisted per pane).
     #[serde(default)]
     pub places: PlacesState,
+    /// Diff panes: what is compared and how it is shown.
+    #[serde(default)]
+    pub diff: Option<DiffState>,
+}
+
+/// One side of a comparison.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DiffSide {
+    /// A file on disk (absolute OS path).
+    File(String),
+    /// A file as committed at `rev` (branch, tag, sha, `HEAD`, ...) in the repository at `repo`.
+    Rev {
+        repo: String,
+        rev: String,
+        rel: String,
+    },
+    /// A file as staged in the index of the repository at `repo`.
+    Index { repo: String, rel: String },
+}
+
+impl DiffSide {
+    /// Short label for the column header.
+    pub fn label(&self) -> String {
+        match self {
+            Self::File(p) => p.clone(),
+            Self::Rev { rev, rel, .. } => format!("{rel} @ {rev}"),
+            Self::Index { rel, .. } => format!("{rel} (staged)"),
+        }
+    }
+}
+
+/// How the two sides are laid out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DiffMode {
+    #[default]
+    Split,
+    Unified,
+}
+
+/// What a Diff pane compares (serialised with the workspace).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DiffState {
+    pub left: DiffSide,
+    pub right: DiffSide,
+    #[serde(default)]
+    pub mode: DiffMode,
+    #[serde(default)]
+    pub ignore_eol: bool,
+    /// Vertical scroll in px, shared by both columns.
+    #[serde(default)]
+    pub scroll: f32,
+    /// Index of the change the next/previous commands last landed on.
+    #[serde(default)]
+    pub current: usize,
+}
+
+impl DiffState {
+    pub fn new(left: DiffSide, right: DiffSide) -> Self {
+        Self {
+            left,
+            right,
+            mode: DiffMode::Split,
+            ignore_eol: false,
+            scroll: 0.0,
+            current: 0,
+        }
+    }
 }
 
 /// Collapse state of the Places sections above the tree. All start expanded.
@@ -613,6 +685,7 @@ impl PaneState {
             col_widths: DEFAULT_COL_WIDTHS,
             preview_source: PreviewSource::Follow,
             places: PlacesState::default(),
+            diff: None,
         };
         if pane.location != pane.tree.root {
             pane.reveal_location();

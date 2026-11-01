@@ -233,8 +233,14 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                         RowState::Loading => format!("{} …", ellipsize(&row.name, max_chars)),
                         RowState::Failed => format!("{} !", ellipsize(&row.name, max_chars)),
                     };
+                    let marks = crate::git_marks::Marks::peek(s, &row.uri);
+                    let mark = marks.mark(&row.uri);
+                    let mut text = egui::RichText::new(format!("   {label}"));
+                    if !selected && let Some(tint) = marks.tint_of(mark, tokens) {
+                        text = text.color(tint);
+                    }
                     let response = ui.add(
-                        egui::Button::selectable(selected, format!("   {label}"))
+                        egui::Button::selectable(selected, text)
                             .sense(egui::Sense::click_and_drag()),
                     );
                     if reveal && selected {
@@ -243,6 +249,17 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     }
                     if row.is_dir {
                         paint_chevron(ui, response.rect, row.expanded, selected, tokens);
+                    }
+                    if let Some(m) = mark
+                        && marks.gutter
+                        && row.is_dir
+                        && m != fm_engine::git::Mark::Ignored
+                    {
+                        let d = tokens.font_size * 0.5;
+                        let (dot, _) =
+                            ui.allocate_exact_size(egui::vec2(d, d), egui::Sense::hover());
+                        ui.painter()
+                            .circle_filled(dot.center(), d * 0.4, tokens.git(m));
                     }
                     if is_connected_host(s, &row.uri) {
                         // Beside the name, never over it.

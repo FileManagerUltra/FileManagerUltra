@@ -19,6 +19,7 @@ fm-fs-local = { path = "crates/fs-local" }
 fm-fs-smb = { path = "crates/fs-smb" }
 fm-fs-sftp = { path = "crates/fs-sftp" }
 fm-discovery = { path = "crates/discovery" }
+fm-git = { path = "crates/git" }
 fm-testkit = { path = "crates/testkit" }
 fm-ops = { path = "crates/ops" }
 fm-layout = { path = "crates/layout" }
@@ -62,6 +63,9 @@ opener = { version = "0.9", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 semver = "1"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+# fm-git only: pure-Rust git (no network, no hooks, no external programs)
+gix = { version = "0.90", default-features = false, features = ["sha1", "status", "revision", "index", "blob-diff", "excludes", "attributes"] }
+similar = "3"
 portable-pty = "0.9"
 vt100 = "0.18"
 

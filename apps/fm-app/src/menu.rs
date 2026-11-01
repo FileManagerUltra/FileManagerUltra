@@ -782,6 +782,23 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, ZOOM_RESET);
             ui.separator();
             item(ui, session, dialogs, VIEW_PREVIEW);
+            ui.menu_button("Compare", |ui| {
+                for id in [
+                    "diff.compare.head",
+                    "diff.mark",
+                    "diff.compare.marked",
+                    "diff.compare.selected",
+                    "diff.next",
+                    "diff.prev",
+                    "diff.swap",
+                    "diff.mode",
+                    "diff.eol.toggle",
+                    "diff.reload",
+                ] {
+                    item(ui, session, dialogs, id);
+                }
+                item(ui, session, dialogs, "git.refresh");
+            });
             ui.menu_button("Preview", |ui| {
                 item(ui, session, dialogs, PREVIEW_SELECT_ALL);
                 item(ui, session, dialogs, PREVIEW_COPY_TEXT);

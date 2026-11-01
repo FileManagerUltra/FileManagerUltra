@@ -1040,7 +1040,9 @@ impl Session {
         if let Some(notice) = self.watch.sync(&uris, &mounts) {
             self.notice = Some(notice);
         }
-        for uri in self.watch.drain(Instant::now()) {
+        let drained = self.watch.drain(Instant::now());
+        self.git_tick(&drained);
+        for uri in drained {
             self.poll_location(uri);
         }
         if self

@@ -15,7 +15,7 @@ use crate::session::Session;
 const KEYS: &str = "accent (\"default\"|\"#rrggbb\"), density (compact|normal|comfortable), \
     font_size 9-24, terminal_font_size 9-24, terminal_scrollback_rows 5000-1000000, size_units (binary|decimal|bytes), \
     date_format (iso|isoseconds|us|eu), show_hidden, single_click_open, confirm_delete, \
-    confirm_run (bool), thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
+    confirm_run (bool), git_enabled, git_gutter, git_tint (bool), thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
 
 fn bad(key: &str, expect: &str) -> FmError {
     FmError::InvalidParams(format!("{key} must be {expect}"))
@@ -94,6 +94,9 @@ pub fn set(s: &mut Session, key: &str, value: &Value) -> Result<(), FmError> {
                 s.dispatch("view.hidden.toggle", &Value::Null)?;
             }
         }
+        "git_enabled" => s.prefs.git_enabled = boolean(key, value)?,
+        "git_gutter" => s.prefs.git_gutter = boolean(key, value)?,
+        "git_tint" => s.prefs.git_tint = boolean(key, value)?,
         "single_click_open" => s.prefs.single_click_open = boolean(key, value)?,
         "confirm_delete" => s.prefs.confirm_delete = boolean(key, value)?,
         "confirm_run" => s.prefs.confirm_run = boolean(key, value)?,

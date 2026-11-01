@@ -84,6 +84,13 @@ pub fn set_kind() -> CommandSpec {
                         s.trash_list()?;
                     }
                 }
+                PaneKind::Diff => {
+                    if s.layout.state(pane).is_none_or(|st| st.diff.is_none()) {
+                        return Err(FmError::InvalidParams(
+                            "open a comparison with diff.open first".to_string(),
+                        ));
+                    }
+                }
                 PaneKind::Terminal => s.ensure_terminal(pane)?,
                 PaneKind::Network => s.open_network(pane)?,
             }

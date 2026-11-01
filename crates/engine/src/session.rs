@@ -93,6 +93,10 @@ pub struct Session {
     pub dirs: DirCache,
     /// Live watches on visible local directories (capability `directory-cache`).
     pub watch: crate::watch::Watcher,
+    /// Git status per repository (capability `git-status`).
+    pub git: crate::git::GitState,
+    /// Loaded comparisons of Diff panes (capability `git-diff`).
+    pub diffs: crate::diff_cmds::DiffHub,
     /// Scheme → backend; local disk is always registered.
     pub backends: VfsRegistry,
     /// Running and recently finished file jobs (capability `job-progress`).
@@ -168,6 +172,8 @@ impl Default for Session {
             preferences_open: false,
             dirs: DirCache::new(),
             watch: Default::default(),
+            git: Default::default(),
+            diffs: Default::default(),
             backends,
             fileops: FileOps::default(),
             remote,
@@ -329,6 +335,8 @@ impl Session {
             || self.updates.browser_job.is_some()
             || !self.inflight.is_empty()
             || self.watch.has_pending()
+            || self.git_busy()
+            || self.diff_busy()
             || self.remote.is_busy()
             || self.previews.is_busy()
             || self.thumbs.is_busy()
@@ -347,6 +355,8 @@ impl Session {
         changed |= self.pump_devices();
         changed |= self.pump_remote_lost();
         changed |= self.pump_trash();
+        changed |= self.pump_git();
+        changed |= self.pump_diffs();
         self.sync_servers();
         self.normalize_sftp_panes();
         self.remote_tick();

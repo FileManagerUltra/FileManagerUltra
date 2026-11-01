@@ -42,6 +42,8 @@ pub fn specs() -> Vec<CommandSpec> {
         theme_cmds::toggle(),
     ];
     specs.extend(crate::update_cmds::specs());
+    specs.extend(crate::git_cmds::specs());
+    specs.extend(crate::diff_cmds::specs());
     specs.extend(pane_cmds::specs());
     specs.extend(arrange_cmds::specs());
     specs.extend(pane_kind_cmds::specs());

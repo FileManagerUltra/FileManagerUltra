@@ -263,6 +263,22 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                     }
                 },
             );
+            section(ui, tokens, "Git", None, |ui| {
+                for (key, label, value) in [
+                    ("git_enabled", "Show git status", s.prefs.git_enabled),
+                    (
+                        "git_gutter",
+                        "Status letter beside names",
+                        s.prefs.git_gutter,
+                    ),
+                    ("git_tint", "Tint names by status", s.prefs.git_tint),
+                ] {
+                    let mut on = value;
+                    if ui.checkbox(&mut on, label).changed() {
+                        set(s, key, json!(on));
+                    }
+                }
+            });
         }
         Topic::Advanced => {
             section(

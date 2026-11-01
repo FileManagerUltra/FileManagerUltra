@@ -739,6 +739,10 @@ fn ready_rows(
         None => builder.vertical_scroll_offset(saved_scroll),
     };
     let mut focus_parent = false;
+    let marks = match s.layout.state(pane).map(|st| st.location.clone()) {
+        Some(loc) => crate::git_marks::Marks::for_folder(s, &loc),
+        None => crate::git_marks::Marks::none(),
+    };
     let output = builder.show_rows(ui, row_height, total, |ui, row_range| {
         for row in row_range {
             if row == 0 {
@@ -764,9 +768,17 @@ fn ready_rows(
             let Some(entry) = entries.get(idx as usize) else {
                 continue;
             };
-            if let Some(target) =
-                entry_row_ui(ui, s, pane, tokens, pane_focused, entry, entry_row, widths)
-            {
+            if let Some(target) = entry_row_ui(
+                ui,
+                s,
+                pane,
+                tokens,
+                pane_focused,
+                entry,
+                entry_row,
+                widths,
+                &marks,
+            ) {
                 open = Some(target);
             }
         }
@@ -973,6 +985,7 @@ fn entry_row_ui(
     entry: &Entry,
     row: usize,
     widths: ColumnSizing,
+    marks: &crate::git_marks::Marks,
 ) -> Option<VfsUri> {
     let state = s.layout.state(pane)?;
     let selected = state.listing.is_selected(&entry.name);
@@ -1062,8 +1075,11 @@ fn entry_row_ui(
     }
     // Norton-style cues: directories get the accent colour and a trailing slash, links the
     // muted colour and an `@`; plain files keep the primary text colour.
+    let mark = marks.mark(&entry.uri);
     let text_color = if selected {
         tokens.selection_text
+    } else if let Some(tint) = marks.tint_of(mark, tokens) {
+        tint
     } else if entry.is_dir_like() {
         tokens.accent_text
     } else if entry.is_symlink() {
@@ -1085,11 +1101,15 @@ fn entry_row_ui(
     };
     let cols = columns(rect, widths);
     if cols.name.width() >= 1.0 {
-        if entry.is_symlink() {
+        let mut cell = cols.name.shrink2(egui::vec2(tokens.padding, 0.0));
+        // The icon gutter shows the git mark, else the link icon.
+        let git = mark.filter(|m| marks.gutter && *m != fm_engine::git::Mark::Ignored);
+        if let Some(m) = git {
+            crate::git_marks::paint_gutter(ui.painter(), cell, m, entry.is_dir_like(), tokens);
+        } else if entry.is_symlink() {
             let origin = cols.name.left_center() + egui::vec2(tokens.padding, 0.0);
             paint_link_icon(ui.painter(), origin, text_color);
         }
-        let mut cell = cols.name.shrink2(egui::vec2(tokens.padding, 0.0));
         cell.min.x += ICON_GUTTER;
         paint_cell(
             ui.painter(),
@@ -1138,9 +1158,11 @@ fn entry_row_ui(
         );
     }
     column_separators(ui.painter(), &cols, rect, tokens);
-    response
-        .clone()
-        .on_hover_text(fm_engine::item_cmds::display_path(&entry.uri));
+    let mut hover = fm_engine::item_cmds::display_path(&entry.uri);
+    if let Some(m) = mark {
+        hover = format!("{hover}\nGit: {}", crate::git_marks::describe(m));
+    }
+    response.clone().on_hover_text(hover);
     open
 }
 

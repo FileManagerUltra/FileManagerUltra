@@ -17,6 +17,7 @@ fm-fs-local.workspace = true
 fm-fs-sftp.workspace = true
 fm-fs-smb.workspace = true
 fm-discovery.workspace = true
+fm-git.workspace = true
 fm-layout.workspace = true
 fm-ops.workspace = true
 fm-term.workspace = true

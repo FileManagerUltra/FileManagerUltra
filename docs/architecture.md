@@ -502,6 +502,10 @@ Change 3 extends `security` with drag & drop and `ops` rules (destination contai
 
 ---
 
+## 12a. Git status and Diff pane (`git-status-and-diff`)
+
+`fm-git` (L0, `gix`, read-only, isolated config) computes a per-repo status map (folders aggregate their strongest mark; capped at 200 000 entries) and loads blobs (HEAD/rev/index, 2 MiB cap). `fm-git::diff` aligns two texts with `similar` (binary detection, 100 000-line and 2 s caps, word marks). The engine's `git.rs` keeps an LRU of at most 8 repos, refreshed on the local lane after watcher events or a `.git/index`/`HEAD` stamp change; `diff_cmds.rs` loads comparisons for `PaneKind::Diff` panes (`diff.*` commands) and drops them when the pane goes away. The UI draws marks in the icon gutter and name tint (`git_marks.rs`) and the aligned/unified view (`diff.rs`).
+
 ## 13. Change history
 
 | Date | Change |

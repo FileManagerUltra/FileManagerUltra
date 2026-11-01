@@ -1,0 +1,19 @@
+[package]
+name = "fm-git"
+description = "Read-only git status and blob access (pure-Rust gix, no git binary)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+gix = { workspace = true }
+similar = { workspace = true }
+fm-vfs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

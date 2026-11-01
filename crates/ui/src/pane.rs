@@ -121,6 +121,10 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 crate::trash::show(ui, s, pane, tokens);
                 return;
             }
+            if kind == PaneKind::Diff {
+                crate::diff::show(ui, s, pane, tokens);
+                return;
+            }
             if kind == PaneKind::Preview {
                 open = crate::preview::show(ui, s, pane, tokens);
                 return;
@@ -239,7 +243,9 @@ fn kind_menu(ui: &mut Ui, s: &mut Session, pane: PaneId, current: PaneKind) {
                     | PaneKind::Sftp
                     | PaneKind::Network
                     | PaneKind::Trash
-            );
+                    | PaneKind::Diff
+            ) && (kind != PaneKind::Diff
+                || s.layout.state(pane).is_some_and(|st| st.diff.is_some()));
             let label = if supported {
                 kind.label().to_string()
             } else {

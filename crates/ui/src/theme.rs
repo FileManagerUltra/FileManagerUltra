@@ -42,6 +42,18 @@ pub struct Tokens {
     pub warning: Color32,
     /// Success / completion.
     pub success: Color32,
+    /// Git status colours (name tint and gutter letter).
+    pub git_modified: Color32,
+    pub git_added: Color32,
+    pub git_removed: Color32,
+    pub git_untracked: Color32,
+    pub git_ignored: Color32,
+    pub git_conflict: Color32,
+    /// Diff pane row backgrounds and the stronger intra-line highlights.
+    pub diff_add_bg: Color32,
+    pub diff_del_bg: Color32,
+    pub diff_add_word: Color32,
+    pub diff_del_word: Color32,
     /// Virtualized listing row height (px).
     pub row_height: f32,
     /// Generic inner padding (px).
@@ -81,6 +93,16 @@ impl Tokens {
             error: Color32::from_rgb(0xff, 0x6b, 0x6b),
             warning: Color32::from_rgb(0xff, 0xc8, 0x57),
             success: Color32::from_rgb(0x63, 0xc1, 0x74),
+            git_modified: Color32::from_rgb(0xe5, 0xc0, 0x7b),
+            git_added: Color32::from_rgb(0x63, 0xc1, 0x74),
+            git_removed: Color32::from_rgb(0xff, 0x6b, 0x6b),
+            git_untracked: Color32::from_rgb(0x6f, 0xe3, 0xd0),
+            git_ignored: Color32::from_rgb(0x7a, 0x80, 0x88),
+            git_conflict: Color32::from_rgb(0xff, 0x8f, 0xd0),
+            diff_add_bg: Color32::from_rgb(0x1d, 0x3a, 0x26),
+            diff_del_bg: Color32::from_rgb(0x44, 0x22, 0x26),
+            diff_add_word: Color32::from_rgb(0x2b, 0x62, 0x3c),
+            diff_del_word: Color32::from_rgb(0x7a, 0x30, 0x38),
             row_height: 24.0,
             padding: 6.0,
             corner_radius: 6.0,
@@ -131,6 +153,16 @@ impl Tokens {
             error: Color32::from_rgb(0xc2, 0x2b, 0x2b),
             warning: Color32::from_rgb(0x9a, 0x67, 0x00),
             success: Color32::from_rgb(0x1f, 0x7a, 0x33),
+            git_modified: Color32::from_rgb(0x8a, 0x5c, 0x00),
+            git_added: Color32::from_rgb(0x1f, 0x7a, 0x33),
+            git_removed: Color32::from_rgb(0xc2, 0x2b, 0x2b),
+            git_untracked: Color32::from_rgb(0x0a, 0x7d, 0x7d),
+            git_ignored: Color32::from_rgb(0x80, 0x86, 0x90),
+            git_conflict: Color32::from_rgb(0xa8, 0x2a, 0x8a),
+            diff_add_bg: Color32::from_rgb(0xdf, 0xf5, 0xe3),
+            diff_del_bg: Color32::from_rgb(0xfd, 0xe3, 0xe3),
+            diff_add_word: Color32::from_rgb(0xa6, 0xe3, 0xb2),
+            diff_del_word: Color32::from_rgb(0xf6, 0xb5, 0xb5),
             row_height: 24.0,
             padding: 6.0,
             corner_radius: 6.0,
@@ -159,6 +191,19 @@ impl Tokens {
                 Color32::from_rgb(0x12, 0x9c, 0x9c),
                 Color32::from_rgb(0x1b, 0x1e, 0x23),
             ],
+        }
+    }
+
+    /// Colour of a git status mark.
+    pub fn git(&self, mark: fm_engine::git::Mark) -> Color32 {
+        use fm_engine::git::Mark as M;
+        match mark {
+            M::Modified => self.git_modified,
+            M::Added | M::Renamed => self.git_added,
+            M::Removed => self.git_removed,
+            M::Untracked => self.git_untracked,
+            M::Ignored => self.git_ignored,
+            M::Conflicted => self.git_conflict,
         }
     }
 
@@ -553,6 +598,16 @@ mod tests {
                 error,
                 warning,
                 success,
+                git_modified,
+                git_added,
+                git_removed,
+                git_untracked,
+                git_ignored,
+                git_conflict,
+                diff_add_bg,
+                diff_del_bg,
+                diff_add_word,
+                diff_del_word,
                 row_height,
                 padding,
                 corner_radius,
@@ -579,6 +634,16 @@ mod tests {
                 ("error", error),
                 ("warning", warning),
                 ("success", success),
+                ("git_modified", git_modified),
+                ("git_added", git_added),
+                ("git_removed", git_removed),
+                ("git_untracked", git_untracked),
+                ("git_ignored", git_ignored),
+                ("git_conflict", git_conflict),
+                ("diff_add_bg", diff_add_bg),
+                ("diff_del_bg", diff_del_bg),
+                ("diff_add_word", diff_add_word),
+                ("diff_del_word", diff_del_word),
                 ("term_bg", term_bg),
                 ("term_fg", term_fg),
                 ("term_cursor", term_cursor),
