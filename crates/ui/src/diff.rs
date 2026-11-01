@@ -22,9 +22,23 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
     let status = s.diff_view(pane).map(|v| v.status.clone());
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(state.left.label()).color(tokens.git_removed));
-        ui.label("↔");
-        ui.label(egui::RichText::new(state.right.label()).color(tokens.git_added));
+        for (side, color) in [
+            (&state.left, tokens.git_removed),
+            (&state.right, tokens.git_added),
+        ] {
+            let full = side.label();
+            let short = match side {
+                fm_layout::DiffSide::File(p) => std::path::Path::new(p)
+                    .file_name()
+                    .map_or_else(|| full.clone(), |n| n.to_string_lossy().into_owned()),
+                _ => full.clone(),
+            };
+            ui.label(egui::RichText::new(short).color(color))
+                .on_hover_text(full);
+            if std::ptr::eq(side, &state.left) {
+                ui.label("vs");
+            }
+        }
     });
     ui.horizontal(|ui| {
         for (id, label) in [
@@ -67,7 +81,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
                 }
                 ui.label(
                     egui::RichText::new(format!(
-                        "{} changes · +{} −{}",
+                        "{} changes · +{} -{}",
                         model.changes.len(),
                         model.added,
                         model.removed
@@ -124,6 +138,7 @@ fn rows(
         rows.len()
     };
     area.show_rows(ui, row_h, total, |ui, range| {
+        ui.spacing_mut().item_spacing.y = 0.0;
         if unified {
             let mut at = 0;
             for row in rows {

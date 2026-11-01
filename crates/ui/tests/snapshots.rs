@@ -3231,3 +3231,64 @@ fn find_files_window_lists_results_dark_light() {
         results.extend_harness(&mut harness);
     }
 }
+
+#[test]
+fn diff_pane_split_and_unified_dark_light() {
+    use fm_engine::diff_cmds::DiffStatus;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    let dir = tempfile::tempdir().expect("tmp");
+    let (a, b) = (dir.path().join("old.rs"), dir.path().join("new.rs"));
+    std::fs::write(
+        &a,
+        "fn main() {\n    let x = 1;\n    println!(\"{x}\");\n    old();\n}\n",
+    )
+    .expect("a");
+    std::fs::write(
+        &b,
+        "fn main() {\n    let x = 2;\n    println!(\"{x}\");\n    added();\n    more();\n}\n",
+    )
+    .expect("b");
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for mode in ["split", "unified"] {
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let mut session = with_fixed_places(Session::new().expect("session"));
+            session
+                .dispatch(
+                    "diff.open",
+                    &serde_json::json!({"left": a.to_string_lossy(), "right": b.to_string_lossy()}),
+                )
+                .expect("open");
+            session
+                .dispatch("diff.mode", &serde_json::json!({"mode": mode}))
+                .expect("mode");
+            let pane = session.layout.focused();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                session.poll();
+                if matches!(
+                    session.diff_view(pane).map(|v| &v.status),
+                    Some(DiffStatus::Ready(_))
+                ) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let mut harness = Harness::builder()
+                .renderer(renderer)
+                .with_accessibility_check(false)
+                .build_ui(move |ui| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    egui::Frame::NONE.fill(tokens.panel).show(ui, |ui| {
+                        fm_ui::diff::show(ui, &mut session, pane, &tokens);
+                    });
+                });
+            harness.set_size(egui::vec2(760.0, 260.0));
+            harness.run();
+            harness.snapshot(format!("pane_diff_{mode}_{theme}"));
+            results.extend_harness(&mut harness);
+        }
+    }
+}

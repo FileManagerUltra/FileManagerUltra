@@ -235,6 +235,50 @@ pub fn finish_terminal(ctx: &Context, s: &mut Session, pane: PaneId, rect: Rect,
     }
 }
 
+/// A Diff pane accepts a dragged local file onto its left or right half as that side.
+pub fn finish_diff(ctx: &Context, s: &mut Session, pane: PaneId, rect: Rect, tokens: &Tokens) {
+    let Some(payload) = DragAndDrop::payload::<DragPayload>(ctx) else {
+        return;
+    };
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        DragAndDrop::clear_payload(ctx);
+        return;
+    }
+    let Some(pos) = ctx.pointer_interact_pos().filter(|p| rect.contains(*p)) else {
+        return;
+    };
+    let Some(path) = payload.sources.first().and_then(|u| u.local_path_string()) else {
+        ctx.set_cursor_icon(CursorIcon::NoDrop);
+        return;
+    };
+    let left = pos.x < rect.center().x;
+    let half = if left {
+        Rect::from_min_max(rect.min, egui::pos2(rect.center().x, rect.max.y))
+    } else {
+        Rect::from_min_max(egui::pos2(rect.center().x, rect.min.y), rect.max)
+    };
+    paint_feedback(
+        ctx,
+        half,
+        pos,
+        if left {
+            "Compare on left"
+        } else {
+            "Compare on right"
+        },
+        tokens,
+    );
+    if ctx.input(|i| i.pointer.any_released())
+        && DragAndDrop::take_payload::<DragPayload>(ctx).is_some()
+    {
+        let side = if left { "left" } else { "right" };
+        s.dispatch_or_notice(
+            "diff.side",
+            &json!({"side": side, "path": path, "pane": pane}),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

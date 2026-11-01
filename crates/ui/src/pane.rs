@@ -199,6 +199,8 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let dragging = egui::DragAndDrop::has_payload_of_type::<crate::dnd::DragPayload>(ui.ctx());
     if kind == PaneKind::Terminal {
         crate::dnd::finish_terminal(ui.ctx(), s, pane, area, tokens);
+    } else if kind == PaneKind::Diff {
+        crate::dnd::finish_diff(ui.ctx(), s, pane, area, tokens);
     } else {
         crate::dnd::finish(ui.ctx(), s, area, tokens);
     }

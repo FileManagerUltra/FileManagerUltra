@@ -114,3 +114,48 @@ fn locate_splits_repo_and_relative_path() {
     assert_eq!((root.as_path(), rel.as_str()), (d, "src/deep/m.rs"));
     assert!(fm_git::locate(Path::new("/")).is_none());
 }
+
+#[test]
+fn hostile_repo_config_is_never_executed() {
+    let t = fixture();
+    let d = t.path();
+    let marker = d.join("pwned");
+    let cmd = format!("touch {}", marker.display());
+    git(d, &["config", "core.fsmonitor", &cmd]);
+    git(d, &["config", "core.hooksPath", "/nonexistent"]);
+    git(d, &["config", "filter.x.clean", &cmd]);
+    std::fs::write(d.join(".gitattributes"), "*.txt filter=x\n").unwrap();
+    std::fs::write(d.join("a.txt"), "changed\n").unwrap();
+    let _ = fm_git::status(d);
+    assert!(!marker.exists(), "status executed repo config");
+    let _ = fm_git::blob(d, &Rev::Index, "a.txt");
+    assert!(!marker.exists(), "blob executed repo config");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_loops_do_not_hang_or_escape() {
+    let t = fixture();
+    let d = t.path();
+    std::os::unix::fs::symlink(d, d.join("loop")).unwrap();
+    std::os::unix::fs::symlink("/etc", d.join("etc-link")).unwrap();
+    let st = fm_git::status(d).unwrap();
+    assert!(st.len() < 100);
+}
+
+#[test]
+fn blob_rejects_traversal_and_option_like_revisions() {
+    let t = fixture();
+    let d = t.path();
+    for rel in ["../x", "/etc/passwd", "a\0b"] {
+        assert!(fm_git::blob(d, &Rev::Index, rel).is_err(), "{rel:?}");
+    }
+    for rev in ["--output=/tmp/x", "-1"] {
+        assert!(
+            fm_git::blob(d, &Rev::Commit(rev.to_string()), "a.txt").is_err(),
+            "{rev}"
+        );
+    }
+    let long = "a".repeat(300);
+    assert!(fm_git::blob(d, &Rev::Commit(long), "a.txt").is_err());
+}

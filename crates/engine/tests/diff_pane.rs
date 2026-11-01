@@ -124,6 +124,7 @@ fn hostile_params_are_rejected() {
         ("diff.compare.marked", json!({})),
         ("diff.mode", json!({"mode": "bogus"})),
         ("diff.rev", json!({"side": "up", "rev": "HEAD"})),
+        ("diff.side", json!({"side": "left", "path": "rel"})),
         ("diff.swap", json!({})),
         ("diff.next", json!({})),
     ] {

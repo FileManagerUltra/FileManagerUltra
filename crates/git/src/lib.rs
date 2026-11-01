@@ -208,8 +208,26 @@ fn resolve_git_dir(root: &Path) -> Option<PathBuf> {
     })
 }
 
+/// Open read-only. Repository-local `filter.*` drivers are removed from the in-memory
+/// config: they are shell commands, and a cloned repo must never get to run one.
 fn open(root: &Path) -> Result<gix::Repository, GitError> {
-    gix::open_opts(root, gix::open::Options::isolated()).map_err(err)
+    let mut repo = gix::open_opts(root, gix::open::Options::isolated()).map_err(err)?;
+    {
+        let mut snapshot = repo.config_snapshot_mut();
+        let drivers: Vec<_> = snapshot
+            .sections_by_name("filter")
+            .into_iter()
+            .flatten()
+            .filter_map(|section| section.header().subsection_name().map(ToOwned::to_owned))
+            .collect();
+        for name in drivers {
+            while snapshot
+                .remove_section("filter", Some(name.as_ref()))
+                .is_some()
+            {}
+        }
+    }
+    Ok(repo)
 }
 
 fn branch_of(repo: &gix::Repository) -> Option<String> {

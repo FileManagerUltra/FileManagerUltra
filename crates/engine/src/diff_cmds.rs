@@ -591,8 +591,49 @@ fn rev() -> CommandSpec {
     }
 }
 
+/// `diff.side {side: "left"|"right", path, pane?}` — replace one side with a local file.
+fn side_cmd() -> CommandSpec {
+    CommandSpec {
+        id: "diff.side",
+        label: "Set Diff Side",
+        menu: &["View", "Diff", "Set Side"],
+        shortcut: None,
+        params: "{side: \"left\"|\"right\", path: string, pane?: number}",
+        enabled: focused_diff,
+        run: |s, p: &Params| {
+            let map = object(p)?
+                .ok_or_else(|| FmError::InvalidParams("side and path required".to_string()))?;
+            let path = abs_path(
+                map.get("path")
+                    .and_then(Params::as_str)
+                    .ok_or_else(|| FmError::InvalidParams("path required".to_string()))?,
+            )?;
+            let left = match map.get("side").and_then(Params::as_str) {
+                Some("left") => true,
+                Some("right") => false,
+                _ => {
+                    return Err(FmError::InvalidParams(
+                        "side must be left or right".to_string(),
+                    ));
+                }
+            };
+            let pane = match map.get("pane") {
+                None | Some(Params::Null) => s.layout.focused(),
+                Some(v) => v
+                    .as_u64()
+                    .ok_or_else(|| FmError::InvalidParams("invalid pane".to_string()))?,
+            };
+            let d = s.diff_state_mut(pane)?;
+            *(if left { &mut d.left } else { &mut d.right }) = DiffSide::File(path);
+            d.current = 0;
+            Ok(())
+        },
+    }
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        side_cmd(),
         open_cmd(),
         compare_head(),
         mark_cmd(),

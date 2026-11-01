@@ -8,7 +8,7 @@
 - [x] Blob loading, diff model (`similar`), caps and binary detection.
 - [x] `PaneKind::Diff`: layout state + serde, kind switcher, `diff.*` commands.
 - [x] Diff widget: aligned columns, synced scroll, intra-line highlight, next/prev change, narrow fallback.
-- [ ] Entry points: context menu Compare with HEAD / Compare with… (done); drag onto a side (open).
-- [ ] Security tests: hostile repo config, huge repo, symlink loops, caps; command fuzzing.
-- [ ] Snapshots (dark/light), temp-repo integration tests, performance check on a large repo.
-- [ ] Docs: architecture, roadmap, development smoke checks, specs; devlog.
+- [x] Entry points: context menu Compare with HEAD / Compare with…, drag onto a side.
+- [x] Security tests: hostile repo config, huge repo, symlink loops, caps; command fuzzing.
+- [x] Snapshots (dark/light), temp-repo integration tests, performance check on a large repo.
+- [x] Docs: architecture, roadmap, development smoke checks, specs; devlog.
