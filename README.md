@@ -1,5 +1,3 @@
-<p align="center"><img src="packaging/icon.png" width="128" alt="FileManagerUltra logo"></p>
-
 # FileManagerUltra
 
 A cross-platform (Linux · macOS · Windows), multi-pane file manager written in **Rust** with a native `eframe`/egui UI — no Electron, no webview.
@@ -36,6 +34,3 @@ See [docs/install.md](docs/install.md).
 ## License
 
 MIT — see [LICENSE](LICENSE). Logo source: `packaging/logo.svg`. Bundled Atkinson Hyperlegible fonts use the [SIL Open Font License](crates/ui/assets/fonts/OFL.txt).
-
-Change test
-
