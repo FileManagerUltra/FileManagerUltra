@@ -170,9 +170,18 @@ impl Layout {
         if !self.root.contains(target) {
             return Err(FmError::NotFound(format!("pane {target}")));
         }
-        // Focus a surviving pane before the id disappears; never leave a
-        // dangling previous-focus pointing at the closed id.
-        let survivor = self.panes().into_iter().find(|p| *p != target);
+        let panes = self.panes();
+        let survivors: Vec<PaneId> = panes.iter().copied().filter(|p| *p != target).collect();
+        let old_focused = self.focus.focused;
+        let old_previous = self.focus.previous;
+        let focused_after = if old_focused != target && survivors.contains(&old_focused) {
+            old_focused
+        } else {
+            old_previous
+                .filter(|p| *p != target && survivors.contains(p))
+                .or_else(|| survivors.first().copied())
+                .ok_or(FmError::Unsupported("cannot close the last pane"))?
+        };
         self.root.close_leaf(target);
         self.states.remove(&target);
         for st in self.states.values_mut() {
@@ -183,14 +192,10 @@ impl Layout {
         if self.focus.last_files == Some(target) {
             self.focus.last_files = None;
         }
-        if let Some(s) = survivor {
-            if self.focus.focused == target {
-                self.focus.focused = s;
-            }
-            if self.focus.previous == Some(target) {
-                self.focus.previous = Some(s);
-            }
-        }
+        self.focus.focused = focused_after;
+        self.focus.previous = old_previous
+            .filter(|p| *p != target && *p != focused_after && survivors.contains(p))
+            .or_else(|| survivors.iter().copied().find(|p| *p != focused_after));
         self.fix_zoom();
         Ok(())
     }
@@ -437,6 +442,21 @@ mod tests {
         assert_eq!(l.focused(), 1, "focus moves to the survivor");
         let err = l.close(1).expect_err("close last");
         assert!(err.to_string().contains("last pane"));
+    }
+
+    #[test]
+    fn closing_new_split_returns_focus_to_previously_active_pane() {
+        let mut l = layout();
+        let b = l.split(1, Axis::Vertical, 0.5).expect("split");
+        let c = l.split(b, Axis::Horizontal, 0.5).expect("split");
+
+        assert_eq!(l.focused(), c);
+        assert_eq!(l.focus.previous, Some(b));
+        l.close(c).expect("close");
+
+        assert_eq!(l.focused(), b, "restore the pane active before the split");
+        assert_ne!(l.focus.previous, Some(c));
+        assert!(l.focus.previous.is_none_or(|p| l.state(p).is_some()));
     }
 
     #[test]
