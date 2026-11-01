@@ -339,7 +339,7 @@ unmounted backing directory.
 
 ### Watching
 
-`DirCache::invalidate(uri)` (revision bump) is the only mutation path — the cache is invalidated, never patched. The `notify`-based watcher (non-recursive, per watched directory, 100 ms debounce) lands with the ops change; until then panes refresh via `nav.refresh` (`Ctrl+R`), and remotes will refresh on focus regain + a 5 s poll while visible.
+`DirCache::invalidate(uri)` (revision bump) is the only mutation path — the cache is invalidated, never patched. `engine::watch::Watcher` (the `notify` crate: inotify / FSEvents / `ReadDirectoryChangesW`) holds one non-recursive watch per *visible* local folder (reconciled every `Session::poll` from the active tab's Files panes, so shared folders share one watch and hidden tabs hold none). The OS callback queues nothing: it only marks an already-watched folder dirty in a set bounded by `MAX_WATCHES` (64) and wakes the UI, so event floods cost no memory. `drain` debounces (100 ms) and the session re-reads through `poll_location` on the `local` lane, swapping entries in without a loading blank; selection prunes by name. Backend errors/overflow mark every watch dirty. A vanished folder shows the read error. Folders on network filesystems/UNC paths, over the watch cap, or whose watch fails fall back to a 2 s poll; remotes keep focus-regain + the 5 s poll. The OS watcher is created lazily on first use.
 
 ---
 

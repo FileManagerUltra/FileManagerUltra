@@ -811,6 +811,13 @@ impl Session {
                 }
                 // A folder that listed fine a moment ago and now fails for any reason other
                 // than "gone" or "denied" means the link is in trouble.
+                // A local folder that vanished shows the read error instead of a stale listing.
+                Some(Err(FmError::NotFound(_))) if uri.scheme() == Scheme::File => {
+                    self.watch.forget(&uri);
+                    if let Err(err) = self.refresh_read(uri) {
+                        self.notice = Some(err.to_string());
+                    }
+                }
                 Some(Err(FmError::NotFound(_) | FmError::PermissionDenied(_))) => {}
                 Some(Err(_)) => {
                     lock(&self.remote.lost).push(conn_key(uri.scheme(), uri.authority()))
@@ -1006,17 +1013,9 @@ impl Session {
         self.refresh_remote_panes();
     }
 
-    /// Until a file watcher exists, changes made outside the app (or by a job on another
-    /// pane's folder) show up by re-reading the visible local folders every 2 s.
+    /// Keep OS watches on the visible local folders and re-read the ones that changed.
+    /// Folders without a live watch (network mounts, watch limits) are polled every 2 s.
     fn local_tick(&mut self) {
-        if self
-            .remote
-            .local_tick
-            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2))
-        {
-            return;
-        }
-        self.remote.local_tick = Some(Instant::now());
         let panes = match self.layout.zoomed {
             Some(p) => vec![p],
             None => self.layout.panes(),
@@ -1031,8 +1030,31 @@ impl Session {
                 uris.push(loc.clone());
             }
         }
-        for uri in uris {
+        let mounts: Vec<String> = self
+            .volumes
+            .entries()
+            .iter()
+            .filter(|d| crate::watch::is_network_filesystem(&d.filesystem))
+            .filter_map(|d| d.mount.local_path_string())
+            .collect();
+        if let Some(notice) = self.watch.sync(&uris, &mounts) {
+            self.notice = Some(notice);
+        }
+        for uri in self.watch.drain(Instant::now()) {
             self.poll_location(uri);
+        }
+        if self
+            .remote
+            .local_tick
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2))
+        {
+            return;
+        }
+        self.remote.local_tick = Some(Instant::now());
+        for uri in uris {
+            if !self.watch.covers(&uri) {
+                self.poll_location(uri);
+            }
         }
     }
 

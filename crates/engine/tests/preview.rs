@@ -647,6 +647,8 @@ fn gzip_rotations_and_missing_sources_are_not_silently_dropped() {
         ("gone.log", b"x"),
     ]);
     std::fs::remove_file(r._dir.path().join("gone.log")).expect("remove");
+    // Keep the listing stale: a live refresh would (correctly) prune the vanished selection.
+    r.s.watch.disable();
     r.select(&["a.log", "b.log.1.gz", "gone.log"]);
     wait_multi(&mut r, 3);
     let pane = r.preview;

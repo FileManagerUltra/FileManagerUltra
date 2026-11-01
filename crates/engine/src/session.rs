@@ -91,6 +91,8 @@ pub struct Session {
     pub preferences_open: bool,
     /// Shared directory listings (capability `directory-cache`).
     pub dirs: DirCache,
+    /// Live watches on visible local directories (capability `directory-cache`).
+    pub watch: crate::watch::Watcher,
     /// Scheme → backend; local disk is always registered.
     pub backends: VfsRegistry,
     /// Running and recently finished file jobs (capability `job-progress`).
@@ -165,6 +167,7 @@ impl Default for Session {
             updates: Default::default(),
             preferences_open: false,
             dirs: DirCache::new(),
+            watch: Default::default(),
             backends,
             fileops: FileOps::default(),
             remote,
@@ -325,6 +328,7 @@ impl Session {
             || self.updates.checking()
             || self.updates.browser_job.is_some()
             || !self.inflight.is_empty()
+            || self.watch.has_pending()
             || self.remote.is_busy()
             || self.previews.is_busy()
             || self.thumbs.is_busy()

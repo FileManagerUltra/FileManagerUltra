@@ -598,6 +598,8 @@ fn main() -> eframe::Result {
             // Seed the theme before the first frame; `sync_theme` keeps it current.
             let theme_pref = session.prefs.theme;
             set_egui_theme_preference(&cc.egui_ctx, theme_pref);
+            let wake_ctx = cc.egui_ctx.clone();
+            session.watch.set_waker(move || wake_ctx.request_repaint());
             // Zoom is a command (View menu, shortcuts) persisted in prefs; egui's own keys
             // would change it behind the preference's back.
             cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);

@@ -250,6 +250,20 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_refresh_keeps_the_revision() {
+        let mut c = DirCache::new();
+        let u = uri("/d");
+        c.begin_load(u.clone(), 1);
+        c.apply(&u, ReadOutcome::Ok(Arc::from(vec![entry("a")])));
+        assert!(c.refresh(&u, Arc::from(vec![entry("a")])).is_none());
+        assert_eq!(c.state(&u).revision(), Some(0));
+        assert!(
+            c.refresh(&u, Arc::from(vec![entry("a"), entry("b")]))
+                .is_some()
+        );
+    }
+
+    #[test]
     fn invalidate_drops_the_slot() {
         let mut c = DirCache::new();
         let u = uri("/d");

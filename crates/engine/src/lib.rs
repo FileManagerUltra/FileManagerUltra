@@ -64,6 +64,7 @@ pub mod update_cmds;
 pub mod updates;
 pub mod video_cmds;
 pub mod view_cmds;
+pub mod watch;
 pub mod workspace;
 pub mod workspace_cmds;
 

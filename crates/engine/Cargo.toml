@@ -24,6 +24,7 @@ fm-preview.workspace = true
 opener.workspace = true
 reqwest.workspace = true
 semver.workspace = true
+notify.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 crossbeam-channel.workspace = true

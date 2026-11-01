@@ -370,6 +370,31 @@ Ctrl+A/Ctrl+C must never include the copy control or its tooltip.
 - Test both themes, a long/hostile label, a busy mount, a missing tool and a network
   mount with unavailable capacity. Errors must be visible without blocking frames.
 
+## Live directory refresh checks
+
+Run on Linux, macOS and Windows (manual smoke; the OS watchers differ per platform).
+
+- Open a Files pane on a local folder, then create, rename and delete files from
+  another program (terminal, Explorer/Finder/file manager). The listing updates
+  within ~1 s without Ctrl+R; the selected file stays selected and scroll holds.
+- Show the same folder in two panes and in two workspace tabs; change it, then
+  navigate one pane away: the other keeps updating. Switch tabs: hidden tabs
+  must not keep refreshing (check CPU stays near idle).
+- Delete the folder a pane shows (or unplug its volume): the pane shows an error,
+  not a stale listing, and recovers when the folder reappears and is retried.
+- Run a burst in a shown folder (`for i in $(seq 5000); do touch f$i; done`, or a
+  build/`git checkout`): the UI stays responsive and settles on the final list.
+  Watch memory in the task manager before and after; it must not grow.
+- Windows: repeat on a mapped network drive and a UNC path (`\\server\share`).
+  These poll every 2 s instead of using events; changes still appear, with delay.
+  Also check a path with a trailing/mixed-case drive letter and a `\\?\` path.
+- macOS: repeat on a folder under `/Volumes` and on an iCloud/Dropbox folder.
+- Linux: lower `fs.inotify.max_user_watches` (for example `sudo sysctl
+  fs.inotify.max_user_watches=8`), open several panes: a notice says some folders
+  refresh periodically, and listings still update. Restore the value afterwards.
+  Also try an NFS/sshfs mount (must poll, not error).
+- Remote (SFTP/SMB) panes are unchanged: refresh on focus regain and every 5 s.
+
 ## Dev log
 
 Append to `log/devlog.md` at the end of every working session (what landed, numbers, what is still open). It is gitignored and exists so the next session can pick up cold.
