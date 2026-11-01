@@ -8,8 +8,12 @@ Every pane SHALL have exactly one `PaneKind` from `Files`, `Terminal`, `Sftp`, `
 - **THEN** that pane's kind is `Terminal` and other panes are unchanged
 
 #### Scenario: Switch a pane to diff
-- **WHEN** `pane.kind.set {"kind":"diff"}` runs on a pane
-- **THEN** that pane's kind is `Diff` with empty sources and the Files state is preserved
+- **WHEN** `pane.kind.set {"kind":"diff"}` runs on a pane that has no comparison
+- **THEN** it returns an error ("open a comparison with diff.open first") and the pane is unchanged
+
+#### Scenario: Diff from the pane kind menu
+- **WHEN** the user chooses Diff in a pane's kind menu
+- **THEN** the pane's selection is compared (two files, or one file against HEAD); with neither a notice explains what to select
 
 #### Scenario: Unknown kind
 - **WHEN** `pane.kind.set` runs with an unknown kind, a missing or non-string `kind`, or non-object params

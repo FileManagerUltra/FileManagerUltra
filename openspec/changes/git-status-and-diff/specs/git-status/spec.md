@@ -18,6 +18,14 @@ come from the pure-Rust `gix` library; no `git` binary is required or invoked.
 - **WHEN** a pane shows a folder not inside a repository, or an SFTP/SMB location
 - **THEN** no gutter column or marker is shown and no error occurs
 
+### Requirement: Line-ending conversion is not a change
+A file that differs from the index only by CRLF line endings SHALL NOT be reported as modified when `core.autocrlf` is `true` or `input` (re-checked for at most 1 000 files per scan). On Windows the
+system default `true` is assumed when the repository sets nothing.
+
+#### Scenario: CRLF checkout
+- **WHEN** `core.autocrlf=true` and a tracked file has CRLF endings but identical content
+- **THEN** it shows no marker
+
 ### Requirement: Status never blocks and stays small
 Repository discovery and status SHALL run on the `local` job lane, single-flight per repository,
 debounced, and cached per repository (not per pane). Only changed entries are stored, capped at

@@ -49,6 +49,7 @@ crates/
   fs-smb       L0  in-app SMB backend (pure-Rust `smb` crate)
   discovery    L0  LAN discovery (mDNS, WS-Discovery) + the virtual `network:///` folder
   fs-sftp      L0  SSH/SFTP backend (russh + russh-sftp, owns its tokio runtime)
+  git          L0  read-only git status, blobs and the line/word diff model (gix + similar, no git binary)
   ops          L1  copy/move/delete/mkdir/rename pipelines: streaming, conflicts, progress
   layout       L2  pane tree (recursive splits), per-pane history/bookmarks/selection
   engine       L3  Session, command registry, job scheduler, watchers, dir cache
@@ -504,7 +505,7 @@ Change 3 extends `security` with drag & drop and `ops` rules (destination contai
 
 ## 12a. Git status and Diff pane (`git-status-and-diff`)
 
-`fm-git` (L0, `gix`, read-only, isolated config) computes a per-repo status map (folders aggregate their strongest mark; capped at 200 000 entries) and loads blobs (HEAD/rev/index, 2 MiB cap). `fm-git::diff` aligns two texts with `similar` (binary detection, 100 000-line and 2 s caps, word marks). The engine's `git.rs` keeps an LRU of at most 8 repos, refreshed on the local lane after watcher events or a `.git/index`/`HEAD` stamp change; `diff_cmds.rs` loads comparisons for `PaneKind::Diff` panes (`diff.*` commands) and drops them when the pane goes away. The UI draws marks in the icon gutter and name tint (`git_marks.rs`) and the aligned/unified view (`diff.rs`).
+`fm-git` (L0, `gix`, read-only, isolated config) computes a per-repo status map (folders aggregate their strongest mark; capped at 200 000 entries) and loads blobs (HEAD/rev/index, 2 MiB cap). `fm-git::diff` aligns two texts with `similar` (binary detection, 100 000-line and 2 s caps, word marks). The engine's `git.rs` keeps an LRU of at most 8 repos, refreshed on the local lane after watcher events or a `.git/index`/`HEAD` stamp change; `diff_cmds.rs` loads comparisons for `PaneKind::Diff` panes on the local lane (`diff.open/side/swap/next/prev/mode/eol.toggle/rev/reload`, `diff.compare.*`, `diff.mark`) and drops them when the pane goes away. Entry points: file context menu, View > Compare, the pane kind menu, and dropping a file on a diff half. Hostile repos are inert: the repository is opened with isolated config (no user/system git config), repo-local `filter.*` drivers are stripped, and no hook, fsmonitor or textconv ever runs. `core.autocrlf` is honoured by re-checking modified files modulo CRLF (≤1000 per scan); on Windows `true` is the default. Measured: 50 000 files / 500 modified → 78 ms, 21 MB RSS. The UI draws marks in the icon gutter and name tint (`git_marks.rs`) and the aligned/unified view (`diff.rs`).
 
 ## 13. Change history
 

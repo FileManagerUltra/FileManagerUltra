@@ -11,6 +11,10 @@ symlinks are never followed out of the working tree.
 - **WHEN** a repo's config sets `core.fsmonitor` or a filter driver to a command
 - **THEN** status and diff complete without running it
 
+#### Scenario: Filter driver
+- **WHEN** a repo's config defines `filter.<name>.clean`/`process` and `.gitattributes` applies it
+- **THEN** repository-local `filter.*` sections are removed from the in-memory config and nothing runs
+
 #### Scenario: Oversized or corrupt data
 - **WHEN** a repo has a corrupt object, a 10 GiB blob or 1 000 000 untracked files
 - **THEN** the feature degrades with a visible notice, bounded memory and no panic

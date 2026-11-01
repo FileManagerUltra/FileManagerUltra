@@ -9,6 +9,10 @@ lines are highlighted; changed line pairs highlight the differing words. Scrolli
 - **WHEN** `diff.open` runs for a modified tracked file with left = HEAD and right = working file
 - **THEN** a Diff pane shows both versions aligned with changed lines highlighted
 
+#### Scenario: Drop a file on a side
+- **WHEN** a local file is dragged onto the left or right half of a Diff pane
+- **THEN** `diff.side` replaces that side with the file
+
 #### Scenario: Compare two arbitrary files
 - **WHEN** the user picks "Compare with…" and selects another file
 - **THEN** the pane shows the two files side by side
@@ -21,6 +25,10 @@ lines are highlighted; changed line pairs highlight the differing words. Scrolli
 `diff.next` / `diff.prev` SHALL jump between changes; `diff.swap` exchanges sides; `diff.mode`
 switches side-by-side/unified (unified is the automatic fallback in narrow panes); an
 ignore-line-endings option SHALL be available. Bad parameters return `Err` and change nothing.
+
+#### Scenario: Line endings
+- **WHEN** a side is a committed blob and the platform is Windows
+- **THEN** line endings are ignored by default, since a CRLF checkout would otherwise differ on every line
 
 #### Scenario: Next change
 - **WHEN** `diff.next` runs

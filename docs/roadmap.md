@@ -11,6 +11,8 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 | 4b | `smb-backend` | SMB via the pure-Rust `smb` crate (NTLM, no system library, one code path on all platforms), reusing the connection model from change 4 | done (archived) |
 | 5 | `live-watch-and-packaging` | `notify`-driven directory refresh, session persistence (panes/sizes/locations), `.deb`/AppImage, `.msi`, `.dmg` | next |
 
+Additional change, implemented: `git-status-and-diff` (git status markers, side-by-side Diff pane) — see `docs/architecture.md` §12a; pending archive.
+
 **Current focus:** 5 (`live-watch-and-packaging`).
 
 **Security is a standing concern, not a change.** The `security` OpenSpec capability starts in change 1 (hostile input, secrets, state-file permissions, symlink policy, no `unsafe`) and each change that adds a behaviour area extends it in the same change: change 3 adds drag & drop / `ops` containment and overwrite rules; change 4 adds credentials, host keys and remote listing caps. A change that adds security-relevant behaviour without a spec + failing-test proof is not done.
