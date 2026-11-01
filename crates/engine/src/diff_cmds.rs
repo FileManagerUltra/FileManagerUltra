@@ -1,26 +1,29 @@
-//! Diff panes (capability `git-diff`): loading both sides on a worker, the aligned model,
-//! and the `diff.*` commands. Blobs live only as long as the Diff pane shows them.
+//! Diff view of a Preview pane (capability `git-diff`): the selected file's working copy against
+//! a committed revision, loaded on a worker, and the `preview.diff.*` commands. Blobs live only
+//! as long as the pane shows the diff.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 pub use fm_git::diff::{Content, DiffModel, Outcome, Row, Tag};
-use fm_git::{MAX_BLOB, Rev};
-use fm_layout::{Axis, DiffMode, DiffSide, DiffState, PaneId, PaneKind};
-use fm_vfs::{FmError, Scheme, VfsUri};
+use fm_git::{MAX_BLOB, Mark, Rev};
+use fm_layout::{DiffMode, DiffSide, DiffState, PaneId, PaneKind};
+use fm_vfs::{EntryKind, FmError, Scheme};
 
-use crate::file_cmds::{focused_selection, object};
+use crate::file_cmds::object;
 use crate::jobs::JobLane;
+use crate::preview_cmds::Body;
 use crate::registry::{CommandSpec, Params};
 use crate::session::Session;
 
-const MAX_PATH: usize = 4096;
 const MAX_REV: usize = 256;
 
-type Key = (DiffSide, DiffSide, bool);
+type Stamp = Option<(SystemTime, u64)>;
+type Key = (DiffSide, DiffSide, bool, Stamp);
 
-/// Load state of one Diff pane.
+/// Load state of one pane's diff.
 #[derive(Debug, Clone)]
 pub enum DiffStatus {
     Loading,
@@ -34,20 +37,59 @@ pub struct DiffView {
     pub status: DiffStatus,
 }
 
-type Done = Vec<(PaneId, Key, Result<Outcome, String>)>;
+/// What a Preview pane's diff is about: the single selected file inside a git repository.
+#[derive(Debug, Clone)]
+pub struct PaneDiff {
+    pub path: String,
+    /// The user's choice (Preview or Diff) for this selection; `None` follows the default.
+    pub shown: Option<bool>,
+    /// Whether the pane currently shows the diff instead of the preview.
+    pub active: bool,
+    /// The revision picker is open.
+    pub picker: bool,
+    /// Branches and tags for the picker, once listed.
+    pub refs: Option<Arc<fm_git::refs::Refs>>,
+    pub state: DiffState,
+    stamp: Stamp,
+}
 
-/// All Diff panes' loaded results plus the "select for compare" memory.
+impl PaneDiff {
+    /// The revision the working copy is compared with.
+    pub fn rev(&self) -> &str {
+        match &self.state.left {
+            DiffSide::Rev { rev, .. } => rev,
+            _ => "HEAD",
+        }
+    }
+}
+
+type Done = Vec<(PaneId, Key, Result<Outcome, String>)>;
+type RefsDone = Vec<(PaneId, Result<fm_git::refs::Refs, String>)>;
+
+/// What a pane keeps while the selection moves between files (or to a non-diffable item).
+#[derive(Clone)]
+struct Sticky {
+    shown: Option<bool>,
+    repo: String,
+    rev: String,
+    mode: DiffMode,
+    ignore_eol: bool,
+}
+
+/// Diff state of every Preview pane plus the loaded results.
 #[derive(Default)]
 pub struct DiffHub {
+    panes: HashMap<PaneId, PaneDiff>,
+    sticky: HashMap<PaneId, Sticky>,
     views: HashMap<PaneId, DiffView>,
     done: Arc<Mutex<Done>>,
-    /// File picked with "Select for Compare".
-    pub mark: Option<String>,
+    refs_done: Arc<Mutex<RefsDone>>,
 }
 
 impl std::fmt::Debug for DiffHub {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DiffHub")
+            .field("panes", &self.panes.len())
             .field("views", &self.views.len())
             .finish()
     }
@@ -84,17 +126,42 @@ fn blob(repo: &str, rev: &Rev, rel: &str) -> Result<Content, String> {
     }
 }
 
+fn stamp(path: &str) -> Stamp {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+/// Text-like content that a diff can replace without hiding anything useful.
+fn diffable_by_default(body: &Body) -> bool {
+    match body {
+        Body::Static(p) => matches!(
+            &**p,
+            fm_preview::Preview::Text(_)
+                | fm_preview::Preview::Structured(_)
+                | fm_preview::Preview::Markdown(_)
+        ),
+        Body::Log(_) => true,
+        _ => false,
+    }
+}
+
 impl Session {
-    /// The load state for a Diff pane, starting the load when the pane's comparison changed.
+    /// The diff state of a Preview pane whose selection can be compared (one file in a repo).
+    pub fn pane_diff(&self, pane: PaneId) -> Option<&PaneDiff> {
+        self.diffs.panes.get(&pane)
+    }
+
+    /// The load state of a Preview pane's diff, starting the load when its inputs changed.
     pub fn diff_view(&mut self, pane: PaneId) -> Option<&DiffView> {
-        let state = self.layout.state(pane)?;
-        if state.kind != PaneKind::Diff {
-            return None;
-        }
-        let diff = state.diff.as_ref()?;
-        let key: Key = (diff.left.clone(), diff.right.clone(), diff.ignore_eol);
+        let diff = self.diffs.panes.get(&pane).filter(|d| d.active)?;
+        let key: Key = (
+            diff.state.left.clone(),
+            diff.state.right.clone(),
+            diff.state.ignore_eol,
+            diff.stamp,
+        );
         if self.diffs.views.get(&pane).is_none_or(|v| v.key != key) {
-            let (left, right, eol) = key.clone();
+            let (left, right, eol, _) = key.clone();
             let done = self.diffs.done.clone();
             let job_key = key.clone();
             self.jobs.submit(JobLane::Local, move |_ctx| {
@@ -118,11 +185,12 @@ impl Session {
         self.diffs.views.get(&pane)
     }
 
-    /// Apply finished comparisons and drop the data of panes that stopped showing one.
+    /// Re-derive every Preview pane's diff target from its selection, apply finished
+    /// comparisons and drop the data of panes that stopped showing one.
     pub(crate) fn pump_diffs(&mut self) -> bool {
+        let mut changed = self.sync_pane_diffs();
         let finished: Done =
             std::mem::take(&mut *self.diffs.done.lock().unwrap_or_else(|p| p.into_inner()));
-        let mut changed = false;
         for (pane, key, result) in finished {
             if let Some(view) = self.diffs.views.get_mut(&pane)
                 && view.key == key
@@ -134,12 +202,128 @@ impl Session {
                 changed = true;
             }
         }
-        let layout = &self.layout;
-        self.diffs.views.retain(|pane, _| {
-            layout
-                .state(*pane)
-                .is_some_and(|st| st.kind == PaneKind::Diff && st.diff.is_some())
-        });
+        let listed: RefsDone = std::mem::take(
+            &mut *self
+                .diffs
+                .refs_done
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
+        );
+        for (pane, result) in listed {
+            if let Some(d) = self.diffs.panes.get_mut(&pane) {
+                match result {
+                    Ok(refs) => d.refs = Some(Arc::new(refs)),
+                    Err(e) => {
+                        d.picker = false;
+                        self.notice = Some(e);
+                    }
+                }
+                changed = true;
+            }
+        }
+        let panes = &self.diffs.panes;
+        self.diffs
+            .views
+            .retain(|pane, _| panes.get(pane).is_some_and(|d| d.active));
+        changed
+    }
+
+    fn sync_pane_diffs(&mut self) -> bool {
+        let previews: Vec<PaneId> = self
+            .layout
+            .states
+            .iter()
+            .filter(|(_, st)| st.kind == PaneKind::Preview)
+            .map(|(id, _)| *id)
+            .collect();
+        let mut changed = false;
+        self.diffs.panes.retain(|id, _| previews.contains(id));
+        self.diffs.sticky.retain(|id, _| previews.contains(id));
+        for pane in previews {
+            if let Some(d) = self.diffs.panes.get(&pane)
+                && let DiffSide::Rev { repo, rev, .. } = &d.state.left
+            {
+                self.diffs.sticky.insert(
+                    pane,
+                    Sticky {
+                        shown: d.shown.or(d.active.then_some(true)),
+                        repo: repo.clone(),
+                        rev: rev.clone(),
+                        mode: d.state.mode,
+                        ignore_eol: d.state.ignore_eol,
+                    },
+                );
+            }
+            let subject = self
+                .previews
+                .slot(pane)
+                .filter(|slot| slot.subjects.len() <= 1)
+                .and_then(|slot| slot.subject.clone())
+                .filter(|e| e.kind == EntryKind::File && e.uri.scheme() == Scheme::File);
+            let path = subject
+                .as_ref()
+                .and_then(|e| e.uri.local_path_string())
+                .filter(|_| self.prefs.git_enabled);
+            let Some(path) = path else {
+                changed |= self.diffs.panes.remove(&pane).is_some();
+                continue;
+            };
+            if self.diffs.panes.get(&pane).is_none_or(|d| d.path != path) {
+                self.diffs.panes.remove(&pane);
+                let Some((repo, rel)) = locate(&path).ok() else {
+                    continue;
+                };
+                let previous = self.diffs.sticky.get(&pane).cloned();
+                // A revision only carries over within the same repository.
+                let rev = previous
+                    .as_ref()
+                    .filter(|p| p.repo == repo)
+                    .map_or_else(|| "HEAD".to_string(), |p| p.rev.clone());
+                let mut state = DiffState::new(
+                    DiffSide::Rev { repo, rev, rel },
+                    DiffSide::File(path.clone()),
+                );
+                state.ignore_eol = previous.as_ref().map_or(cfg!(windows), |p| p.ignore_eol);
+                state.mode = previous.as_ref().map_or(DiffMode::Split, |p| p.mode);
+                let shown = previous.and_then(|p| p.shown);
+                self.diffs.panes.insert(
+                    pane,
+                    PaneDiff {
+                        path: path.clone(),
+                        shown,
+                        active: false,
+                        picker: false,
+                        refs: None,
+                        state,
+                        stamp: None,
+                    },
+                );
+                changed = true;
+            }
+            let modified = subject
+                .as_ref()
+                .and_then(|e| e.uri.parent())
+                .and_then(|dir| self.git_view(&dir))
+                .and_then(|status| status.mark_abs(Path::new(&path)))
+                .is_some_and(|m| {
+                    matches!(
+                        m,
+                        Mark::Modified | Mark::Renamed | Mark::Added | Mark::Conflicted
+                    )
+                });
+            let by_default = modified
+                && self
+                    .previews
+                    .slot(pane)
+                    .is_some_and(|slot| diffable_by_default(&slot.body));
+            if let Some(d) = self.diffs.panes.get_mut(&pane) {
+                let active = d.shown.unwrap_or(by_default);
+                let stamp = if active { stamp(&path) } else { None };
+                changed |= d.active != active || d.stamp != stamp;
+                d.active = active;
+                d.stamp = stamp;
+            }
+        }
         changed
     }
 
@@ -150,47 +334,20 @@ impl Session {
             .any(|v| matches!(v.status, DiffStatus::Loading))
     }
 
-    fn diff_state_mut(&mut self, pane: PaneId) -> Result<&mut DiffState, FmError> {
-        self.layout
-            .state_mut(pane)
-            .filter(|st| st.kind == PaneKind::Diff)
-            .and_then(|st| st.diff.as_mut())
-            .ok_or_else(|| FmError::InvalidParams("not a Diff pane".to_string()))
+    fn pane_diff_mut(&mut self, params: &Params) -> Result<(PaneId, &mut PaneDiff), FmError> {
+        let pane = self.preview_pane(params)?;
+        self.diffs
+            .panes
+            .get_mut(&pane)
+            .map(|d| (pane, d))
+            .ok_or_else(|| {
+                FmError::InvalidParams("select one file inside a git repository".to_string())
+            })
     }
-
-    /// Show `diff` in the focused Diff pane, or in a new pane next to the focused one.
-    pub fn open_diff(&mut self, mut diff: DiffState) -> Result<PaneId, FmError> {
-        // Committed blobs have LF endings; on Windows a CRLF checkout would differ on every line.
-        let committed = |s: &DiffSide| !matches!(s, DiffSide::File(_));
-        diff.ignore_eol |= cfg!(windows) && (committed(&diff.left) || committed(&diff.right));
-        let focused = self.layout.focused();
-        let reuse = self.pane_kind(focused) == Some(PaneKind::Diff);
-        let pane = if reuse {
-            focused
-        } else {
-            self.layout.split(focused, Axis::Vertical, 0.5)?
-        };
-        if let Some(st) = self.layout.state_mut(pane) {
-            st.kind = PaneKind::Diff;
-            st.diff = Some(diff);
-        }
-        self.diffs.views.remove(&pane);
-        self.layout.focus_pane(pane)?;
-        Ok(pane)
-    }
-}
-
-fn abs_path(text: &str) -> Result<String, FmError> {
-    if text.is_empty() || text.len() > MAX_PATH || text.contains('\0') {
-        return Err(FmError::InvalidParams("invalid path".to_string()));
-    }
-    if !Path::new(text).is_absolute() {
-        return Err(FmError::InvalidParams("path must be absolute".to_string()));
-    }
-    Ok(text.to_string())
 }
 
 fn rev_text(text: &str) -> Result<String, FmError> {
+    let text = text.trim();
     if text.is_empty() || text.len() > MAX_REV || text.starts_with('-') || text.contains('\0') {
         return Err(FmError::InvalidParams("invalid revision".to_string()));
     }
@@ -203,253 +360,102 @@ fn locate(path: &str) -> Result<(String, String), FmError> {
     Ok((root.to_string_lossy().into_owned(), rel))
 }
 
-/// `"/abs/file"`, `{path, rev}` (committed) or `{path, source: "index"}` (staged).
-fn parse_side(value: &Params) -> Result<DiffSide, FmError> {
-    if let Some(text) = value.as_str() {
-        return Ok(DiffSide::File(abs_path(text)?));
-    }
-    let map = value
-        .as_object()
-        .ok_or_else(|| FmError::InvalidParams("a side is a path or {path, rev}".to_string()))?;
-    let path = abs_path(
-        map.get("path")
-            .and_then(Params::as_str)
-            .ok_or_else(|| FmError::InvalidParams("path required".to_string()))?,
-    )?;
-    if map.get("source").and_then(Params::as_str) == Some("index") {
-        let (repo, rel) = locate(&path)?;
-        return Ok(DiffSide::Index { repo, rel });
-    }
-    match map.get("rev").and_then(Params::as_str) {
-        Some(rev) => {
-            let (repo, rel) = locate(&path)?;
-            Ok(DiffSide::Rev {
-                repo,
-                rev: rev_text(rev)?,
-                rel,
-            })
-        }
-        None => Ok(DiffSide::File(path)),
-    }
+/// The Preview pane a command acts on has a comparable file.
+fn has_target(s: &Session) -> bool {
+    s.preview_pane(&Params::Null)
+        .is_ok_and(|pane| s.diffs.panes.contains_key(&pane))
 }
 
-fn local_file(uri: &VfsUri) -> Option<String> {
-    if uri.scheme() != Scheme::File {
-        return None;
-    }
-    uri.local_path_string()
+fn showing(s: &Session) -> bool {
+    s.preview_pane(&Params::Null)
+        .is_ok_and(|pane| s.diffs.panes.get(&pane).is_some_and(|d| d.active))
 }
 
-/// The single selected local file of the focused pane.
-fn selected_file(s: &Session) -> Option<String> {
-    let sel = focused_selection(s);
-    match sel.as_slice() {
-        [one] => local_file(one).filter(|p| Path::new(p).is_file()),
-        _ => None,
-    }
-}
-
-fn in_repo(path: &str) -> bool {
-    fm_git::locate(Path::new(path)).is_some()
-}
-
-fn focused_diff(s: &Session) -> bool {
-    s.focused_kind() == Some(PaneKind::Diff)
-}
-
-fn open_cmd() -> CommandSpec {
+fn toggle() -> CommandSpec {
     CommandSpec {
-        id: "diff.open",
-        label: "Compare",
-        menu: &["View", "Compare"],
+        id: "preview.diff.toggle",
+        label: "Show Diff",
+        menu: &["View", "Preview Diff"],
         shortcut: None,
-        params: "{left: side, right: side} | {path: string, rev?: string}; side = \"/abs/file\" | {path, rev} | {path, source: \"index\"}",
-        enabled: |_s| true,
+        params: "{pane?: number, show?: boolean} (default: switch between preview and diff)",
+        enabled: has_target,
         run: |s, p: &Params| {
-            let map = object(p)?.ok_or_else(|| {
-                FmError::InvalidParams("left and right, or path, required".into())
-            })?;
-            let (left, right) = match (map.get("left"), map.get("right"), map.get("path")) {
-                (Some(l), Some(r), _) => (parse_side(l)?, parse_side(r)?),
-                (_, _, Some(path)) => {
-                    let path = abs_path(path.as_str().ok_or_else(|| {
-                        FmError::InvalidParams("path must be a string".to_string())
-                    })?)?;
-                    let rev = match map.get("rev") {
-                        None | Some(Params::Null) => "HEAD".to_string(),
-                        Some(v) => rev_text(v.as_str().ok_or_else(|| {
-                            FmError::InvalidParams("rev must be a string".to_string())
-                        })?)?,
-                    };
-                    let (repo, rel) = locate(&path)?;
-                    (DiffSide::Rev { repo, rev, rel }, DiffSide::File(path))
-                }
-                _ => {
-                    return Err(FmError::InvalidParams(
-                        "left and right, or path, required".to_string(),
-                    ));
-                }
+            let wanted = match object(p)?.and_then(|m| m.get("show")) {
+                None | Some(Params::Null) => None,
+                Some(v) => Some(
+                    v.as_bool()
+                        .ok_or_else(|| FmError::InvalidParams("show must be a boolean".into()))?,
+                ),
             };
-            s.open_diff(DiffState::new(left, right)).map(|_| ())
-        },
-    }
-}
-
-fn compare_head() -> CommandSpec {
-    CommandSpec {
-        id: "diff.compare.head",
-        label: "Compare with HEAD",
-        menu: &["View", "Compare with HEAD"],
-        shortcut: None,
-        params: "{path?: string} (default: the selected file)",
-        enabled: |s| s.prefs.git_enabled && selected_file(s).as_deref().is_some_and(in_repo),
-        run: |s, p: &Params| {
-            let path =
-                match object(p)?.and_then(|m| m.get("path")) {
-                    Some(v) => abs_path(v.as_str().ok_or_else(|| {
-                        FmError::InvalidParams("path must be a string".to_string())
-                    })?)?,
-                    None => selected_file(s)
-                        .ok_or_else(|| FmError::InvalidParams("select one file".to_string()))?,
-                };
-            let (repo, rel) = locate(&path)?;
-            s.open_diff(DiffState::new(
-                DiffSide::Rev {
-                    repo,
-                    rev: "HEAD".to_string(),
-                    rel,
-                },
-                DiffSide::File(path),
-            ))
-            .map(|_| ())
-        },
-    }
-}
-
-fn mark_cmd() -> CommandSpec {
-    CommandSpec {
-        id: "diff.mark",
-        label: "Select for Compare",
-        menu: &["View", "Select for Compare"],
-        shortcut: None,
-        params: "{path?: string} (default: the selected file)",
-        enabled: |s| selected_file(s).is_some(),
-        run: |s, p: &Params| {
-            let path =
-                match object(p)?.and_then(|m| m.get("path")) {
-                    Some(v) => abs_path(v.as_str().ok_or_else(|| {
-                        FmError::InvalidParams("path must be a string".to_string())
-                    })?)?,
-                    None => selected_file(s)
-                        .ok_or_else(|| FmError::InvalidParams("select one file".to_string()))?,
-                };
-            s.diffs.mark = Some(path);
-            s.info = Some((
-                "Selected for compare; pick another file and choose Compare with Selected"
-                    .to_string(),
-                std::time::Instant::now(),
-            ));
+            let (_, d) = s.pane_diff_mut(p)?;
+            let show = wanted.unwrap_or(!d.active);
+            d.shown = Some(show);
+            d.active = show;
             Ok(())
         },
     }
 }
 
-fn compare_marked() -> CommandSpec {
+/// `preview.diff.picker {open?: boolean, pane?: number}`: the branch/tag picker. Lists the
+/// repository's refs on a worker each time it opens.
+fn picker() -> CommandSpec {
     CommandSpec {
-        id: "diff.compare.marked",
-        label: "Compare with Selected",
-        menu: &["View", "Compare with Selected"],
+        id: "preview.diff.picker",
+        label: "Choose Diff Revision",
+        menu: &["View", "Preview Diff", "Choose Revision"],
         shortcut: None,
-        params: "{path?: string} (default: the selected file)",
-        enabled: |s| s.diffs.mark.is_some() && selected_file(s).is_some(),
+        params: "{pane?: number, open?: boolean} (default: toggle)",
+        enabled: showing,
         run: |s, p: &Params| {
-            let left = s
-                .diffs
-                .mark
-                .clone()
-                .ok_or_else(|| FmError::InvalidParams("no file selected for compare".into()))?;
-            let right =
-                match object(p)?.and_then(|m| m.get("path")) {
-                    Some(v) => abs_path(v.as_str().ok_or_else(|| {
-                        FmError::InvalidParams("path must be a string".to_string())
-                    })?)?,
-                    None => selected_file(s)
-                        .ok_or_else(|| FmError::InvalidParams("select one file".to_string()))?,
-                };
-            s.open_diff(DiffState::new(DiffSide::File(left), DiffSide::File(right)))
-                .map(|_| ())
-        },
-    }
-}
-
-fn compare_selected() -> CommandSpec {
-    CommandSpec {
-        id: "diff.compare.selected",
-        label: "Compare Two Selected Files",
-        menu: &["View", "Compare Selected Files"],
-        shortcut: None,
-        params: "none",
-        enabled: |s| two_files(s).is_some(),
-        run: |s, _p: &Params| {
-            let (a, b) = two_files(s)
-                .ok_or_else(|| FmError::InvalidParams("select exactly two files".to_string()))?;
-            s.open_diff(DiffState::new(DiffSide::File(a), DiffSide::File(b)))
-                .map(|_| ())
-        },
-    }
-}
-
-fn two_files(s: &Session) -> Option<(String, String)> {
-    match focused_selection(s).as_slice() {
-        [a, b] => {
-            let (a, b) = (local_file(a)?, local_file(b)?);
-            (Path::new(&a).is_file() && Path::new(&b).is_file()).then_some((a, b))
-        }
-        _ => None,
-    }
-}
-
-fn swap() -> CommandSpec {
-    CommandSpec {
-        id: "diff.swap",
-        label: "Swap Sides",
-        menu: &["View", "Diff", "Swap Sides"],
-        shortcut: None,
-        params: "none",
-        enabled: focused_diff,
-        run: |s, _p: &Params| {
-            let pane = s.layout.focused();
-            let d = s.diff_state_mut(pane)?;
-            std::mem::swap(&mut d.left, &mut d.right);
-            d.current = 0;
-            d.scroll = 0.0;
+            let open = match object(p)?.and_then(|m| m.get("open")) {
+                None | Some(Params::Null) => None,
+                Some(v) => Some(
+                    v.as_bool()
+                        .ok_or_else(|| FmError::InvalidParams("open must be a boolean".into()))?,
+                ),
+            };
+            let (pane, d) = s.pane_diff_mut(p)?;
+            let open = open.unwrap_or(!d.picker);
+            d.picker = open;
+            let DiffSide::Rev { repo, .. } = &d.state.left else {
+                return Ok(());
+            };
+            if open {
+                let repo = repo.clone();
+                let done = s.diffs.refs_done.clone();
+                s.jobs.submit(JobLane::Local, move |_ctx| {
+                    let result = fm_git::refs::list(Path::new(&repo)).map_err(|e| e.to_string());
+                    done.lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .push((pane, result));
+                    Ok(())
+                });
+            }
             Ok(())
         },
-    }
-}
-
-fn change_count(s: &mut Session, pane: PaneId) -> usize {
-    match s.diff_view(pane).map(|v| &v.status) {
-        Some(DiffStatus::Ready(o)) => match o.as_ref() {
-            Outcome::Text(m) => m.changes.len(),
-            Outcome::Binary { .. } => 0,
-        },
-        _ => 0,
     }
 }
 
 fn step(forward: bool) -> impl Fn(&mut Session, &Params) -> Result<(), FmError> {
-    move |s, _p| {
-        let pane = s.layout.focused();
-        let n = change_count(s, pane);
-        let d = s.diff_state_mut(pane)?;
+    move |s, p| {
+        let (pane, _) = s.pane_diff_mut(p)?;
+        let n = match s.diff_view(pane).map(|v| &v.status) {
+            Some(DiffStatus::Ready(o)) => match o.as_ref() {
+                Outcome::Text(m) => m.changes.len(),
+                Outcome::Binary { .. } => 0,
+            },
+            _ => 0,
+        };
+        let (_, d) = s.pane_diff_mut(p)?;
         if n == 0 {
             return Ok(());
         }
-        d.current = if forward {
-            (d.current + 1).min(n - 1)
+        let st = &mut d.state;
+        st.jumps = st.jumps.wrapping_add(1);
+        st.current = if forward {
+            (st.current + 1).min(n - 1)
         } else {
-            d.current.saturating_sub(1).min(n - 1)
+            st.current.saturating_sub(1).min(n - 1)
         };
         Ok(())
     }
@@ -457,36 +463,36 @@ fn step(forward: bool) -> impl Fn(&mut Session, &Params) -> Result<(), FmError> 
 
 fn next() -> CommandSpec {
     CommandSpec {
-        id: "diff.next",
+        id: "preview.diff.next",
         label: "Next Change",
-        menu: &["View", "Diff", "Next Change"],
-        shortcut: None,
-        params: "none",
-        enabled: focused_diff,
+        menu: &["View", "Preview Diff", "Next Change"],
+        shortcut: Some("F7"),
+        params: "{pane?: number}",
+        enabled: showing,
         run: |s, p: &Params| step(true)(s, p),
     }
 }
 
 fn prev() -> CommandSpec {
     CommandSpec {
-        id: "diff.prev",
+        id: "preview.diff.prev",
         label: "Previous Change",
-        menu: &["View", "Diff", "Previous Change"],
-        shortcut: None,
-        params: "none",
-        enabled: focused_diff,
+        menu: &["View", "Preview Diff", "Previous Change"],
+        shortcut: Some("Shift+F7"),
+        params: "{pane?: number}",
+        enabled: showing,
         run: |s, p: &Params| step(false)(s, p),
     }
 }
 
 fn mode() -> CommandSpec {
     CommandSpec {
-        id: "diff.mode",
+        id: "preview.diff.mode",
         label: "Diff Layout",
-        menu: &["View", "Diff", "Toggle Unified"],
+        menu: &["View", "Preview Diff", "Toggle Unified"],
         shortcut: None,
-        params: "{mode?: \"split\"|\"unified\"} (default: toggle)",
-        enabled: focused_diff,
+        params: "{pane?: number, mode?: \"split\"|\"unified\"} (default: toggle)",
+        enabled: showing,
         run: |s, p: &Params| {
             let wanted = match object(p)?.and_then(|m| m.get("mode")) {
                 None | Some(Params::Null) => None,
@@ -500,9 +506,8 @@ fn mode() -> CommandSpec {
                     }
                 }),
             };
-            let pane = s.layout.focused();
-            let d = s.diff_state_mut(pane)?;
-            d.mode = wanted.unwrap_or(match d.mode {
+            let (_, d) = s.pane_diff_mut(p)?;
+            d.state.mode = wanted.unwrap_or(match d.state.mode {
                 DiffMode::Split => DiffMode::Unified,
                 DiffMode::Unified => DiffMode::Split,
             });
@@ -513,16 +518,15 @@ fn mode() -> CommandSpec {
 
 fn eol() -> CommandSpec {
     CommandSpec {
-        id: "diff.eol.toggle",
+        id: "preview.diff.eol",
         label: "Ignore Line Endings",
-        menu: &["View", "Diff", "Ignore Line Endings"],
+        menu: &["View", "Preview Diff", "Ignore Line Endings"],
         shortcut: None,
-        params: "none",
-        enabled: focused_diff,
-        run: |s, _p: &Params| {
-            let pane = s.layout.focused();
-            let d = s.diff_state_mut(pane)?;
-            d.ignore_eol = !d.ignore_eol;
+        params: "{pane?: number}",
+        enabled: showing,
+        run: |s, p: &Params| {
+            let (_, d) = s.pane_diff_mut(p)?;
+            d.state.ignore_eol = !d.state.ignore_eol;
             Ok(())
         },
     }
@@ -530,105 +534,43 @@ fn eol() -> CommandSpec {
 
 fn reload() -> CommandSpec {
     CommandSpec {
-        id: "diff.reload",
-        label: "Reload Comparison",
-        menu: &["View", "Diff", "Reload"],
+        id: "preview.diff.reload",
+        label: "Reload Diff",
+        menu: &["View", "Preview Diff", "Reload"],
         shortcut: None,
-        params: "none",
-        enabled: focused_diff,
-        run: |s, _p: &Params| {
-            let pane = s.layout.focused();
-            s.diff_state_mut(pane)?;
+        params: "{pane?: number}",
+        enabled: showing,
+        run: |s, p: &Params| {
+            let (pane, _) = s.pane_diff_mut(p)?;
             s.diffs.views.remove(&pane);
             Ok(())
         },
     }
 }
 
-/// `diff.rev {side: "left"|"right", rev}` — point a committed side at another revision.
+/// `preview.diff.rev {rev, pane?}`: compare the working copy with another revision
+/// (branch, tag, commit or an expression such as `HEAD~3`).
 fn rev() -> CommandSpec {
     CommandSpec {
-        id: "diff.rev",
+        id: "preview.diff.rev",
         label: "Set Diff Revision",
-        menu: &["View", "Diff", "Set Revision"],
+        menu: &["View", "Preview Diff", "Set Revision"],
         shortcut: None,
-        params: "{side: \"left\"|\"right\", rev: string}",
-        enabled: focused_diff,
+        params: "{pane?: number, rev: string}",
+        enabled: has_target,
         run: |s, p: &Params| {
-            let map = object(p)?
-                .ok_or_else(|| FmError::InvalidParams("side and rev required".to_string()))?;
-            let side = map.get("side").and_then(Params::as_str);
             let rev = rev_text(
-                map.get("rev")
+                object(p)?
+                    .and_then(|m| m.get("rev"))
                     .and_then(Params::as_str)
                     .ok_or_else(|| FmError::InvalidParams("rev required".to_string()))?,
             )?;
-            let pane = s.layout.focused();
-            let d = s.diff_state_mut(pane)?;
-            let target = match side {
-                Some("left") => &mut d.left,
-                Some("right") => &mut d.right,
-                _ => {
-                    return Err(FmError::InvalidParams(
-                        "side must be left or right".to_string(),
-                    ));
-                }
-            };
-            match target {
-                DiffSide::Rev { rev: r, .. } => *r = rev,
-                DiffSide::File(path) => {
-                    let (repo, rel) = locate(path)?;
-                    *target = DiffSide::Rev { repo, rev, rel };
-                }
-                DiffSide::Index { repo, rel } => {
-                    *target = DiffSide::Rev {
-                        repo: std::mem::take(repo),
-                        rev,
-                        rel: std::mem::take(rel),
-                    };
-                }
+            let (_, d) = s.pane_diff_mut(p)?;
+            if let DiffSide::Rev { rev: r, .. } = &mut d.state.left {
+                *r = rev;
             }
-            d.current = 0;
-            Ok(())
-        },
-    }
-}
-
-/// `diff.side {side: "left"|"right", path, pane?}` — replace one side with a local file.
-fn side_cmd() -> CommandSpec {
-    CommandSpec {
-        id: "diff.side",
-        label: "Set Diff Side",
-        menu: &["View", "Diff", "Set Side"],
-        shortcut: None,
-        params: "{side: \"left\"|\"right\", path: string, pane?: number}",
-        enabled: focused_diff,
-        run: |s, p: &Params| {
-            let map = object(p)?
-                .ok_or_else(|| FmError::InvalidParams("side and path required".to_string()))?;
-            let path = abs_path(
-                map.get("path")
-                    .and_then(Params::as_str)
-                    .ok_or_else(|| FmError::InvalidParams("path required".to_string()))?,
-            )?;
-            let left = match map.get("side").and_then(Params::as_str) {
-                Some("left") => true,
-                Some("right") => false,
-                _ => {
-                    return Err(FmError::InvalidParams(
-                        "side must be left or right".to_string(),
-                    ));
-                }
-            };
-            let pane = match map.get("pane") {
-                None | Some(Params::Null) => s.layout.focused(),
-                Some(v) => v
-                    .as_u64()
-                    .ok_or_else(|| FmError::InvalidParams("invalid pane".to_string()))?,
-            };
-            let d = s.diff_state_mut(pane)?;
-            *(if left { &mut d.left } else { &mut d.right }) = DiffSide::File(path);
-            d.current = 0;
+            d.state.current = 0;
+            d.picker = false;
             Ok(())
         },
     }
@@ -636,13 +578,8 @@ fn side_cmd() -> CommandSpec {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        side_cmd(),
-        open_cmd(),
-        compare_head(),
-        mark_cmd(),
-        compare_marked(),
-        compare_selected(),
-        swap(),
+        toggle(),
+        picker(),
         next(),
         prev(),
         mode(),

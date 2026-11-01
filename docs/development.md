@@ -399,10 +399,10 @@ Run on Linux, macOS and Windows (manual smoke; the OS watchers differ per platfo
 
 1. In a git repo, open it in a pane: modified files show a tinted name and an `M` in the icon gutter, untracked `U`, folders a dot; the footer shows `git: <branch> · N changed`.
 2. Edit/save a file externally: the marker appears within about a second.
-3. Right-click a modified file > Compare with HEAD: a Diff pane opens beside it with aligned columns and word highlights; View > Compare has next/prev/swap/unified/ignore EOL.
-4. Pane kind menu > Diff with one file selected compares it with HEAD; with two files selected compares them. Drag a file onto either half of a Diff pane to replace that side.
+3. Open a Preview pane and select a modified file: it opens in the Diff view (aligned columns, word highlights, "Change N of M"). F7 / Shift+F7 (or the ▲▼ buttons) put the next/previous change's first line at the top; with the pane focused away from the diff, F7 is still New Folder. Narrow the pane: Unified/Ignore EOL/Reload fold into the ☰ menu and the columns shrink with it.
+4. Click the revision button (`HEAD ▾`): a resizable picker lists Recent, Local, Remote and Tags with search. Pick a branch, then select another file: it stays in Diff against that branch. Click Preview: following files stay in Preview. Folders and multi-selections show no Diff button.
 5. Preferences > Files > Git toggles the markers. Opening a huge repo must keep the UI responsive.
-6. Tests: `cargo test -p fm-git -p fm-engine --test git_status --test diff_pane`; snapshots `pane_diff_*` and `listing_git_markers_*` in `crates/ui/tests/snapshots.rs` (`UPDATE_SNAPSHOTS=1` to refresh). The fixtures call the real `git` binary; the product never does.
+6. Tests: `cargo test -p fm-git -p fm-engine --test git_status --test diff_pane`; snapshots `preview_diff_*` and `listing_git_markers_*` in `crates/ui/tests/snapshots.rs` (`UPDATE_SNAPSHOTS=1` to refresh). The fixtures call the real `git` binary; the product never does.
 7. Windows/CRLF is untested on real hardware: check that a `core.autocrlf=true` checkout shows no markers.
 
 ## Dev log

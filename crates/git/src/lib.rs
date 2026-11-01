@@ -5,6 +5,7 @@
 //! size) because repositories are untrusted input.
 
 pub mod diff;
+pub mod refs;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -384,6 +385,13 @@ pub fn blob(root: &Path, rev: &Rev, rel: &str) -> Result<Option<Vec<u8>>, GitErr
         Rev::Index => format!(":{rel}"),
     };
     let repo = open(root)?;
+    // An unborn HEAD (no commits yet) simply has no content.
+    if let Rev::Commit(r) = rev
+        && r != "HEAD"
+        && repo.rev_parse_single(r.as_bytes().as_bstr()).is_err()
+    {
+        return Err(GitError(format!("unknown revision '{r}'")));
+    }
     let Ok(id) = repo.rev_parse_single(spec.as_bytes().as_bstr()) else {
         return Ok(None);
     };

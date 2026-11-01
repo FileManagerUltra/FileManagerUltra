@@ -1,3 +1,3 @@
 # git-status-and-diff
 
-Read-only git integration: status markers and a side-by-side Diff pane
+Read-only git integration: status markers and a Diff view in the Preview pane

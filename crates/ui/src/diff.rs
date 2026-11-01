@@ -14,50 +14,73 @@ use crate::theme::Tokens;
 const MIN_SPLIT: f32 = 480.0;
 const NUM_W: f32 = 44.0;
 
+/// Draw the diff of a Preview pane. The pane toolbar (Preview/Diff toggle) is the
+/// preview's; this draws the revision line, the status and the rows.
 pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
-    let Some(state) = s.layout.state(pane).and_then(|st| st.diff.clone()) else {
-        ui.label("No comparison. Use Compare on a file.");
+    let Some(diff) = s.pane_diff(pane).cloned() else {
+        ui.label("Select one file inside a git repository.");
         return;
     };
+    let state = diff.state.clone();
     let status = s.diff_view(pane).map(|v| v.status.clone());
 
-    ui.horizontal(|ui| {
-        for (side, color) in [
-            (&state.left, tokens.git_removed),
-            (&state.right, tokens.git_added),
-        ] {
-            let full = side.label();
-            let short = match side {
-                fm_layout::DiffSide::File(p) => std::path::Path::new(p)
-                    .file_name()
-                    .map_or_else(|| full.clone(), |n| n.to_string_lossy().into_owned()),
-                _ => full.clone(),
-            };
-            ui.label(egui::RichText::new(short).color(color))
-                .on_hover_text(full);
-            if std::ptr::eq(side, &state.left) {
-                ui.label("vs");
-            }
-        }
-    });
-    ui.horizontal(|ui| {
-        for (id, label) in [
-            ("diff.prev", "Prev"),
-            ("diff.next", "Next"),
-            ("diff.swap", "Swap"),
-            ("diff.mode", "Split/Unified"),
-            ("diff.eol.toggle", "Ignore EOL"),
-            ("diff.reload", "Reload"),
-        ] {
-            if ui
-                .add_enabled(s.command_enabled(id), egui::Button::new(label))
-                .clicked()
-            {
-                s.layout.focus_pane(pane).ok();
-                s.dispatch_or_notice(id, &json!({}));
-            }
-        }
-    });
+    let anchor = ui
+        .horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Options sit inline when the bar is wide enough, else in a hamburger menu.
+                let inline = inline_width(ui);
+                if ui.available_width() >= inline + MIN_LEAD {
+                    inline_controls(ui, s, pane, &diff);
+                } else {
+                    controls(ui, s, pane, &diff);
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let tail = 150.0;
+                    let text = egui::WidgetText::from(diff.rev())
+                        .into_galley(
+                            ui,
+                            Some(egui::TextWrapMode::Extend),
+                            f32::INFINITY,
+                            egui::TextStyle::Button,
+                        )
+                        .size()
+                        .x;
+                    let wanted = text + ui.spacing().button_padding.x * 2.0 + 40.0;
+                    let width = wanted.min(ui.available_width() - tail).max(60.0);
+                    let button = ui
+                        .allocate_ui(vec2(width, ui.spacing().interact_size.y), |ui| {
+                            ui.add(
+                                egui::Button::new(diff.rev())
+                                    .truncate()
+                                    .right_text("   ")
+                                    .min_size(vec2(width, 0.0)),
+                            )
+                        })
+                        .inner
+                        .on_hover_text(format!(
+                            "{} - choose the branch, tag or commit to compare with",
+                            diff.rev()
+                        ));
+                    crate::pane::paint_dropdown_triangle(ui, &button);
+                    if button.clicked() {
+                        s.dispatch_or_notice("preview.diff.picker", &json!({"pane": pane}));
+                    }
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new("vs Working copy").color(tokens.git_added),
+                        )
+                        .truncate(),
+                    );
+                    button
+                })
+                .inner
+            })
+            .inner
+        })
+        .inner;
+    if diff.picker {
+        picker(ui, s, pane, &diff, anchor.rect, tokens);
+    }
     ui.separator();
 
     match status {
@@ -76,19 +99,18 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
                 });
             }
             Outcome::Text(model) => {
-                if model.identical() {
-                    ui.label("Files are identical");
-                }
-                ui.label(
-                    egui::RichText::new(format!(
+                let summary = if model.identical() {
+                    format!("No changes against {}", diff.rev())
+                } else {
+                    format!(
                         "Change {} of {} · +{} -{}",
                         state.current.min(model.changes.len().saturating_sub(1)) + 1,
                         model.changes.len(),
                         model.added,
                         model.removed
-                    ))
-                    .color(tokens.text_muted),
-                );
+                    )
+                };
+                ui.label(egui::RichText::new(summary).color(tokens.text_muted));
                 let unified = state.mode == DiffMode::Unified || ui.available_width() < MIN_SPLIT;
                 let target = model
                     .changes
@@ -104,9 +126,358 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
                         .count();
                     start..start + len
                 });
-                rows(ui, pane, &model.rows, unified, (target, block), tokens);
+                rows(
+                    ui,
+                    pane,
+                    &model.rows,
+                    unified,
+                    (target, block),
+                    state.jumps,
+                    tokens,
+                );
             }
         },
+    }
+}
+
+/// Room the revision button and "vs Working copy" need before the options go inline.
+const MIN_LEAD: f32 = 320.0;
+const LABELS: [&str; 3] = ["Reload", "Ignore EOL", "Unified"];
+
+/// Width of the inline options: two arrow buttons plus the labelled buttons.
+fn inline_width(ui: &Ui) -> f32 {
+    let pad = ui.spacing().button_padding.x * 2.0;
+    let gap = ui.spacing().item_spacing.x;
+    let text: f32 = LABELS
+        .iter()
+        .map(|t| {
+            egui::WidgetText::from(*t)
+                .into_galley(
+                    ui,
+                    Some(egui::TextWrapMode::Extend),
+                    f32::INFINITY,
+                    egui::TextStyle::Button,
+                )
+                .size()
+                .x
+                + pad
+        })
+        .sum();
+    text + 2.0 * 22.0 + 6.0 * gap + 8.0
+}
+
+/// The options as buttons, laid out right to left (Reload ends up rightmost).
+fn inline_controls(
+    ui: &mut Ui,
+    s: &mut Session,
+    pane: PaneId,
+    diff: &fm_engine::diff_cmds::PaneDiff,
+) {
+    if ui.button("Reload").clicked() {
+        s.dispatch_or_notice("preview.diff.reload", &json!({"pane": pane}));
+    }
+    if ui
+        .add(egui::Button::selectable(
+            diff.state.ignore_eol,
+            "Ignore EOL",
+        ))
+        .on_hover_text("Treat CRLF and LF line endings as equal")
+        .clicked()
+    {
+        s.dispatch_or_notice("preview.diff.eol", &json!({"pane": pane}));
+    }
+    if ui
+        .add(egui::Button::selectable(
+            diff.state.mode == DiffMode::Unified,
+            "Unified",
+        ))
+        .on_hover_text("One column instead of side by side")
+        .clicked()
+    {
+        s.dispatch_or_notice("preview.diff.mode", &json!({"pane": pane}));
+    }
+    ui.add_space(8.0);
+    for (up, id, tip) in [
+        (false, "preview.diff.next", "Next change"),
+        (true, "preview.diff.prev", "Previous change"),
+    ] {
+        let (rect, resp) = ui.allocate_exact_size(vec2(22.0, 20.0), egui::Sense::click());
+        let visuals = ui.style().interact(&resp);
+        ui.painter()
+            .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
+        let c = rect.center();
+        let (w, h) = (4.5, 3.0);
+        let pts = if up {
+            vec![c + vec2(-w, h), c + vec2(w, h), c + vec2(0.0, -h)]
+        } else {
+            vec![c + vec2(-w, -h), c + vec2(w, -h), c + vec2(0.0, h)]
+        };
+        ui.painter().add(egui::Shape::convex_polygon(
+            pts,
+            visuals.fg_stroke.color,
+            egui::Stroke::NONE,
+        ));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
+        let hover = match s.registry.get(id).and_then(|spec| spec.shortcut) {
+            Some(key) => format!("{tip} ({key})"),
+            None => tip.to_string(),
+        };
+        if resp.on_hover_text(hover).clicked() {
+            s.dispatch_or_notice(id, &json!({"pane": pane}));
+        }
+    }
+}
+
+/// Diff options in a hamburger menu so the bar never forces the pane wider: change
+/// navigation, layout, line endings and reload.
+fn controls(ui: &mut Ui, s: &mut Session, pane: PaneId, diff: &fm_engine::diff_cmds::PaneDiff) {
+    let button = egui::Button::new("").min_size(vec2(28.0, 0.0));
+    let (response, _) = egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
+        let mut run = |ui: &mut Ui, label: String, id: &str| {
+            let mut button = egui::Button::new(label);
+            if let Some(key) = s.registry.get(id).and_then(|spec| spec.shortcut) {
+                button = button.shortcut_text(key);
+            }
+            if ui.add(button).clicked() {
+                s.dispatch_or_notice(id, &json!({"pane": pane}));
+                ui.close();
+            }
+        };
+        run(ui, "Previous change".into(), "preview.diff.prev");
+        run(ui, "Next change".into(), "preview.diff.next");
+        ui.separator();
+        let unified = diff.state.mode == DiffMode::Unified;
+        run(
+            ui,
+            format!(
+                "{} Unified (one column)",
+                if unified { "[x]" } else { "[ ]" }
+            ),
+            "preview.diff.mode",
+        );
+        run(
+            ui,
+            format!(
+                "{} Ignore line endings",
+                if diff.state.ignore_eol { "[x]" } else { "[ ]" }
+            ),
+            "preview.diff.eol",
+        );
+        ui.separator();
+        run(ui, "Reload".into(), "preview.diff.reload");
+    });
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Diff options"));
+    // The bundled fonts have no hamburger glyph: draw it.
+    let stroke = ui.style().interact(&response).fg_stroke;
+    let c = response.rect.center();
+    for dy in [-4.0, 0.0, 4.0] {
+        ui.painter().hline(c.x - 7.0..=c.x + 7.0, c.y + dy, stroke);
+    }
+    response.on_hover_text("Diff options");
+}
+
+/// Branch and tag picker under the revision button: a search box, then Recent, Local, Remote and
+/// Tags, with `feature/x` style names nested into folders. Enter applies the typed text as a
+/// revision, so `HEAD~3` or a commit id works too.
+fn picker(
+    ui: &mut Ui,
+    s: &mut Session,
+    pane: PaneId,
+    diff: &fm_engine::diff_cmds::PaneDiff,
+    below: egui::Rect,
+    tokens: &Tokens,
+) {
+    let search_id = ui.make_persistent_id(egui::IdSalt::new(("diff-picker-q", pane)));
+    let mut query: String = ui.data(|d| d.get_temp(search_id)).unwrap_or_default();
+    let mut chosen: Option<String> = None;
+    let mut close = ui.input(|i| i.key_pressed(egui::Key::Escape));
+    let area = egui::Area::new(egui::Id::NULL.with(("diff-picker", pane)))
+        .order(egui::Order::Foreground)
+        .fixed_pos(below.left_bottom() + vec2(0.0, 2.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                // Drag the bottom-right corner to resize; the size is remembered.
+                let screen = ui.ctx().content_rect();
+                let max = vec2(
+                    (screen.right() - below.left() - 8.0).max(320.0),
+                    (screen.bottom() - below.bottom() - 12.0).max(200.0),
+                );
+                egui::Resize::default()
+                    .id_salt(("diff-picker-size", pane))
+                    .default_size(vec2(520.0_f32.min(max.x), 460.0_f32.min(max.y)))
+                    .min_size(vec2(300.0, 180.0))
+                    .max_size(max)
+                    .with_stroke(false)
+                    .show(ui, |ui| {
+                        let search = ui.add(
+                            egui::TextEdit::singleline(&mut query)
+                                .hint_text("Search branches, tags or type a revision")
+                                .desired_width(f32::INFINITY),
+                        );
+                        if !search.has_focus()
+                            && !ui.data(|d| {
+                                d.get_temp::<bool>(search_id.with("seen")).unwrap_or(false)
+                            })
+                        {
+                            search.request_focus();
+                        }
+                        ui.data_mut(|d| d.insert_temp(search_id.with("seen"), true));
+                        if search.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            let typed = query.trim();
+                            if !typed.is_empty() {
+                                chosen = Some(typed.to_string());
+                            }
+                        }
+                        ui.add_space(4.0);
+                        let q = query.trim().to_lowercase();
+                        match &diff.refs {
+                            None => {
+                                ui.label(
+                                    egui::RichText::new("Loading...").color(tokens.text_muted),
+                                );
+                            }
+                            Some(refs) => {
+                                ScrollArea::vertical()
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        if (q.is_empty() || "head".contains(&q))
+                                            && ui
+                                                .selectable_label(
+                                                    diff.rev() == "HEAD",
+                                                    "HEAD (last commit)",
+                                                )
+                                                .clicked()
+                                        {
+                                            chosen = Some("HEAD".to_string());
+                                        }
+                                        let sections: [(&str, &[String]); 4] = [
+                                            ("Recent", &refs.recent),
+                                            ("Local", &refs.local),
+                                            ("Remote", &refs.remote),
+                                            ("Tags", &refs.tags),
+                                        ];
+                                        for (title, names) in sections {
+                                            let shown: Vec<&str> = names
+                                                .iter()
+                                                .map(String::as_str)
+                                                .filter(|n| {
+                                                    q.is_empty() || n.to_lowercase().contains(&q)
+                                                })
+                                                .collect();
+                                            if shown.is_empty() {
+                                                continue;
+                                            }
+                                            let open = (!q.is_empty() || title == "Recent")
+                                                .then_some(true);
+                                            egui::CollapsingHeader::new(
+                                                egui::RichText::new(title).strong(),
+                                            )
+                                            .id_salt(("diff-picker-sec", pane, title))
+                                            .default_open(title == "Recent" || title == "Local")
+                                            .open(open)
+                                            .show(
+                                                ui,
+                                                |ui| {
+                                                    names_tree(
+                                                        ui,
+                                                        pane,
+                                                        title,
+                                                        &shown,
+                                                        refs.current.as_deref(),
+                                                        diff.rev(),
+                                                        tokens,
+                                                        &mut chosen,
+                                                    );
+                                                },
+                                            );
+                                        }
+                                        if refs.truncated {
+                                            ui.label(
+                                                egui::RichText::new(
+                                                    "List truncated; type a name and press Enter.",
+                                                )
+                                                .color(tokens.text_muted),
+                                            );
+                                        }
+                                    });
+                            }
+                        }
+                    });
+            });
+        });
+    ui.data_mut(|d| d.insert_temp(search_id, query));
+    let outside = ui.input(|i| i.pointer.any_pressed())
+        && ui
+            .input(|i| i.pointer.interact_pos())
+            .is_some_and(|p| !area.response.rect.contains(p) && !below.contains(p));
+    close |= outside;
+    if let Some(rev) = chosen {
+        s.dispatch_or_notice("preview.diff.rev", &json!({"pane": pane, "rev": rev}));
+        close = true;
+    }
+    if close {
+        ui.data_mut(|d| {
+            d.remove::<bool>(search_id.with("seen"));
+            d.remove::<String>(search_id);
+        });
+        if s.pane_diff(pane).is_some_and(|d| d.picker) {
+            s.dispatch_or_notice("preview.diff.picker", &json!({"pane": pane, "open": false}));
+        }
+    }
+}
+
+/// Names grouped by their first `/` segment into collapsible folders (one level, like branch
+/// prefixes `feature/` and `bugfix/`); the rest are leaves.
+#[allow(clippy::too_many_arguments)]
+fn names_tree(
+    ui: &mut Ui,
+    pane: PaneId,
+    section: &str,
+    names: &[&str],
+    current: Option<&str>,
+    selected: &str,
+    tokens: &Tokens,
+    chosen: &mut Option<String>,
+) {
+    let mut folders: std::collections::BTreeMap<&str, Vec<&str>> =
+        std::collections::BTreeMap::new();
+    let mut leaves: Vec<&str> = Vec::new();
+    for name in names {
+        match name.split_once('/') {
+            Some((head, _)) if section != "Remote" || name.matches('/').count() > 1 => {
+                folders.entry(head).or_default().push(name);
+            }
+            _ => leaves.push(name),
+        }
+    }
+    let leaf = |ui: &mut Ui, name: &str, chosen: &mut Option<String>| {
+        let star = current == Some(name);
+        let text = if star {
+            format!("* {name}")
+        } else {
+            name.to_string()
+        };
+        let label = if star {
+            egui::RichText::new(text).color(tokens.accent)
+        } else {
+            egui::RichText::new(text)
+        };
+        if ui.selectable_label(selected == name, label).clicked() {
+            *chosen = Some(name.to_string());
+        }
+    };
+    for name in &leaves {
+        leaf(ui, name, chosen);
+    }
+    for (folder, members) in folders {
+        egui::CollapsingHeader::new(folder)
+            .id_salt(("diff-picker-folder", pane, section, folder))
+            .default_open(false)
+            .show(ui, |ui| {
+                for name in members {
+                    leaf(ui, name, chosen);
+                }
+            });
     }
 }
 
@@ -116,30 +487,34 @@ fn rows(
     rows: &[Row],
     unified: bool,
     (target, block): (Option<(usize, usize)>, Option<std::ops::Range<usize>>),
+    jumps: u64,
     tokens: &Tokens,
 ) {
     let font = FontId::monospace(tokens.font_size);
     let row_h = ui.fonts_mut(|f| f.row_height(&font)) + 2.0;
     let seen = ui.make_persistent_id(egui::IdSalt::new(("diff-current", pane)));
-    let last: Option<usize> = ui.ctx().data(|d| d.get_temp(seen));
-    let mut area = ScrollArea::both()
+    let last: Option<(usize, u64)> = ui.ctx().data(|d| d.get_temp(seen));
+    // Vertical only: long lines are clipped per row, and a horizontal scroll area would feed
+    // last frame's content width back in, so the view could never shrink with the pane.
+    let mut area = ScrollArea::vertical()
         .id_salt(("diff-scroll", pane))
         .auto_shrink(false);
     if let Some((index, row)) = target
-        && last != Some(index)
+        && last != Some((index, jumps))
     {
         let visual = if unified {
             unified_index(rows, row)
         } else {
             row
         };
-        area = area.vertical_scroll_offset((visual as f32 * row_h - row_h * 3.0).max(0.0));
+        // The change's first line lands at the top of the view.
+        area = area.vertical_scroll_offset(visual as f32 * row_h);
     }
     ui.ctx().data_mut(|d| match target {
         Some((i, _)) => {
-            d.insert_temp(seen, i);
+            d.insert_temp(seen, (i, jumps));
         }
-        None => d.remove::<usize>(seen),
+        None => d.remove::<(usize, u64)>(seen),
     });
 
     let total = if unified {
@@ -147,6 +522,8 @@ fn rows(
     } else {
         rows.len()
     };
+    // Rows are exactly `row_h` apart: `show_rows` adds the item spacing to its pitch.
+    ui.spacing_mut().item_spacing.y = 0.0;
     let out = area.show_rows(ui, row_h, total, |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
         if unified {
@@ -166,16 +543,20 @@ fn rows(
             let half = ((ui.available_width() - 4.0) / 2.0).max(100.0);
             let first = range.start;
             for (offset, row) in rows.get(range).unwrap_or_default().iter().enumerate() {
-                let line = ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    side(ui, row, false, half, row_h, &font, tokens);
-                    side(ui, row, true, half, row_h, &font, tokens);
-                });
+                // One exact-height allocation per row; `ui.horizontal` would round it up to
+                // the interact height and break the row pitch the jump offsets rely on.
+                let (line, _) =
+                    ui.allocate_exact_size(vec2(half * 2.0 + 4.0, row_h), egui::Sense::hover());
+                let left = egui::Rect::from_min_size(line.min, vec2(half, row_h));
+                let right =
+                    egui::Rect::from_min_size(line.min + vec2(half + 4.0, 0.0), vec2(half, row_h));
+                side(ui, row, false, left, &font, tokens);
+                side(ui, row, true, right, &font, tokens);
                 if block
                     .as_ref()
                     .is_some_and(|b| b.contains(&(first + offset)))
                 {
-                    current_bar(ui, line.response.rect, tokens);
+                    current_bar(ui, line, tokens);
                 }
             }
         }
@@ -245,16 +626,7 @@ fn line_job(
     job
 }
 
-fn side(
-    ui: &mut Ui,
-    row: &Row,
-    right: bool,
-    width: f32,
-    row_h: f32,
-    font: &FontId,
-    tokens: &Tokens,
-) {
-    let (rect, _) = ui.allocate_exact_size(vec2(width, row_h), egui::Sense::hover());
+fn side(ui: &Ui, row: &Row, right: bool, rect: egui::Rect, font: &FontId, tokens: &Tokens) {
     let line = if right { &row.right } else { &row.left };
     let (bg, word) = backgrounds(row.tag, right, tokens);
     let painter = ui.painter_at(rect);
@@ -324,73 +696,210 @@ fn unified_row(ui: &mut Ui, row: &Row, current: bool, row_h: f32, font: &FontId,
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
-    use egui_kittest::{Harness, kittest::Queryable};
-    use fm_engine::diff_cmds::DiffStatus;
+    use egui_kittest::Harness;
     use std::time::{Duration, Instant};
 
-    #[test]
-    fn next_and_previous_scroll_to_the_changed_blocks() {
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let ok = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "git {args:?}");
+    }
+
+    fn rig(changes: &[usize]) -> (tempfile::TempDir, Session, PaneId) {
         let dir = tempfile::tempdir().expect("tmp");
-        let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
         let base: Vec<String> = (0..300).map(|i| format!("line {i}")).collect();
         let mut changed = base.clone();
-        for i in [10usize, 150, 280] {
-            changed[i] = format!("CHANGED {i}");
+        for i in changes {
+            changed[*i] = format!("CHANGED {i}");
         }
-        std::fs::write(&a, base.join("\n")).expect("a");
-        std::fs::write(&b, changed.join("\n")).expect("b");
-        let mut s = fm_engine::Session::new().expect("session");
-        s.dispatch(
-            "diff.open",
-            &serde_json::json!({"left": a.to_string_lossy(), "right": b.to_string_lossy()}),
-        )
-        .expect("open");
-        let pane = s.layout.focused();
+        let file = dir.path().join("a.txt");
+        git(dir.path(), &["init", "-q", "-b", "main"]);
+        std::fs::write(&file, base.join("\n")).expect("a");
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-q", "-m", "i"]);
+        std::fs::write(&file, changed.join("\n")).expect("b");
+        let mut s = Session::new().expect("session");
+        let folder = fm_vfs::VfsUri::parse(&dir.path().to_string_lossy()).expect("uri");
+        let files = s.layout.focused();
+        s.layout
+            .state_mut(files)
+            .expect("pane")
+            .navigate(folder.clone());
+        s.ensure_read(folder).expect("read");
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !matches!(
-            s.diff_view(pane).map(|v| &v.status),
-            Some(DiffStatus::Ready(_))
-        ) {
+        while !s.pane_view_ready(files) {
             assert!(Instant::now() < deadline);
             s.poll();
             std::thread::sleep(Duration::from_millis(5));
         }
+        let uri = fm_vfs::VfsUri::parse(&file.to_string_lossy()).expect("uri");
+        s.dispatch("preview.open", &serde_json::json!({"uri": uri.to_string()}))
+            .expect("open");
+        let pane = s
+            .layout
+            .panes()
+            .into_iter()
+            .find(|p| s.pane_kind(*p) == Some(fm_layout::PaneKind::Preview))
+            .expect("preview");
+        while !(s.pane_diff(pane).is_some_and(|d| d.active)
+            && matches!(
+                s.diff_view(pane).map(|v| &v.status),
+                Some(DiffStatus::Ready(_))
+            ))
+        {
+            assert!(Instant::now() < deadline, "diff never became ready");
+            s.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        (dir, s, pane)
+    }
+
+    fn harness(s: Session, pane: PaneId) -> Harness<'static, Session> {
         let tokens = Tokens::dark();
-        let mut harness = Harness::builder()
+        Harness::builder()
             .with_size(egui::vec2(800.0, 400.0))
             .build_ui_state(
-                move |ui, s: &mut fm_engine::Session| {
+                move |ui, s: &mut Session| {
                     crate::theme::apply_to(ui.ctx(), &tokens);
                     show(ui, s, pane, &tokens);
                 },
                 s,
+            )
+    }
+
+    fn offset(h: &Harness<Session>) -> f32 {
+        h.ctx
+            .data(|d| d.get_temp::<f32>(egui::Id::NULL.with("diff-offset-test")))
+            .unwrap_or(-1.0)
+    }
+
+    fn step(h: &mut Harness<Session>, id: &str) {
+        h.state_mut()
+            .dispatch(id, &serde_json::json!({}))
+            .expect("dispatch");
+        h.run();
+        h.run();
+    }
+
+    #[test]
+    fn next_and_previous_scroll_to_the_changed_blocks() {
+        let (_dir, s, pane) = rig(&[10, 150, 280]);
+        let mut harness = harness(s, pane);
+        harness.run();
+        let start = offset(&harness);
+        step(&mut harness, "preview.diff.next");
+        let second = offset(&harness);
+        assert!(second > start + 500.0, "Next: {start} -> {second}");
+        step(&mut harness, "preview.diff.next");
+        let third = offset(&harness);
+        assert!(third > second + 500.0, "Next: {second} -> {third}");
+        step(&mut harness, "preview.diff.prev");
+        assert!(offset(&harness) < third - 500.0, "Prev did not scroll back");
+    }
+
+    #[test]
+    fn a_single_change_is_scrolled_back_to() {
+        let (_dir, s, pane) = rig(&[200]);
+        let mut harness = harness(s, pane);
+        harness.run();
+        let at_change = offset(&harness);
+        assert!(at_change > 500.0, "first change not shown: {at_change}");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod folder_tests {
+    use super::*;
+    use egui_kittest::Harness;
+    use std::time::{Duration, Instant};
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let ok = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "git {args:?}");
+    }
+
+    fn pump(s: &mut Session, ms: u64) {
+        let end = Instant::now() + Duration::from_millis(ms);
+        while Instant::now() < end {
+            s.poll();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Switching from a file whose diff is showing to a folder must not leave the pane loading.
+    #[test]
+    fn a_folder_after_a_diffed_file_settles() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = tmp.path();
+        git(d, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir(d.join("sub")).expect("dir");
+        std::fs::write(d.join("sub/a.txt"), "x\n").expect("file");
+        std::fs::write(d.join("f.txt"), "1\n").expect("f");
+        git(d, &["add", "."]);
+        git(d, &["commit", "-q", "-m", "i"]);
+        std::fs::write(d.join("f.txt"), "2\n").expect("f");
+        let mut s = Session::new().expect("session");
+        let dir = fm_vfs::VfsUri::parse(&d.to_string_lossy()).expect("uri");
+        let files = s.layout.focused();
+        s.layout
+            .state_mut(files)
+            .expect("pane")
+            .navigate(dir.clone());
+        s.ensure_read(dir).expect("read");
+        pump(&mut s, 300);
+        let file = fm_vfs::VfsUri::parse(&d.join("f.txt").to_string_lossy()).expect("uri");
+        s.dispatch(
+            "preview.open",
+            &serde_json::json!({"uri": file.to_string()}),
+        )
+        .expect("open");
+        let pane = s
+            .layout
+            .panes()
+            .into_iter()
+            .find(|p| s.pane_kind(*p) == Some(fm_layout::PaneKind::Preview))
+            .expect("preview");
+        pump(&mut s, 500);
+        assert!(s.pane_diff(pane).is_some_and(|d| d.active));
+        let tokens = Tokens::dark();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 400.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    crate::theme::apply_to(ui.ctx(), &tokens);
+                    crate::preview::show(ui, s, pane, &tokens);
+                },
+                s,
             );
         harness.run();
-        let offset = |h: &Harness<fm_engine::Session>| -> f32 {
-            h.ctx
-                .data(|d| d.get_temp::<f32>(egui::Id::NULL.with("diff-offset-test")))
-                .unwrap_or(-1.0)
-        };
-        let start = offset(&harness);
-        harness.get_by_label("Next").click();
-        harness.run();
-        harness.run();
-        let second = offset(&harness);
+        let sub = fm_vfs::VfsUri::parse(&d.join("sub").to_string_lossy()).expect("uri");
+        harness
+            .state_mut()
+            .dispatch("preview.open", &serde_json::json!({"uri": sub.to_string()}))
+            .expect("open folder");
+        for _ in 0..30 {
+            harness.state_mut().poll();
+            harness.run();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let s = harness.state();
+        assert!(s.pane_diff(pane).is_none());
         assert!(
-            second > start + 500.0,
-            "Next did not scroll: {start} -> {second}"
+            s.preview_slot(pane)
+                .is_some_and(|sl| matches!(sl.body, fm_engine::preview_cmds::Body::Static(_))),
+            "folder preview stuck"
         );
-        harness.get_by_label("Next").click();
-        harness.run();
-        harness.run();
-        let third = offset(&harness);
-        assert!(
-            third > second + 500.0,
-            "Next did not reach the third change: {second} -> {third}"
-        );
-        harness.get_by_label("Prev").click();
-        harness.run();
-        harness.run();
-        assert!(offset(&harness) < third - 500.0, "Prev did not scroll back");
     }
 }

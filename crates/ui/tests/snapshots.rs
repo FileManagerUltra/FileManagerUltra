@@ -3233,61 +3233,92 @@ fn find_files_window_lists_results_dark_light() {
 }
 
 #[test]
-fn diff_pane_split_and_unified_dark_light() {
+fn preview_diff_split_and_unified_dark_light() {
     use fm_engine::diff_cmds::DiffStatus;
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();
     let dir = tempfile::tempdir().expect("tmp");
-    let (a, b) = (dir.path().join("old.rs"), dir.path().join("new.rs"));
+    let d = dir.path();
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(d)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "git {args:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    let file = d.join("main.rs");
     std::fs::write(
-        &a,
+        &file,
         "fn main() {\n    let x = 1;\n    println!(\"{x}\");\n    old();\n}\n",
     )
-    .expect("a");
+    .expect("old");
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "i"]);
     std::fs::write(
-        &b,
+        &file,
         "fn main() {\n    let x = 2;\n    println!(\"{x}\");\n    added();\n    more();\n}\n",
     )
-    .expect("b");
+    .expect("new");
+    let dir_uri = VfsUri::parse(&d.to_string_lossy()).expect("uri");
+    let file_uri = VfsUri::parse(&file.to_string_lossy()).expect("uri");
     for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
         for mode in ["split", "unified"] {
             let Some(renderer) = renderer_or_skip() else {
                 return;
             };
             let mut session = with_fixed_places(Session::new().expect("session"));
+            let files = session.layout.focused();
+            session
+                .layout
+                .state_mut(files)
+                .expect("pane")
+                .navigate(dir_uri.clone());
+            session.ensure_read(dir_uri.clone()).expect("read");
+            wait_ready(&mut session, &dir_uri);
             session
                 .dispatch(
-                    "diff.open",
-                    &serde_json::json!({"left": a.to_string_lossy(), "right": b.to_string_lossy()}),
+                    "preview.open",
+                    &serde_json::json!({"uri": file_uri.to_string()}),
                 )
                 .expect("open");
-            session
-                .dispatch("diff.mode", &serde_json::json!({"mode": mode}))
-                .expect("mode");
-            let pane = session.layout.focused();
+            let pane = session
+                .layout
+                .panes()
+                .into_iter()
+                .find(|p| session.pane_kind(*p) == Some(fm_layout::PaneKind::Preview))
+                .expect("preview");
             let deadline = Instant::now() + Duration::from_secs(10);
             while Instant::now() < deadline {
                 session.poll();
-                if matches!(
-                    session.diff_view(pane).map(|v| &v.status),
-                    Some(DiffStatus::Ready(_))
-                ) {
+                if session.pane_diff(pane).is_some_and(|d| d.active)
+                    && matches!(
+                        session.diff_view(pane).map(|v| &v.status),
+                        Some(DiffStatus::Ready(_))
+                    )
+                {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
+            session
+                .dispatch("preview.diff.mode", &serde_json::json!({"mode": mode}))
+                .expect("mode");
             let mut harness = Harness::builder()
                 .renderer(renderer)
                 .with_accessibility_check(false)
                 .build_ui(move |ui| {
                     theme::apply_to(ui.ctx(), &tokens);
                     egui::Frame::NONE.fill(tokens.panel).show(ui, |ui| {
-                        fm_ui::diff::show(ui, &mut session, pane, &tokens);
+                        fm_ui::preview::show(ui, &mut session, pane, &tokens);
                     });
                 });
-            harness.set_size(egui::vec2(760.0, 260.0));
+            harness.set_size(egui::vec2(900.0, 260.0));
             harness.run();
-            harness.snapshot(format!("pane_diff_{mode}_{theme}"));
+            harness.snapshot(format!("preview_diff_{mode}_{theme}"));
             results.extend_harness(&mut harness);
         }
     }

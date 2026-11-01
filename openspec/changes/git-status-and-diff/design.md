@@ -4,11 +4,13 @@
   Pure data out. Registered in `xtask/src/layers.rs`.
 - `engine::git` (L3): per-repository state cache (repo root -> status map, branch, revision),
   refreshed on the `local` job lane; panes only read cached results. Commands in
-  `engine/src/git_cmds.rs` and `diff_cmds.rs` (`git.refresh`, `git.markers.toggle`, `diff.open`,
-  `diff.swap`, `diff.next`, `diff.prev`, `diff.mode`).
-- `layout` (L2): `PaneKind::Diff` with `DiffState { left, right, mode, scroll }`, serialised
-  in workspaces.
-- `ui` (L4): gutter column + name tint in listing/tree, Diff pane widget. Colors only from
+  `engine/src/git_cmds.rs` and `diff_cmds.rs` (`git.refresh`, `git.markers.toggle`,
+  `preview.diff.{toggle,picker,rev,next,prev,mode,eol,reload}`). `diff_cmds` keeps one
+  `PaneDiff` per Preview pane, derived from the preview subject each frame, plus a sticky
+  per-pane choice (view, revision, mode, EOL) that survives selection changes.
+- `layout` (L2): session-only `DiffState { left, right, mode, ignore_eol, current, jumps }`;
+  no new pane kind (saved workspaces with the earlier "Diff" kind load as Files).
+- `ui` (L4): gutter column + name tint in listing/tree, the Diff view inside the Preview pane (`diff.rs`: bar, revision picker, rows). Colors only from
   `theme.rs` tokens (new `git_modified`, `git_added`, `git_removed`, `git_untracked`,
   `git_ignored`, `git_conflict`; dark and light exhaustive).
 
@@ -24,7 +26,7 @@
   grace period; at most 8 repos cached (LRU).
 - Untracked collection is ignore-aware (skips `node_modules`-style ignored trees) and capped.
 - Blobs for diffs load on demand, capped (2 MiB per side), binary detected, and are dropped
-  when the Diff pane closes.
+  when the Preview pane closes or its file changes.
 
 ## Diff algorithm
 

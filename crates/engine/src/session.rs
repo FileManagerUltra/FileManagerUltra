@@ -95,7 +95,7 @@ pub struct Session {
     pub watch: crate::watch::Watcher,
     /// Git status per repository (capability `git-status`).
     pub git: crate::git::GitState,
-    /// Loaded comparisons of Diff panes (capability `git-diff`).
+    /// Diff state and loaded comparisons of Preview panes (capability `git-diff`).
     pub diffs: crate::diff_cmds::DiffHub,
     /// Scheme → backend; local disk is always registered.
     pub backends: VfsRegistry,

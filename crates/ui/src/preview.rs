@@ -186,7 +186,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         }
         let tokens = &content_tokens;
         ui.data_mut(|d| d.insert_temp(Id::NULL.with("pv-content-scale"), scale));
-        if let Some(slot) = s.preview_slot(pane) {
+        if s.pane_diff(pane).is_some_and(|d| d.active) {
+            crate::diff::show(ui, s, pane, tokens);
+        } else if let Some(slot) = s.preview_slot(pane) {
             match &slot.body {
                 Body::Empty => centered(ui, tokens, "Select a file to preview it"),
                 Body::Loading => {
@@ -370,9 +372,14 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
     };
     // The view options go in a closure so they can be measured, then shown inline or, when the
     // pane is too narrow, behind a menu button on the right.
+    let diff = s.pane_diff(pane);
     let options = |ui: &mut Ui, actions: &mut Vec<Action>| {
         ui.spacing_mut().item_spacing.x = 8.0;
         ui.spacing_mut().button_padding = vec2(10.0, 3.0);
+        // The diff's own controls live in its second bar.
+        if diff.is_some_and(|d| d.active) {
+            return;
+        }
         if !matches!(slot.body, Body::Log(_)) {
             let can_find = matches!(&slot.body, Body::Static(p) if fm_engine::preview_find_cmds::searchable(p));
             if ui
@@ -458,6 +465,20 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
     };
     ui.horizontal(|ui| {
         source_picker(ui, s, pane, actions);
+        if let Some(d) = diff {
+            for (label, show) in [("Preview", false), ("Diff", true)] {
+                let resp = ui
+                    .add(egui::Button::selectable(d.active == show, label))
+                    .on_hover_text(if show {
+                        "Show the changes against the last commit"
+                    } else {
+                        "Show the file"
+                    });
+                if resp.clicked() && d.active != show {
+                    actions.push(("preview.diff.toggle", json!({ "show": show })));
+                }
+            }
+        }
         if matches!(slot.body, Body::Log(_)) || slot.subjects.len() > 1 {
             let id = Id::NULL.with(("pv-logui", pane));
             let mut st: LogUi = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();

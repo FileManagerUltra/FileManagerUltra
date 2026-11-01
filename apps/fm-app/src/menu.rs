@@ -45,6 +45,8 @@ pub const PREVIEW_FIND: &str = "preview.find.open";
 pub const PREVIEW_SCALE_IN: &str = "preview.scale.in";
 pub const PREVIEW_SCALE_OUT: &str = "preview.scale.out";
 pub const PREVIEW_SCALE_RESET: &str = "preview.scale.reset";
+pub const DIFF_NEXT: &str = "preview.diff.next";
+pub const DIFF_PREV: &str = "preview.diff.prev";
 pub const LOG_FOLLOW: &str = "preview.log.follow";
 pub const LOG_COLUMNS: &str = "preview.log.columns";
 pub const LOG_MARK: &str = "preview.log.mark";
@@ -782,18 +784,14 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, ZOOM_RESET);
             ui.separator();
             item(ui, session, dialogs, VIEW_PREVIEW);
-            ui.menu_button("Compare", |ui| {
+            ui.menu_button("Diff", |ui| {
                 for id in [
-                    "diff.compare.head",
-                    "diff.mark",
-                    "diff.compare.marked",
-                    "diff.compare.selected",
-                    "diff.next",
-                    "diff.prev",
-                    "diff.swap",
-                    "diff.mode",
-                    "diff.eol.toggle",
-                    "diff.reload",
+                    "preview.diff.toggle",
+                    DIFF_NEXT,
+                    DIFF_PREV,
+                    "preview.diff.mode",
+                    "preview.diff.eol",
+                    "preview.diff.reload",
                 ] {
                     item(ui, session, dialogs, id);
                 }
@@ -920,6 +918,9 @@ pub fn consume_shortcuts(
                     ZOOM_IN => PREVIEW_SCALE_IN,
                     ZOOM_OUT => PREVIEW_SCALE_OUT,
                     ZOOM_RESET => PREVIEW_SCALE_RESET,
+                    // A diff borrows the F7 pair for change navigation (as in IDE diff viewers).
+                    FILE_MKDIR if session.command_enabled(DIFF_NEXT) => DIFF_NEXT,
+                    FILE_NEWFILE if session.command_enabled(DIFF_PREV) => DIFF_PREV,
                     _ => id,
                 }
             } else {

@@ -11,7 +11,7 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 | 4b | `smb-backend` | SMB via the pure-Rust `smb` crate (NTLM, no system library, one code path on all platforms), reusing the connection model from change 4 | done (archived) |
 | 5 | `live-watch-and-packaging` | `notify`-driven directory refresh, session persistence (panes/sizes/locations), `.deb`/AppImage, `.msi`, `.dmg` | next |
 
-Additional change, implemented: `git-status-and-diff` (git status markers, side-by-side Diff pane) — see `docs/architecture.md` §12a; pending archive.
+Additional change, implemented: `git-status-and-diff` (git status markers, Diff view in the Preview pane) — see `docs/architecture.md` §12a; pending archive.
 
 **Current focus:** 5 (`live-watch-and-packaging`).
 

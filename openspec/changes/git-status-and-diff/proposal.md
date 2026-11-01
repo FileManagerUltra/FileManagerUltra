@@ -1,14 +1,14 @@
-# Git status markers and side-by-side Diff pane
+# Git status markers and a Diff view in the Preview pane
 
 Read-only git integration for local folders: show each file's and folder's git status in Files
-panes and the tree, and compare any two files or revisions side by side in a new **Diff** pane
-type with line-level highlighting.
+panes and the tree, and compare a file with any revision in a **Diff** view of the Preview pane,
+with line-level highlighting.
 
 ## Why
 
 Developers browse project trees in a file manager and want to see what changed without
-switching to a terminal. Two linked Preview panes show raw content but no differences, so
-comparison needs its own pane type.
+switching to a terminal. The Preview pane already follows the selection, so showing the
+changes there is the natural place.
 
 ## Scope
 
@@ -21,18 +21,17 @@ comparison needs its own pane type.
 - **Backend:** `gix` (pure Rust, no git binary, no `unsafe`, no FFI). New crate `fm-git` (L0)
   wraps it behind a small API returning plain data. No hooks, filters, credential helpers or
   external commands are ever run.
-- **Diff pane:** new `PaneKind::Diff` with two aligned columns, line-level add/remove/change
-  highlighting, intra-line highlight for changed lines, synced scrolling, next/previous change
-  navigation, and a unified fallback in narrow panes. Inputs are any two *sources*: a working
-  file, a file at a revision (HEAD, index, branch, tag, commit), or another file on disk.
-  Entry points: context menu "Compare with HEAD" / "Compare with…", the `diff.open {left,
-  right}` command, and dragging a file onto a Diff pane side.
+- **Diff view:** the Preview pane gets Preview/Diff buttons for a single local file in a
+  repository; modified files open in Diff. Two aligned columns, line-level add/remove/change
+  highlighting, intra-line highlight, next/previous change (F7/Shift+F7), a unified fallback in
+  narrow panes, and a revision picker (HEAD, recent, local/remote branches, tags). The choice
+  and revision stay with the pane as the selection moves.
 - **Settings:** `prefs.git.enabled` (default on) and marker style toggles (color, letter).
 - **Non-goals (v1):** stage/unstage/commit/restore/checkout, merge tooling, blame, history
   browser, remote operations, SFTP/SMB repositories, submodule recursion, editing in the Diff
-  pane.
+  view, comparing two arbitrary files.
 
 ## Capabilities
 
 - New: `git-status`, `git-diff`
-- Modified: `pane-types` (Diff kind), `security` (hostile repositories, limits)
+- Modified: `preview-pane` (Diff view), `security` (hostile repositories, limits)

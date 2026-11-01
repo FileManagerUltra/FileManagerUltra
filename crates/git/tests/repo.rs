@@ -169,3 +169,22 @@ fn repo_autocrlf_checkout_is_not_reported_modified() {
     let st = fm_git::status(d).unwrap();
     assert_eq!(st.mark_abs(&d.join("a.txt")), None);
 }
+
+#[test]
+fn refs_lists_branches_tags_and_recent_checkouts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    git(d, &["init", "-q", "-b", "main"]);
+    std::fs::write(d.join("a"), "1\n").unwrap();
+    git(d, &["add", "."]);
+    git(d, &["commit", "-q", "-m", "i"]);
+    git(d, &["tag", "v1"]);
+    git(d, &["checkout", "-q", "-b", "feature/x"]);
+    git(d, &["checkout", "-q", "main"]);
+    let refs = fm_git::refs::list(d).unwrap();
+    assert_eq!(refs.current.as_deref(), Some("main"));
+    assert_eq!(refs.local, ["feature/x", "main"]);
+    assert_eq!(refs.tags, ["v1"]);
+    assert_eq!(refs.recent.first().map(String::as_str), Some("main"));
+    assert!(refs.recent.iter().any(|r| r == "feature/x"));
+}

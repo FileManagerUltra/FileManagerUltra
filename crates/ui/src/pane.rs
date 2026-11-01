@@ -121,10 +121,6 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 crate::trash::show(ui, s, pane, tokens);
                 return;
             }
-            if kind == PaneKind::Diff {
-                crate::diff::show(ui, s, pane, tokens);
-                return;
-            }
             if kind == PaneKind::Preview {
                 open = crate::preview::show(ui, s, pane, tokens);
                 return;
@@ -199,8 +195,6 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let dragging = egui::DragAndDrop::has_payload_of_type::<crate::dnd::DragPayload>(ui.ctx());
     if kind == PaneKind::Terminal {
         crate::dnd::finish_terminal(ui.ctx(), s, pane, area, tokens);
-    } else if kind == PaneKind::Diff {
-        crate::dnd::finish_diff(ui.ctx(), s, pane, area, tokens);
     } else {
         crate::dnd::finish(ui.ctx(), s, area, tokens);
     }
@@ -245,7 +239,6 @@ fn kind_menu(ui: &mut Ui, s: &mut Session, pane: PaneId, current: PaneKind) {
                     | PaneKind::Sftp
                     | PaneKind::Network
                     | PaneKind::Trash
-                    | PaneKind::Diff
             );
             let label = if supported {
                 kind.label().to_string()
@@ -253,25 +246,7 @@ fn kind_menu(ui: &mut Ui, s: &mut Session, pane: PaneId, current: PaneKind) {
                 format!("{} (soon)", kind.label())
             };
             let resp = ui.add_enabled(supported, egui::Button::selectable(kind == current, label));
-            if resp.clicked() && kind == PaneKind::Diff && current != PaneKind::Diff {
-                // A Diff pane needs something to compare: use this pane's selection.
-                let _ = s.layout.focus_pane(pane);
-                let id = ["diff.compare.selected", "diff.compare.head"]
-                    .into_iter()
-                    .find(|id| s.command_enabled(id));
-                match id {
-                    Some(id) => {
-                        s.dispatch_or_notice(id, &serde_json::json!({}));
-                    }
-                    None => {
-                        s.notice = Some(
-                            "Select a file in a git repository, or two files, then choose Diff"
-                                .to_string(),
-                        );
-                    }
-                }
-                ui.close();
-            } else if resp.clicked() {
+            if resp.clicked() {
                 s.dispatch_or_notice(
                     "pane.kind.set",
                     &serde_json::json!({ "kind": kind.as_str(), "pane": pane }),
@@ -280,8 +255,14 @@ fn kind_menu(ui: &mut Ui, s: &mut Session, pane: PaneId, current: PaneKind) {
             }
         }
     });
-    let r = button.response.rect;
-    let color = ui.style().interact(&button.response).fg_stroke.color;
+    paint_dropdown_triangle(ui, &button.response);
+}
+
+/// The dropdown triangle painted at the right edge of a button (the bundled fonts lack ▾).
+/// Reserve room for it with trailing spaces in the label.
+pub(crate) fn paint_dropdown_triangle(ui: &Ui, response: &egui::Response) {
+    let r = response.rect;
+    let color = ui.style().interact(response).fg_stroke.color;
     let size = r.height() * 0.14;
     let c = egui::pos2(
         r.right() - ui.spacing().button_padding.x - size,

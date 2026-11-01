@@ -1,48 +1,68 @@
 ## ADDED Requirements
 
-### Requirement: Diff pane compares two sources side by side
-`PaneKind::Diff` SHALL show two sources in aligned columns: each is a working-tree file, a file at
-a revision (HEAD, index, branch, tag or commit), or any file on disk. Added, removed and changed
-lines are highlighted; changed line pairs highlight the differing words. Scrolling is synced.
+### Requirement: Preview pane shows a diff against a revision
+A Preview pane showing a single local file inside a git repository SHALL offer a **Diff** view
+next to the normal preview. The diff compares the working copy (right) with the file at a
+revision (left, default `HEAD`) in aligned columns. Added, removed and changed lines are
+highlighted, and changed line pairs highlight the differing words. Folders, multi-selections,
+remote files and files outside a repository have no Diff view.
 
-#### Scenario: Compare with HEAD
-- **WHEN** `diff.open` runs for a modified tracked file with left = HEAD and right = working file
-- **THEN** a Diff pane shows both versions aligned with changed lines highlighted
+#### Scenario: Modified file opens in Diff
+- **WHEN** the previewed file is Modified, Added, Renamed or Conflicted and its preview is text
+- **THEN** the pane shows the Diff view by default with changed lines highlighted
 
-#### Scenario: Drop a file on a side
-- **WHEN** a local file is dragged onto the left or right half of a Diff pane
-- **THEN** `diff.side` replaces that side with the file
-
-#### Scenario: Compare two arbitrary files
-- **WHEN** the user picks "Compare with…" and selects another file
-- **THEN** the pane shows the two files side by side
+#### Scenario: Unmodified file opens in Preview
+- **WHEN** the previewed file is clean
+- **THEN** the pane shows the normal preview and `preview.diff.toggle {show:true}` switches to Diff
 
 #### Scenario: Identical inputs
-- **WHEN** both sources have identical content
-- **THEN** the pane says the files are identical
+- **WHEN** the working copy matches the revision
+- **THEN** the view says there are no changes against that revision
+
+### Requirement: The view choice and revision follow the pane
+The pane SHALL carry over the user's Preview/Diff choice, the chosen revision (within the same
+repository), the layout mode and the ignore-line-endings option when the pane moves to another file.
+
+#### Scenario: Next file keeps Diff and the branch
+- **WHEN** the pane shows the diff against branch `topic` and the selection moves to another file in the same repository
+- **THEN** that file is also shown as a diff against `topic`, even if it is unmodified
+
+### Requirement: Revision picker
+`preview.diff.picker` SHALL open a searchable, resizable list of HEAD, recent checkouts, local
+branches, remote branches and tags (folders for `prefix/` names, current branch marked).
+`preview.diff.rev {rev}` sets the revision; empty, oversized, `-`-prefixed or NUL-containing
+revisions are rejected, and an unknown revision shows an error in the view.
+
+#### Scenario: Choose a branch
+- **WHEN** the user picks a branch in the picker
+- **THEN** the picker closes and the diff reloads against that branch
 
 ### Requirement: Diff navigation and modes
-`diff.next` / `diff.prev` SHALL jump between changes; `diff.swap` exchanges sides; `diff.mode`
-switches side-by-side/unified (unified is the automatic fallback in narrow panes); an
-ignore-line-endings option SHALL be available. Bad parameters return `Err` and change nothing.
-
-#### Scenario: Line endings
-- **WHEN** a side is a committed blob and the platform is Windows
-- **THEN** line endings are ignored by default, since a CRLF checkout would otherwise differ on every line
+`preview.diff.next` (F7) and `preview.diff.prev` (Shift+F7) SHALL move to the next or previous
+change and scroll its first line to the top of the view; the current change is marked and the
+bar shows "Change N of M". F7/Shift+F7 keep their file meanings when no diff is shown.
+`preview.diff.mode` switches side-by-side/unified (unified is the automatic fallback in narrow
+panes), `preview.diff.eol` toggles ignoring line endings and `preview.diff.reload` reloads.
+The options sit in the diff bar and fold into a menu when the pane is narrow. Bad parameters
+return `Err` and change nothing.
 
 #### Scenario: Next change
-- **WHEN** `diff.next` runs
-- **THEN** the view scrolls to the next change and the current change is indicated
+- **WHEN** `preview.diff.next` runs, including when there is only one change
+- **THEN** the view scrolls so the change's first line is at the top and the change is marked
+
+#### Scenario: Line endings
+- **WHEN** the platform is Windows
+- **THEN** line endings are ignored by default, since a CRLF checkout would otherwise differ on every line
 
 ### Requirement: Diff inputs are bounded
 Each side SHALL be capped (default 2 MiB); larger inputs show a notice instead of a diff.
-Binary inputs show "binary files differ" with sizes. Computation runs on a worker; the UI thread
-never diffs, and results are dropped when the pane closes.
+Binary inputs show "binary files differ". Loading and diffing run on the local lane; the UI
+thread never diffs, and results are dropped when the pane goes away or the file changes.
 
 #### Scenario: Binary file
 - **WHEN** a side is binary
-- **THEN** no text diff is attempted and the pane reports binary files differ
+- **THEN** no text diff is attempted and the view reports binary files differ
 
-#### Scenario: Missing revision or file
-- **WHEN** a path does not exist at the chosen revision
-- **THEN** that side is shown empty with an "added/removed" label, not an error
+#### Scenario: Missing path at the revision
+- **WHEN** the file does not exist at the chosen revision
+- **THEN** that side is shown empty, not as an error
