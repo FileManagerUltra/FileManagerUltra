@@ -32,11 +32,20 @@ The menu bar SHALL render its items from the command registry, and selecting an 
 - **THEN** its menu item renders greyed out and activating it does nothing
 
 ### Requirement: Topic-based preferences
-Preferences SHALL present a simplified two-pane dialog with a flat topic list on the left and only the selected topic's settings on the right. Topics SHALL be General, Appearance, Files, Copy and move, Preview, Terminal, Connections, Workspaces and Advanced. Appearance SHALL offer theme, accent colour (presets or `#rrggbb`), density and text size; Files SHALL offer hidden-files default, single-click open, size units, date format and confirmation prompts; Terminal SHALL offer shell and font size; Advanced SHALL offer the thumbnail cache location (shown, changeable to a parent folder that receives a `thumbs` subfolder, resettable), a Clear thumbnail cache button, the cache size limits and the preview time limit. Every such setting SHALL change through the validated `prefs.set` command (bad values return an error and change nothing) and be clamped when read from a hand-edited prefs file. Connections SHALL contain SMB encryption, remote timing and trusted-host management.
+Preferences SHALL present a simplified two-pane dialog with a flat topic list on the left and only the selected topic's settings on the right. Topics SHALL be General, Appearance, Files, Copy and move, Preview, Terminal, Connections, Workspaces, Keyboard shortcuts and Advanced. Appearance SHALL offer theme, accent colour (presets or `#rrggbb`), density and text size; Files SHALL offer hidden-files default, single-click open, size units, date format and confirmation prompts; Terminal SHALL offer shell and font size; Advanced SHALL offer the thumbnail cache location (shown, changeable to a parent folder that receives a `thumbs` subfolder, resettable), a Clear thumbnail cache button, the cache size limits and the preview time limit. Every such setting SHALL change through the validated `prefs.set` command (bad values return an error and change nothing) and be clamped when read from a hand-edited prefs file. Connections SHALL contain SMB encryption, remote timing and trusted-host management.
 
 Preferences SHALL use proportional typography, left-aligned topic labels and neutral page headings without changing typography elsewhere in the application. Settings groups SHALL use flat sections with thin dividers, consistent spacing and aligned controls rather than nested cards. Trusted hosts SHALL appear in a bordered list with readable rows and aligned Forget actions. Mutually exclusive theme and shell choices SHALL use radio controls.
 
 The dialog SHALL initially select General, remember the selected topic while the application runs, and retain a consistent size when switching topics. Settings and navigation SHALL scroll when needed so the footer and Close remain accessible in small windows. Both dark and light themes SHALL use semantic theme tokens.
+
+#### Scenario: Browse keyboard shortcuts
+- **WHEN** Keyboard shortcuts is selected
+- **THEN** a read-only reference lists all registered command shortcuts, including currently disabled commands, plus binding aliases and pane-local navigation keys
+- **AND** shortcuts are grouped by application, workspace, pane layout, file navigation, selection/clipboard, file operations, preview, logs/diffs, terminal and text/dialog context
+- **AND** modifier names follow the platform (Cmd on macOS, Ctrl elsewhere), without relabeling shell Control keys
+- **AND** a search field filters actions, key combinations, groups and context descriptions
+- **AND** shared combinations explain focus-dependent behavior, including Preview Find, diff F7 navigation, terminal input and workspace switching
+- **AND** browsing or searching changes neither preferences nor keyboard bindings
 
 #### Scenario: Change a setting in a topic
 - **WHEN** a topic is selected

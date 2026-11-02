@@ -102,7 +102,10 @@ cargo run -p fm-app   # or the installed binary name from fm_brand::EXECUTABLE
 Manual checklist:
 
 Preferences: select General, Appearance, Files, Copy and move, Preview, Terminal, Connections,
-Workspaces and Advanced in the left topic column; only that topic's controls appear on the right.
+Workspaces, Keyboard shortcuts and Advanced in the left topic column; only that topic's controls appear on the right.
+Keyboard shortcuts is a grouped read-only reference, searchable by action, key or
+context; check pane-local keys, aliases and focus-dependent meanings without
+changing settings or bindings.
 Check proportional typography, left-aligned navigation and flat, divider-separated sections
 with aligned controls; the file listing keeps its existing typography. Connections separates SMB
 security, remote timing and a bordered trusted-host list with aligned Forget buttons.

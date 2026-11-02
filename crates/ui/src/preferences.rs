@@ -9,6 +9,9 @@ use fm_engine::{DateFormat, Density, Params, Session, SizeUnits, TerminalShell, 
 use crate::dialog_style::{hint, section_heading};
 use crate::theme::Tokens;
 
+#[path = "preferences_shortcuts.rs"]
+mod shortcuts;
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Topic {
     #[default]
@@ -20,11 +23,12 @@ enum Topic {
     Terminal,
     Connections,
     Workspaces,
+    Shortcuts,
     Advanced,
 }
 
 impl Topic {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::General,
         Self::Appearance,
         Self::Files,
@@ -33,6 +37,7 @@ impl Topic {
         Self::Terminal,
         Self::Connections,
         Self::Workspaces,
+        Self::Shortcuts,
         Self::Advanced,
     ];
 
@@ -46,6 +51,7 @@ impl Topic {
             Self::Terminal => "Terminal",
             Self::Connections => "Connections",
             Self::Workspaces => "Workspaces",
+            Self::Shortcuts => "Keyboard shortcuts",
             Self::Advanced => "Advanced",
         }
     }
@@ -133,7 +139,15 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                             close = true;
                         }
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            hint(ui, tokens, "Changes apply immediately. Saved on exit.");
+                            hint(
+                                ui,
+                                tokens,
+                                if topic == Topic::Shortcuts {
+                                    "Keyboard shortcuts are read-only."
+                                } else {
+                                    "Changes apply immediately. Saved on exit."
+                                },
+                            );
                         });
                     });
                 },
@@ -147,6 +161,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
 
 fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
     match topic {
+        Topic::Shortcuts => shortcuts::show(ui, s, tokens),
         Topic::General => {
             section_heading(ui, tokens, "Updates");
             let mut check_updates = s.prefs.check_updates;
@@ -832,6 +847,7 @@ mod tests {
                 ("Terminal", "Shell"),
                 ("Connections", "Require encrypted connections"),
                 ("Workspaces", "No saved workspaces (Workspace > Save)."),
+                ("Keyboard shortcuts", "Search shortcuts"),
                 ("Advanced", "Memory cache"),
             ] {
                 h.get_by_label(topic).click();
@@ -914,6 +930,7 @@ mod tests {
             "Copy and move",
             "Preview",
             "Terminal",
+            "Keyboard shortcuts",
         ] {
             h.get_all_by_label(topic)
                 .next()
@@ -937,6 +954,37 @@ mod tests {
             assert!(rect.min.y >= 0.0 && rect.max.y <= 320.0, "{rect:?}");
             let close = h.get_by_label("Close").rect();
             assert!(rect.contains_rect(close), "Close is clipped: {close:?}");
+        }
+    }
+
+    #[test]
+    fn shortcuts_are_searchable_read_only_and_remembered_in_both_themes() {
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            let mut h = harness(tokens, egui::vec2(1000.0, 700.0));
+            let before = serde_json::to_value(&h.state().prefs).expect("prefs");
+            h.get_by_label("Keyboard shortcuts").click();
+            h.run();
+            h.get_by_label("Application and appearance");
+            h.get_by_label("Search shortcuts").click();
+            h.get_by_label("Search shortcuts").type_text("scrollback");
+            h.run();
+            h.get_by_label("Scroll terminal history");
+            h.get_by_label("Shift+PageUp / Shift+PageDown");
+            assert!(h.query_by_label("Application and appearance").is_none());
+            h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+            h.get_by_label("Search shortcuts")
+                .type_text("no-such-shortcut");
+            h.run();
+            h.get_by_label("No shortcuts match your search.");
+            h.get_by_label("Close").click();
+            h.run();
+            h.state_mut().preferences_open = true;
+            h.run();
+            h.get_by_label("Search shortcuts");
+            assert_eq!(
+                serde_json::to_value(&h.state().prefs).expect("prefs"),
+                before
+            );
         }
     }
 

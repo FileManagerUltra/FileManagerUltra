@@ -421,6 +421,7 @@ fn preferences_dialog_dark_light() {
             "Terminal",
             "Connections",
             "Workspaces",
+            "Keyboard shortcuts",
             "Advanced",
         ] {
             harness.get_by_label(topic).click();
@@ -430,6 +431,25 @@ fn preferences_dialog_dark_light() {
                 "dialog_preferences_{}_{theme}",
                 topic.to_lowercase().replace(' ', "_")
             ));
+            if topic == "Keyboard shortcuts" {
+                harness.get_by_label("Search shortcuts").click();
+                harness
+                    .get_by_label("Search shortcuts")
+                    .type_text("terminal pane");
+                harness.run_steps(3);
+                harness.get_by_label("Terminal pane");
+                assert!(
+                    harness
+                        .query_by_label("Application and appearance")
+                        .is_none()
+                );
+                harness.snapshot(format!("dialog_preferences_shortcuts_filtered_{theme}"));
+                harness.set_size(egui::vec2(560.0, 320.0));
+                harness.run_steps(3);
+                harness.snapshot(format!("dialog_preferences_shortcuts_narrow_{theme}"));
+                harness.set_size(egui::vec2(900.0, 650.0));
+                harness.run_steps(3);
+            }
             if topic == "Preview" {
                 harness.get_by_label("Logs").scroll_to_me();
                 harness.run();
