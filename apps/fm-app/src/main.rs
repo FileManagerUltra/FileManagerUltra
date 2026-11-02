@@ -487,6 +487,7 @@ impl eframe::App for App {
         fm_ui::properties::show(&ctx, &mut self.session, &tokens);
         fm_ui::search::show(&ctx, &mut self.session, &tokens);
         fm_ui::open_with::show(&ctx, &mut self.session, &tokens);
+        fm_ui::compare_with::show(&ctx, &mut self.session, &tokens);
         fm_ui::remote::host_key_dialog(&ctx, &mut self.session, &tokens);
         fm_ui::remote::login_dialog(&ctx, &mut self.session, &tokens);
         fm_ui::sftp_popup::sftp_prompt_dialog(&ctx, &mut self.session, &tokens);

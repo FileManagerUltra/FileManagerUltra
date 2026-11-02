@@ -3,6 +3,7 @@
 //! as long as the pane shows the diff.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -10,7 +11,7 @@ use std::time::SystemTime;
 pub use fm_git::diff::{Content, DiffModel, Outcome, Row, Tag};
 use fm_git::{MAX_BLOB, Mark, Rev};
 use fm_layout::{DiffMode, DiffSide, DiffState, PaneId, PaneKind};
-use fm_vfs::{EntryKind, FmError, Scheme};
+use fm_vfs::{EntryKind, FmError, Scheme, Vfs, VfsUri};
 
 use crate::file_cmds::object;
 use crate::jobs::JobLane;
@@ -37,7 +38,8 @@ pub struct DiffView {
     pub status: DiffStatus,
 }
 
-/// What a Preview pane's diff is about: the single selected file inside a git repository.
+/// What a Preview pane's diff is about: the single selected file inside a git repository, or
+/// two files (any backend) compared with each other.
 #[derive(Debug, Clone)]
 pub struct PaneDiff {
     pub path: String,
@@ -54,6 +56,11 @@ pub struct PaneDiff {
 }
 
 impl PaneDiff {
+    /// Two files compared with each other (no git revision involved).
+    pub fn is_pair(&self) -> bool {
+        !matches!(self.state.left, DiffSide::Rev { .. })
+    }
+
     /// The revision the working copy is compared with.
     pub fn rev(&self) -> &str {
         match &self.state.left {
@@ -76,12 +83,28 @@ struct Sticky {
     ignore_eol: bool,
 }
 
+/// A file pair chosen with "Compare with…".
+#[derive(Clone)]
+struct Pin {
+    a: VfsUri,
+    b: VfsUri,
+    /// The selection the pair belongs to; set once the pane's selection reaches `a`.
+    anchor: Option<Vec<VfsUri>>,
+    since: std::time::Instant,
+}
+
+/// How long a pin waits for the preview to reach its file before it is dropped.
+const PIN_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Diff state of every Preview pane plus the loaded results.
 #[derive(Default)]
 pub struct DiffHub {
     panes: HashMap<PaneId, PaneDiff>,
     sticky: HashMap<PaneId, Sticky>,
     views: HashMap<PaneId, DiffView>,
+    /// Explicit file pairs ("Compare with…"), kept while the pane's selection stays `anchor`.
+    pins: HashMap<PaneId, Pin>,
+    pub(crate) finds: HashMap<PaneId, crate::diff_find_cmds::DiffFind>,
     done: Arc<Mutex<Done>>,
     refs_done: Arc<Mutex<RefsDone>>,
 }
@@ -115,6 +138,59 @@ fn load_side(side: &DiffSide) -> Result<Content, String> {
         }
         DiffSide::Rev { repo, rev, rel } => blob(repo, &Rev::Commit(rev.clone()), rel),
         DiffSide::Index { repo, rel } => blob(repo, &Rev::Index, rel),
+        DiffSide::Uri(_) => Err("remote files are loaded through their backend".to_string()),
+    }
+}
+
+/// A side ready to load on a worker: plain data, or a backend plus the file to read from it.
+enum Source {
+    Side(DiffSide),
+    Remote(Arc<dyn Vfs>, VfsUri),
+}
+
+fn load_source(source: &Source) -> Result<Content, String> {
+    match source {
+        Source::Side(side) => load_side(side),
+        Source::Remote(vfs, uri) => {
+            let entry = match vfs.stat(uri) {
+                Ok(e) => e,
+                Err(FmError::NotFound(_)) => return Ok(Content::Missing),
+                Err(e) => return Err(e.to_string()),
+            };
+            if !matches!(entry.kind, EntryKind::File | EntryKind::Symlink { .. }) {
+                return Err(format!("{} is not a file", entry.name));
+            }
+            if entry.size.is_some_and(|n| n > MAX_BLOB as u64) {
+                return Err(format!(
+                    "{} is larger than {} MiB",
+                    entry.name,
+                    MAX_BLOB >> 20
+                ));
+            }
+            let mut bytes = Vec::new();
+            vfs.open_read(uri)
+                .map_err(|e| e.to_string())?
+                .take(MAX_BLOB as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|e| e.to_string())?;
+            if bytes.len() > MAX_BLOB {
+                return Err(format!(
+                    "{} is larger than {} MiB",
+                    entry.name,
+                    MAX_BLOB >> 20
+                ));
+            }
+            Ok(Content::Bytes(bytes))
+        }
+    }
+}
+
+/// The side that reads `uri`: a plain path for local files, a URI for other backends.
+fn side_for(uri: &VfsUri) -> Option<DiffSide> {
+    match uri.scheme() {
+        Scheme::File => uri.local_path_string().map(DiffSide::File),
+        Scheme::Sftp | Scheme::Smb => Some(DiffSide::Uri(uri.to_string())),
+        _ => None,
     }
 }
 
@@ -147,6 +223,10 @@ fn diffable_by_default(body: &Body) -> bool {
 
 impl Session {
     /// The diff state of a Preview pane whose selection can be compared (one file in a repo).
+    pub fn diffs_find(&self, pane: PaneId) -> Option<&crate::diff_find_cmds::DiffFind> {
+        self.diffs.finds.get(&pane)
+    }
+
     pub fn pane_diff(&self, pane: PaneId) -> Option<&PaneDiff> {
         self.diffs.panes.get(&pane)
     }
@@ -162,27 +242,49 @@ impl Session {
         );
         if self.diffs.views.get(&pane).is_none_or(|v| v.key != key) {
             let (left, right, eol, _) = key.clone();
-            let done = self.diffs.done.clone();
-            let job_key = key.clone();
-            self.jobs.submit(JobLane::Local, move |_ctx| {
-                let result = load_side(&left).and_then(|l| {
-                    let r = load_side(&right)?;
-                    fm_git::diff::diff(&l, &r, eol).map_err(|e| e.to_string())
-                });
-                done.lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .push((pane, job_key, result));
-                Ok(())
-            });
-            self.diffs.views.insert(
-                pane,
-                DiffView {
-                    key,
-                    status: DiffStatus::Loading,
-                },
-            );
+            let sources = self
+                .diff_source(&left)
+                .and_then(|l| self.diff_source(&right).map(|r| (l, r)));
+            let status = match sources {
+                Ok((left, right)) => {
+                    let lane = [&left, &right]
+                        .into_iter()
+                        .find_map(|src| match src {
+                            Source::Remote(_, uri) => Some(crate::backends::lane_for(uri.scheme())),
+                            Source::Side(_) => None,
+                        })
+                        .unwrap_or(JobLane::Local);
+                    let done = self.diffs.done.clone();
+                    let job_key = key.clone();
+                    self.jobs.submit(lane, move |_ctx| {
+                        let result = load_source(&left).and_then(|l| {
+                            let r = load_source(&right)?;
+                            fm_git::diff::diff(&l, &r, eol).map_err(|e| e.to_string())
+                        });
+                        done.lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .push((pane, job_key, result));
+                        Ok(())
+                    });
+                    DiffStatus::Loading
+                }
+                Err(e) => DiffStatus::Failed(e),
+            };
+            self.diffs.views.insert(pane, DiffView { key, status });
         }
         self.diffs.views.get(&pane)
+    }
+
+    fn diff_source(&self, side: &DiffSide) -> Result<Source, String> {
+        let DiffSide::Uri(raw) = side else {
+            return Ok(Source::Side(side.clone()));
+        };
+        let uri = VfsUri::parse(raw).map_err(|_| format!("invalid location: {raw}"))?;
+        let vfs = self
+            .backends
+            .get_for(&uri)
+            .ok_or_else(|| "not connected to that location".to_string())?;
+        Ok(Source::Remote(vfs, uri))
     }
 
     /// Re-derive every Preview pane's diff target from its selection, apply finished
@@ -239,6 +341,7 @@ impl Session {
         let mut changed = false;
         self.diffs.panes.retain(|id, _| previews.contains(id));
         self.diffs.sticky.retain(|id, _| previews.contains(id));
+        self.diffs.pins.retain(|id, _| previews.contains(id));
         for pane in previews {
             if let Some(d) = self.diffs.panes.get(&pane)
                 && let DiffSide::Rev { repo, rev, .. } = &d.state.left
@@ -254,6 +357,10 @@ impl Session {
                     },
                 );
             }
+            if let Some((a, b)) = self.pair_target(pane) {
+                changed |= self.sync_pair(pane, a, b);
+                continue;
+            }
             let subject = self
                 .previews
                 .slot(pane)
@@ -268,7 +375,12 @@ impl Session {
                 changed |= self.diffs.panes.remove(&pane).is_some();
                 continue;
             };
-            if self.diffs.panes.get(&pane).is_none_or(|d| d.path != path) {
+            if self
+                .diffs
+                .panes
+                .get(&pane)
+                .is_none_or(|d| d.path != path || d.is_pair())
+            {
                 self.diffs.panes.remove(&pane);
                 let Some((repo, rel)) = locate(&path).ok() else {
                     continue;
@@ -327,6 +439,101 @@ impl Session {
         changed
     }
 
+    /// The two files a pane compares with each other: an explicit "Compare with…" pair while
+    /// its selection is unchanged, else exactly two selected files.
+    fn pair_target(&mut self, pane: PaneId) -> Option<(VfsUri, VfsUri)> {
+        let slot = self.previews.slot(pane)?;
+        let selection: Vec<VfsUri> = if slot.subjects.is_empty() {
+            slot.subject.iter().map(|e| e.uri.clone()).collect()
+        } else {
+            slot.subjects.iter().map(|e| e.uri.clone()).collect()
+        };
+        if let Some(pin) = self.diffs.pins.get_mut(&pane) {
+            let armed = pin.anchor.is_some();
+            if pin
+                .anchor
+                .as_ref()
+                .is_some_and(|anchor| *anchor == selection)
+            {
+                return Some((pin.a.clone(), pin.b.clone()));
+            }
+            if !armed && selection == [pin.a.clone()] {
+                pin.anchor = Some(selection);
+                return Some((pin.a.clone(), pin.b.clone()));
+            }
+            if armed || pin.since.elapsed() > PIN_WAIT {
+                self.diffs.pins.remove(&pane);
+            }
+        }
+        let [a, b] = slot.subjects.as_slice() else {
+            return None;
+        };
+        let comparable =
+            |e: &fm_vfs::Entry| matches!(e.kind, EntryKind::File) && side_for(&e.uri).is_some();
+        (comparable(a) && comparable(b)).then(|| (a.uri.clone(), b.uri.clone()))
+    }
+
+    /// Point a pane's diff at two files. `true` when something changed.
+    fn sync_pair(&mut self, pane: PaneId, a: VfsUri, b: VfsUri) -> bool {
+        let (Some(left), Some(right)) = (side_for(&a), side_for(&b)) else {
+            return self.diffs.panes.remove(&pane).is_some();
+        };
+        let path = format!("{a}\n{b}");
+        let pinned = self.diffs.pins.contains_key(&pane);
+        let mut changed = false;
+        if self.diffs.panes.get(&pane).is_none_or(|d| d.path != path) {
+            let previous = self.diffs.sticky.get(&pane).cloned();
+            let mut state = DiffState::new(left, right);
+            state.ignore_eol = previous.as_ref().map_or(cfg!(windows), |p| p.ignore_eol);
+            state.mode = previous.as_ref().map_or(DiffMode::Split, |p| p.mode);
+            self.diffs.panes.insert(
+                pane,
+                PaneDiff {
+                    path,
+                    shown: pinned.then_some(true),
+                    active: false,
+                    picker: false,
+                    refs: None,
+                    state,
+                    stamp: None,
+                },
+            );
+            changed = true;
+        }
+        if let Some(d) = self.diffs.panes.get_mut(&pane) {
+            let active = d.shown.unwrap_or(false);
+            let stamp = if active {
+                [&d.state.right, &d.state.left]
+                    .into_iter()
+                    .find_map(|side| match side {
+                        DiffSide::File(path) => Some(stamp(path)),
+                        _ => None,
+                    })
+                    .flatten()
+            } else {
+                None
+            };
+            changed |= d.active != active || d.stamp != stamp;
+            d.active = active;
+            d.stamp = stamp;
+        }
+        changed
+    }
+
+    /// Show `a` against `b` in `pane` until its selection moves away from `a`.
+    pub(crate) fn pin_pair(&mut self, pane: PaneId, a: VfsUri, b: VfsUri) {
+        self.diffs.panes.remove(&pane);
+        self.diffs.pins.insert(
+            pane,
+            Pin {
+                a,
+                b,
+                anchor: None,
+                since: std::time::Instant::now(),
+            },
+        );
+    }
+
     pub(crate) fn diff_busy(&self) -> bool {
         self.diffs
             .views
@@ -341,7 +548,9 @@ impl Session {
             .get_mut(&pane)
             .map(|d| (pane, d))
             .ok_or_else(|| {
-                FmError::InvalidParams("select one file inside a git repository".to_string())
+                FmError::InvalidParams(
+                    "select one file inside a git repository, or two files".to_string(),
+                )
             })
     }
 }
@@ -364,6 +573,12 @@ fn locate(path: &str) -> Result<(String, String), FmError> {
 fn has_target(s: &Session) -> bool {
     s.preview_pane(&Params::Null)
         .is_ok_and(|pane| s.diffs.panes.contains_key(&pane))
+}
+
+/// The pane's diff compares a file with a git revision (so a revision can be chosen).
+fn has_rev(s: &Session) -> bool {
+    s.preview_pane(&Params::Null)
+        .is_ok_and(|pane| s.diffs.panes.get(&pane).is_some_and(|d| !d.is_pair()))
 }
 
 fn showing(s: &Session) -> bool {
@@ -405,7 +620,7 @@ fn picker() -> CommandSpec {
         menu: &["View", "Preview Diff", "Choose Revision"],
         shortcut: None,
         params: "{pane?: number, open?: boolean} (default: toggle)",
-        enabled: showing,
+        enabled: |s| showing(s) && has_rev(s),
         run: |s, p: &Params| {
             let open = match object(p)?.and_then(|m| m.get("open")) {
                 None | Some(Params::Null) => None,
@@ -415,6 +630,11 @@ fn picker() -> CommandSpec {
                 ),
             };
             let (pane, d) = s.pane_diff_mut(p)?;
+            if d.is_pair() {
+                return Err(FmError::InvalidParams(
+                    "a file comparison has no revision to choose".into(),
+                ));
+            }
             let open = open.unwrap_or(!d.picker);
             d.picker = open;
             let DiffSide::Rev { repo, .. } = &d.state.left else {
@@ -557,7 +777,7 @@ fn rev() -> CommandSpec {
         menu: &["View", "Preview Diff", "Set Revision"],
         shortcut: None,
         params: "{pane?: number, rev: string}",
-        enabled: has_target,
+        enabled: has_rev,
         run: |s, p: &Params| {
             let rev = rev_text(
                 object(p)?
@@ -566,9 +786,12 @@ fn rev() -> CommandSpec {
                     .ok_or_else(|| FmError::InvalidParams("rev required".to_string()))?,
             )?;
             let (_, d) = s.pane_diff_mut(p)?;
-            if let DiffSide::Rev { rev: r, .. } = &mut d.state.left {
-                *r = rev;
-            }
+            let DiffSide::Rev { rev: r, .. } = &mut d.state.left else {
+                return Err(FmError::InvalidParams(
+                    "a file comparison has no revision to set".into(),
+                ));
+            };
+            *r = rev;
             d.state.current = 0;
             d.picker = false;
             Ok(())

@@ -4,8 +4,14 @@
 A Preview pane showing a single local file inside a git repository SHALL offer a **Diff** view
 next to the normal preview. The diff compares the working copy (right) with the file at a
 revision (left, default `HEAD`) in aligned columns. Added, removed and changed lines are
-highlighted, and changed line pairs highlight the differing words. Folders, multi-selections,
-remote files and files outside a repository have no Diff view.
+highlighted, and changed line pairs highlight the differing words. Folders, larger multi-selections,
+and files outside a repository have no revision Diff view.
+
+#### Requirement note: file-vs-file comparison
+When exactly two files are selected, the pane offers a **Diff** toggle that compares them directly
+(no git needed, never auto-shown, no revision picker). **File > Compare With…** and the context menu
+open an in-app file picker; the chosen pair stays pinned until the selection moves. Files may be
+local or on SFTP/SMB; each side is size-capped and loaded on its backend's job lane.
 
 #### Scenario: Modified file opens in Diff
 - **WHEN** the previewed file is Modified, Added, Renamed or Conflicted and its preview is text

@@ -70,33 +70,38 @@ pub fn searchable(p: &Preview) -> bool {
 }
 
 pub fn available(s: &Session) -> bool {
-    s.preview_slot(s.layout.focused()).is_some_and(|slot| {
-        matches!(&slot.body, Body::Log(_)) || matches!(&slot.body, Body::Static(p) if searchable(p))
-    }) && s.focused_kind() == Some(fm_layout::PaneKind::Preview)
+    crate::diff_find_cmds::available(s)
+        || s.preview_slot(s.layout.focused()).is_some_and(|slot| {
+            matches!(&slot.body, Body::Log(_))
+                || matches!(&slot.body, Body::Static(p) if searchable(p))
+        }) && s.focused_kind() == Some(fm_layout::PaneKind::Preview)
 }
 
 fn text_available(s: &Session) -> bool {
-    available(s)
-        && s.preview_slot(s.layout.focused())
-            .is_some_and(|slot| matches!(&slot.body, Body::Static(p) if searchable(p)))
+    crate::diff_find_cmds::available(s)
+        || available(s)
+            && s.preview_slot(s.layout.focused())
+                .is_some_and(|slot| matches!(&slot.body, Body::Static(p) if searchable(p)))
 }
 
 fn can_navigate(s: &Session) -> bool {
-    text_available(s)
-        && s.preview_slot(s.layout.focused()).is_some_and(|slot| {
-            slot.find.open
-                && slot
-                    .find
-                    .matches
-                    .as_ref()
-                    .is_some_and(|m| !m.hits.is_empty())
-        })
+    crate::diff_find_cmds::can_navigate(s)
+        || text_available(s)
+            && s.preview_slot(s.layout.focused()).is_some_and(|slot| {
+                slot.find.open
+                    && slot
+                        .find
+                        .matches
+                        .as_ref()
+                        .is_some_and(|m| !m.hits.is_empty())
+            })
 }
 
 fn can_close(s: &Session) -> bool {
-    s.focused_kind() == Some(fm_layout::PaneKind::Preview)
-        && s.preview_slot(s.layout.focused())
-            .is_some_and(|slot| slot.find.open)
+    crate::diff_find_cmds::can_close(s)
+        || s.focused_kind() == Some(fm_layout::PaneKind::Preview)
+            && s.preview_slot(s.layout.focused())
+                .is_some_and(|slot| slot.find.open)
 }
 
 fn segments(p: &Preview, pretty: bool, visit: &mut impl FnMut(String)) {
@@ -294,6 +299,9 @@ fn change(s: &mut Session, params: &Params, mode: &str) -> Result<(), FmError> {
         }
     }
     let pane = s.preview_pane(params)?;
+    if crate::diff_find_cmds::active(s, pane) {
+        return crate::diff_find_cmds::change(s, pane, object, mode);
+    }
     let slot = s
         .previews
         .slots

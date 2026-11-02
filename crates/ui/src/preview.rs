@@ -58,7 +58,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 s.dispatch_or_notice(id, &json!({"pane": pane}));
             }
         }
-        if s.preview_slot(pane).is_some_and(|slot| slot.find.open)
+        if (s.preview_slot(pane).is_some_and(|slot| slot.find.open)
+            || s.diffs_find(pane)
+                .is_some_and(|f| f.open && s.pane_diff(pane).is_some_and(|d| d.active)))
             && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             s.dispatch_or_notice("preview.find.close", &json!({"pane": pane}));
@@ -207,8 +209,10 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                         });
                         if slot.thumbs {
                             if let Some(volume) = volume {
-                                ui.collapsing("Volume information", |ui| {
-                                    volume_card(ui, tokens, volume)
+                                ui.push_id(("pv-volume", pane), |ui| {
+                                    ui.collapsing("Volume information", |ui| {
+                                        volume_card(ui, tokens, volume)
+                                    });
                                 });
                             }
                             thumb_grid(
@@ -465,7 +469,19 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
     };
     ui.horizontal(|ui| {
         source_picker(ui, s, pane, actions);
-        if let Some(d) = diff {
+        if let Some(d) = diff.filter(|d| d.is_pair()) {
+            // Two files: one compact toggle, as the pane may be narrow.
+            let resp = ui
+                .add(egui::Button::selectable(d.active, "Diff"))
+                .on_hover_text(if d.active {
+                    "Back to the file previews"
+                } else {
+                    "Compare the two files"
+                });
+            if resp.clicked() {
+                actions.push(("preview.diff.toggle", json!({ "show": !d.active })));
+            }
+        } else if let Some(d) = diff {
             for (label, show) in [("Preview", false), ("Diff", true)] {
                 let resp = ui
                     .add(egui::Button::selectable(d.active == show, label))
@@ -802,7 +818,10 @@ fn multi_grid(
 fn scrolled(ui: &mut Ui, pane: PaneId, what: &str, add: impl FnOnce(&mut Ui)) {
     let output = paged_scroll(ui, ScrollArea::vertical(), ("pv-scroll", what, pane))
         .auto_shrink(false)
-        .show(ui, add);
+        // Scroll content shares its parent's id; scope it so side-by-side panes don't collide.
+        .show(ui, |ui| {
+            ui.push_id((what, pane), add);
+        });
     remember_scroll(ui, &output);
 }
 
@@ -1213,7 +1232,7 @@ fn video_body(
             if let Some(e) = &v.error {
                 ui.colored_label(tokens.error, e);
             }
-            meta_card(ui, tokens, m);
+            ui.push_id(("pv-video-meta", pane), |ui| meta_card(ui, tokens, m));
         });
     remember_scroll(ui, &output);
     if v.playing {

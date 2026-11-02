@@ -584,6 +584,8 @@ pub enum DiffSide {
     },
     /// A file as staged in the index of the repository at `repo`.
     Index { repo: String, rel: String },
+    /// A file on a non-local backend (SFTP/SMB), as a `VfsUri` string.
+    Uri(String),
 }
 
 impl DiffSide {
@@ -593,6 +595,7 @@ impl DiffSide {
             Self::File(p) => p.clone(),
             Self::Rev { rev, rel, .. } => format!("{rel} @ {rev}"),
             Self::Index { rel, .. } => format!("{rel} (staged)"),
+            Self::Uri(u) => u.clone(),
         }
     }
 }

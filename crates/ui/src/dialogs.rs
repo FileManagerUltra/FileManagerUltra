@@ -78,6 +78,7 @@ pub fn window_owns_keyboard(s: &Session) -> bool {
     s.preferences_open
         || s.about_open
         || s.open_with.is_some()
+        || s.compare.is_some()
         || s.search.is_some()
         || s.properties.is_some()
         || s.unsaved_prompt.is_some()

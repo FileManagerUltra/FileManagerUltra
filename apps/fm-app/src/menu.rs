@@ -100,6 +100,7 @@ pub const COPY_PATH: &str = "file.copy_path";
 pub const COPY_NAME: &str = "file.copy_name";
 pub const FILE_DUPLICATE: &str = "file.duplicate";
 pub const OPEN_WITH: &str = "file.open_with.dialog";
+pub const COMPARE_WITH: &str = "file.compare_with";
 pub const PROPERTIES: &str = "file.properties";
 pub const FIND_FILES: &str = "search.open";
 pub const BOOKMARK_ADD: &str = "bookmark.add";
@@ -196,6 +197,7 @@ pub fn all_ids() -> &'static [&'static str] {
         COPY_NAME,
         FILE_DUPLICATE,
         OPEN_WITH,
+        COMPARE_WITH,
         PROPERTIES,
         FIND_FILES,
         BOOKMARK_ADD,
@@ -681,6 +683,7 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, FILE_DUPLICATE);
             ui.separator();
             item(ui, session, dialogs, OPEN_WITH);
+            item(ui, session, dialogs, COMPARE_WITH);
             item(ui, session, dialogs, PROPERTIES);
             item(ui, session, dialogs, FIND_FILES);
             ui.separator();

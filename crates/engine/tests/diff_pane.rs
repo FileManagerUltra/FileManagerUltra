@@ -227,3 +227,148 @@ fn the_diff_choice_and_revision_follow_the_pane_between_files() {
             .is_some_and(|x| x.path.ends_with("b.txt") && x.active && x.rev() == "topic")
     });
 }
+
+fn plain_pair() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.txt"), "1\n2\n3\n").unwrap();
+    std::fs::write(tmp.path().join("b.txt"), "1\nX\n3\n").unwrap();
+    tmp
+}
+
+fn diff_text_changes(s: &mut Session, pane: u64) -> usize {
+    let mut changes = None;
+    pump(s, "pair diff ready", |s| {
+        if let Some(DiffStatus::Ready(o)) = s.diff_view(pane).map(|v| v.status.clone())
+            && let Outcome::Text(m) = o.as_ref()
+        {
+            changes = Some(m.changes.len());
+            return true;
+        }
+        false
+    });
+    changes.unwrap()
+}
+
+#[test]
+fn two_selected_files_can_be_compared_without_git() {
+    let tmp = plain_pair();
+    let mut s = Session::new().unwrap();
+    let pane = open_in_preview(&mut s, &tmp.path().join("a.txt"));
+    let files = s.layout.focused();
+    let row = {
+        let (entries, ix) = s.pane_view(files).unwrap();
+        ix.order
+            .iter()
+            .position(|i| entries[*i as usize].name == "b.txt")
+            .unwrap()
+    };
+    s.layout
+        .state_mut(files)
+        .unwrap()
+        .listing
+        .toggle("b.txt", row);
+    pump(&mut s, "pair target", |s| {
+        s.pane_diff(pane).is_some_and(|d| d.is_pair())
+    });
+    // Offered, not forced: the pane keeps the preview until Diff is chosen.
+    assert!(!s.pane_diff(pane).unwrap().active);
+    s.dispatch("preview.diff.toggle", &json!({"show": true}))
+        .unwrap();
+    assert_eq!(diff_text_changes(&mut s, pane), 1);
+    for id in ["preview.diff.rev", "preview.diff.picker"] {
+        assert!(s.dispatch(id, &json!({"rev": "HEAD"})).is_err(), "{id}");
+    }
+}
+
+#[test]
+fn find_works_inside_the_diff() {
+    let tmp = plain_pair();
+    let mut s = Session::new().unwrap();
+    let pane = open_in_preview(&mut s, &tmp.path().join("a.txt"));
+    let a = fm_vfs::VfsUri::parse(&tmp.path().join("a.txt").to_string_lossy()).unwrap();
+    let b = fm_vfs::VfsUri::parse(&tmp.path().join("b.txt").to_string_lossy()).unwrap();
+    s.dispatch("file.compare_with", &json!({"uri": a.to_string()}))
+        .unwrap();
+    s.dispatch(
+        "preview.diff.compare",
+        &json!({"a": a.to_string(), "b": b.to_string()}),
+    )
+    .unwrap();
+    pump(&mut s, "diff shown", |s| {
+        s.pane_diff(pane).is_some_and(|d| d.active)
+    });
+    diff_text_changes(&mut s, pane);
+    assert!(s.command_enabled("preview.find.open"));
+    s.dispatch("preview.find.open", &json!({"pane": pane}))
+        .unwrap();
+    s.dispatch("preview.find.set", &json!({"pane": pane, "query": "x"}))
+        .unwrap();
+    fm_engine::diff_find_cmds::prepare(&mut s, pane);
+    let find = s.diffs_find(pane).unwrap();
+    assert!(find.open && !find.hits.is_empty());
+    let n = find.hits.len();
+    s.dispatch("preview.find.next", &json!({"pane": pane}))
+        .unwrap();
+    assert_eq!(s.diffs_find(pane).unwrap().current, 1 % n);
+    s.dispatch(
+        "preview.find.set",
+        &json!({"pane": pane, "query": "zzzz-none"}),
+    )
+    .unwrap();
+    fm_engine::diff_find_cmds::prepare(&mut s, pane);
+    assert!(s.diffs_find(pane).unwrap().hits.is_empty());
+    assert!(
+        s.dispatch("preview.find.next", &json!({"pane": pane}))
+            .is_err()
+    );
+    assert!(
+        s.dispatch("preview.find.set", &json!({"pane": pane, "query": 5}))
+            .is_err()
+    );
+    s.dispatch("preview.find.close", &json!({"pane": pane}))
+        .unwrap();
+}
+
+#[test]
+fn compare_with_pins_a_pair_until_the_selection_moves() {
+    let tmp = plain_pair();
+    let a = fm_vfs::VfsUri::parse(&tmp.path().join("a.txt").to_string_lossy()).unwrap();
+    let b = fm_vfs::VfsUri::parse(&tmp.path().join("b.txt").to_string_lossy()).unwrap();
+    let mut s = Session::new().unwrap();
+    let pane = open_in_preview(&mut s, &tmp.path().join("a.txt"));
+    s.dispatch("file.compare_with", &json!({"uri": a.to_string()}))
+        .unwrap();
+    assert!(s.compare.is_some());
+    s.dispatch("file.compare_with.select", &json!({"uri": b.to_string()}))
+        .unwrap();
+    s.dispatch("preview.diff.compare", &Params::Null).unwrap();
+    assert!(s.compare.is_none());
+    pump(&mut s, "pinned diff shown", |s| {
+        s.pane_diff(pane).is_some_and(|d| d.is_pair() && d.active)
+    });
+    assert_eq!(diff_text_changes(&mut s, pane), 1);
+
+    s.dispatch("preview.open", &json!({"uri": b.to_string()}))
+        .unwrap();
+    pump(&mut s, "pin dropped", |s| s.pane_diff(pane).is_none());
+}
+
+#[test]
+fn compare_with_rejects_bad_input() {
+    let tmp = plain_pair();
+    let a = fm_vfs::VfsUri::parse(&tmp.path().join("a.txt").to_string_lossy()).unwrap();
+    let mut s = Session::new().unwrap();
+    open_in_preview(&mut s, &tmp.path().join("a.txt"));
+    for (id, p) in [
+        ("file.compare_with", json!({"uri": 3})),
+        ("file.compare_with.navigate", json!({"uri": a.to_string()})),
+        ("file.compare_with.select", json!({"uri": a.to_string()})),
+        ("preview.diff.compare", json!({"a": a.to_string()})),
+        (
+            "preview.diff.compare",
+            json!({"a": a.to_string(), "b": a.to_string()}),
+        ),
+    ] {
+        assert!(s.dispatch(id, &p).is_err(), "{id} {p}");
+    }
+}

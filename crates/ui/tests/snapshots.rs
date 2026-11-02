@@ -2337,8 +2337,9 @@ fn preview_filter_row_toggles_and_preserves_settings_dark_light() {
                 .expect("panel selector")
                 .rect();
             assert!(
-                button.left() >= selector.right() && button.left() - selector.right() < 20.0,
-                "Filter is next to the panel selector"
+                // The Preview/Diff toggle of a two-file selection sits between them.
+                button.left() >= selector.right() && button.left() - selector.right() < 160.0,
+                "Filter follows the panel selector"
             );
             let clear = harness.get_by_label("Clear").rect();
             let mark = harness.get_by_label("Mark").rect();

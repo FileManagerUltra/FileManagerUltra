@@ -14,6 +14,8 @@ pub mod commands;
 pub mod devices;
 mod devices_cmds;
 pub mod diff_cmds;
+pub mod diff_compare_cmds;
+pub mod diff_find_cmds;
 pub mod dircache;
 pub mod display_prefs_cmds;
 pub mod dnd_cmds;

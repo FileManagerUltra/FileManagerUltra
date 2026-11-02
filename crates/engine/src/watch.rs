@@ -265,6 +265,9 @@ impl Watcher {
                 Ok(()) => {
                     self.retries.remove(uri);
                     self.dirs.insert(k, uri.clone());
+                    // The cached listing may predate this watch (e.g. the pane's workspace
+                    // was inactive), so re-read once now that changes are being tracked.
+                    self.pending.entry(uri.clone()).or_insert(now);
                 }
                 Err(err) => {
                     lock(&self.shared).watched.remove(&k);

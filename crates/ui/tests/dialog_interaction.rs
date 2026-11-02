@@ -403,3 +403,49 @@ fn closing_conflict_cancels_the_copy_without_overwriting() {
         assert_eq!(fs.get_str("/dst/a.txt").expect("unchanged"), b"old");
     }
 }
+
+#[test]
+fn compare_with_lists_the_folder_picks_a_file_and_cancels() {
+    for tokens in [Tokens::dark(), Tokens::light()] {
+        let dir = tempfile::tempdir().expect("tmp");
+        std::fs::write(dir.path().join("a.txt"), "1\n").expect("write");
+        std::fs::write(dir.path().join("b.txt"), "2\n").expect("write");
+        std::fs::create_dir(dir.path().join("sub")).expect("mkdir");
+        let a = VfsUri::parse(&dir.path().join("a.txt").to_string_lossy()).expect("uri");
+        let b = VfsUri::parse(&dir.path().join("b.txt").to_string_lossy()).expect("uri");
+        let mut s = Session::new().expect("session");
+        s.dispatch("file.compare_with", &json!({"uri": a.to_string()}))
+            .expect("compare with");
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(900.0, 700.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    s.poll();
+                    fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                    fm_ui::compare_with::show(ui.ctx(), s, &tokens);
+                },
+                s,
+            );
+        for _ in 0..40 {
+            h.run();
+            if h.query_by_label("b.txt").is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(h.query_by_label("sub/").is_some());
+        assert!(
+            h.query_by_label("a.txt").is_none(),
+            "the source is not offered"
+        );
+        h.get_by_label("b.txt").click();
+        h.run();
+        assert_eq!(
+            h.state().compare.as_ref().and_then(|c| c.selected.clone()),
+            Some(b.clone())
+        );
+        h.get_by_label("Cancel").click();
+        h.run();
+        assert!(h.state().compare.is_none());
+    }
+}

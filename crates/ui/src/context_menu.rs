@@ -26,6 +26,7 @@ const FOLDER_ENTRIES: &[Option<&str>] = &[
 /// Command ids in menu order; `None` is a separator.
 const ENTRIES: &[Option<&str>] = &[
     Some("file.open_with.dialog"),
+    Some("file.compare_with"),
     None,
     Some("file.clip_cut"),
     Some("file.clip_copy"),

@@ -109,6 +109,8 @@ pub struct Session {
     pub undo: UndoStack,
     /// The Open With dialog and the (lazily scanned) installed applications.
     pub open_with: Option<crate::openwith_cmds::OpenWith>,
+    /// The "Compare with…" file chooser, while open.
+    pub compare: Option<crate::diff_compare_cmds::ComparePicker>,
     pub(crate) app_catalog: Option<Arc<Mutex<Option<Arc<crate::openwith_cmds::AppCatalog>>>>>,
     /// The Find Files window and its running search.
     pub search: Option<crate::search_cmds::Search>,
@@ -142,6 +144,7 @@ impl Default for Session {
             properties: None,
             search: None,
             open_with: None,
+            compare: None,
             app_catalog: None,
             registry: Registry::new(),
             prefs: Prefs::default(),

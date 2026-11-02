@@ -14,15 +14,39 @@ use crate::theme::Tokens;
 const MIN_SPLIT: f32 = 480.0;
 const NUM_W: f32 = 44.0;
 
+fn base_name(side: &fm_layout::DiffSide) -> String {
+    let label = side.label();
+    label
+        .rsplit(['/', '\\'])
+        .find(|part| !part.is_empty())
+        .unwrap_or(&label)
+        .to_string()
+}
+
+/// "left vs right" for two compared files; full paths when the names alone are ambiguous.
+fn pair_title(diff: &fm_engine::diff_cmds::PaneDiff) -> String {
+    let (left, right) = (base_name(&diff.state.left), base_name(&diff.state.right));
+    if left == right {
+        format!(
+            "{}  vs  {}",
+            diff.state.left.label(),
+            diff.state.right.label()
+        )
+    } else {
+        format!("{left}  vs  {right}")
+    }
+}
+
 /// Draw the diff of a Preview pane. The pane toolbar (Preview/Diff toggle) is the
 /// preview's; this draws the revision line, the status and the rows.
 pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
     let Some(diff) = s.pane_diff(pane).cloned() else {
-        ui.label("Select one file inside a git repository.");
+        ui.label("Select one file inside a git repository, or two files to compare.");
         return;
     };
     let state = diff.state.clone();
     let status = s.diff_view(pane).map(|v| v.status.clone());
+    fm_engine::diff_find_cmds::prepare(s, pane);
 
     let anchor = ui
         .horizontal(|ui| {
@@ -35,6 +59,20 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
                     controls(ui, s, pane, &diff);
                 }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    if diff.is_pair() {
+                        return ui
+                            .add(
+                                egui::Label::new(
+                                    egui::RichText::new(pair_title(&diff)).color(tokens.git_added),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(format!(
+                                "{}\nvs\n{}",
+                                diff.state.left.label(),
+                                diff.state.right.label()
+                            ));
+                    }
                     let tail = 150.0;
                     let text = egui::WidgetText::from(diff.rev())
                         .into_galley(
@@ -81,6 +119,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
     if diff.picker {
         picker(ui, s, pane, &diff, anchor.rect, tokens);
     }
+    find_bar(ui, s, pane);
     ui.separator();
 
     match status {
@@ -100,7 +139,11 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
             }
             Outcome::Text(model) => {
                 let summary = if model.identical() {
-                    format!("No changes against {}", diff.rev())
+                    if diff.is_pair() {
+                        "The files are identical".to_string()
+                    } else {
+                        format!("No changes against {}", diff.rev())
+                    }
                 } else {
                     format!(
                         "Change {} of {} · +{} -{}",
@@ -126,17 +169,109 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
                         .count();
                     start..start + len
                 });
+                let find = s.diffs_find(pane).filter(|f| f.open && !f.hits.is_empty());
                 rows(
                     ui,
                     pane,
                     outcome.clone(),
                     unified,
                     (target, block),
-                    state.jumps,
+                    (state.jumps, find),
                     tokens,
                 );
             }
         },
+    }
+}
+
+/// Find row under the diff bar (Ctrl+F). All changes go through the `preview.find.*` commands.
+fn find_bar(ui: &mut Ui, s: &mut Session, pane: PaneId) {
+    let Some(find) = s.diffs_find(pane).filter(|f| f.open) else {
+        return;
+    };
+    let (mut query, mut case) = (find.query.clone(), find.case_sensitive);
+    let (count, current, capped, focus) = (find.hits.len(), find.current, find.capped, find.focus);
+    let mut actions: Vec<(&str, serde_json::Value)> = Vec::new();
+    let row = vec2(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(
+        row,
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            if ui.button("Close").clicked() {
+                actions.push(("preview.find.close", json!({"pane": pane})));
+            }
+            for (label, id) in [("▼", "preview.find.next"), ("▲", "preview.find.previous")] {
+                if ui
+                    .add_enabled(count > 0, egui::Button::new(label))
+                    .clicked()
+                {
+                    actions.push((id, json!({"pane": pane})));
+                }
+            }
+            if ui
+                .add(egui::Button::selectable(case, "Aa"))
+                .on_hover_text("Match case")
+                .clicked()
+            {
+                case = !case;
+            }
+            let status = if query.is_empty() {
+                String::new()
+            } else if count == 0 {
+                "No matches".into()
+            } else {
+                format!(
+                    "{} / {}{}",
+                    current + 1,
+                    count,
+                    if capped { "+" } else { "" }
+                )
+            };
+            ui.label(status);
+            let query_id = egui::Id::NULL.with(("diff-find-query", pane));
+            if ui.memory(|m| m.has_focus(query_id)) {
+                for (modifiers, id) in [
+                    (egui::Modifiers::SHIFT, "preview.find.previous"),
+                    (egui::Modifiers::NONE, "preview.find.next"),
+                ] {
+                    if ui.input_mut(|i| i.consume_key(modifiers, egui::Key::Enter)) {
+                        actions.push((id, json!({"pane": pane})));
+                    }
+                }
+            }
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut query)
+                    .id(query_id)
+                    .hint_text("Find in diff")
+                    .desired_width(ui.available_width().max(40.0))
+                    .char_limit(fm_engine::preview_find_cmds::MAX_QUERY),
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::TextInput, true, "Find in diff")
+            });
+            let focus_id = egui::Id::NULL.with(("diff-find-focus", pane));
+            if ui.data(|d| d.get_temp::<u64>(focus_id)) != Some(focus) {
+                response.request_focus();
+                ui.data_mut(|d| d.insert_temp(focus_id, focus));
+            }
+        },
+    );
+    if query
+        != s.diffs_find(pane)
+            .map(|f| f.query.clone())
+            .unwrap_or_default()
+        || case != s.diffs_find(pane).is_some_and(|f| f.case_sensitive)
+    {
+        actions.insert(
+            0,
+            (
+                "preview.find.set",
+                json!({"pane": pane, "query": query, "case_sensitive": case}),
+            ),
+        );
+    }
+    for (id, params) in actions {
+        s.dispatch_or_notice(id, &params);
     }
 }
 
@@ -494,7 +629,7 @@ fn rows(
     document: std::sync::Arc<Outcome>,
     unified: bool,
     (target, block): (Option<(usize, usize)>, Option<std::ops::Range<usize>>),
-    jumps: u64,
+    (jumps, find): (u64, Option<&fm_engine::diff_find_cmds::DiffFind>),
     tokens: &Tokens,
 ) {
     let Outcome::Text(model) = document.as_ref() else {
@@ -530,6 +665,25 @@ fn rows(
         };
         // The change's first line lands at the top of the view.
         area = area.vertical_scroll_offset(visual as f32 * row_h);
+    }
+    let find_seen = ui.make_persistent_id(egui::IdSalt::new(("diff-find-seen", pane)));
+    if let Some(f) = find {
+        let last: Option<u64> = ui.ctx().data(|d| d.get_temp(find_seen));
+        if last != Some(f.reveal) {
+            if let Some(hit) = f.hits.get(f.current) {
+                let visual = if unified {
+                    unified_index(rows, hit.row)
+                        + usize::from(
+                            hit.right && rows.get(hit.row).is_some_and(|r| r.tag == Tag::Replace),
+                        )
+                } else {
+                    hit.row
+                };
+                let centre = (ui.available_height() / 2.0 - row_h).max(0.0);
+                area = area.vertical_scroll_offset((visual as f32 * row_h - centre).max(0.0));
+            }
+            ui.ctx().data_mut(|d| d.insert_temp(find_seen, f.reveal));
+        }
     }
     ui.ctx().data_mut(|d| match target {
         Some((i, _)) => {
@@ -570,8 +724,8 @@ fn rows(
                         current,
                         line_rect(at),
                         viewport.left(),
-                        &font,
-                        tokens,
+                        (&font, tokens),
+                        (find, index),
                     ));
                 }
                 at += n;
@@ -586,8 +740,15 @@ fn rows(
                 let right =
                     egui::Rect::from_min_size(line.min + vec2(half + 4.0, 0.0), vec2(half, row_h));
                 for (right, rect) in [(false, left), (true, right)] {
-                    measured =
-                        measured.max(side(ui, row, right, rect, viewport.left(), &font, tokens));
+                    measured = measured.max(side(
+                        ui,
+                        row,
+                        right,
+                        rect,
+                        viewport.left(),
+                        (&font, tokens),
+                        (find, first + offset),
+                    ));
                 }
                 if block
                     .as_ref()
@@ -644,32 +805,76 @@ fn backgrounds(tag: Tag, right: bool, tokens: &Tokens) -> (Color32, Color32) {
     }
 }
 
+/// A find match inside a line: byte range and whether it is the current match.
+type Found = (usize, usize, bool);
+
+fn finds_for(
+    find: Option<&fm_engine::diff_find_cmds::DiffFind>,
+    index: usize,
+    row: &Row,
+    right: bool,
+) -> Vec<Found> {
+    let Some(find) = find else {
+        return Vec::new();
+    };
+    let start = find.hits.partition_point(|h| h.row < index);
+    find.hits
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take_while(|(_, h)| h.row == index)
+        // Identical rows are matched once but shown on both sides.
+        .filter(|(_, h)| h.right == right || row.tag == Tag::Equal)
+        .map(|(n, h)| (h.bytes.start, h.bytes.end, n == find.current))
+        .collect()
+}
+
 fn line_job(
     text: &str,
     marks: &[(u32, u32)],
+    finds: &[Found],
     word_bg: Color32,
     font: &FontId,
     tokens: &Tokens,
 ) -> LayoutJob {
     let mut job = LayoutJob::default();
-    let fmt = |bg: Option<Color32>| TextFormat {
-        font_id: font.clone(),
-        color: tokens.text,
-        background: bg.unwrap_or_default(),
-        ..Default::default()
-    };
-    let mut at = 0usize;
+    let len = text.len();
+    let mut cuts = vec![0, len];
     for &(a, b) in marks {
-        let (a, b) = (a as usize, (b as usize).min(text.len()));
-        let (Some(plain), Some(hit)) = (text.get(at..a.max(at)), text.get(a.max(at)..b.max(a)))
-        else {
+        cuts.extend([a as usize, b as usize]);
+    }
+    for &(a, b, _) in finds {
+        cuts.extend([a, b]);
+    }
+    cuts.retain(|c| *c <= len && text.is_char_boundary(*c));
+    cuts.sort_unstable();
+    cuts.dedup();
+    for w in cuts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let Some(piece) = text.get(a..b) else {
             continue;
         };
-        job.append(plain, 0.0, fmt(None));
-        job.append(hit, 0.0, fmt(Some(word_bg)));
-        at = b.max(a).max(at);
+        let found = finds.iter().find(|(x, y, _)| *x <= a && b <= *y);
+        let marked = marks
+            .iter()
+            .any(|&(x, y)| x as usize <= a && b <= y as usize);
+        let (bg, color) = match found {
+            Some((_, _, true)) => (tokens.accent, tokens.bg),
+            Some(_) => (tokens.selection_bg, tokens.selection_text),
+            None if marked => (word_bg, tokens.text),
+            None => (Default::default(), tokens.text),
+        };
+        job.append(
+            piece,
+            0.0,
+            TextFormat {
+                font_id: font.clone(),
+                color,
+                background: bg,
+                ..Default::default()
+            },
+        );
     }
-    job.append(text.get(at..).unwrap_or_default(), 0.0, fmt(None));
     job
 }
 
@@ -679,9 +884,10 @@ fn side(
     right: bool,
     rect: egui::Rect,
     x: f32,
-    font: &FontId,
-    tokens: &Tokens,
+    (font, tokens): (&FontId, &Tokens),
+    (find, index): (Option<&fm_engine::diff_find_cmds::DiffFind>, usize),
 ) -> f32 {
+    let finds = &finds_for(find, index, row, right);
     let line = if right { &row.right } else { &row.left };
     let (bg, word) = backgrounds(row.tag, right, tokens);
     let painter = ui.painter_at(rect);
@@ -695,8 +901,9 @@ fn side(
                 FontId::monospace(tokens.font_size * 0.85),
                 tokens.text_muted,
             );
-            let galley =
-                ui.fonts_mut(|f| f.layout_job(line_job(&l.text, &l.marks, word, font, tokens)));
+            let galley = ui.fonts_mut(|f| {
+                f.layout_job(line_job(&l.text, &l.marks, finds, word, font, tokens))
+            });
             let width = galley.size().x;
             let text_rect =
                 egui::Rect::from_min_max(rect.min + vec2(NUM_W.min(rect.width()), 0.0), rect.max);
@@ -718,10 +925,11 @@ fn unified_row(
     current: bool,
     rect: egui::Rect,
     x: f32,
-    font: &FontId,
-    tokens: &Tokens,
+    (font, tokens): (&FontId, &Tokens),
+    (find, index): (Option<&fm_engine::diff_find_cmds::DiffFind>, usize),
 ) -> f32 {
     let one = |right: bool, rect: egui::Rect| {
+        let finds = &finds_for(find, index, row, right);
         let line = if right { &row.right } else { &row.left };
         let Some(l) = line else { return 0.0 };
         let (bg, word) = backgrounds(row.tag, right, tokens);
@@ -743,7 +951,7 @@ fn unified_row(
             tokens.text_muted,
         );
         let galley =
-            ui.fonts_mut(|f| f.layout_job(line_job(&l.text, &l.marks, word, font, tokens)));
+            ui.fonts_mut(|f| f.layout_job(line_job(&l.text, &l.marks, finds, word, font, tokens)));
         let width = galley.size().x;
         let text_rect = egui::Rect::from_min_max(
             rect.min + vec2((NUM_W + 16.0).min(rect.width()), 0.0),

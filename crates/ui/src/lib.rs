@@ -3,6 +3,7 @@
 //! Widgets take tokens; no widget ever hard-codes a colour.
 
 pub mod arrange;
+pub mod compare_with;
 pub mod context_menu;
 pub mod dialog_style;
 pub mod dialogs;

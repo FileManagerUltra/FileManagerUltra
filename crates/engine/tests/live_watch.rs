@@ -126,3 +126,21 @@ fn selection_survives_an_unrelated_change() {
             .is_selected("keep.txt")
     );
 }
+
+#[test]
+fn changes_made_while_the_workspace_was_inactive_show_up_on_return() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut s, uri) = open(tmp.path());
+    s.dispatch("workspace.new", &serde_json::json!({})).unwrap();
+    assert!(pump(&mut s, Duration::from_secs(5), |s| !s
+        .watch
+        .covers(&uri)));
+    std::fs::write(tmp.path().join("shot.png"), b"x").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    s.dispatch("workspace.switch", &serde_json::json!({"n": 1}))
+        .unwrap();
+    assert!(pump(&mut s, Duration::from_millis(1500), |s| names(
+        s, &uri
+    )
+    .contains(&"shot.png".to_string())));
+}
