@@ -8,6 +8,7 @@
 - [x] Blob loading, diff model (`similar`), caps and binary detection.
 - [x] Diff as a Preview pane view: `preview.diff.*` commands, default for modified files, sticky choice and revision.
 - [x] Diff widget: aligned columns, intra-line highlight, next/prev change (F7/Shift+F7), narrow fallback, options menu.
+- [x] Linked horizontal text scrolling with fixed gutters, viewport-sized columns and virtualized rows; resize/navigation regression coverage.
 - [x] Revision picker: search, recent/local/remote/tags, resizable popup (`fm_git::refs`).
 - [x] Security tests: hostile repo config, huge repo, symlink loops, caps; command fuzzing.
 - [x] Snapshots (dark/light), temp-repo integration tests, performance check on a large repo.

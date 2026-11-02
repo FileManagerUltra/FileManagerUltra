@@ -122,6 +122,14 @@ pub trait Vfs: Send + Sync {
 ```
 
 - **Copy across backends** lives in `ops`: stream `open_read` → `open_write` in chunks with progress ticks. Same-scheme moves call `rename` (fast path); cross-scheme moves stream then delete.
+
+  Move eligibility compares the source device with the existing destination
+  parent, since the destination name may not exist yet. Eligible directory
+  moves use a shallow plan and rename without scanning descendants. If rename
+  fails, the bounded recursive copy plan is expanded before copying that tree;
+  progress totals grow accordingly. A renamed tree counts as one item and keeps
+  its symlink targets unchanged. Existing destinations retain conflict/merge
+  handling, and cross-device moves retain copy/verify/delete behavior.
 - `VfsRegistry` maps `Scheme -> Arc<dyn Vfs>`; a connect (SMB/SFTP) creates a session-backed instance and registers it.
 - Backends are dumb: no caching, no sorting, no watching. That is `engine`'s job.
 
@@ -513,6 +521,13 @@ Change 3 extends `security` with drag & drop and `ops` rules (destination contai
 ## 12a. Git status and diff view (`git-status-and-diff`)
 
 `fm-git` (L0, `gix`, read-only, isolated config) computes a per-repo status map (folders aggregate their strongest mark; capped at 200 000 entries) and loads blobs (HEAD/rev/index, 2 MiB cap). `fm-git::diff` aligns two texts with `similar` (binary detection, 100 000-line and 2 s caps, word marks). The engine's `git.rs` keeps an LRU of at most 8 repos, refreshed on the local lane after watcher events or a `.git/index`/`HEAD` stamp change; `fm-git::refs` lists branches, tags and recent checkouts (capped) for the revision picker. The diff is a view of the Preview pane, not a pane kind: `diff_cmds.rs` derives a `PaneDiff` per Preview pane from its subject (one local file inside a repo), defaults to Diff for Modified/Added/Renamed/Conflicted text files, keeps a sticky per-pane choice (view, revision within the repo, mode, EOL) across selections, loads both sides on the local lane keyed by the file's mtime+size, and drops results when the pane goes away (`preview.diff.toggle/picker/rev/next/prev/mode/eol/reload`; F7/Shift+F7 map to next/prev while a diff is shown). Hostile repos are inert: the repository is opened with isolated config (no user/system git config), repo-local `filter.*` drivers are stripped, and no hook, fsmonitor or textconv ever runs. `core.autocrlf` is honoured by re-checking modified files modulo CRLF (≤1000 per scan); on Windows `true` is the default. Measured: 50 000 files / 500 modified → 78 ms, 21 MB RSS. The UI draws marks in the icon gutter and name tint (`git_marks.rs`) and the Diff view inside the Preview pane (`diff.rs`: revision bar, picker, aligned/unified rows).
+
+Split diffs share one horizontal scrollbar and pixel offset for both text
+columns; horizontal gestures over either side stay linked. Gutters, row
+backgrounds, divider and change markers stay fixed. A two-axis viewport paints
+only visible rows with independent text clips per column. Measured line widths
+are cached as rows are visited, keyed by document/font/mode; widths never feed
+back into pane sizing. Unified diffs use the same virtualized scrolling.
 
 ## 13. Change history
 

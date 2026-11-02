@@ -10,7 +10,7 @@ use fm_vfs::{Entry, EntryKind, FmError, Scheme, Vfs, VfsUri, WriteOpts};
 use crate::ConflictPolicy;
 use crate::ctx::{Backends, Choice, Conflict, ConflictSide, OpCtx, OpReport, Progress};
 use crate::names::keep_both_name;
-use crate::plan::{Plan, PlanItem, PlanKind, Top};
+use crate::plan::{Plan, PlanItem, PlanKind, PlanLimits, Top, plan_transfer};
 use crate::symlink::retarget;
 
 const BUF_BYTES: usize = 1024 * 1024;
@@ -79,7 +79,43 @@ impl<'a, 'b> Runner<'a, 'b> {
             if moving && self.try_rename(top) {
                 continue;
             }
-            self.transfer_top(top, moving);
+            if top.deferred {
+                let expanded = top
+                    .dst
+                    .parent()
+                    .ok_or_else(|| FmError::InvalidParams("missing move destination parent".into()))
+                    .and_then(|parent| {
+                        plan_transfer(
+                            self.backends,
+                            std::slice::from_ref(&top.src),
+                            &parent,
+                            PlanLimits::default(),
+                        )
+                    })
+                    .and_then(|plan| {
+                        if self.progress.items.total - 1 + plan.total_items()
+                            > PlanLimits::default().max_items as u64
+                        {
+                            return Err(FmError::InvalidParams("selection too large".into()));
+                        }
+                        Ok(plan)
+                    });
+                match expanded {
+                    Ok(plan) => {
+                        self.progress.items.total += plan.total_items().saturating_sub(1);
+                        self.progress.bytes.total =
+                            self.progress.bytes.total.saturating_add(plan.total_bytes);
+                        self.transfer_top(top, &plan.items, moving);
+                    }
+                    Err(err) => {
+                        self.report.failed.push((top.src.clone(), err));
+                        self.progress.items.done += 1;
+                        self.emit();
+                    }
+                }
+            } else if let Some(items) = self.plan.items.get(top.start..top.end) {
+                self.transfer_top(top, items, moving);
+            }
             if self.report.cancelled {
                 break;
             }
@@ -93,9 +129,12 @@ impl<'a, 'b> Runner<'a, 'b> {
         else {
             return false;
         };
+        let Some(parent) = top.dst.parent() else {
+            return false;
+        };
         let same_place = top.src.scheme() == top.dst.scheme()
             && top.src.authority() == top.dst.authority()
-            && src_vfs.same_device(&top.src, &top.dst);
+            && src_vfs.same_device(&top.src, &parent);
         if !same_place || !matches!(dst_vfs.stat(&top.dst), Err(FmError::NotFound(_))) {
             return false;
         }
@@ -117,10 +156,7 @@ impl<'a, 'b> Runner<'a, 'b> {
         true
     }
 
-    fn transfer_top(&mut self, top: &Top, moving: bool) {
-        let Some(items) = self.plan.items.get(top.start..top.end) else {
-            return;
-        };
+    fn transfer_top(&mut self, top: &Top, items: &[PlanItem], moving: bool) {
         self.roots = Some((
             top.src
                 .local_path_string()

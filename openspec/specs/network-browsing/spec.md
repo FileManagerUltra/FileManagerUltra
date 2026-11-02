@@ -43,6 +43,12 @@ The Network pane header SHALL have a "Connect…" button, and File ▸ Connect t
 - **WHEN** the user presses Connect…, enters `nas.example` and credentials
 - **THEN** the pane connects and lists the server's shares
 
+#### Scenario: Windows UNC server name
+- **WHEN** Host contains `\\192.168.0.50` or `\\nas` (with an optional trailing backslash)
+- **THEN** connection commands and saved SMB profiles normalize it to the bare server name before validation and use that identity for connection state and credentials
+- **AND** a full UNC path such as `\\nas\share` is rejected with guidance to enter the share in Share, without discarding the authentication prompt
+- **AND** the host field shows that bare and UNC server names are accepted
+
 ### Requirement: Live refresh and connection indicator
 While a Network pane is visible, the app SHALL re-read `network:///` periodically and repaint without user input so newly discovered hosts appear on their own. Hosts with a ready connection SHALL show a success-coloured dot after their name in the tree.
 
@@ -70,4 +76,3 @@ Every visible local Files pane SHALL re-read its folder about every 2 seconds, f
 #### Scenario: File added behind the app's back
 - **WHEN** another program creates a file in a folder shown in an unfocused pane
 - **THEN** the file appears within a few seconds
-

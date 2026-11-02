@@ -103,7 +103,23 @@ fn volume_labels() -> std::collections::HashMap<String, String> {
 }
 
 fn map_io(e: std::io::Error, path: &str) -> FmError {
+    map_platform_io(e, path, cfg!(windows))
+}
+
+fn map_platform_io(e: std::io::Error, path: &str, windows: bool) -> FmError {
     use std::io::ErrorKind as K;
+    if windows && e.raw_os_error() == Some(1005) {
+        return FmError::backend(
+            "file",
+            format!(
+                "Cannot open {path}: Windows cannot recognize the drive's file system.\n\
+                 The drive may be unformatted, encrypted/locked, use an unsupported file system, or be damaged.\n\
+                 If encrypted, unlock or mount it with the appropriate software (for example BitLocker or VeraCrypt).\n\
+                 Otherwise, check the drive in Windows Disk Management. Do not format it if it contains data you need.\n\
+                 Windows error 1005."
+            ),
+        );
+    }
     match e.kind() {
         K::NotFound => FmError::NotFound(path.to_string()),
         K::PermissionDenied => FmError::PermissionDenied(path.to_string()),
@@ -493,5 +509,41 @@ mod tests {
         assert!(matches!(map_io(e, "/x"), FmError::AlreadyExists(_)));
         let e = std::io::Error::from(std::io::ErrorKind::DirectoryNotEmpty);
         assert!(matches!(map_io(e, "/x"), FmError::NotEmpty(_)));
+    }
+
+    #[test]
+    fn windows_unrecognized_volume_has_safe_actionable_guidance() {
+        let err = map_platform_io(std::io::Error::from_raw_os_error(1005), r"H:\", true);
+        let message = err.to_string();
+        for expected in [
+            r"Cannot open H:\",
+            "unformatted",
+            "encrypted/locked",
+            "unsupported file system",
+            "damaged",
+            "BitLocker",
+            "VeraCrypt",
+            "Disk Management",
+            "Do not format",
+            "1005",
+        ] {
+            assert!(message.contains(expected), "{message}");
+        }
+    }
+
+    #[test]
+    fn volume_guidance_does_not_replace_other_platform_errors() {
+        assert!(matches!(
+            map_platform_io(std::io::Error::from_raw_os_error(1005), "/x", false),
+            FmError::Io(_)
+        ));
+        assert!(matches!(
+            map_platform_io(
+                std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+                r"H:\",
+                true
+            ),
+            FmError::PermissionDenied(_)
+        ));
     }
 }

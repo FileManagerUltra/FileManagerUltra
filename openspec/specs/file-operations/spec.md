@@ -25,6 +25,20 @@ Move SHALL use `Vfs::rename` when source and destination share an authority and 
 - **WHEN** a file is moved within one local directory tree
 - **THEN** no bytes are copied and the source no longer exists
 
+#### Scenario: New destination on the same filesystem
+- **WHEN** a file or directory is moved to a name that does not yet exist
+- **THEN** device eligibility is checked against the existing destination parent, not the nonexistent item
+- **AND** an eligible directory is renamed without listing its descendants or reading file contents
+- **AND** local inodes and symlink target text remain unchanged
+- **AND** progress and the report count a renamed directory as one top-level item without inventing descendant totals
+
+#### Scenario: Directory rename fails
+- **WHEN** an eligible directory cannot be renamed
+- **THEN** its contents are planned with the existing depth/item caps before copying that tree
+- **AND** progress totals expand to include the planned descendants
+- **AND** copy verification, conflict decisions, cancellation and source preservation on failure still apply
+- **AND** a planning failure is reported for that source without copying or deleting its contents
+
 #### Scenario: Failed cross-device move keeps the source
 - **WHEN** the destination write fails midway during a cross-backend move
 - **THEN** the source is untouched and the item is reported failed
@@ -41,7 +55,13 @@ Move SHALL use `Vfs::rename` when source and destination share an authority and 
 - **THEN** it returns `AlreadyExists` and nothing is overwritten
 
 ### Requirement: Planning pass and caps
-Every operation SHALL plan first: walk the sources (bounded by `MAX_DIR_ENTRIES` per directory, a depth cap and a total item cap), compute item/byte totals, and run guards before any write.
+Every operation SHALL validate selected sources and containment guards before any
+write. Copy and non-rename move paths SHALL walk sources (bounded by
+`MAX_DIR_ENTRIES` per directory, a depth cap and a total item cap) and compute
+item/byte totals. Eligible directory renames SHALL instead use a bounded
+top-level plan without enumerating descendants; if a rename fails, that tree's
+copy plan SHALL be expanded and validated before copying it. Earlier completed
+renames are retained if a later fallback plan fails.
 
 #### Scenario: Totals known before the first byte
 - **WHEN** a copy job starts
@@ -49,7 +69,8 @@ Every operation SHALL plan first: walk the sources (bounded by `MAX_DIR_ENTRIES`
 
 #### Scenario: Over-cap selection
 - **WHEN** the plan would exceed the item cap
-- **THEN** the job fails with an actionable error before writing anything
+- **THEN** the plan fails with an actionable error before writing any items covered by that plan
+- **AND** a deferred move fallback failure does not roll back earlier completed renames
 
 ### Requirement: Containment guards
 `ops` SHALL refuse to copy or move a directory into itself or any descendant, SHALL treat copying an item onto its own uri as a silent no-op, and SHALL never follow symlinks: a source symlink is recreated as a link (`Vfs::create_symlink`) and its target is never read. A backend that cannot create links reports the item as failed (`Unsupported`).
@@ -94,4 +115,3 @@ Copy and move SHALL work for local ↔ SFTP and SFTP ↔ SFTP by streaming `open
 #### Scenario: Same-authority move
 - **WHEN** files are moved between two directories on one server
 - **THEN** a rename is used and no bytes are transferred
-

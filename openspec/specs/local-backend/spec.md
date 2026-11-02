@@ -44,3 +44,9 @@ On Windows the local root `file:///` SHALL be a virtual **This PC** folder listi
 #### Scenario: Drive labels
 - **WHEN** a drive has a volume label
 - **THEN** it is shown as `Label (C:)` in the tree and listing (sanitized, at most 64 characters) while its name, selection key and path stay `C:`
+
+#### Scenario: Windows cannot recognize a volume
+- **WHEN** a local operation returns Windows error 1005 (unrecognized volume)
+- **THEN** the error names the affected path and explains that the drive may be unformatted, encrypted/locked, unsupported or damaged
+- **AND** it suggests unlocking/mounting encrypted volumes with the appropriate software, or checking Windows Disk Management
+- **AND** it warns against formatting a drive containing needed data, retains the error code for diagnostics, and never starts formatting

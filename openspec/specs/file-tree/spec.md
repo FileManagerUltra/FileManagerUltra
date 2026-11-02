@@ -18,6 +18,20 @@ A pane's file tree SHALL show the uri hierarchy rooted at the pane's tree root; 
 - **WHEN** expanding a node fails (permission denied)
 - **THEN** the node shows an inline error affordance and stays expandable for retry
 
+### Requirement: Folder labels expand without toggling
+Clicking a folder name SHALL open it in the listing and expand its tree node,
+never collapse it. Only clicking the disclosure arrow SHALL toggle expansion
+with the mouse; arrow clicks SHALL leave the listing location unchanged.
+Keyboard expand/collapse behavior SHALL remain unchanged.
+
+#### Scenario: Clicking an expanded folder name
+- **WHEN** a folder is expanded and its name is clicked again or double-clicked
+- **THEN** it stays expanded and the listing opens that folder
+
+#### Scenario: Clicking the disclosure arrow
+- **WHEN** a folder's arrow is clicked
+- **THEN** a collapsed folder expands or an expanded folder collapses without navigating
+
 ### Requirement: The tree is keyboard-navigable
 The tree SHALL support arrow-key navigation between visible nodes, Right to expand or descend, Left to collapse or ascend, and Enter to open the focused node in the pane.
 
@@ -53,4 +67,3 @@ Pressing Left on the tree root SHALL collapse every expanded directory.
 #### Scenario: Left on root
 - **WHEN** the root node is focused and Left is pressed
 - **THEN** all directories are collapsed
-

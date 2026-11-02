@@ -149,7 +149,11 @@ pub fn login_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                         if prompt.manual {
                             let label = ui.label("Host");
                             let host = ui
-                                .add(TextEdit::singleline(&mut form.host).desired_width(220.0))
+                                .add(
+                                    TextEdit::singleline(&mut form.host)
+                                        .hint_text(r"server or \\server")
+                                        .desired_width(220.0),
+                                )
                                 .labelled_by(label.id);
                             if form.focus_pending {
                                 host.request_focus();

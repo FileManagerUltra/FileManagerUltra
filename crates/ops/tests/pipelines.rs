@@ -193,6 +193,186 @@ fn same_device_move_is_a_rename() {
     assert_eq!(report.moved, vec![(uri("/src/a"), uri("/dst/a"))]);
 }
 
+#[cfg(unix)]
+#[test]
+fn local_moves_preserve_inodes_without_reading_or_copying_contents() {
+    use std::os::unix::fs::{MetadataExt, symlink};
+
+    let tmp = tempfile::tempdir().expect("tmp");
+    let source = tmp.path().join("source");
+    let destination = tmp.path().join("destination");
+    std::fs::create_dir_all(source.join("folder/nested")).expect("source");
+    std::fs::create_dir(&destination).expect("destination");
+    std::fs::write(source.join("folder/nested/video"), b"video").expect("file");
+    std::fs::write(source.join("single"), b"single").expect("file");
+    symlink(
+        source.join("folder/nested/video"),
+        source.join("folder/link"),
+    )
+    .expect("link");
+    let folder_inode = std::fs::metadata(source.join("folder"))
+        .expect("metadata")
+        .ino();
+    let video_inode = std::fs::metadata(source.join("folder/nested/video"))
+        .expect("metadata")
+        .ino();
+    let single_inode = std::fs::metadata(source.join("single"))
+        .expect("metadata")
+        .ino();
+    let fs = FaultFs::new(fm_fs_local::LocalFs::new());
+    let reads = Arc::new(AtomicUsize::new(0));
+    {
+        let mut faults = fs.faults();
+        faults
+            .unreadable_dirs
+            .push(uri(&source.join("folder").to_string_lossy()));
+        faults.fail_write_after = Some(0);
+        let reads = reads.clone();
+        faults.read_hook = Some(Arc::new(move || {
+            reads.fetch_add(1, Ordering::SeqCst);
+        }));
+    }
+    let report = run(
+        Arc::new(fs),
+        ConflictPolicy::Ask,
+        true,
+        &[
+            &source.join("folder").to_string_lossy(),
+            &source.join("single").to_string_lossy(),
+        ],
+        &destination.to_string_lossy(),
+    )
+    .expect("move");
+    assert!(report.is_clean(), "{:?}", report.failed);
+    assert_eq!(report.done, 2, "renamed trees count as top-level items");
+    assert_eq!(report.moved.len(), 2);
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        std::fs::metadata(destination.join("folder"))
+            .expect("metadata")
+            .ino(),
+        folder_inode
+    );
+    assert_eq!(
+        std::fs::metadata(destination.join("folder/nested/video"))
+            .expect("metadata")
+            .ino(),
+        video_inode
+    );
+    assert_eq!(
+        std::fs::metadata(destination.join("single"))
+            .expect("metadata")
+            .ino(),
+        single_inode
+    );
+    assert_eq!(
+        std::fs::read_link(destination.join("folder/link")).expect("link"),
+        source.join("folder/nested/video")
+    );
+    assert!(!source.join("folder").exists());
+    assert!(!source.join("single").exists());
+}
+
+#[test]
+fn directory_rename_failure_expands_the_plan_and_finishes_progress() {
+    let fs = FaultFs::new(sample());
+    fs.faults().rename_unsupported = true;
+    let b = SingleBackend(Arc::new(fs.clone()));
+    let mut seen = Vec::new();
+    let mut progress = |p: &Progress| seen.push(p.clone());
+    let mut conflict = no_conflicts;
+    let mut ctx = OpCtx::new(ConflictPolicy::Ask, &mut progress, &mut conflict);
+    let report = fm_ops::move_(&b, &[uri("/src/a")], &uri("/dst"), &mut ctx).expect("move");
+    assert!(report.is_clean(), "{:?}", report.failed);
+    assert_eq!(
+        fs.inner().get_str("/dst/a/b/two.txt").expect("file"),
+        b"twotwo"
+    );
+    assert!(!fs.inner().exists(&uri("/src/a")));
+    assert_eq!(report.done, 4);
+    assert_eq!(report.moved, vec![(uri("/src/a"), uri("/dst/a"))]);
+    let last = seen.last().expect("progress");
+    assert_eq!(last.items.done, 4);
+    assert_eq!(last.items.total, 4);
+    assert_eq!(last.bytes.done, 9);
+    assert_eq!(last.bytes.total, 9);
+}
+
+#[test]
+fn deferred_move_planning_failure_preserves_source_and_reports_error() {
+    let fs = FaultFs::new(sample());
+    {
+        let mut faults = fs.faults();
+        faults.rename_unsupported = true;
+        faults.unreadable_dirs.push(uri("/src/a"));
+    }
+    let report = run(
+        Arc::new(fs.clone()),
+        ConflictPolicy::Ask,
+        true,
+        &["/src/a"],
+        "/dst",
+    )
+    .expect("move report");
+    assert_eq!(report.failed.len(), 1);
+    assert!(fs.inner().exists(&uri("/src/a/b/two.txt")));
+    assert!(!fs.inner().exists(&uri("/dst/a")));
+    assert!(report.moved.is_empty());
+}
+
+#[test]
+fn cancelled_fast_move_leaves_the_tree_untouched() {
+    let fs = sample();
+    let b = SingleBackend(Arc::new(fs.clone()));
+    let flag = CancelFlag::new();
+    flag.cancel();
+    let mut progress = |_: &Progress| {};
+    let mut conflict = no_conflicts;
+    let mut ctx = OpCtx::new(ConflictPolicy::Ask, &mut progress, &mut conflict).with_cancel(flag);
+    let report = fm_ops::move_(&b, &[uri("/src/a")], &uri("/dst"), &mut ctx).expect("move");
+    assert!(report.cancelled);
+    assert!(fs.exists(&uri("/src/a")));
+    assert!(!fs.exists(&uri("/dst/a")));
+}
+
+#[test]
+fn move_into_descendant_is_rejected_before_any_rename() {
+    let fs = sample();
+    let report = run(
+        Arc::new(fs.clone()),
+        ConflictPolicy::Ask,
+        true,
+        &["/src/top.txt", "/src/a"],
+        "/src/a/b",
+    );
+    assert!(matches!(report, Err(FmError::InvalidParams(_))));
+    assert!(fs.exists(&uri("/src/top.txt")));
+    assert!(!fs.exists(&uri("/src/a/b/top.txt")));
+}
+
+#[test]
+fn moving_into_existing_directory_merges_without_replacing_existing_files() {
+    let fs = sample();
+    fs.put_str("/dst/a/one.txt", b"existing").expect("existing");
+    let report = run(
+        Arc::new(fs.clone()),
+        ConflictPolicy::Skip,
+        true,
+        &["/src/a"],
+        "/dst",
+    )
+    .expect("move");
+    assert!(report.is_clean(), "{:?}", report.failed);
+    assert_eq!(report.skipped, 1);
+    assert_eq!(fs.get_str("/dst/a/one.txt").expect("existing"), b"existing");
+    assert_eq!(fs.get_str("/src/a/one.txt").expect("source"), b"one");
+    assert_eq!(fs.get_str("/dst/a/b/two.txt").expect("moved"), b"twotwo");
+    assert!(
+        report.moved.is_empty(),
+        "partial move is not a completed undo pair"
+    );
+}
+
 #[test]
 fn cross_device_move_copies_verifies_then_deletes() {
     let fs = FaultFs::new(sample());

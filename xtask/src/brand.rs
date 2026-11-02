@@ -134,10 +134,11 @@ pub fn packager_config() -> Result<String, String> {
 description = \"A cross-platform multi-pane file manager\"\ncategory = \"Utility\"\n\
 icons = [\"{root}/packaging/icon.png\", \"{root}/packaging/icon.ico\", \"{root}/packaging/icon.icns\"]\nout-dir = \"{root}/target/packager\"\n\
 binaries-dir = \"{root}/target/release\"\nbinaries = [{{ path = \"{slug}\", main = true }}]\n\
-\n[nsis]\ninstaller-icon = \"{root}/packaging/icon.ico\"\n",
+\n[nsis]\ninstaller-icon = \"{root}/packaging/icon.ico\"\npreinstall-section = '''\n{icon_refresh}\n'''\n",
         name = brand.name,
         slug = brand.slug,
         root = root.display().to_string().replace('\\', "/"),
+        icon_refresh = include_str!("../../packaging/windows-refresh-icons.nsh"),
     );
     let out = root.join("target/Packager.toml");
     if let Some(dir) = out.parent() {
@@ -417,5 +418,13 @@ mod tests {
             config["product-name"].as_str(),
             Some(read_brand(&root).expect("brand").name.as_str())
         );
+        let refresh = config["nsis"]["preinstall-section"]
+            .as_str()
+            .expect("refresh hook");
+        assert!(refresh.contains("Function .onGUIEnd"));
+        assert!(refresh.contains(r#"$INSTDIR\${MAINBINARYNAME}.exe""#));
+        assert!(refresh.contains("shell32::SHChangeNotify"));
+        assert!(!refresh.contains("taskkill"));
+        assert!(!refresh.contains("Delete "));
     }
 }

@@ -103,7 +103,7 @@ pub fn move_(
     dest_dir: &VfsUri,
     ctx: &mut OpCtx<'_>,
 ) -> Result<OpReport, FmError> {
-    let plan = plan_transfer(backends, sources, dest_dir, PlanLimits::default())?;
+    let plan = plan::plan_move(backends, sources, dest_dir)?;
     Ok(transfer::run_move(backends, &plan, ctx))
 }
 

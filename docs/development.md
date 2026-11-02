@@ -83,6 +83,14 @@ See `AGENTS.md` §2. `docs/architecture.md` explains why each crate exists and h
   or switching the Cargo target/profile. No root privileges are needed. To undo,
   remove those two files. An installed package supplies its own desktop entry.
 
+- **Windows upgrade icons**: the executable and NSIS installer both embed the
+  branded ICO. Interactive installers notify Explorer to refresh its icon cache
+  when the installer closes. Windows can still retain an old icon in a pinned
+  shortcut: unpin the old entry, start the installed app from Start, and pin it
+  again. Check a fresh desktop shortcut too. The installer does not restart
+  Explorer or delete user shortcuts/cache files. Verify upgrades on Windows;
+  config tests on Linux cannot confirm Explorer's cache behavior.
+
 - **Wayland**: window-wide file drops from other applications depend on winit's Wayland support and may be unavailable; in-app pane-to-pane drag & drop is unaffected, and pasting paths from the clipboard always works. See `docs/architecture.md` §11.
 
 The main window saves its normal size, position and maximized state about a second
@@ -91,6 +99,9 @@ position for the first moments in case the window manager places the window itse
 Native Wayland controls placement in the compositor, so only size/maximized state
 can be restored there; X11/XWayland, Windows and macOS also restore position.
 - **Network discovery** (manual smoke; multicast cannot run in CI): File ▸ Network should list Samba/NAS hosts (mDNS) and Windows PCs (WS-Discovery) within ~5 s; opening one asks for credentials in a popup, a wrong password reopens it with an error, and `Remember until you quit` reconnects silently. VLANs/VPNs may hide hosts; use the Network pane's Connect… button (or File ▸ Connect to SMB Server…) as the fallback.
+- **Manual SMB host**: Host accepts `nas`, an IP address, or a UNC server name
+  such as `\\192.168.0.50` (an optional final backslash is allowed). Enter the
+  share separately in Share; a complete `\\server\share` path is not a host name.
 - **SMB**: pure Rust on every OS, no system libraries. The `fm-fs-smb` integration tests start `dperson/samba` in Docker and skip themselves when Docker or the image is missing.
 - **macOS**: local roots are `/` and `/Volumes`.
 - **Trash**: only local paths can be trashed (SMB/SFTP report `Unsupported`; permanent delete is always an explicit command). Undoing a trash restores via `trash::os_limited`, available on Linux and Windows; on macOS the `trash` crate cannot restore, so undo-delete is unavailable there (undo of rename/move/create still works).
@@ -119,6 +130,11 @@ Snapshot fixtures use a fixed mtime and synthesized error messages so the
 images are machine-independent.
 
 ## Running the real window (manual smoke)
+
+In the file tree, clicking a folder name opens it and expands it; repeated or
+double clicks on the name never collapse it. Click the disclosure arrow to
+expand/collapse without changing the listing. Right/Left keyboard behavior is
+unchanged.
 
 The windowed launch is `#[ignore]`d in CI. Run it by hand:
 

@@ -35,6 +35,14 @@ changed line pairs under a length cap. Computation runs on a worker; the result 
 `Arc<DiffModel>` of aligned rows (left?, right?, kind), rendered virtualized. UTF-8 with lossy
 fallback; optional ignore-line-endings.
 
+The diff body uses one two-axis scroll area for linked horizontal and vertical
+movement. Columns and gutters are pinned to the viewport; only text is translated
+horizontally, with per-column clips. Virtual rows are painted at fixed heights.
+The maximum measured width of visited rows is cached per document/font/mode,
+avoiding full-document text layout on the UI thread; encountering a wider row
+extends the shared horizontal range. Pane width comes from the viewport, never
+the previous frame's scrollable content width.
+
 ## Risks
 
 - `gix` status speed on very large repos: single-flight, caps and the unchanged-index short

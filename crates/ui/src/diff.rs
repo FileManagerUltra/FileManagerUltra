@@ -129,7 +129,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
                 rows(
                     ui,
                     pane,
-                    &model.rows,
+                    outcome.clone(),
                     unified,
                     (target, block),
                     state.jumps,
@@ -481,22 +481,43 @@ fn names_tree(
     }
 }
 
+#[derive(Clone)]
+struct HorizontalExtent {
+    document: std::sync::Arc<Outcome>,
+    font: FontId,
+    width: f32,
+}
+
 fn rows(
     ui: &mut Ui,
     pane: PaneId,
-    rows: &[Row],
+    document: std::sync::Arc<Outcome>,
     unified: bool,
     (target, block): (Option<(usize, usize)>, Option<std::ops::Range<usize>>),
     jumps: u64,
     tokens: &Tokens,
 ) {
+    let Outcome::Text(model) = document.as_ref() else {
+        return;
+    };
+    let rows = &model.rows;
     let font = FontId::monospace(tokens.font_size);
     let row_h = ui.fonts_mut(|f| f.row_height(&font)) + 2.0;
+    let extent_id = ui.make_persistent_id(egui::IdSalt::new(("diff-width", pane, unified)));
+    let mut extent: HorizontalExtent = ui
+        .ctx()
+        .data(|d| d.get_temp(extent_id))
+        .filter(|extent: &HorizontalExtent| {
+            std::sync::Arc::ptr_eq(&extent.document, &document) && extent.font == font
+        })
+        .unwrap_or_else(|| HorizontalExtent {
+            document: document.clone(),
+            font: font.clone(),
+            width: 0.0,
+        });
     let seen = ui.make_persistent_id(egui::IdSalt::new(("diff-current", pane)));
     let last: Option<(usize, u64)> = ui.ctx().data(|d| d.get_temp(seen));
-    // Vertical only: long lines are clipped per row, and a horizontal scroll area would feed
-    // last frame's content width back in, so the view could never shrink with the pane.
-    let mut area = ScrollArea::vertical()
+    let mut area = ScrollArea::both()
         .id_salt(("diff-scroll", pane))
         .auto_shrink(false);
     if let Some((index, row)) = target
@@ -522,36 +543,52 @@ fn rows(
     } else {
         rows.len()
     };
-    // Rows are exactly `row_h` apart: `show_rows` adds the item spacing to its pitch.
-    ui.spacing_mut().item_spacing.y = 0.0;
-    let out = area.show_rows(ui, row_h, total, |ui, range| {
-        ui.spacing_mut().item_spacing.y = 0.0;
+    let out = area.show_viewport(ui, |ui, viewport| {
+        let origin = ui.min_rect().min;
+        let width = viewport.width();
+        let half = ((width - 4.0) / 2.0).max(0.0);
+        let gutter = if unified { NUM_W + 16.0 } else { NUM_W };
+        let text_width = (if unified { width } else { half } - gutter).max(0.0);
+        let first = ((viewport.top() / row_h).floor().max(0.0) as usize).min(total);
+        let end = ((viewport.bottom() / row_h).ceil().max(0.0) as usize + 1).min(total);
+        let line_rect = |index: usize| {
+            egui::Rect::from_min_size(
+                origin + vec2(viewport.left(), index as f32 * row_h),
+                vec2(width, row_h),
+            )
+        };
+        let mut measured = extent.width;
         if unified {
             let mut at = 0;
             for (index, row) in rows.iter().enumerate() {
                 let n = unified_len(row);
-                if at + n > range.start && at < range.end {
+                if at + n > first && at < end {
                     let current = block.as_ref().is_some_and(|b| b.contains(&index));
-                    unified_row(ui, row, current, row_h, &font, tokens);
+                    measured = measured.max(unified_row(
+                        ui,
+                        row,
+                        current,
+                        line_rect(at),
+                        viewport.left(),
+                        &font,
+                        tokens,
+                    ));
                 }
                 at += n;
-                if at >= range.end {
+                if at >= end {
                     break;
                 }
             }
         } else {
-            let half = ((ui.available_width() - 4.0) / 2.0).max(100.0);
-            let first = range.start;
-            for (offset, row) in rows.get(range).unwrap_or_default().iter().enumerate() {
-                // One exact-height allocation per row; `ui.horizontal` would round it up to
-                // the interact height and break the row pitch the jump offsets rely on.
-                let (line, _) =
-                    ui.allocate_exact_size(vec2(half * 2.0 + 4.0, row_h), egui::Sense::hover());
+            for (offset, row) in rows.get(first..end).unwrap_or_default().iter().enumerate() {
+                let line = line_rect(first + offset);
                 let left = egui::Rect::from_min_size(line.min, vec2(half, row_h));
                 let right =
                     egui::Rect::from_min_size(line.min + vec2(half + 4.0, 0.0), vec2(half, row_h));
-                side(ui, row, false, left, &font, tokens);
-                side(ui, row, true, right, &font, tokens);
+                for (right, rect) in [(false, left), (true, right)] {
+                    measured =
+                        measured.max(side(ui, row, right, rect, viewport.left(), &font, tokens));
+                }
                 if block
                     .as_ref()
                     .is_some_and(|b| b.contains(&(first + offset)))
@@ -560,13 +597,23 @@ fn rows(
                 }
             }
         }
+        extent.width = measured;
+        ui.set_min_size(vec2(
+            width + (measured - text_width).max(0.0),
+            total as f32 * row_h,
+        ));
     });
+    ui.ctx().data_mut(|d| d.insert_temp(extent_id, extent));
     #[cfg(test)]
     ui.ctx().data_mut(|d| {
         d.insert_temp(
             egui::Id::NULL.with("diff-offset-test"),
             out.state.unclamped_offset().y,
-        )
+        );
+        d.insert_temp(
+            egui::Id::NULL.with("diff-scroll-test"),
+            (out.state.unclamped_offset(), out.inner_rect),
+        );
     });
     let _ = &out;
 }
@@ -626,7 +673,15 @@ fn line_job(
     job
 }
 
-fn side(ui: &Ui, row: &Row, right: bool, rect: egui::Rect, font: &FontId, tokens: &Tokens) {
+fn side(
+    ui: &Ui,
+    row: &Row,
+    right: bool,
+    rect: egui::Rect,
+    x: f32,
+    font: &FontId,
+    tokens: &Tokens,
+) -> f32 {
     let line = if right { &row.right } else { &row.left };
     let (bg, word) = backgrounds(row.tag, right, tokens);
     let painter = ui.painter_at(rect);
@@ -642,20 +697,33 @@ fn side(ui: &Ui, row: &Row, right: bool, rect: egui::Rect, font: &FontId, tokens
             );
             let galley =
                 ui.fonts_mut(|f| f.layout_job(line_job(&l.text, &l.marks, word, font, tokens)));
-            painter.galley(rect.left_top() + vec2(NUM_W, 1.0), galley, tokens.text);
+            let width = galley.size().x;
+            let text_rect =
+                egui::Rect::from_min_max(rect.min + vec2(NUM_W.min(rect.width()), 0.0), rect.max);
+            painter
+                .with_clip_rect(painter.clip_rect().intersect(text_rect))
+                .galley(rect.left_top() + vec2(NUM_W - x, 1.0), galley, tokens.text);
+            width
         }
         None => {
             painter.rect_filled(rect, 0.0, tokens.diff_del_bg.gamma_multiply(0.3));
+            0.0
         }
     }
 }
 
-fn unified_row(ui: &mut Ui, row: &Row, current: bool, row_h: f32, font: &FontId, tokens: &Tokens) {
-    let one = |ui: &mut Ui, right: bool| {
+fn unified_row(
+    ui: &Ui,
+    row: &Row,
+    current: bool,
+    rect: egui::Rect,
+    x: f32,
+    font: &FontId,
+    tokens: &Tokens,
+) -> f32 {
+    let one = |right: bool, rect: egui::Rect| {
         let line = if right { &row.right } else { &row.left };
-        let Some(l) = line else { return };
-        let (rect, _) =
-            ui.allocate_exact_size(vec2(ui.available_width(), row_h), egui::Sense::hover());
+        let Some(l) = line else { return 0.0 };
         let (bg, word) = backgrounds(row.tag, right, tokens);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, bg);
@@ -676,19 +744,24 @@ fn unified_row(ui: &mut Ui, row: &Row, current: bool, row_h: f32, font: &FontId,
         );
         let galley =
             ui.fonts_mut(|f| f.layout_job(line_job(&l.text, &l.marks, word, font, tokens)));
-        painter.galley(
-            rect.left_top() + vec2(NUM_W + 16.0, 1.0),
-            galley,
-            tokens.text,
+        let width = galley.size().x;
+        let text_rect = egui::Rect::from_min_max(
+            rect.min + vec2((NUM_W + 16.0).min(rect.width()), 0.0),
+            rect.max,
         );
+        painter
+            .with_clip_rect(painter.clip_rect().intersect(text_rect))
+            .galley(
+                rect.left_top() + vec2(NUM_W + 16.0 - x, 1.0),
+                galley,
+                tokens.text,
+            );
+        width
     };
     match row.tag {
-        Tag::Equal | Tag::Insert => one(ui, row.tag == Tag::Insert),
-        Tag::Delete => one(ui, false),
-        Tag::Replace => {
-            one(ui, false);
-            one(ui, true);
-        }
+        Tag::Equal | Tag::Insert => one(row.tag == Tag::Insert, rect),
+        Tag::Delete => one(false, rect),
+        Tag::Replace => one(false, rect).max(one(true, rect.translate(vec2(0.0, rect.height())))),
     }
 }
 
@@ -711,8 +784,12 @@ mod tests {
     }
 
     fn rig(changes: &[usize]) -> (tempfile::TempDir, Session, PaneId) {
-        let dir = tempfile::tempdir().expect("tmp");
         let base: Vec<String> = (0..300).map(|i| format!("line {i}")).collect();
+        rig_with_base(changes, base)
+    }
+
+    fn rig_with_base(changes: &[usize], base: Vec<String>) -> (tempfile::TempDir, Session, PaneId) {
+        let dir = tempfile::tempdir().expect("tmp");
         let mut changed = base.clone();
         for i in changes {
             changed[*i] = format!("CHANGED {i}");
@@ -809,6 +886,87 @@ mod tests {
         harness.run();
         let at_change = offset(&harness);
         assert!(at_change > 500.0, "first change not shown: {at_change}");
+    }
+
+    fn positions(h: &Harness<Session>, value: &str) -> Vec<egui::Pos2> {
+        fn collect(shape: &egui::Shape, value: &str, out: &mut Vec<egui::Pos2>) {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text() == value => out.push(text.pos),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, value, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for shape in &h.output().shapes {
+            collect(&shape.shape, value, &mut out);
+        }
+        out
+    }
+
+    fn horizontal(h: &Harness<Session>) -> (egui::Vec2, egui::Rect) {
+        h.ctx
+            .data(|d| d.get_temp(egui::Id::NULL.with("diff-scroll-test")))
+            .expect("scroll")
+    }
+
+    #[test]
+    fn split_horizontal_scroll_links_both_sides_and_keeps_gutters_fixed_on_resize() {
+        let base: Vec<_> = (0..300)
+            .map(|i| format!("line {i} {}", "wide text ".repeat(60)))
+            .collect();
+        let text = base[11].clone();
+        let (_dir, s, pane) = rig_with_base(&[10], base);
+        let mut h = harness(s, pane);
+        h.run();
+        let before = positions(&h, &text);
+        let gutters = positions(&h, "12");
+        assert_eq!(before.len(), 2);
+        assert_eq!(gutters.len(), 2);
+        let (_, viewport) = horizontal(&h);
+        for fraction in [0.25, 0.75] {
+            h.hover_at(egui::pos2(
+                viewport.left() + viewport.width() * fraction,
+                viewport.center().y,
+            ));
+            h.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(-120.0, 0.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.run();
+        }
+        let after = positions(&h, &text);
+        assert_eq!(after.len(), 2);
+        assert!(horizontal(&h).0.x > 100.0);
+        assert!((before[0].x - after[0].x - (before[1].x - after[1].x)).abs() < 0.1);
+        assert!((before[0].x - after[0].x) > 100.0);
+        for (before, after) in gutters.iter().zip(positions(&h, "12")) {
+            assert!(before.distance(after) < 0.5, "{before:?} -> {after:?}");
+        }
+        h.set_size(vec2(620.0, 400.0));
+        h.run();
+        let (_, smaller) = horizontal(&h);
+        assert!(
+            smaller.width() < viewport.width() - 150.0,
+            "{viewport:?} -> {smaller:?}"
+        );
+        assert!(
+            horizontal(&h).0.x > 100.0,
+            "resize retains the shared offset"
+        );
+        h.state_mut()
+            .dispatch("preview.diff.mode", &serde_json::json!({}))
+            .expect("unified");
+        h.run();
+        assert_eq!(positions(&h, &text).len(), 1);
+        step(&mut h, "preview.diff.next");
+        assert!(offset(&h) >= 0.0);
     }
 }
 

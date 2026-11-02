@@ -154,6 +154,36 @@ fn closing_key_picker_leaves_connection_form_open() {
 type Show = fn(&Context, &mut Session, &Tokens);
 
 #[test]
+fn manual_smb_form_connects_with_a_unc_server_name() {
+    for tokens in [Tokens::dark(), Tokens::light()] {
+        let mut s = Session::new().expect("session");
+        s.dispatch("network.connect.dialog", &json!(null))
+            .expect("dialog");
+        let mut h = harness(tokens, s, fm_ui::remote::login_dialog);
+        for (label, text) in [
+            ("Host", r"\\127.0.0.1"),
+            ("Port", "1"),
+            ("Username", "alice"),
+        ] {
+            h.get_by_label(label).click();
+            h.run();
+            h.get_by_label(label).type_text(text);
+            h.run();
+        }
+        h.get_by_label("Connect").click();
+        h.run();
+        assert!(h.state().remote.login_prompt.is_none());
+        let server = VfsUri::parse("smb://127.0.0.1:1/").expect("server");
+        assert_eq!(
+            h.state()
+                .remote
+                .state(fm_vfs::Scheme::Smb, server.authority()),
+            Some(&fm_engine::remote::ConnState::Connecting)
+        );
+    }
+}
+
+#[test]
 fn properties_title_close_cancels_the_background_count() {
     for tokens in [Tokens::dark(), Tokens::light()] {
         let fs = fm_testkit::MemFs::new();

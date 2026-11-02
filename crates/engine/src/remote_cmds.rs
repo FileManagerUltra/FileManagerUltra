@@ -58,7 +58,7 @@ fn parse_connect_smb(s: &Session, params: &Params) -> Result<SmbParams, FmError>
     };
     let secs = s.prefs.remote_timeout_secs.clamp(1, 600);
     let params = SmbParams {
-        host: required("host")?,
+        host: fm_fs_smb::normalize_host(&required("host")?)?,
         port: port(map)?,
         share: required("share")?,
         user: required("user")?,
@@ -354,7 +354,10 @@ pub fn profile_save() -> CommandSpec {
             let profile = crate::prefs::Profile {
                 protocol,
                 name: need("name")?,
-                host: need("host")?,
+                host: match protocol {
+                    crate::prefs::Protocol::Smb => fm_fs_smb::normalize_host(&need("host")?)?,
+                    crate::prefs::Protocol::Sftp => need("host")?,
+                },
                 user: need("user")?,
                 port: port(map)?.unwrap_or(default_port),
                 key_path: text(map, "key_path")?,
@@ -415,4 +418,26 @@ pub fn specs() -> Vec<CommandSpec> {
         profile_save(),
         profile_delete(),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn smb_connect_command_normalizes_unc_host_before_validation() {
+        let session = Session::new().expect("session");
+        let params = parse_connect_smb(
+            &session,
+            &serde_json::json!({
+                "host": r"\\192.168.0.50",
+                "share": "videos",
+                "user": "alice",
+                "password": "test-secret"
+            }),
+        )
+        .expect("connection params");
+        assert_eq!(params.host, "192.168.0.50");
+        assert_eq!(params.share, "videos");
+    }
 }

@@ -54,6 +54,14 @@ return `Err` and change nothing.
 - **WHEN** the platform is Windows
 - **THEN** line endings are ignored by default, since a CRLF checkout would otherwise differ on every line
 
+#### Scenario: Linked horizontal scrolling
+- **WHEN** long lines extend beyond either side of a split diff
+- **THEN** one shared horizontal scrollbar and horizontal wheel/trackpad gestures over either side move both text columns by the same pixel offset
+- **AND** line-number gutters, the split divider, row backgrounds and change markers remain fixed
+- **AND** each side clips text to its own content area so it cannot cover its gutter or the other side
+- **AND** resizing keeps the columns within the new pane width without feeding scrollable text width into the pane layout
+- **AND** rows remain virtualized, unified mode can scroll long lines horizontally, and change navigation retains its vertical behavior
+
 ### Requirement: Diff inputs are bounded
 Each side SHALL be capped (default 2 MiB); larger inputs show a notice instead of a diff.
 Binary inputs show "binary files differ". Loading and diffing run on the local lane; the UI

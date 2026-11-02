@@ -47,6 +47,8 @@ pub struct Top {
     pub dst: VfsUri,
     pub start: usize,
     pub end: usize,
+    /// Contents are planned only if the rename fast path cannot run.
+    pub(crate) deferred: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -76,7 +78,22 @@ pub fn plan_transfer(
     dest_dir: &VfsUri,
     limits: PlanLimits,
 ) -> Result<Plan, FmError> {
-    plan_inner(backends, sources, dest_dir, limits, false)
+    plan_inner(backends, sources, dest_dir, limits, false, false)
+}
+
+pub(crate) fn plan_move(
+    backends: &dyn Backends,
+    sources: &[VfsUri],
+    dest_dir: &VfsUri,
+) -> Result<Plan, FmError> {
+    plan_inner(
+        backends,
+        sources,
+        dest_dir,
+        PlanLimits::default(),
+        false,
+        true,
+    )
 }
 
 /// Like [`plan_transfer`], but an item already in `dest_dir` is duplicated under the first
@@ -87,7 +104,7 @@ pub fn plan_duplicating(
     dest_dir: &VfsUri,
     limits: PlanLimits,
 ) -> Result<Plan, FmError> {
-    plan_inner(backends, sources, dest_dir, limits, true)
+    plan_inner(backends, sources, dest_dir, limits, true, false)
 }
 
 fn plan_inner(
@@ -96,6 +113,7 @@ fn plan_inner(
     dest_dir: &VfsUri,
     limits: PlanLimits,
     duplicate_in_place: bool,
+    moving: bool,
 ) -> Result<Plan, FmError> {
     let dest_vfs = backends.vfs(dest_dir)?;
     if !dest_vfs.stat(dest_dir)?.is_dir() {
@@ -127,7 +145,14 @@ fn plan_inner(
             )));
         }
         let start = plan.items.len();
+        let deferred = moving
+            && entry.is_dir()
+            && src.scheme() == dst.scheme()
+            && src.authority() == dst.authority()
+            && vfs.same_device(src, dest_dir)
+            && matches!(dest_vfs.stat(&dst), Err(FmError::NotFound(_)));
         match &entry.kind {
+            EntryKind::Dir if deferred => push(&mut plan, src, &dst, PlanKind::Dir, None, limits)?,
             EntryKind::Dir => walk_dir(backends, src, &dst, 0, limits, &mut plan)?,
             EntryKind::File => push(&mut plan, src, &dst, PlanKind::File, entry.size, limits)?,
             EntryKind::Symlink { .. } => {
@@ -144,6 +169,7 @@ fn plan_inner(
             dst,
             start,
             end: plan.items.len(),
+            deferred,
         });
     }
     Ok(plan)

@@ -286,6 +286,10 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     // egui turns Enter on a focused button into a click; Enter must only open.
                     let enter = response.has_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                     let clicked = response.clicked() && !enter;
+                    let arrow_clicked = clicked
+                        && response.interact_pointer_pos().is_some_and(|pos| {
+                            pos.x < response.rect.left() + chevron_width(tokens)
+                        });
                     if clicked {
                         response.request_focus();
                     }
@@ -363,15 +367,16 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                         ui.memory_mut(|m| m.surrender_focus(response.id));
                     }
                     if clicked && row.is_dir {
-                        // Selecting a folder shows it in the listing.
-                        open = Some(row.uri.clone());
-                        if row.expanded {
+                        if arrow_clicked && row.expanded {
                             collapse.push(row.uri.clone());
                         } else {
                             expand.push(row.uri.clone());
                         }
+                        if !arrow_clicked {
+                            open = Some(row.uri.clone());
+                        }
                     }
-                    if response.double_clicked() {
+                    if response.double_clicked() && !arrow_clicked {
                         open = Some(row.uri.clone());
                     }
                     if saved_servers && row.depth == 1 {
@@ -474,6 +479,10 @@ fn paint_chevron(ui: &Ui, rect: egui::Rect, expanded: bool, selected: bool, toke
         .add(egui::Shape::convex_polygon(pts, color, egui::Stroke::NONE));
 }
 
+fn chevron_width(tokens: &Tokens) -> f32 {
+    tokens.padding + tokens.font_size * 0.7
+}
+
 /// Truncate to `max_chars` with a horizontal ellipsis (full name is a tooltip).
 pub(crate) fn ellipsize(name: &str, max_chars: usize) -> String {
     let count = name.chars().count();
@@ -549,6 +558,75 @@ mod tests {
         assert_eq!(ellipsize("short", 20), "short");
         assert!(ellipsize("longer-name", 5).ends_with('…'));
         assert_eq!(ellipsize("anything", 0), "…");
+    }
+
+    #[test]
+    fn folder_names_only_expand_and_arrows_toggle_without_navigation() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            let (mut s, _) = nested_session();
+            s.registry =
+                fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+            let home = VfsUri::parse("/home/alice").expect("home");
+            let docs = home.join("docs").expect("docs");
+            let deep = docs.join("deep").expect("deep");
+            s.layout.state_mut(1).expect("pane").tree = fm_layout::TreeState::new(home.clone());
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(500.0, 400.0))
+                .build_ui_state(
+                    move |ui, s: &mut Session| {
+                        crate::theme::apply_to(ui.ctx(), &tokens);
+                        if let Some(uri) = show(ui, s, 1, &tokens) {
+                            s.dispatch("nav.open", &serde_json::json!({"uri": uri.to_string()}))
+                                .expect("navigate");
+                        }
+                    },
+                    s,
+                );
+            h.get_by_label("   docs").click();
+            h.run();
+            wait_ready(h.state_mut(), &docs);
+            h.run();
+            assert!(
+                h.state()
+                    .layout
+                    .state(1)
+                    .expect("pane")
+                    .tree
+                    .is_expanded(&docs)
+            );
+            assert_eq!(h.state().layout.state(1).expect("pane").location, docs);
+            for _ in 0..3 {
+                h.get_by_label("   docs").click();
+                h.run();
+                assert!(
+                    h.state()
+                        .layout
+                        .state(1)
+                        .expect("pane")
+                        .tree
+                        .is_expanded(&docs)
+                );
+                h.get_by_label("   deep");
+            }
+            h.get_by_label("   deep").click();
+            h.run();
+            wait_ready(h.state_mut(), &deep);
+            h.run();
+            for expanded in [false, true] {
+                let rect = h.get_by_label("   docs").rect();
+                let arrow = egui::pos2(rect.left() + 6.0, rect.center().y);
+                h.hover_at(arrow);
+                h.drag_at(arrow);
+                h.run_steps(1);
+                h.drop_at(arrow);
+                h.run();
+                let state = h.state().layout.state(1).expect("pane");
+                assert_eq!(state.tree.is_expanded(&docs), expanded);
+                assert_eq!(state.location, deep, "arrow must not navigate");
+            }
+        }
     }
 
     #[test]

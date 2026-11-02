@@ -56,6 +56,22 @@ fn valid_host(host: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':' | '[' | ']'))
 }
 
+/// Accept a bare host or a Windows UNC server name; shares belong in the share field.
+pub fn normalize_host(input: &str) -> Result<String, FmError> {
+    let input = input.trim();
+    let host = match input.strip_prefix(r"\\") {
+        Some(host) => host.strip_suffix('\\').unwrap_or(host),
+        None => input,
+    };
+    if !valid_host(host) {
+        return Err(FmError::backend(
+            "smb",
+            r"Enter a host name, IP address or \\server; enter the share separately in Share.",
+        ));
+    }
+    Ok(host.to_string())
+}
+
 impl ConnectParams {
     /// Reject malformed host, share and user before any network traffic.
     pub fn validate(&self) -> Result<(), FmError> {
@@ -138,4 +154,42 @@ pub fn connect(params: &ConnectParams) -> Result<SmbFs, FmError> {
             encrypted: params.require_encryption,
         }),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_bare_and_unc_hosts_without_changing_server_identity() {
+        for (input, expected) in [
+            ("nas", "nas"),
+            ("192.168.0.50", "192.168.0.50"),
+            (r"\\192.168.0.50", "192.168.0.50"),
+            (r" \\NAS\ ", "NAS"),
+            ("[::1]", "[::1]"),
+        ] {
+            assert_eq!(normalize_host(input).expect("host"), expected);
+        }
+    }
+
+    #[test]
+    fn rejects_paths_credentials_and_oversized_hosts_without_echoing_input() {
+        for input in [
+            "",
+            r"\\",
+            r"\nas",
+            r"\\nas\share",
+            r"\\nas\share\folder",
+            "smb://nas",
+            "alice:secret@nas",
+            "nas\nhost",
+            &"x".repeat(256),
+        ] {
+            let err = normalize_host(input).expect_err("invalid host");
+            let message = err.to_string();
+            assert!(message.contains("enter the share separately"));
+            assert!(!message.contains("secret"));
+        }
+    }
 }

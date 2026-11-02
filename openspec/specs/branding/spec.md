@@ -58,3 +58,9 @@ SHALL use the corresponding treatment, with editable sources owned by `fm-brand`
 - **WHEN** the app runs or is installed on Linux, Windows or macOS
 - **THEN** its window/About icon and launcher/bundle icon use the same platform treatment
 - **AND** Windows ICO includes 16 through 256 px representations and macOS ICNS includes standard and Retina representations through 1024 px
+
+#### Scenario: Refresh Windows launcher icons after an interactive install
+- **WHEN** the Windows installer closes with the application executable installed
+- **THEN** it notifies the Windows shell to refresh cached icons
+- **AND** it does not restart Explorer, delete the global icon cache or remove user-managed shortcuts and taskbar pins
+- **AND** stale pinned copies may still require unpinning and re-pinning in Windows

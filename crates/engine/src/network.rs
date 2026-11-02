@@ -351,7 +351,9 @@ impl Session {
             .clone()
             .ok_or_else(|| FmError::NotFound("sign-in prompt".to_string()))?;
         let (host, port, share, require_encryption, landing) = if prompt.manual {
-            let m = manual.ok_or_else(|| FmError::InvalidParams("host is required".to_string()))?;
+            let mut m =
+                manual.ok_or_else(|| FmError::InvalidParams("host is required".to_string()))?;
+            m.host = fm_fs_smb::normalize_host(&m.host)?;
             let shown_port = m.port.map(|p| format!(":{p}")).unwrap_or_default();
             let landing = VfsUri::parse(&format!("smb://{}{shown_port}/{}", m.host, m.share))
                 .map_err(|_| FmError::InvalidParams("invalid host or share".to_string()))?;

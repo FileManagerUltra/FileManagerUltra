@@ -116,6 +116,56 @@ fn login_command_rejects_bad_params_and_keeps_the_popup() {
 }
 
 #[test]
+fn manual_unc_login_uses_the_bare_host_for_navigation_and_credentials() {
+    let mut s = session();
+    s.dispatch("network.connect.dialog", &json!(null)).unwrap();
+    s.dispatch(
+        "network.login",
+        &json!({
+            "host": r"\\127.0.0.1",
+            "port": 1,
+            "user": "alice",
+            "password": "test-secret",
+            "remember": "session"
+        }),
+    )
+    .unwrap();
+    assert!(s.remote.login_prompt.is_none());
+    assert!(s.remote.remembers_login("127.0.0.1", Some(1)));
+    let server = VfsUri::parse("smb://127.0.0.1:1/").unwrap();
+    assert_eq!(
+        s.remote.state(Scheme::Smb, server.authority()),
+        Some(&fm_engine::remote::ConnState::Connecting)
+    );
+}
+
+#[test]
+fn invalid_unc_path_keeps_manual_login_open_and_profiles_store_normalized_hosts() {
+    let mut s = session();
+    s.dispatch("network.connect.dialog", &json!(null)).unwrap();
+    assert!(
+        s.dispatch(
+            "network.login",
+            &json!({"host": r"\\nas\share", "user": "alice", "password": "test-secret"})
+        )
+        .is_err()
+    );
+    assert!(s.remote.login_prompt.is_some());
+    s.dispatch(
+            "remote.profile.save",
+            &json!({"protocol": "smb", "name": "UNC server", "host": r"\\192.168.0.50\", "user": "alice"})
+        ).unwrap();
+    let profile = s
+        .prefs
+        .profiles
+        .iter()
+        .find(|p| p.name == "UNC server")
+        .unwrap();
+    assert_eq!(profile.host, "192.168.0.50");
+    s.dispatch("network.login.cancel", &json!(null)).unwrap();
+}
+
+#[test]
 fn a_failed_connect_closes_the_popup_and_reports() {
     let mut s = session();
     let uri = VfsUri::parse("smb://127.0.0.1:1/").unwrap();
