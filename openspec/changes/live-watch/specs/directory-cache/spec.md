@@ -33,6 +33,14 @@ Remote (SFTP, SMB) directories SHALL be revalidated every 5 s while visible (con
 - **WHEN** the OS refuses a new watch (for example inotify limit)
 - **THEN** a notice is shown and that directory falls back to polling
 
+#### Scenario: Recover a failed watch
+- **WHEN** watcher initialization or a directory watch fails temporarily
+- **THEN** polling continues and watch creation retries after 1, 2, 4, 8, 16, 32 and then at most once every 60 seconds
+- **AND** repeated failures in the same retry sequence do not repeat notices every frame
+- **AND** successful watch creation ends the retry sequence without requiring navigation
+- **AND** leaving a directory discards its pending retry
+- **AND** directories over the watch cap become eligible when a watch slot is freed, while known network filesystems continue polling without failed-watch retry loops
+
 #### Scenario: Unchanged poll
 - **WHEN** a poll returns identical entries
 - **THEN** the revision is unchanged and the pane does not redraw

@@ -2223,6 +2223,52 @@ fn preview_toolbar_keeps_controls_on_one_row_and_logs_have_only_filter() {
 }
 
 #[test]
+fn preview_toolbar_folder_path_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let (mut session, pane) = preview_fixture(
+            "a-very-long-preview-filename-with-many-characters.md",
+            b"# Preview\n\nThe toolbar identifies this file's folder.",
+            false,
+        );
+        session
+            .previews
+            .slots
+            .get_mut(&pane)
+            .expect("slot")
+            .subject
+            .as_mut()
+            .expect("subject")
+            .uri = VfsUri::parse(
+            "/home/alice/Pictures/Screenshots/a-very-long-preview-filename-with-many-characters.md",
+        )
+        .expect("uri");
+        let mut harness = Harness::builder()
+            .renderer(renderer)
+            .with_accessibility_check(false)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::preview::show(ui, &mut session, pane, &tokens);
+            });
+        for width in [1400, 800, 360] {
+            harness.set_size(egui::vec2(width as f32, 180.0));
+            harness.run();
+            harness.snapshot(format!("preview_folder_path_{width}_{theme}"));
+        }
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
 fn preview_toolbar_collapses_into_a_menu_when_narrow() {
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();
@@ -3017,7 +3063,7 @@ fn volume_preview_dark_light() {
             h.get_by_label("Volume");
             h.get_by_label("USB backup");
             assert!(h.query_by_label("Outer volume").is_none());
-            h.get_by_label("/home/alice");
+            assert_eq!(h.query_all_by_label("/home/alice").count(), 2);
             h.get_by_label("96.0 GiB");
             h.get_by_label("Folder summary");
             h.get_by_label("Subfolders");
@@ -3327,6 +3373,16 @@ fn preview_diff_split_and_unified_dark_light() {
             session
                 .dispatch("preview.diff.mode", &serde_json::json!({"mode": mode}))
                 .expect("mode");
+            // The toolbar must not snapshot the random temporary repository path.
+            session
+                .previews
+                .slots
+                .get_mut(&pane)
+                .expect("slot")
+                .subject
+                .as_mut()
+                .expect("subject")
+                .uri = VfsUri::parse("/home/alice/project/main.rs").expect("uri");
             let mut harness = Harness::builder()
                 .renderer(renderer)
                 .with_accessibility_check(false)

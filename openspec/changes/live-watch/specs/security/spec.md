@@ -10,3 +10,8 @@ Watcher events and paths SHALL be normalized and bounds-checked before mapping t
 #### Scenario: Event for an unexpected path
 - **WHEN** an event path cannot be mapped to a displayed `VfsUri`
 - **THEN** it is ignored without error or panic
+
+#### Scenario: Oversized event path list
+- **WHEN** one event contains more than four paths
+- **THEN** all active watches are marked for a debounced rescan without inspecting or allocating per remaining path
+- **AND** changes in paths beyond the inspection limit are not silently lost

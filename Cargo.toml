@@ -50,7 +50,6 @@ egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }
 winit = { version = "0.30", features = ["wayland-csd-adwaita"] }
 
 # external — core
-thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 crossbeam-channel = "0.5"
@@ -74,7 +73,6 @@ russh = "0.64"
 russh-sftp = "3"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
 secrecy = "0.10"
-zeroize = "1"
 
 # external — SMB (fm-fs-smb only; pure Rust, sync mode, NTLM)
 smb = { version = "=0.12.1", default-features = false, features = ["sign", "encrypt", "multi_threaded"] }
@@ -101,6 +99,9 @@ unimplemented = "deny"
 todo = "deny"
 unreachable = "deny"
 dbg_macro = "warn"
+
+[profile.dev]
+debug = 1
 
 # Image/text decoding is unusably slow unoptimised; keep dev builds usable on large files.
 [profile.dev.package."*"]

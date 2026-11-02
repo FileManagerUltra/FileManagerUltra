@@ -105,8 +105,8 @@ pub const FIND_FILES: &str = "search.open";
 pub const BOOKMARK_ADD: &str = "bookmark.add";
 
 /// Every command id referenced by the menus or the shortcut table.
-/// (Used by the tests and by `cargo xtask brand-check`'s registry cross-check.)
-#[cfg_attr(not(test), allow(dead_code))]
+/// Used by the tests; brand-check separately scans command literals in this file.
+#[cfg(test)]
 pub fn all_ids() -> &'static [&'static str] {
     &[
         QUIT,
@@ -952,8 +952,16 @@ pub fn consume_shortcuts(
         for (ix, key) in digits.into_iter().enumerate() {
             let sc = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key);
             if ctx.input_mut(|input| input.consume_shortcut(&sc)) {
-                session.dispatch_or_notice("workspace.switch", &serde_json::json!({ "n": ix + 1 }));
-                fired.push("workspace.switch");
+                if key == Num0 && session.focused_kind() == Some(PaneKind::Preview) {
+                    dispatch(session, dialogs, PREVIEW_SCALE_RESET);
+                    fired.push(PREVIEW_SCALE_RESET);
+                } else {
+                    session.dispatch_or_notice(
+                        "workspace.switch",
+                        &serde_json::json!({ "n": ix + 1 }),
+                    );
+                    fired.push("workspace.switch");
+                }
             }
         }
     }
@@ -1282,6 +1290,70 @@ mod tests {
             assert_eq!(s.prefs.zoom, global);
         }
         assert_eq!(s.preview_slot(pane).expect("slot").scale, 1.0);
+    }
+
+    #[test]
+    fn ctrl_zero_resets_preview_instead_of_switching_to_workspace_ten() {
+        let mut s = Session::new().expect("session");
+        for _ in 1..10 {
+            s.dispatch("workspace.new", &Params::Null).expect("new tab");
+        }
+        s.dispatch("workspace.switch", &serde_json::json!({"n": 1}))
+            .expect("first tab");
+        let pane = s.layout.focused();
+        s.layout.state_mut(pane).expect("pane").kind = PaneKind::Preview;
+        s.dispatch(PREVIEW_SCALE_IN, &Params::Null).expect("zoom");
+        let global = s.prefs.zoom;
+        let ctx = egui::Context::default();
+        assert_eq!(
+            chord(&ctx, &mut s, egui::Key::Num0, egui::Modifiers::COMMAND),
+            [PREVIEW_SCALE_RESET]
+        );
+        assert_eq!(s.workspaces.active, 0);
+        assert_eq!(s.preview_slot(pane).expect("preview").scale, 1.0);
+        assert_eq!(s.prefs.zoom, global);
+        assert!(s.notice.is_none());
+        assert_eq!(
+            chord(&ctx, &mut s, egui::Key::Num2, egui::Modifiers::COMMAND),
+            ["workspace.switch"]
+        );
+        assert_eq!(
+            s.workspaces.active, 1,
+            "other digits still switch from Preview"
+        );
+        s.dispatch("workspace.switch", &serde_json::json!({"n": 1}))
+            .expect("return to first tab");
+        s.layout.state_mut(pane).expect("pane").kind = PaneKind::Files;
+        assert_eq!(
+            chord(&ctx, &mut s, egui::Key::Num0, egui::Modifiers::COMMAND),
+            ["workspace.switch"]
+        );
+        assert_eq!(s.workspaces.active, 9);
+    }
+
+    #[test]
+    fn ctrl_zero_stays_with_preview_text_fields_dialogs_and_terminal_input() {
+        let mut s = Session::new().expect("session");
+        let pane = s.layout.focused();
+        s.layout.state_mut(pane).expect("pane").kind = PaneKind::Preview;
+        s.dispatch(PREVIEW_SCALE_IN, &Params::Null).expect("zoom");
+        let scale = s.preview_slot(pane).expect("preview").scale;
+        s.preferences_open = true;
+        let ctx = egui::Context::default();
+        assert!(chord(&ctx, &mut s, egui::Key::Num0, egui::Modifiers::COMMAND).is_empty());
+        s.preferences_open = false;
+        let mut value = String::new();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            ui.add(egui::TextEdit::singleline(&mut value))
+                .request_focus();
+        });
+        out.textures_delta.clear();
+        assert!(chord(&ctx, &mut s, egui::Key::Num0, egui::Modifiers::COMMAND).is_empty());
+        assert_eq!(s.preview_slot(pane).expect("preview").scale, scale);
+        s.layout.state_mut(pane).expect("pane").kind = PaneKind::Terminal;
+        let ctx = egui::Context::default();
+        assert!(chord(&ctx, &mut s, egui::Key::Num0, egui::Modifiers::COMMAND).is_empty());
+        assert_eq!(s.workspaces.active, 0);
     }
 
     #[test]

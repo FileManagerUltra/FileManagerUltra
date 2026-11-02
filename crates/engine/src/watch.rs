@@ -20,6 +20,24 @@ pub const DEBOUNCE: Duration = Duration::from_millis(100);
 pub const MAX_WATCHES: usize = 64;
 /// Event paths inspected per OS event (events carry one or two in practice).
 const MAX_EVENT_PATHS: usize = 4;
+const RETRY_INITIAL: Duration = Duration::from_secs(1);
+const RETRY_MAX: Duration = Duration::from_secs(60);
+
+#[derive(Clone, Copy)]
+struct Retry {
+    at: Instant,
+    delay: Duration,
+}
+
+impl Retry {
+    fn after_failure(previous: Option<Self>, now: Instant) -> Self {
+        let delay = previous.map_or(RETRY_INITIAL, |r| (r.delay * 2).min(RETRY_MAX));
+        Self {
+            at: now + delay,
+            delay,
+        }
+    }
+}
 
 type Waker = Arc<dyn Fn() + Send + Sync>;
 
@@ -72,10 +90,11 @@ pub struct Watcher {
     inner: Option<notify::RecommendedWatcher>,
     started: bool,
     startup_error: Option<String>,
+    startup_retry: Option<Retry>,
     shared: Arc<Mutex<Shared>>,
     waker: Arc<Mutex<Option<Waker>>>,
     dirs: HashMap<PathBuf, VfsUri>,
-    fallback: HashSet<VfsUri>,
+    retries: HashMap<VfsUri, Retry>,
     pending: HashMap<VfsUri, Instant>,
 }
 
@@ -85,7 +104,7 @@ impl std::fmt::Debug for Watcher {
             .field("active", &self.inner.is_some())
             .field("startup_error", &self.startup_error.is_some())
             .field("watched", &self.dirs.len())
-            .field("fallback", &self.fallback.len())
+            .field("retries", &self.retries.len())
             .finish()
     }
 }
@@ -102,17 +121,18 @@ impl Watcher {
             inner: None,
             started: false,
             startup_error: None,
+            startup_retry: None,
             shared: Arc::default(),
             waker: Arc::default(),
             dirs: HashMap::new(),
-            fallback: HashSet::new(),
+            retries: HashMap::new(),
             pending: HashMap::new(),
         }
     }
 
     /// Create the OS watcher on first use, so idle sessions hold no OS handles.
-    fn start(&mut self) {
-        if self.started {
+    fn start(&mut self, now: Instant) {
+        if self.started || self.startup_retry.is_some_and(|retry| now < retry.at) {
             return;
         }
         self.started = true;
@@ -132,8 +152,17 @@ impl Watcher {
                 wake();
             }
         }) {
-            Ok(watcher) => self.inner = Some(watcher),
-            Err(err) => self.startup_error = Some(err.to_string()),
+            Ok(watcher) => {
+                self.inner = Some(watcher);
+                self.startup_retry = None;
+            }
+            Err(err) => {
+                self.started = false;
+                if self.startup_retry.is_none() {
+                    self.startup_error = Some(err.to_string());
+                }
+                self.startup_retry = Some(Retry::after_failure(self.startup_retry, now));
+            }
         }
     }
 
@@ -141,10 +170,14 @@ impl Watcher {
     pub fn disable(&mut self) {
         self.started = true;
         self.inner = None;
+        self.startup_retry = None;
+        self.retries.clear();
+        self.pending.clear();
         self.dirs.clear();
         let mut shared = lock(&self.shared);
         shared.watched.clear();
         shared.dirty.clear();
+        shared.rescan = false;
     }
 
     /// Called from the OS thread when a watched directory changes, so an idle UI wakes.
@@ -178,6 +211,15 @@ impl Watcher {
     /// Make the watched set equal `want` (the visible local directories). Returns a
     /// notice when a watch could not be created and polling takes over.
     pub fn sync(&mut self, want: &[VfsUri], network_mounts: &[String]) -> Option<String> {
+        self.sync_at(want, network_mounts, Instant::now())
+    }
+
+    fn sync_at(
+        &mut self,
+        want: &[VfsUri],
+        network_mounts: &[String],
+        now: Instant,
+    ) -> Option<String> {
         let wanted: HashMap<PathBuf, &VfsUri> = want
             .iter()
             .filter_map(|u| u.local_path().map(|p| (key(&p), u)))
@@ -191,21 +233,26 @@ impl Watcher {
         for k in stale {
             self.unwatch(&k);
         }
-        self.fallback.retain(|u| want.contains(u));
+        self.retries.retain(|u, _| want.contains(u));
         self.pending.retain(|u, _| want.contains(u));
         if !wanted.is_empty() {
-            self.start();
+            self.start(now);
         }
         let mut notice = None;
         for (k, uri) in wanted {
-            if self.dirs.contains_key(&k) || self.fallback.contains(uri) {
+            if self.dirs.contains_key(&k) {
                 continue;
             }
             let Some(path) = uri.local_path() else {
                 continue;
             };
+            if is_non_event_path(&path.to_string_lossy(), network_mounts)
+                || self.dirs.len() >= MAX_WATCHES
+                || self.retries.get(uri).is_some_and(|retry| now < retry.at)
+            {
+                continue;
+            }
             let Some(inner) = self.inner.as_mut() else {
-                self.fallback.insert(uri.clone());
                 if let Some(err) = self.startup_error.take() {
                     notice = Some(format!(
                         "Live refresh is unavailable ({err}); folders refresh periodically instead."
@@ -213,22 +260,19 @@ impl Watcher {
                 }
                 continue;
             };
-            if is_non_event_path(&path.to_string_lossy(), network_mounts)
-                || self.dirs.len() >= MAX_WATCHES
-            {
-                self.fallback.insert(uri.clone());
-                continue;
-            }
             lock(&self.shared).watched.insert(k.clone());
             match inner.watch(&path, RecursiveMode::NonRecursive) {
                 Ok(()) => {
+                    self.retries.remove(uri);
                     self.dirs.insert(k, uri.clone());
                 }
                 Err(err) => {
                     lock(&self.shared).watched.remove(&k);
-                    self.fallback.insert(uri.clone());
+                    let previous = self.retries.get(uri).copied();
+                    self.retries
+                        .insert(uri.clone(), Retry::after_failure(previous, now));
                     // A vanished folder is not a watcher problem; the read reports it.
-                    if !matches!(err.kind, notify::ErrorKind::PathNotFound) {
+                    if previous.is_none() && !matches!(err.kind, notify::ErrorKind::PathNotFound) {
                         notice = Some(format!(
                             "Live refresh is unavailable for some folders ({err}); they refresh periodically instead."
                         ));
@@ -289,7 +333,7 @@ fn mark(shared: &Mutex<Shared>, event: &notify::Event) -> bool {
         return false;
     }
     let mut guard = lock(shared);
-    if event.need_rescan() {
+    if event.need_rescan() || event.paths.len() > MAX_EVENT_PATHS {
         guard.rescan = true;
         return true;
     }
@@ -378,7 +422,8 @@ mod tests {
         let mut w = Watcher::new();
         w.sync(&uris, &[]);
         assert!(w.watched() <= MAX_WATCHES);
-        assert_eq!(w.watched() + w.fallback.len(), uris.len());
+        assert_eq!(w.watched(), MAX_WATCHES);
+        assert_eq!(uris.iter().filter(|u| !w.covers(u)).count(), 3);
     }
 
     #[test]
@@ -389,6 +434,12 @@ mod tests {
         let mount = dir.path().to_string_lossy().into_owned();
         w.sync(std::slice::from_ref(&u), &[mount]);
         assert!(!w.covers(&u));
+        assert!(
+            w.retries.is_empty(),
+            "network polling is not a failed watch"
+        );
+        w.sync(std::slice::from_ref(&u), &[]);
+        assert!(w.covers(&u), "reconsider when mount classification changes");
     }
 
     #[test]
@@ -399,6 +450,124 @@ mod tests {
         let mut w = Watcher::new();
         assert!(w.sync(std::slice::from_ref(&u), &[]).is_none());
         assert!(!w.covers(&u));
+    }
+
+    #[test]
+    fn oversized_events_rescan_all_watches_even_when_relevant_path_is_last() {
+        let mut w = Watcher::new();
+        let a = VfsUri::parse("/watched/a").expect("uri");
+        let b = VfsUri::parse("/watched/b").expect("uri");
+        w.dirs.insert(PathBuf::from("/watched/a"), a.clone());
+        w.dirs.insert(PathBuf::from("/watched/b"), b.clone());
+        let mut event = notify::Event::new(EventKind::Create(notify::event::CreateKind::File));
+        for i in 0..MAX_EVENT_PATHS {
+            event = event.add_path(PathBuf::from(format!("/unrelated/{i}")));
+        }
+        event = event.add_path(PathBuf::from("/watched/b/new.txt"));
+        assert!(mark(&w.shared, &event));
+        assert!(lock(&w.shared).rescan);
+        assert!(lock(&w.shared).dirty.is_empty());
+        let now = Instant::now();
+        assert!(w.drain(now).is_empty());
+        let due = w.drain(now + DEBOUNCE);
+        assert_eq!(due.len(), 2);
+        assert!(due.contains(&a) && due.contains(&b));
+        assert!(w.drain(now + DEBOUNCE * 2).is_empty());
+    }
+
+    #[test]
+    fn missing_directory_retries_with_backoff_and_recovers_without_navigation() {
+        let root = tempfile::tempdir().expect("tmp");
+        let path = root.path().join("recover");
+        let u = uri(&path);
+        let mut w = Watcher::new();
+        let now = Instant::now();
+        assert!(w.sync_at(std::slice::from_ref(&u), &[], now).is_none());
+        let first = *w.retries.get(&u).expect("retry");
+        assert_eq!(first.at, now + RETRY_INITIAL);
+        assert!(w.sync_at(std::slice::from_ref(&u), &[], first.at).is_none());
+        let second = *w.retries.get(&u).expect("retry");
+        assert_eq!(second.delay, RETRY_INITIAL * 2);
+        std::fs::create_dir(&path).expect("recreate");
+        w.sync_at(std::slice::from_ref(&u), &[], first.at);
+        assert!(!w.covers(&u), "must not retry every frame");
+        w.sync_at(std::slice::from_ref(&u), &[], second.at);
+        assert!(w.covers(&u));
+        assert!(!w.retries.contains_key(&u));
+        std::fs::write(path.join("new.txt"), b"x").expect("write");
+        assert!(wait_due(&mut w, &u));
+        w.sync_at(&[], &[], second.at);
+        assert!(w.retries.is_empty());
+        assert!(!w.covers(&u));
+    }
+
+    #[test]
+    fn retry_delay_is_exponential_and_capped() {
+        let now = Instant::now();
+        let mut retry = Retry::after_failure(None, now);
+        for seconds in [1, 2, 4, 8, 16, 32, 60, 60] {
+            assert_eq!(retry.delay, Duration::from_secs(seconds));
+            assert_eq!(retry.at, now + retry.delay);
+            retry = Retry::after_failure(Some(retry), now);
+        }
+    }
+
+    #[test]
+    fn leaving_a_failed_watch_discards_its_backoff() {
+        let root = tempfile::tempdir().expect("tmp");
+        let u = uri(&root.path().join("missing"));
+        let mut w = Watcher::new();
+        let now = Instant::now();
+        w.sync_at(std::slice::from_ref(&u), &[], now);
+        assert!(w.retries.contains_key(&u));
+        w.sync_at(&[], &[], now);
+        assert!(w.retries.is_empty());
+        std::fs::create_dir(root.path().join("missing")).expect("recreate");
+        w.sync_at(std::slice::from_ref(&u), &[], now);
+        assert!(w.covers(&u), "returning starts a fresh attempt");
+    }
+
+    #[test]
+    fn watcher_startup_waits_for_backoff_but_disabled_watching_never_restarts() {
+        let root = tempfile::tempdir().expect("tmp");
+        let u = uri(root.path());
+        let now = Instant::now();
+        let mut w = Watcher::new();
+        let retry = Retry::after_failure(None, now);
+        w.startup_retry = Some(retry);
+        w.sync_at(std::slice::from_ref(&u), &[], now);
+        assert!(w.inner.is_none());
+        w.sync_at(std::slice::from_ref(&u), &[], retry.at);
+        assert!(w.covers(&u));
+        assert!(w.startup_retry.is_none());
+        w.disable();
+        w.sync_at(std::slice::from_ref(&u), &[], retry.at + RETRY_MAX);
+        assert!(w.inner.is_none());
+        assert!(!w.covers(&u));
+    }
+
+    #[test]
+    fn watch_cap_fallback_recovers_when_a_slot_is_freed() {
+        let root = tempfile::tempdir().expect("tmp");
+        let uris: Vec<_> = (0..=MAX_WATCHES)
+            .map(|i| {
+                let path = root.path().join(format!("dir{i}"));
+                std::fs::create_dir(&path).expect("mkdir");
+                uri(&path)
+            })
+            .collect();
+        let mut w = Watcher::new();
+        w.sync(&uris, &[]);
+        let uncovered = uris
+            .iter()
+            .find(|u| !w.covers(u))
+            .expect("over cap")
+            .clone();
+        let removed = uris.iter().find(|u| w.covers(u)).expect("covered");
+        let remaining: Vec<_> = uris.iter().filter(|u| *u != removed).cloned().collect();
+        w.sync(&remaining, &[]);
+        assert!(w.covers(&uncovered));
+        assert_eq!(w.watched(), MAX_WATCHES);
     }
 
     #[test]

@@ -12,5 +12,7 @@
 ## Risks
 
 - Event floods (build directories): debounce plus single in-flight read per URI (existing cache guarantee) bounds the work.
+- Events with more than four paths mark all active watches for rescan rather than discarding paths beyond the inspection cap. The callback still allocates no per-event queue.
+- Failed watcher initialization and failed directory watches retry at 1/2/4/8/16/32/60-second intervals, capped at 60 seconds; polling continues while waiting. A successful retry clears its backoff. Directory retries are removed when no longer visible; network paths remain polling-only, and over-cap paths are reconsidered when a slot is freed. Notices are emitted on the first failure of a retry sequence, not every retry.
 - Symlinked directories: watch the resolved path but key by the displayed URI.
 - Platform behaviour differs; Windows and macOS need real-machine smoke checks in addition to fixture tests.

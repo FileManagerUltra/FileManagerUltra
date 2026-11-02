@@ -65,6 +65,42 @@ Captured so they are not lost; each becomes an OpenSpec proposal (`/opsx-propose
 
 - **Preferences menu + pane-layout restore policy** (extends existing workspace startup behavior): a Preferences menu item holding app settings from `prefs.toml`, with *Restore previous pane layout* as `yes` / `no` / `ask`. On `ask`, a popup poses the question at startup before the saved layout is applied, and the popup repeats the same yes/no/ask control so the setting can be changed right there (the answer persists the preference). Stays a command (`prefs.*` id) and a `Prefs` field, so the security rules (no secrets, owner-only file) hold unchanged.
 
+### File synchronization
+
+A substantial future feature inspired by FreeFileSync, not just a folder-comparison
+action. Folder comparison belongs to this feature as the basis for planning a sync.
+Candidate scope for its OpenSpec proposal:
+
+- Compare two folder trees by relative path, size and timestamps, with optional
+  content comparison.
+- Show a reviewable plan of copies, updates, deletions and conflicts before any
+  changes; make direction and destructive actions explicit.
+- Consider one-way update, mirror and two-way synchronization, with include/exclude
+  filters and reusable folder-pair profiles.
+- Build on the VFS and existing background file-operation lanes, progress and
+  cancellation rather than introducing a separate transfer engine.
+
+The proposal must settle supported backends, comparison rules, two-way change
+tracking, deletion/conflict policy, symlink handling and recovery after partial
+failure or cancellation. Scheduling and unattended operation are separate scope
+decisions, not commitments. No implementation or delivery date is planned yet.
+
+### Batch rename
+
+A future multi-item rename tool with a before/after preview. Candidate scope for
+its OpenSpec proposal:
+
+- Numbering, text replacement, case conversion and filename/extension handling.
+- Preview every proposed name and flag invalid names, unchanged items and
+  collisions before applying.
+- Handle swaps and rename cycles safely; report partial failures explicitly and
+  evaluate undo through the existing operation model.
+- Dispatch through commands and run filesystem work on the existing job lanes.
+
+The proposal must settle rule ordering, regex support, backend-specific naming and
+case-sensitivity rules, temporary-name handling, cancellation and undo guarantees.
+This is a planned feature idea, not approved implementation scope.
+
 ## Working agreement
 
 - Nothing is "done" until `cargo test`, `cargo clippy -D warnings`, `cargo xtask layers`, `cargo xtask brand-check` and `cargo fmt --check` are green, tests are added, and `log/devlog.md` has an entry.

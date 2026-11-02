@@ -3,6 +3,13 @@
 ## Purpose
 TBD - created by archiving change pane-preview. Update Purpose after archive.
 ## Requirements
+### Requirement: Preview zoom reset takes precedence over workspace switching
+With Preview focused and no dialog or text field owning the keyboard, Ctrl+0
+(Cmd+0 on macOS) SHALL reset only that Preview's zoom. It SHALL NOT switch
+workspaces or change interface zoom. Ctrl+Shift+0 SHALL retain the same
+Preview-local reset behavior. Outside Preview, Ctrl+0 SHALL retain workspace 10
+selection; terminal input and text fields SHALL keep their existing ownership.
+
 ### Requirement: Preview has pane-local Find
 `Ctrl+F`, the Preview menu and a toolbar Find button (non-log views) SHALL open/focus Find in the
 focused Preview, without opening the Files-pane filter. Text, structured text
@@ -46,6 +53,20 @@ not consume a separate row. At narrow widths view controls SHALL move into the
 existing View options overflow menu; the filename SHALL truncate to keep that
 menu and the log Filter button visible. An open search/filter panel MAY appear
 below the toolbar.
+
+### Requirement: Preview identifies the folder in its toolbar
+For a single item the Preview toolbar SHALL show its name and full containing
+folder path; for a folder it SHALL show that folder's own full path. The current
+folder entry (`.`) SHALL show the full folder path instead of a lone dot.
+Local paths SHALL use native path notation and remote paths SHALL retain their
+scheme and authority. Full names and paths SHALL remain available on hover.
+
+#### Scenario: Resize a Preview pane
+- **WHEN** the pane becomes too narrow for both the name and folder path
+- **THEN** the name truncates first, preserving the folder path
+- **AND** if the path still cannot fit, it shortens with an ellipsis in the middle, retaining its beginning and end
+- **AND** the toolbar stays on one row and its controls remain accessible in both themes
+- **AND** multi-file previews retain their selected-file count without implying a single folder
 
 ### Requirement: Items can be opened in an existing or new Preview pane
 The shared file-row/thumbnail context menu SHALL offer **Open in Preview Panel**

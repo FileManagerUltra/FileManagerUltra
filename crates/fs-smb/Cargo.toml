@@ -14,7 +14,3 @@ workspace = true
 fm-vfs.workspace = true
 smb.workspace = true
 secrecy.workspace = true
-log.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true

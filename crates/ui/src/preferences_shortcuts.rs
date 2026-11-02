@@ -83,7 +83,7 @@ fn context(spec: &CommandSpec) -> &'static str {
             "Focused Preview; logs open their existing Filter search."
         }
         Group::Preview if spec.id == "preview.scale.reset" => {
-            "Ctrl+0 also targets workspace 10; use Ctrl+Shift+0 to reset Preview without that conflict."
+            "Focused Preview owns Ctrl+0 for zoom reset; elsewhere it switches to workspace 10."
         }
         Group::Preview if spec.id == "preview.find.close" => {
             "Close Preview Find or log filters; retain applied log filters."
@@ -126,7 +126,7 @@ fn rows(s: &Session, mac: bool) -> Vec<Row> {
             Group::Workspaces,
             "Switch workspace",
             "Ctrl+1 through Ctrl+9 / Ctrl+0",
-            "Tabs 1-9 and 10; outside terminals and text fields. Ctrl+0 overlaps Preview zoom reset.",
+            "Tabs 1-9 and 10; outside terminals and text fields. In Preview, Ctrl+0 resets zoom instead.",
         ),
         (
             Group::Panes,
@@ -434,7 +434,17 @@ mod tests {
                 .any(|row| row.keys == "Cmd+C" && row.group == Group::Terminal)
         );
         assert!(mac.iter().any(|row| row.keys.starts_with("Ctrl+key")));
+        assert!(
+            mac.iter().any(
+                |row| row.keys == "Cmd+0" && row.context.contains("Focused Preview owns Cmd+0")
+            )
+        );
         let rows = rows(&s, false);
+        assert!(
+            rows.iter()
+                .any(|row| row.keys == "Ctrl+0"
+                    && row.context.contains("Focused Preview owns Ctrl+0"))
+        );
         for query in ["  PASTE  ", "ctrl+q", "scrollback", "workspace tabs"] {
             assert!(rows.iter().any(|row| matches(row, query)), "{query}");
         }

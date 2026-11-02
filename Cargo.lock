@@ -1848,7 +1848,6 @@ dependencies = [
  "notify",
  "opener",
  "plist",
- "proptest",
  "regex",
  "reqwest",
  "semver",
@@ -1856,7 +1855,6 @@ dependencies = [
  "serde_json",
  "sysinfo",
  "tempfile",
- "thiserror 2.0.21",
  "toml 0.8.23",
 ]
 
@@ -1875,13 +1873,11 @@ version = "0.1.0"
 dependencies = [
  "fm-fs-sftp",
  "fm-vfs",
- "log",
  "russh",
  "russh-sftp",
  "secrecy",
  "tempfile",
  "tokio",
- "zeroize",
 ]
 
 [[package]]
@@ -1889,17 +1885,14 @@ name = "fm-fs-smb"
 version = "0.1.0"
 dependencies = [
  "fm-vfs",
- "log",
  "secrecy",
  "smb",
- "tempfile",
 ]
 
 [[package]]
 name = "fm-git"
 version = "0.1.0"
 dependencies = [
- "fm-vfs",
  "gix",
  "similar",
  "tempfile",

@@ -13,6 +13,8 @@ The window SHALL show a tab bar of open workspaces. Each workspace owns its full
 #### Scenario: Shortcuts
 - **WHEN** Ctrl+1..9/0 is pressed
 - **THEN** the Nth open tab becomes active; Ctrl+T / Ctrl+W add / close, and are ignored while a terminal pane has focus
+- **AND** while Preview has focus, Ctrl+0 resets preview zoom instead of switching to tab 10; Ctrl+1..9 still switch tabs
+- **AND** text fields and dialogs retain keyboard ownership; macOS uses Cmd for these application shortcuts
 
 #### Scenario: Bad params
 - **WHEN** `workspace.switch {n: 0}` or an out-of-range tab runs
@@ -45,4 +47,3 @@ Quitting or closing a non-auto-save workspace with unsaved changes (or a never-s
 #### Scenario: Hostile file
 - **WHEN** `workspaces.json` is oversized, malformed, or contains duplicate or oversize pane trees
 - **THEN** the offending entries are skipped, a notice is shown, and the app starts normally
-

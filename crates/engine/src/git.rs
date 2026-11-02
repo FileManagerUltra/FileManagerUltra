@@ -119,15 +119,6 @@ impl GitState {
     pub fn cached(&self) -> usize {
         self.repos.len()
     }
-
-    /// Last error of the repository containing `dir`, if its status failed.
-    pub fn error_for(&mut self, dir: &Path) -> Option<String> {
-        let root = self.root_of(dir)?;
-        self.repos
-            .iter()
-            .find(|r| r.root == root)
-            .and_then(|r| r.error.clone())
-    }
 }
 
 impl Session {

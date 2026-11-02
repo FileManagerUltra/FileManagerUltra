@@ -62,18 +62,26 @@ impl Session {
         self.terminals.get(&pane).map(TermSession::snapshot)
     }
 
-    /// Start the pane's shell if it has none: in the pane's directory when that is a
-    /// local folder, otherwise in the home directory.
+    /// Start the pane's shell if it has none: in the last active Files pane's folder when local,
+    /// else the pane's own folder, otherwise the home directory.
     pub fn ensure_terminal(&mut self, pane: PaneId) -> Result<(), FmError> {
         if self.terminals.contains_key(&pane) {
             return Ok(());
         }
-        let location = self
+        let own = self
             .layout
             .state(pane)
             .map(|p| p.location.clone())
             .ok_or_else(|| FmError::NotFound(format!("pane {pane}")))?;
-        let cwd = local_dir(&location).or_else(home_dir);
+        // Prefer the last active file pane's folder, then the pane's own, then home.
+        let last_files = self
+            .layout
+            .focus
+            .last_files
+            .and_then(|id| self.layout.state(id))
+            .filter(|p| p.kind.is_files())
+            .and_then(|p| local_dir(&p.location));
+        let cwd = last_files.or_else(|| local_dir(&own)).or_else(home_dir);
         let session = TermSession::spawn_with_scrollback(
             self.prefs.terminal_shell.to_term(),
             cwd.as_deref(),

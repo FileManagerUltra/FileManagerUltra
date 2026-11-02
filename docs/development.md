@@ -23,6 +23,34 @@ cargo xtask ci                       # everything CI runs, locally
 
 Faster inner loop: `cargo nextest run` if `cargo install cargo-nextest` is available; while iterating use `cargo test -p <crate> --lib --tests` to skip examples/doctests.
 
+For dependency/dead-code cleanup, check source, tests and platform-specific
+configuration before removing a dependency. Some dependencies intentionally
+enable transitive features (for example `winit`'s Wayland title bar support).
+Run Clippy with `--workspace --all-targets --all-features` to cover optional test
+helpers too; public APIs still need a separate caller search because Rust's
+dead-code lint does not flag exported, unused APIs.
+
+On memory-constrained desktops, limit compilation and test concurrency:
+
+```sh
+CARGO_BUILD_JOBS=1 cargo build -p fm-app
+CARGO_BUILD_JOBS=1 cargo test -p fm-engine -- --test-threads=1
+```
+
+Avoid simultaneous builds. On Linux, programs launched from the embedded terminal
+share the application's systemd scope. Memory pressure from a Cargo build can
+therefore cause the desktop's OOM manager to kill the whole scope and attribute
+the notification to the file manager, not just the compiler.
+
+Development builds keep line-table debug information (`debug = 1`) rather than
+full variable/type information to reduce build-artifact size. Use
+`CARGO_PROFILE_DEV_DEBUG=2` when full debugger inspection is needed.
+Cargo output lives under `target/`; `cargo clean` removes it, including the
+binary used by the development desktop launcher, so rebuild before launching
+again. Remove unused agent-specific target directories after their work ends.
+Keep `crates/ui/tests/snapshots/`: these are test baselines, not disposable
+screenshots.
+
 Use your own target dir when working in parallel with another agent:
 
 ```sh
@@ -106,6 +134,10 @@ Workspaces, Keyboard shortcuts and Advanced in the left topic column; only that 
 Keyboard shortcuts is a grouped read-only reference, searchable by action, key or
 context; check pane-local keys, aliases and focus-dependent meanings without
 changing settings or bindings.
+With Preview focused, Ctrl+0 (Cmd+0 on macOS) resets its zoom rather than
+switching to workspace 10; Ctrl+1..9 still switch tabs. In Files, Ctrl+0
+continues to select workspace 10. Dialogs, text fields and terminals keep their
+keyboard ownership.
 Check proportional typography, left-aligned navigation and flat, divider-separated sections
 with aligned controls; the file listing keeps its existing typography. Connections separates SMB
 security, remote timing and a bordered trusted-host list with aligned Forget buttons.

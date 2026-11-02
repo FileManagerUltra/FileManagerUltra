@@ -13,7 +13,6 @@ workspace = true
 [dependencies]
 gix = { workspace = true }
 similar = { workspace = true }
-fm-vfs.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

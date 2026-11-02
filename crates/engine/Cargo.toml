@@ -31,7 +31,6 @@ serde_json.workspace = true
 crossbeam-channel.workspace = true
 toml.workspace = true
 directories.workspace = true
-thiserror.workspace = true
 sysinfo.workspace = true
 jiff.workspace = true
 regex.workspace = true
@@ -42,7 +41,6 @@ plist = "1"
 [dev-dependencies]
 plist = "1"
 flate2 = "1"
-proptest.workspace = true
 tempfile.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
 fm-testkit.workspace = true

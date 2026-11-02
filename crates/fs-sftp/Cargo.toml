@@ -20,8 +20,6 @@ russh.workspace = true
 russh-sftp.workspace = true
 tokio.workspace = true
 secrecy.workspace = true
-zeroize.workspace = true
-log.workspace = true
 
 [dev-dependencies]
 fm-fs-sftp = { path = ".", features = ["test-server"] }
