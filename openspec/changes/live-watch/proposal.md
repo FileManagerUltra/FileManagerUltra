@@ -18,7 +18,7 @@ Panes only refresh on `nav.refresh` (Ctrl+R) or after the app's own operations. 
 ## Out of scope
 
 - Recursive watching, file-content watching for previews (existing reload commands remain).
-- Session/pane persistence (already delivered by `workspaces`) and installer packaging (already in `release.yml`); remaining packaging smoke checks stay tracked in the roadmap and are not part of this change.
+- Session/pane persistence (already delivered by `workspaces`) and installer packaging (already configured in `.github/workflows/release.yml`: Linux `.deb`/AppImage, Windows NSIS installer, macOS `.dmg`); remaining cross-platform watcher and release-package smoke checks stay tracked in the roadmap and are not part of this change.
 
 ## Capabilities
 

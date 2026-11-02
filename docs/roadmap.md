@@ -9,11 +9,17 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 | 3 | `dnd-and-file-ops` | Cross-pane drag & drop (tree node + listing targets, Ctrl=copy/Shift=move), external file drop, `ops` pipelines, job queue with progress/cancel, conflict dialogs, trash + undo | done, archived |
 | 4 | `sftp-backend` | **SFTP client that fills a pane** (`sftp://user@host/…` → tree + listing, connect dialog, in-memory passwords, TOFU host keys, profiles without secrets, cross-backend ops, free space in the status bar) | archived |
 | 4b | `smb-backend` | SMB via the pure-Rust `smb` crate (NTLM, no system library, one code path on all platforms), reusing the connection model from change 4 | done (archived) |
-| 5 | `live-watch-and-packaging` | `notify`-driven directory refresh, session persistence (panes/sizes/locations), `.deb`/AppImage, `.msi`, `.dmg` | next |
+| 5 | `live-watch-and-packaging` | `notify`-driven directory refresh; cross-platform watcher and release-package smoke checks | watcher implemented and Linux-tested; Windows/macOS checks remain |
 
 Additional change, implemented: `git-status-and-diff` (git status markers, Diff view in the Preview pane) — see `docs/architecture.md` §12a; pending archive.
 
-**Current focus:** 5 (`live-watch-and-packaging`).
+**Current focus:** close out `live-watch` with Windows/macOS smoke checks, including a mapped drive, then validate the existing release artifacts.
+
+Session persistence is already delivered by `workspaces` (saved pane layouts and
+startup behavior). Release packaging is also configured in `.github/workflows/release.yml`:
+Linux `.deb`/AppImage, Windows NSIS `*-setup.exe`, and macOS `.dmg` for Apple silicon
+and Intel. It is not an `.msi` installer. The remaining milestone work is validation,
+not implementing persistence or packaging from scratch.
 
 **Security is a standing concern, not a change.** The `security` OpenSpec capability starts in change 1 (hostile input, secrets, state-file permissions, symlink policy, no `unsafe`) and each change that adds a behaviour area extends it in the same change: change 3 adds drag & drop / `ops` containment and overwrite rules; change 4 adds credentials, host keys and remote listing caps. A change that adds security-relevant behaviour without a spec + failing-test proof is not done.
 
@@ -51,13 +57,13 @@ mount detection, volume information and guarded removal. Real USB/VeraCrypt smok
 checks on Linux, macOS and Windows remain open in its task list; the change is not
 archived.
 
-`pane-preview`, `pane-arrange`, `thumbnails-and-open`, `current-folder-row` and `workspaces` are implemented, smoke-tested in a real window and archived (their specs live in `openspec/specs/`). Change 4 (`sftp-backend`) is implemented and archived; 4b (`smb-backend`, with Network discovery) is implemented and archived; next up: change 5 (`live-watch-and-packaging`).
+`pane-preview`, `pane-arrange`, `thumbnails-and-open`, `current-folder-row` and `workspaces` are implemented, smoke-tested in a real window and archived (their specs live in `openspec/specs/`). Change 4 (`sftp-backend`) is implemented and archived; 4b (`smb-backend`, with Network discovery) is implemented and archived. Change 5's watcher implementation is complete; its remaining platform checks are listed above.
 
 ## Ideas for future changes
 
 Captured so they are not lost; each becomes an OpenSpec proposal (`/opsx-propose`) when picked up.
 
-- **Preferences menu + pane-layout restore policy** (extends change 5's session persistence): a Preferences menu item holding app settings from `prefs.toml`, with *Restore previous pane layout* as `yes` / `no` / `ask`. On `ask`, a popup poses the question at startup before the saved layout is applied, and the popup repeats the same yes/no/ask control so the setting can be changed right there (the answer persists the preference). Stays a command (`prefs.*` id) and a `Prefs` field, so the security rules (no secrets, owner-only file) hold unchanged.
+- **Preferences menu + pane-layout restore policy** (extends existing workspace startup behavior): a Preferences menu item holding app settings from `prefs.toml`, with *Restore previous pane layout* as `yes` / `no` / `ask`. On `ask`, a popup poses the question at startup before the saved layout is applied, and the popup repeats the same yes/no/ask control so the setting can be changed right there (the answer persists the preference). Stays a command (`prefs.*` id) and a `Prefs` field, so the security rules (no secrets, owner-only file) hold unchanged.
 
 ## Working agreement
 

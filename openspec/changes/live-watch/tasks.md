@@ -7,5 +7,6 @@
 - [x] Preserve selection/focus by name and clamp scroll on refresh.
 - [x] Watch/event caps and notices (inotify limit, overflow, vanished directory).
 - [x] Tests: tempdir create/rename/delete, burst, overflow, vanished dir, refcount, poll no-op, hostile paths, selection preservation.
+- [ ] Treat OS events exceeding `MAX_EVENT_PATHS` as a full rescan instead of silently ignoring remaining paths; add a regression test.
 - [x] Docs: architecture (Watching), roadmap, specs sync, devlog.
 - [ ] Manual smoke checks on Windows and macOS (including a mapped network drive).
