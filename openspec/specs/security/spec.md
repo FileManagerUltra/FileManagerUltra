@@ -177,7 +177,11 @@ A remote file opened with its default application SHALL be downloaded to an owne
 - **THEN** a job with progress downloads it to the private folder, then the default app opens it, and the folder is removed when the app quits
 
 ### Requirement: Search, sizes and Open With are bounded
-Find Files and Properties walks SHALL NOT follow symlinks and SHALL be capped (see `file-search`; sizes stop at 5 M entries or depth 256). Wildcard patterns are capped at 1024 bytes and 64 alternatives and matched without backtracking blow-up. Open With SHALL parse `.desktop` `Exec` lines without a shell, drop field codes other than `%f %F %u %U %%`, cap arguments at 256 and launch detached; chmod masks modes to `0o7777` and refuses to change a symlink.
+Find Files and Properties walks SHALL NOT follow symlinks and SHALL be capped (see `file-search`; sizes stop at 5 M entries or depth 256). Wildcard patterns SHALL be capped at 1024 bytes and 64 alternatives and matched without backtracking blow-up. Open With SHALL parse `.desktop` `Exec` lines without a shell, drop field codes other than `%f %F %u %U %%`, cap arguments at 256 and launch detached; chmod SHALL mask modes to `0o7777` and refuse to change a symlink.
+
+#### Scenario: Oversized wildcard pattern
+- **WHEN** a search pattern exceeds 1024 bytes or 64 alternatives
+- **THEN** it is rejected before any walk starts
 
 ### Requirement: Mounted-volume removal is identity-checked and non-forced
 Eject/Dismount SHALL derive arguments from a currently listed OS mount, revalidate

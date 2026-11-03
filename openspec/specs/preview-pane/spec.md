@@ -4,11 +4,16 @@
 TBD - created by archiving change pane-preview. Update Purpose after archive.
 ## Requirements
 ### Requirement: Preview zoom reset takes precedence over workspace switching
-With Preview focused and no dialog or text field owning the keyboard, Ctrl+0
-(Cmd+0 on macOS) SHALL reset only that Preview's zoom. It SHALL NOT switch
+Ctrl+0 (Cmd+0 on macOS) SHALL reset only the focused Preview's zoom when no dialog or
+text field owns the keyboard. It SHALL NOT switch
 workspaces or change interface zoom. Ctrl+Shift+0 SHALL retain the same
 Preview-local reset behavior. Outside Preview, Ctrl+0 SHALL retain workspace 10
 selection; terminal input and text fields SHALL keep their existing ownership.
+
+#### Scenario: Reset zoom from Preview
+- **WHEN** Preview is focused with no dialog or text field owning the keyboard and the user presses Ctrl+0
+- **THEN** only that Preview's zoom resets
+- **AND** the workspace and interface zoom do not change
 
 ### Requirement: Preview has pane-local Find
 `Ctrl+F`, the Preview menu and a toolbar Find button (non-log views) SHALL open/focus Find in the
@@ -423,3 +428,24 @@ Non-log preview toolbar options that do not fit the pane width SHALL move into a
 #### Scenario: Copy text
 - **WHEN** the user selects lines in a text preview and copies
 - **THEN** the clipboard holds exactly those lines
+
+### Requirement: Markdown links are clickable and Markdown has a source view
+Clicking a link in a rendered Markdown preview (paragraphs, headings, list items and table cells) SHALL follow it with `preview.open_link {url, pane?}`. `http`, `https` and `mailto` URLs of at most 2048 characters without whitespace or control characters SHALL open in the default browser or mail client. A path relative to the previewed file (percent-decoded, `?query` and `#fragment` ignored, `.` and `..` resolved) SHALL be shown in a Files pane like `file.reveal`: its folder opens and the item is selected. Any other link (`file:`, `javascript:`, absolute or `//` paths, in-page `#anchors`, paths that climb above the root) SHALL NOT be launched and SHALL report an error. Link text SHALL show a pointing-hand cursor and its URL on hover, and selecting text by dragging SHALL NOT open a link.
+
+A Markdown preview SHALL offer a toggleable Preview toolbar button (`preview.toggle_source`, View menu) that shows the highlighted Markdown text instead of the rendered document. Find and Copy SHALL operate on whichever view is shown, and the view SHALL reset to rendered when the previewed file changes. JSON, YAML, TOML and XML keep their existing Pretty toggle, whose off state is the raw source.
+
+#### Scenario: Open a web link
+- **WHEN** the user clicks the text of `[docs](https://example.org)` in a rendered document
+- **THEN** `https://example.org` opens in the default browser
+
+#### Scenario: Jump to a linked file
+- **WHEN** the user clicks `[install](docs/install.md)` in `/home/a/README.md`
+- **THEN** a Files pane shows `/home/a/docs` with `install.md` selected
+
+#### Scenario: Refuse an unsafe link
+- **WHEN** a document links to `file:///etc/passwd` or `javascript:alert(1)` and the user clicks it
+- **THEN** nothing is launched and `preview.open_link` returns an error
+
+#### Scenario: Toggle the source
+- **WHEN** the user clicks the active Preview button on a Markdown preview and clicks it again
+- **THEN** the Markdown text is shown, then the rendered document, with Find matching the visible view

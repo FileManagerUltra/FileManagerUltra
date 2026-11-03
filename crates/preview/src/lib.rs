@@ -99,7 +99,7 @@ pub struct Subject {
     pub entry: Entry,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextDoc {
     pub lines: Vec<Vec<Span>>,
     pub lang: String,

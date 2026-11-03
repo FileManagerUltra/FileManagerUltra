@@ -110,6 +110,7 @@ mod tests {
             blocks: parse(
                 "# Title\n\n```rust\nfirst();\n```\n\n> ```\n> quoted();\n> ```\n\n- item\n\n  ```text\n  nested\n  ```",
             ),
+            source: Default::default(),
             truncated: false,
             total_bytes: 0,
         }));

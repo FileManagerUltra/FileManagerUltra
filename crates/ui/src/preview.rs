@@ -34,7 +34,12 @@ struct LogUi {
 
 impl Default for LogUi {
     fn default() -> Self {
-        Self { filters_open: true, query: String::new(), regex: false, time: None }
+        Self {
+            filters_open: true,
+            query: String::new(),
+            regex: false,
+            time: None,
+        }
     }
 }
 
@@ -251,10 +256,18 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 }
                 Body::Static(p) => {
                     let p = p.clone();
-                    if let Some(block) =
-                        static_body(ui, pane, tokens, &p, slot.pretty, slot.wrap, slot.zoom)
-                    {
+                    let mut link = None;
+                    let view = View {
+                        pretty: slot.pretty,
+                        source: slot.source,
+                        wrap: slot.wrap,
+                        zoom: slot.zoom,
+                    };
+                    if let Some(block) = static_body(ui, pane, tokens, &p, view, &mut link) {
                         actions.push(("preview.code.copy", json!({ "block": block })));
+                    }
+                    if let Some(url) = link {
+                        actions.push(("preview.open_link", json!({ "url": url, "pane": pane })));
                     }
                 }
                 Body::Grid(items) => multi_grid(ui, pane, tokens, items, &mut actions),
@@ -454,7 +467,19 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                     }
                     wrap_pretty(ui, actions);
                 }
-                Preview::Text(_) | Preview::Markdown(_) => wrap_pretty(ui, actions),
+                Preview::Text(_) => wrap_pretty(ui, actions),
+                Preview::Markdown(_) => {
+                    // The git Preview button already toggles the source when it is shown.
+                    if !diff.is_some_and(|d| !d.is_pair())
+                        && ui
+                            .add(egui::Button::selectable(!slot.source, "Preview"))
+                            .on_hover_text(markdown_toggle_hint(slot.source))
+                            .clicked()
+                    {
+                        actions.push(("preview.toggle_source", json!({})));
+                    }
+                    wrap_pretty(ui, actions);
+                }
                 Preview::Image(_) => {
                     for (label, mode) in [("Fit", "fit"), ("100%", "actual")] {
                         if ui.button(label).clicked() {
@@ -475,29 +500,41 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
     };
     ui.horizontal(|ui| {
         source_picker(ui, s, pane, actions);
-        if let Some(d) = diff.filter(|d| d.is_pair()) {
-            // Two files: one compact toggle, as the pane may be narrow.
+        let plain_text = !matches!(&slot.body, Body::Static(p) if matches!(&**p, Preview::Markdown(_)));
+        if let Some(d) = diff.filter(|d| d.is_pair() || plain_text) {
+            // Two files, or anything but Markdown (the only view with a source toggle): one compact toggle.
             let resp = ui
                 .add(egui::Button::selectable(d.active, "Diff"))
                 .on_hover_text(if d.active {
-                    "Back to the file previews"
-                } else {
+                    "Back to the file preview"
+                } else if d.is_pair() {
                     "Compare the two files"
+                } else {
+                    "Show the changes against the last commit"
                 });
             if resp.clicked() {
                 actions.push(("preview.diff.toggle", json!({ "show": !d.active })));
             }
         } else if let Some(d) = diff {
+            let markdown = matches!(&slot.body, Body::Static(p) if matches!(&**p, Preview::Markdown(_)));
             for (label, show) in [("Preview", false), ("Diff", true)] {
+                let rendered = markdown && !slot.source;
+                let selected = d.active == show && (show || !markdown || rendered);
                 let resp = ui
-                    .add(egui::Button::selectable(d.active == show, label))
+                    .add(egui::Button::selectable(selected, label))
                     .on_hover_text(if show {
                         "Show the changes against the last commit"
+                    } else if markdown {
+                        markdown_toggle_hint(slot.source)
                     } else {
                         "Show the file"
                     });
-                if resp.clicked() && d.active != show {
-                    actions.push(("preview.diff.toggle", json!({ "show": show })));
+                if resp.clicked() {
+                    if d.active != show {
+                        actions.push(("preview.diff.toggle", json!({ "show": show })));
+                    } else if !show && markdown {
+                        actions.push(("preview.toggle_source", json!({})));
+                    }
                 }
             }
         }
@@ -739,19 +776,41 @@ fn source_picker(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Actio
     });
 }
 
+fn markdown_toggle_hint(source: bool) -> &'static str {
+    if source {
+        "Showing the Markdown text. Click to show the rendered document."
+    } else {
+        "Click to show the Markdown text instead of the rendered document."
+    }
+}
+
+/// How a static body is shown.
+#[derive(Clone, Copy)]
+struct View {
+    pretty: bool,
+    source: bool,
+    wrap: bool,
+    zoom: Zoom,
+}
+
 fn static_body(
     ui: &mut Ui,
     pane: PaneId,
     tokens: &Tokens,
     p: &Arc<Preview>,
-    pretty: bool,
-    wrap: bool,
-    zoom: Zoom,
+    View {
+        pretty,
+        source,
+        wrap,
+        zoom,
+    }: View,
+    link: &mut Option<String>,
 ) -> Option<usize> {
     match &**p {
         Preview::Text(d) => text_view(ui, pane, tokens, d, wrap),
         Preview::Structured(d) => structured(ui, pane, tokens, d, pretty, wrap),
-        Preview::Markdown(m) => return markdown::show(ui, pane, tokens, m, wrap),
+        Preview::Markdown(m) if source => text_view(ui, pane, tokens, &m.source, wrap),
+        Preview::Markdown(m) => return markdown::show(ui, pane, tokens, m, wrap, link),
         Preview::Image(i) => image(ui, pane, tokens, p, i, zoom),
         Preview::Hex(h) => hex(ui, tokens, h),
         Preview::Dir(d) => scrolled(ui, pane, "dir", |ui| dir_card(ui, tokens, d)),
@@ -817,8 +876,19 @@ fn multi_grid(
                             ui.separator();
                             ui.allocate_ui(vec2(ui.available_width(), 240.0 * scale), |ui| {
                                 ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
-                                if let Some(block) = static_body(ui, pane, tokens, preview, false, false, Zoom::Fit) {
+                                let mut link = None;
+                                if let Some(block) = static_body(
+                                    ui,
+                                    pane,
+                                    tokens,
+                                    preview,
+                                    View { pretty: false, source: false, wrap: false, zoom: Zoom::Fit },
+                                    &mut link,
+                                ) {
                                     actions.push(("preview.code.copy", json!({ "block": block, "item": row_index * columns + column_index })));
+                                }
+                                if let Some(url) = link {
+                                    actions.push(("preview.open_link", json!({ "url": url, "pane": pane })));
                                 }
                             });
                         });

@@ -285,6 +285,15 @@ pub(super) fn reveal(
 }
 
 pub(super) fn label(ui: &mut Ui, tokens: &Tokens, job: LayoutJob, wrap: bool) -> egui::Response {
+    label_with_galley(ui, tokens, job, wrap).0
+}
+
+pub(super) fn label_with_galley(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    job: LayoutJob,
+    wrap: bool,
+) -> (egui::Response, Arc<egui::Galley>) {
     let (mut job, active) = format(ui, tokens, job);
     job.wrap.max_width = if wrap {
         ui.available_width()
@@ -295,7 +304,7 @@ pub(super) fn label(ui: &mut Ui, tokens: &Tokens, job: LayoutJob, wrap: bool) ->
     let label = egui::Label::new(galley.clone());
     let response = ui.add(if wrap { label.wrap() } else { label.extend() });
     reveal(ui, response.rect, &galley, active);
-    response
+    (response, galley)
 }
 
 #[cfg(test)]

@@ -38,22 +38,87 @@ fn inline_job(ui: &Ui, tokens: &Tokens, parts: &[Inline], size: f32, strong: boo
     selection_job(ui, tokens, job)
 }
 
-fn inline(ui: &mut Ui, tokens: &Tokens, parts: &[Inline], size: f32, strong: bool) {
-    let response = find::label(
+/// The link under `pointer`, found from the laid-out glyphs so wrapped and mixed-format text
+/// hit-tests exactly. `origin` is where the galley's rect starts on screen.
+fn link_at<'a>(
+    parts: &'a [Inline],
+    galley: &egui::Galley,
+    origin: egui::Pos2,
+    pointer: egui::Pos2,
+) -> Option<&'a str> {
+    let local = pointer - origin;
+    let mut index = 0usize;
+    for placed in &galley.rows {
+        let row_hit = local.y >= placed.pos.y && local.y < placed.pos.y + placed.row.height();
+        for glyph in &placed.row.glyphs {
+            let left = placed.pos.x + glyph.pos.x;
+            if row_hit && local.x >= left && local.x < left + glyph.advance_width {
+                return link_of(parts, index);
+            }
+            index += 1;
+        }
+        if placed.ends_with_newline {
+            index += 1;
+        }
+    }
+    None
+}
+
+fn link_of(parts: &[Inline], mut index: usize) -> Option<&str> {
+    for part in parts {
+        let len = part.text.chars().count();
+        if index < len {
+            return part.link.as_deref();
+        }
+        index -= len;
+    }
+    None
+}
+
+/// Pointing-hand cursor, tooltip and click handling for the link under the pointer.
+fn follow_link(
+    response: &egui::Response,
+    galley: &egui::Galley,
+    parts: &[Inline],
+    actions: &mut CodeActions,
+) {
+    let Some(pointer) = response.hover_pos() else {
+        return;
+    };
+    let origin = response.rect.min - galley.rect.min.to_vec2();
+    let Some(url) = link_at(parts, galley, origin, pointer) else {
+        return;
+    };
+    response.ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+    egui::Tooltip::always_open(
+        response.ctx.clone(),
+        response.layer_id,
+        response.id.with("link"),
+        egui::PopupAnchor::Pointer,
+    )
+    .show(|ui| {
+        ui.label(url);
+    });
+    if response.clicked() {
+        actions.link = Some(url.to_string());
+    }
+}
+
+fn inline(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    parts: &[Inline],
+    size: f32,
+    strong: bool,
+    actions: &mut CodeActions,
+) {
+    let (response, galley) = find::label_with_galley(
         ui,
         tokens,
         inline_job(ui, tokens, parts, size, strong),
         true,
     );
-    if response.hovered() {
-        let links = parts
-            .iter()
-            .filter_map(|p| p.link.as_deref())
-            .collect::<Vec<_>>();
-        if !links.is_empty() {
-            response.on_hover_text(format!("{} (preview only)", links.join("\n")));
-        }
-    }
+    follow_link(&response, &galley, parts, actions);
 }
 
 fn code(ui: &mut Ui, tokens: &Tokens, code: &CodeBlock, wrap: bool, path: Id) -> bool {
@@ -157,9 +222,10 @@ fn code(ui: &mut Ui, tokens: &Tokens, code: &CodeBlock, wrap: bool, path: Id) ->
 struct CodeActions {
     next: usize,
     clicked: Option<usize>,
+    link: Option<String>,
 }
 
-fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id) {
+fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id, actions: &mut CodeActions) {
     let columns = table.alignments.len().max(1);
     let padding = tokens.font_size * 0.5;
     let width = ((ui.available_width() - 2.0) / columns as f32 - padding * 2.0)
@@ -232,6 +298,17 @@ fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id) {
                     child.set_clip_rect(cell.intersect(ui.clip_rect()));
                     let response = child.add(egui::Label::new(galley.clone()).selectable(true));
                     find::reveal(&child, response.rect, &galley, active);
+                    let parts = if n == 0 {
+                        &table.header
+                    } else {
+                        &table.rows[n - 1]
+                    };
+                    follow_link(
+                        &response,
+                        &galley,
+                        parts.get(col).map_or(&[], Vec::as_slice),
+                        actions,
+                    );
                 }
             }
         });
@@ -256,11 +333,11 @@ fn blocks(
                     3 => 1.3,
                     _ => 1.1,
                 };
-                inline(ui, tokens, parts, tokens.font_size * scale, true);
+                inline(ui, tokens, parts, tokens.font_size * scale, true, actions);
                 ui.add_space(tokens.font_size * 0.25);
             }
             MdBlock::Para(parts) => {
-                inline(ui, tokens, parts, tokens.font_size, false);
+                inline(ui, tokens, parts, tokens.font_size, false, actions);
                 ui.add_space(tokens.font_size * 0.4);
             }
             MdBlock::Code(c) => {
@@ -350,7 +427,7 @@ fn blocks(
                 ui.add_space(tokens.font_size * 0.5);
             }
             MdBlock::Table(t) => {
-                table(ui, tokens, t, path);
+                table(ui, tokens, t, path, actions);
                 ui.add_space(tokens.font_size * 0.6);
             }
             MdBlock::Rule => {
@@ -368,6 +445,7 @@ pub(super) fn show(
     tokens: &Tokens,
     doc: &MdDoc,
     wrap: bool,
+    link: &mut Option<String>,
 ) -> Option<usize> {
     let mut actions = CodeActions::default();
     markdown_fonts::install(ui.ctx());
@@ -404,6 +482,7 @@ pub(super) fn show(
             });
         });
     remember_scroll(ui, &output);
+    *link = actions.link;
     actions.clicked
 }
 
@@ -483,5 +562,81 @@ mod tests {
             );
         });
         out.textures_delta.clear();
+    }
+
+    #[test]
+    fn clicking_a_link_reports_its_url_and_plain_text_does_not() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let doc = MdDoc {
+            blocks: fm_preview::markdown::parse(
+                "plain words and [the link](https://example.org/x) end\n\n| a | b |\n| - | - |\n| [cell](mailto:a@b.c) | x |",
+            ),
+            ..Default::default()
+        };
+        let tokens = Tokens::dark();
+        let mut harness = Harness::builder()
+            .with_size(vec2(600.0, 300.0))
+            .build_ui_state(
+                move |ui, got: &mut Vec<String>| {
+                    crate::theme::apply_to(ui.ctx(), &tokens);
+                    let mut link = None;
+                    show(ui, 1, &tokens, &doc, true, &mut link);
+                    got.extend(link);
+                },
+                Vec::new(),
+            );
+        harness.run();
+        let click = |harness: &mut Harness<'_, Vec<String>>, pos: egui::Pos2| {
+            let events = &mut harness.input_mut().events;
+            events.push(egui::Event::PointerMoved(pos));
+            for pressed in [true, false] {
+                events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                });
+            }
+            harness.run();
+        };
+        let para = harness
+            .query_all_by_label_contains("plain words")
+            .next()
+            .expect("paragraph")
+            .rect();
+        click(&mut harness, para.left_center() + vec2(6.0, 0.0));
+        assert!(harness.state().is_empty(), "plain text is not a link");
+        click(&mut harness, para.left_center() + vec2(130.0, 0.0));
+        assert_eq!(harness.state(), &["https://example.org/x".to_string()]);
+        let cell = harness.get_by_label("cell").rect();
+        click(&mut harness, cell.center());
+        assert_eq!(
+            harness.state().last().map(String::as_str),
+            Some("mailto:a@b.c")
+        );
+    }
+
+    #[test]
+    fn link_lookup_follows_character_order_across_parts() {
+        let parts = vec![
+            Inline {
+                text: "ab ".into(),
+                ..Default::default()
+            },
+            Inline {
+                text: "é\nlink".into(),
+                link: Some("https://x.y".into()),
+                ..Default::default()
+            },
+            Inline {
+                text: " z".into(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(link_of(&parts, 2), None);
+        assert_eq!(link_of(&parts, 3), Some("https://x.y"));
+        assert_eq!(link_of(&parts, 8), Some("https://x.y"));
+        assert_eq!(link_of(&parts, 9), None);
+        assert_eq!(link_of(&parts, 100), None);
     }
 }

@@ -6,7 +6,7 @@ use std::iter::Peekable;
 use fm_vfs::{Entry, FmError, Vfs};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
-use crate::{Limits, Preview, Span, highlight, text};
+use crate::{Limits, Preview, Span, TextDoc, highlight, text};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Inline {
@@ -60,9 +60,11 @@ pub enum MdBlock {
     Rule,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct MdDoc {
     pub blocks: Vec<MdBlock>,
+    /// The Markdown text itself, highlighted, for the Source view.
+    pub source: TextDoc,
     pub truncated: bool,
     pub total_bytes: u64,
 }
@@ -399,9 +401,16 @@ fn parse_document(src: &str, max_lines: usize, total_bytes: u64) -> MdDoc {
     )
     .peekable();
     let blocks = blocks(&mut events, &mut budget, 0, None, &mut None);
+    let truncated = budget.truncated || line_end < src.len();
     MdDoc {
         blocks,
-        truncated: budget.truncated || line_end < src.len(),
+        source: TextDoc {
+            lines: highlight::highlight(&src_capped[..line_end], "md", max_lines),
+            lang: "md".into(),
+            truncated,
+            total_bytes,
+        },
+        truncated,
         total_bytes,
     }
 }

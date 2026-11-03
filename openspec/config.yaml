@@ -1,0 +1,18 @@
+schema: spec-driven
+
+context: |
+  FileManagerUltra is a cross-platform multi-pane file manager written only in Rust
+  (eframe/egui, no webview). Layered Cargo workspace (see docs/architecture.md and AGENTS.md).
+  Everything user-visible is a command registered in the engine; the UI never does I/O
+  and never blocks. No unwrap/expect/panic or unsafe in non-test code. Filenames, remote
+  listings, drop payloads and command params are untrusted input. Secrets never touch disk.
+  Tests are the gate: ops/backends on tempdirs, command fuzzing, egui_kittest snapshots
+  in dark and light themes.
+
+rules:
+  specs:
+    - Every requirement needs a SHALL/MUST on its first line and at least one #### Scenario.
+    - Extend the security capability in the same change that adds credential, host-key, symlink or hostile-input behaviour.
+  tasks:
+    - Include tests, and a graceful-failure test (bad params returns Err) for every new command.
+    - Finish with clippy, cargo xtask layers, cargo xtask brand-check and a log/devlog.md entry.

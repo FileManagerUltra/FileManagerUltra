@@ -971,6 +971,7 @@ fn markdown_document_dark_light() {
             ("narrow", 400.0, 1.0, false),
             ("zoomed", 850.0, 1.44, false),
             ("selected", 850.0, 1.0, true),
+            ("source", 850.0, 1.0, false),
         ] {
             let Some(renderer) = renderer_or_skip() else {
                 return;
@@ -999,6 +1000,17 @@ fn markdown_document_dark_light() {
                     s,
                 );
             harness.run_steps(4);
+            if case == "source" {
+                use egui_kittest::kittest::Queryable;
+                harness.get_by_label("Preview").click();
+                harness.run_steps(4);
+                assert!(
+                    harness
+                        .state()
+                        .preview_slot(pane)
+                        .is_some_and(|slot| slot.source)
+                );
+            }
             harness.snapshot(format!("markdown_{case}_{theme}"));
             results.extend_harness(&mut harness);
         }
@@ -1084,6 +1096,7 @@ fn markdown_code_buttons_in_nested_blocks_and_multi_file_cards() {
             let slot = s.previews.slots.get_mut(&pane).expect("slot");
             let doc = Arc::new(fm_preview::Preview::Markdown(fm_preview::markdown::MdDoc {
                 blocks: fm_preview::markdown::parse("```\ngrid code\n```"),
+                source: Default::default(),
                 truncated: false,
                 total_bytes: 0,
             }));

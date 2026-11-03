@@ -59,6 +59,8 @@ cargo xtask brand-check
 cargo fmt --all -- --check
 ```
 
+If the change is visible to users (features, behaviour changes, fixes, removals, install notes), add a short, human-readable line under `## [Unreleased]` in `CHANGELOG.md`, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`). Write for users, not developers: no crate names, no internals. Skip purely internal work (refactors, tests, CI). On release, rename `[Unreleased]` to the version and date.
+
 Then append a terse entry to `log/devlog.md`: what landed, numbers (rows virtualized, copy throughput, test counts), what is still open. Sessions can end abruptly — the dev log plus a green tree is how the next agent picks up. Keep the tree building at every step.
 
 If you added a command, also verify its shortcut/menu wiring and add a graceful-failure test (bad params → `Err`).
@@ -75,6 +77,7 @@ If you added a command, also verify its shortcut/menu wiring and add a graceful-
 - `openspec/specs/` — approved behaviour specs (source of truth for "what the product must do").
 - `openspec/changes/` — in-flight proposals and their task lists; archive when done (`/opsx-archive`).
 - `docs/architecture.md` — structural decisions; update it in the same change that changes structure.
+- `CHANGELOG.md` — user-facing changes, Keep a Changelog format.
 - `log/devlog.md` — the running engineering log (local, gitignored).
 
 ## 7. Dependencies to know about

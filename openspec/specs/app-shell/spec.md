@@ -59,10 +59,9 @@ The dialog SHALL initially select General, remember the selected topic while the
 - **AND** the existing preference persistence policy is unchanged
 
 ### Requirement: Consistent draggable dialogs
-All floating dialogs, including About, Preferences, file-operation prompts, conflict
-and unsaved-workspace confirmations, connection and host-key prompts, key-file
-picker, Properties, Find Files, Open With, log time range and Jobs SHALL follow
-`docs/style-guide.md`: scoped proportional typography, neutral headings, flat
+All floating dialogs SHALL follow `docs/style-guide.md`. They include About, Preferences,
+file-operation prompts, conflict and unsaved-workspace confirmations, connection and
+host-key prompts, key-file picker, Properties, Find Files, Open With, log time range and Jobs: scoped proportional typography, neutral headings, flat
 sections, aligned controls, semantic theme colors and shared window chrome.
 Every dialog SHALL be draggable by its title bar and SHALL have a title-bar close
 button. Initial placement SHALL be centered except Jobs, which starts bottom-right.

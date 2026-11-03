@@ -145,6 +145,7 @@ fn segments(p: &Preview, pretty: bool, visit: &mut impl FnMut(String)) {
             },
             visit,
         ),
+        Preview::Markdown(doc) if pretty => text(&doc.source, visit),
         Preview::Markdown(doc) => markdown(&doc.blocks, visit),
         _ => {}
     }
@@ -200,7 +201,7 @@ pub fn prepare(s: &mut Session, pane: PaneId) {
         Body::Static(p) if searchable(p) => Some(p),
         _ => None,
     };
-    let same = find.pretty == slot.pretty
+    let same = find.pretty == (slot.pretty || slot.source)
         && find.searched == find.options
         && match (&find.document, doc) {
             (Some(old), Some(new)) => Arc::ptr_eq(old, new),
@@ -209,7 +210,7 @@ pub fn prepare(s: &mut Session, pane: PaneId) {
         };
     if !same {
         find.document = doc.cloned();
-        find.pretty = slot.pretty;
+        find.pretty = slot.pretty || slot.source;
         find.searched = find.options.clone();
         find.matches = None;
         find.error = None;
@@ -220,7 +221,7 @@ pub fn prepare(s: &mut Session, pane: PaneId) {
         match pending.rx.try_recv() {
             Ok(result) => {
                 if doc.is_some_and(|doc| Arc::ptr_eq(doc, &pending.document))
-                    && pending.pretty == slot.pretty
+                    && pending.pretty == (slot.pretty || slot.source)
                     && pending.options == find.options
                 {
                     match result {
@@ -248,7 +249,7 @@ pub fn prepare(s: &mut Session, pane: PaneId) {
     {
         let document = document.clone();
         let options = find.options.clone();
-        let pretty = slot.pretty;
+        let pretty = slot.pretty || slot.source;
         let (tx, rx) = crossbeam_channel::bounded(1);
         let worker_doc = document.clone();
         let worker_options = options.clone();
@@ -509,6 +510,7 @@ mod tests {
             blocks: fm_preview::markdown::parse(
                 "# **needle**\n\n> quoted needle\n\n- needle\n\n```needle\nneedle\n```\n\n| needle | other |\n| --- | --- |\n| cell | needle |\n",
             ),
+            source: Default::default(),
             truncated: false,
             total_bytes: 0,
         });

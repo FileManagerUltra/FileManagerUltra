@@ -28,7 +28,7 @@ fn document(s: &Session) -> Option<(PaneId, &Arc<Preview>, bool)> {
         &**p,
         Preview::Text(_) | Preview::Structured(_) | Preview::Markdown(_)
     )
-    .then_some((pane, p, slot.pretty))
+    .then_some((pane, p, slot.pretty || slot.source))
 }
 
 pub fn selected(s: &Session, pane: PaneId) -> bool {
@@ -62,6 +62,7 @@ fn contents(p: &Preview, pretty: bool) -> Result<String, FmError> {
         } else {
             &d.raw
         }),
+        Preview::Markdown(d) if pretty => plain_text(&d.source),
         Preview::Markdown(d) => fm_preview::markdown::plain_text(&d.blocks),
         _ => return Err(FmError::Unsupported("no text preview")),
     })
@@ -181,12 +182,27 @@ mod tests {
             blocks: fm_preview::markdown::parse(
                 "# Title\n\nHello **world**.\n\n```rs\nlet x = 1;\n```",
             ),
+            source: Default::default(),
             truncated: false,
             total_bytes: 0,
         });
         assert_eq!(
             contents(&md, false).expect("markdown"),
             "Title\nHello world.\nlet x = 1;"
+        );
+        let Preview::Markdown(mut doc) = md else {
+            panic!("markdown")
+        };
+        doc.source = fm_preview::TextDoc {
+            lines: vec![vec![fm_preview::Span {
+                text: "# Title".into(),
+                class: fm_preview::Class::Plain,
+            }]],
+            ..Default::default()
+        };
+        assert_eq!(
+            contents(&Preview::Markdown(doc), true).expect("source"),
+            "# Title"
         );
         let Preview::Text(raw) = text(&["{\"a\":1}"]) else {
             panic!("text")
@@ -217,6 +233,7 @@ mod tests {
             blocks: fm_preview::markdown::parse(
                 "- [x] **done**\n  - nested\n- [ ] pending\n\n> quoted\n\n| A | B |\n| - | - |\n| `one` | ~~two~~ |\n\n```rs\nlet x = 1;\n```",
             ),
+            source: Default::default(),
             truncated: false,
             total_bytes: 0,
         })));

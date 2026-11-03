@@ -12,7 +12,16 @@ Find files below a folder by name and/or content without blocking the UI.
 - **THEN** both matching files are listed with size and folder, and the status shows the number of matches and folders/files searched
 
 ### Requirement: Search is bounded and safe
-The walker SHALL NOT follow symlinks, SHALL stop at 10 000 results or depth 64, SHALL skip files whose first 8 KiB contain a NUL when matching content, and SHALL read at most 64 MiB per file. SMB locations are not searched (they must stay on the SMB lane); local and SFTP are.
+The walker SHALL NOT follow symlinks, SHALL stop at 10 000 results or depth 64, SHALL skip files whose first 8 KiB contain a NUL when matching content, and SHALL read at most 64 MiB per file. SMB locations SHALL NOT be searched (they must stay on the SMB lane); local and SFTP SHALL be.
+
+#### Scenario: Symlink loop and binary files
+- **WHEN** a tree contains a symlink cycle and binary files and a content search runs
+- **THEN** the symlink is not followed and binary files are skipped
+- **AND** the search ends once 10 000 results are found
 
 ### Requirement: Results lead back to the file
-Double-clicking a file result opens it with its default application; Show in Folder (`file.reveal {uri}`) navigates a Files pane to the parent and selects the item; Copy Path copies its path.
+Double-clicking a file result SHALL open it with its default application; Show in Folder (`file.reveal {uri}`) SHALL navigate a Files pane to the parent and select the item; Copy Path SHALL copy its path.
+
+#### Scenario: Show in Folder
+- **WHEN** the user chooses Show in Folder on a result
+- **THEN** a Files pane navigates to the parent folder and selects the item

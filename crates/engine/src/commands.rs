@@ -49,6 +49,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(arrange_cmds::specs());
     specs.extend(pane_kind_cmds::specs());
     specs.extend(preview_cmds::specs());
+    specs.extend(crate::preview_link_cmds::specs());
     specs.extend(crate::preview_text_cmds::specs());
     specs.extend(crate::preview_find_cmds::specs());
     specs.extend(crate::preview_code_cmds::specs());

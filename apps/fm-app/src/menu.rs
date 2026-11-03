@@ -38,6 +38,7 @@ pub const TERM_CD_HERE: &str = "term.cd_here";
 pub const TERM_CLEAR: &str = "term.clear_scrollback";
 pub const VIEW_PREVIEW: &str = "view.preview.toggle";
 pub const PREVIEW_PRETTY: &str = "preview.toggle_pretty";
+pub const PREVIEW_SOURCE: &str = "preview.toggle_source";
 pub const PREVIEW_WRAP: &str = "preview.toggle_wrap";
 pub const PREVIEW_SELECT_ALL: &str = "preview.text.select_all";
 pub const PREVIEW_COPY_TEXT: &str = "preview.text.copy";
@@ -140,6 +141,7 @@ pub fn all_ids() -> &'static [&'static str] {
         TERM_RESTART,
         VIEW_PREVIEW,
         PREVIEW_PRETTY,
+        PREVIEW_SOURCE,
         PREVIEW_WRAP,
         PREVIEW_SELECT_ALL,
         PREVIEW_COPY_TEXT,
@@ -807,6 +809,7 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
                 item(ui, session, dialogs, PREVIEW_SCALE_OUT);
                 item(ui, session, dialogs, PREVIEW_SCALE_RESET);
                 item(ui, session, dialogs, PREVIEW_PRETTY);
+                item(ui, session, dialogs, PREVIEW_SOURCE);
                 item(ui, session, dialogs, PREVIEW_WRAP);
                 item(ui, session, dialogs, PREVIEW_FIND);
                 ui.separator();

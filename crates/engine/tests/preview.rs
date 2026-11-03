@@ -797,6 +797,90 @@ fn pretty_is_opt_in_and_resets_on_file_change() {
     assert!(err.to_string().contains("not valid JSON"));
 }
 
+#[test]
+fn markdown_source_view_toggles_and_resets() {
+    let mut r = rig(&[
+        ("a.md", b"# Title\n\nsee [docs](https://example.org) here\n"),
+        ("b.txt", b"plain"),
+    ]);
+    r.cursor("a.md");
+    let Preview::Markdown(d) = &*r.wait_static() else {
+        panic!("markdown")
+    };
+    assert_eq!(d.source.lines.len(), 3);
+    assert!(!r.s.preview_slot(r.preview).expect("slot").source);
+    r.s.dispatch("preview.toggle_source", &json!({}))
+        .expect("source");
+    assert!(r.s.preview_slot(r.preview).expect("slot").source);
+    r.s.dispatch("preview.toggle_source", &json!({}))
+        .expect("rendered again");
+    r.s.dispatch("preview.toggle_source", &json!({}))
+        .expect("source");
+    r.cursor("b.txt");
+    assert!(pump(&mut r.s, |s| {
+        s.preview_slot(r.preview)
+            .and_then(|x| x.subject.as_ref())
+            .is_some_and(|e| e.name == "b.txt")
+    }));
+    assert!(!r.s.preview_slot(r.preview).expect("slot").source, "reset");
+    r.wait_static();
+    assert!(r.s.dispatch("preview.toggle_source", &json!({})).is_err());
+}
+
+#[test]
+fn relative_markdown_links_reveal_the_target_in_the_files_pane() {
+    let mut r = rig(&[
+        (
+            "README.md",
+            b"[other](other.txt#top) [gone](nothing-here.txt)",
+        ),
+        ("other.txt", b"x"),
+    ]);
+    r.cursor("README.md");
+    r.wait_static();
+    r.s.dispatch(
+        "preview.open_link",
+        &json!({"url": "other.txt#top", "pane": r.preview}),
+    )
+    .expect("relative link");
+    assert_eq!(r.s.layout.focused(), r.files);
+    assert_eq!(
+        r.s.layout
+            .state(r.files)
+            .expect("pane")
+            .listing
+            .reveal
+            .as_deref(),
+        Some("other.txt")
+    );
+    for bad in [
+        "#top",
+        "/etc/passwd",
+        "file:///etc/passwd",
+        "../../../../../../../../x/\u{0}",
+    ] {
+        assert!(
+            r.s.dispatch("preview.open_link", &json!({"url": bad, "pane": r.preview}))
+                .is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn open_link_refuses_unsafe_links() {
+    let mut s = Session::new().expect("session");
+    for bad in [
+        json!({}),
+        json!({"url": 5}),
+        json!({"url": "file:///etc/passwd"}),
+        json!({"url": "javascript:alert(1)"}),
+        json!({"url": "https://a b"}),
+    ] {
+        assert!(s.dispatch("preview.open_link", &bad).is_err(), "{bad}");
+    }
+}
+
 fn monolog(n: usize) -> Vec<u8> {
     (0..n)
         .map(|i| {
@@ -1004,6 +1088,7 @@ fn preview_commands_without_a_preview_pane_fail_gracefully() {
         "preview.zoom",
         "preview.toggle_wrap",
         "preview.toggle_pretty",
+        "preview.toggle_source",
         "preview.log.follow",
         "preview.log.mark",
         "preview.log.earlier",

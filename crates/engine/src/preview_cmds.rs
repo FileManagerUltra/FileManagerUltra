@@ -137,6 +137,8 @@ pub struct PreviewSlot {
     pub subjects: Vec<Entry>,
     pub body: Body,
     pub pretty: bool,
+    /// Show a Markdown file's text instead of its rendered document.
+    pub source: bool,
     pub wrap: bool,
     pub zoom: Zoom,
     /// Magnification for this pane's content, separate from image fit mode and UI zoom.
@@ -173,6 +175,7 @@ impl PreviewSlot {
             subjects: Vec::new(),
             body: Body::Empty,
             pretty: false,
+            source: false,
             wrap: false,
             zoom: Zoom::Fit,
             scale: 1.0,
@@ -409,6 +412,7 @@ impl Session {
                     slot.subjects.clear();
                     slot.body = Body::Empty;
                     slot.pretty = false;
+                    slot.source = false;
                     slot.thumb_window = None;
                     slot.token = 0;
                     slot.saved_log = None;
@@ -517,6 +521,7 @@ impl Session {
             .map(|state| state.listing.sort.clone());
         if slot.subject.as_ref().is_none_or(|s| s.uri != entry.uri) {
             slot.pretty = false;
+            slot.source = false;
             slot.thumb_window = None;
             self.thumbs.cancel(pane);
         }
@@ -1042,6 +1047,13 @@ fn has_structured(s: &Session) -> bool {
     })
 }
 
+fn has_markdown(s: &Session) -> bool {
+    s.previews
+        .slots
+        .values()
+        .any(|sl| matches!(&sl.body, Body::Static(p) if matches!(&**p, Preview::Markdown(_))))
+}
+
 fn has_log(s: &Session) -> bool {
     s.previews.slots.values().any(|sl| sl.log().is_some())
 }
@@ -1229,6 +1241,38 @@ pub fn toggle_pretty() -> CommandSpec {
                 return Err(FmError::InvalidParams(why.clone()));
             }
             slot.pretty = !slot.pretty;
+            Ok(())
+        },
+    }
+}
+
+/// `preview.toggle_source` — show a Markdown file's text instead of the rendered document.
+pub fn toggle_source() -> CommandSpec {
+    CommandSpec {
+        id: "preview.toggle_source",
+        label: "Preview Markdown Source",
+        menu: &["View", "Preview Markdown Source"],
+        shortcut: None,
+        params: "{pane?: number}",
+        enabled: has_markdown,
+        run: |s, p: &Params| {
+            let pane = s.preview_pane(p)?;
+            let slot = s
+                .previews
+                .slots
+                .entry(pane)
+                .or_insert_with(PreviewSlot::new);
+            let Body::Static(prev) = &slot.body else {
+                return Err(FmError::InvalidParams(
+                    "nothing to show the source of".into(),
+                ));
+            };
+            if !matches!(&**prev, Preview::Markdown(_)) {
+                return Err(FmError::InvalidParams(
+                    "only Markdown previews have a source view".into(),
+                ));
+            }
+            slot.source = !slot.source;
             Ok(())
         },
     }
@@ -1466,6 +1510,7 @@ pub fn specs() -> Vec<CommandSpec> {
         zoom(),
         toggle_wrap(),
         toggle_pretty(),
+        toggle_source(),
         log_level(),
         log_search(),
         log_time_range(),
