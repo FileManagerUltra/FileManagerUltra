@@ -1468,8 +1468,6 @@ fn selected_logs_dark_light_and_copy_excludes_filename_gutter() {
                 },
                 session,
             );
-        harness.get_by_label("Filter").click();
-        harness.run();
         harness.get_by_label("Expand").click();
         harness.run();
         harness.snapshot(format!("selected_logs_concatenated_{theme}"));
@@ -1760,7 +1758,6 @@ fn preview_page_keys_scroll_only_the_focused_body() {
                 .layout
                 .focus_pane(pane)
                 .expect("focus preview");
-            harness.get_by_label("Filter").click();
             harness.run();
             let filtered_row_offset = harness.state().1;
             harness
@@ -1916,8 +1913,6 @@ fn selected_previews_offer_reload_only_after_source_changes() {
                 );
             assert!(harness.query_by_label("Reload").is_none());
             if !grid {
-                harness.get_by_label("Filter").click();
-                harness.run();
                 harness.get_by_label("Refresh");
                 assert!(harness.query_by_label("Live tail").is_none());
             }
@@ -2024,8 +2019,6 @@ fn selected_logs_refresh_without_notification_preserves_options() {
             .expect("slot")
             .updates_available
     );
-    h.get_by_label("Filter").click();
-    h.run();
     assert!(h.query_by_label("Live tail").is_none());
     h.get_by_label("Refresh").click();
     h.run();
@@ -2324,9 +2317,12 @@ fn preview_filter_row_toggles_and_preserves_settings_dark_light() {
                 );
             assert_eq!(
                 harness.query_all_by_label(".*").count(),
-                0,
-                "initially hidden"
+                1,
+                "initially shown"
             );
+            harness.get_by_label("Filter").click();
+            harness.run();
+            assert_eq!(harness.query_all_by_label(".*").count(), 0);
             harness.snapshot(format!("preview_filters_closed_{width}_{theme}"));
             harness.get_by_label("Filter").click();
             harness.run();
@@ -2495,8 +2491,6 @@ fn log_time_picker_dark_light() {
                 },
                 session,
             );
-        harness.get_by_label("Filter").click();
-        harness.run();
         harness.get_by_label("Time").click();
         harness.run();
         harness.get_by_label("From").click();
@@ -3472,4 +3466,25 @@ fn git_markers_in_listing_dark_light() {
         harness.snapshot(format!("listing_git_markers_{theme}"));
         results.extend_harness(&mut harness);
     }
+}
+
+#[test]
+fn opening_the_preview_source_list_does_not_panic_and_lists_numbered_panes() {
+    use egui_kittest::kittest::Queryable;
+    let tokens = Tokens::dark();
+    let (s, pane) = preview_fixture("a.md", b"# Title", false);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(600.0, 420.0))
+        .with_accessibility_check(false)
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                theme::apply_to(ui.ctx(), &tokens);
+                fm_ui::preview::show(ui, s, pane, &tokens);
+            },
+            s,
+        );
+    harness.run();
+    harness.get_by_label("Preview source").click();
+    harness.run();
+    harness.get_by_label_contains("Pane 1");
 }

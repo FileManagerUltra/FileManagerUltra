@@ -13,6 +13,11 @@ const BORDER_GRIP: f32 = 5.0;
 const MIN_TREE: f32 = 120.0;
 const MAX_TREE: f32 = 420.0;
 
+/// Set (to the pass number) while a Preview's source list is open; Files panes then show their number.
+pub(crate) fn source_open_id() -> egui::Id {
+    egui::Id::NULL.with("pv-source-open")
+}
+
 /// Render one pane. Returns the uri to open (`nav.open`), if any.
 pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Option<VfsUri> {
     let area = ui.available_rect_before_wrap();
@@ -188,6 +193,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         );
     }
     border_grip(ui, tokens, pane, frame.response.rect);
+    if kind.is_files() {
+        number_overlay(ui, s, pane, frame.response.rect, tokens);
+    }
 
     if pressed_inside {
         let _ = s.layout.focus_pane(pane);
@@ -304,6 +312,44 @@ fn border_grip(ui: &mut Ui, tokens: &Tokens, pane: PaneId, rect: egui::Rect) {
             egui::StrokeKind::Inside,
         );
     }
+}
+
+/// Big number over a Files pane while a Preview's source list is open, like a monitor picker.
+fn number_overlay(ui: &Ui, s: &Session, pane: PaneId, rect: egui::Rect, tokens: &Tokens) {
+    let ctx = ui.ctx();
+    let open = ctx
+        .data(|d| d.get_temp::<u64>(source_open_id()))
+        .is_some_and(|at| ctx.cumulative_pass_nr().saturating_sub(at) <= 1);
+    if !open {
+        return;
+    }
+    let Some(n) = s
+        .layout
+        .panes()
+        .into_iter()
+        .filter(|p| s.layout.state(*p).is_some_and(|st| st.kind.is_files()))
+        .position(|p| p == pane)
+    else {
+        return;
+    };
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::NULL.with(("pv-source-number", pane)),
+    ));
+    let size = rect
+        .width()
+        .min(rect.height())
+        .mul_add(0.5, 0.0)
+        .clamp(40.0, 160.0);
+    let badge = egui::Rect::from_center_size(rect.center(), egui::vec2(size, size));
+    painter.rect_filled(badge, size * 0.2, tokens.accent);
+    painter.text(
+        badge.center(),
+        egui::Align2::CENTER_CENTER,
+        (n + 1).to_string(),
+        egui::FontId::proportional(size * 0.7),
+        tokens.bg,
+    );
 }
 
 #[cfg(test)]

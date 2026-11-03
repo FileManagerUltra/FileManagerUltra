@@ -24,12 +24,18 @@ mod time;
 type Action = (&'static str, Value);
 
 /// Per-pane text fields of the log filter bar.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct LogUi {
     filters_open: bool,
     query: String,
     regex: bool,
     time: Option<time::TimePicker>,
+}
+
+impl Default for LogUi {
+    fn default() -> Self {
+        Self { filters_open: true, query: String::new(), regex: false, time: None }
+    }
 }
 
 fn mono(tokens: &Tokens) -> FontId {
@@ -692,14 +698,20 @@ fn source_picker(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Actio
         .into_iter()
         .filter(|p| s.layout.state(*p).is_some_and(|st| st.kind.is_files()))
         .collect();
+    // Pane ids mean nothing to users: number the file panes; while the list is open each pane
+    // shows the same number as an overlay.
+    let number = |id: PaneId| files.iter().position(|p| *p == id).map_or(0, |i| i + 1);
     let current = match state.preview_source {
         PreviewSource::Follow => "Active pane".to_string(),
-        PreviewSource::Pane(id) => format!("Pane {id}"),
+        PreviewSource::Pane(id) => format!("Pane {}", number(id)),
     };
     let response = egui::ComboBox::from_id_salt(("pv-source", pane))
         .selected_text(current)
         .width(100.0)
         .show_ui(ui, |ui| {
+            let ctx = ui.ctx();
+            let pass = ctx.cumulative_pass_nr();
+            ctx.data_mut(|d| d.insert_temp(crate::pane::source_open_id(), pass));
             if ui
                 .selectable_label(
                     state.preview_source == PreviewSource::Follow,
@@ -709,9 +721,14 @@ fn source_picker(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Actio
             {
                 actions.push(("pane.preview.source", json!({ "source": "focus" })));
             }
-            for id in files {
+            for id in files.iter().copied() {
                 let on = state.preview_source == PreviewSource::Pane(id);
-                if ui.selectable_label(on, format!("Pane {id}")).clicked() {
+                let label = if s.layout.focused() == id {
+                    format!("Pane {} (focused)", number(id))
+                } else {
+                    format!("Pane {}", number(id))
+                };
+                if ui.selectable_label(on, label).clicked() {
                     actions.push(("pane.preview.source", json!({ "source": id })));
                 }
             }
