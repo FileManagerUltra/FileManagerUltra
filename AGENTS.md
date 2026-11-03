@@ -65,6 +65,17 @@ Then append a terse entry to `log/devlog.md`: what landed, numbers (rows virtual
 
 If you added a command, also verify its shortcut/menu wiring and add a graceful-failure test (bad params → `Err`).
 
+## 4a. Versioning and releases
+
+The project uses [Semantic Versioning](https://semver.org/). The single source of truth is `[workspace.package] version` in the root `Cargo.toml`; installers (`cargo xtask packager-config`) and the in-app update check (`crates/engine/src/updates.rs`, compares the latest GitHub release tag with `CARGO_PKG_VERSION`) both read it. To release:
+
+1. Pick the next version: patch for fixes, minor for new features, major for breaking changes (while `0.x`, breaking changes bump minor).
+2. Move the `[Unreleased]` entries in `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`, start a fresh empty `[Unreleased]`, and update the compare links.
+3. Bump `version` in the root `Cargo.toml`, run `cargo check` so `Cargo.lock` follows, and commit (`Release X.Y.Z`).
+4. Tag exactly `vX.Y.Z` and push the tag. The release workflow refuses a tag that differs from the `Cargo.toml` version, then builds the installers and publishes the GitHub release.
+
+Never publish a pre-release or draft expecting users to be notified: the update check ignores them. Never reuse or move a published tag.
+
 ## 5. Parallel agents
 
 - Use your own target dir (`CARGO_TARGET_DIR=target/agent-<name>`) to avoid the Cargo lock, and edit only files you own. Shared files (`engine/src/commands.rs`, `fm-app` menu/shortcut tables) get small surgical edits; re-read before editing.

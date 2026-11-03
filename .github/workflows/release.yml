@@ -24,6 +24,15 @@ jobs:
           - { name: macos-arm64, os: macos-14, target: aarch64-apple-darwin, formats: "dmg" }
     steps:
       - uses: actions/checkout@v5
+      - name: Tag must match the workspace version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          v=$(grep -m1 '^version' Cargo.toml | sed -E 's/^version *= *"([^"]+)".*/\1/')
+          if [ "refs/tags/v$v" != "$GITHUB_REF" ]; then
+            echo "Tag $GITHUB_REF does not match Cargo.toml version $v" >&2
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
