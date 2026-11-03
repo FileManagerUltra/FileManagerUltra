@@ -13,7 +13,7 @@ The installers are **not signed**, so your OS will warn on first start (see belo
 ## macOS (Apple silicon: `macos-arm64`, Intel: `macos-x64`)
 
 1. Unzip, open the `*.dmg` and drag the app to **Applications**.
-2. Because the app is unsigned, Gatekeeper blocks the first start. Either right-click the app → **Open** → **Open**, or run:
+2. Because the app is only ad-hoc signed (not notarized), Gatekeeper blocks the first start. Either right-click the app → **Open** → **Open**, or run:
    ```sh
    xattr -dr com.apple.quarantine /Applications/FileManagerUltra.app
    ```

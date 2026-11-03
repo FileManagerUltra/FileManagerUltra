@@ -134,7 +134,7 @@ pub fn packager_config() -> Result<String, String> {
 description = \"A cross-platform multi-pane file manager\"\ncategory = \"Utility\"\n\
 icons = [\"{root}/packaging/icon.png\", \"{root}/packaging/icon.ico\", \"{root}/packaging/icon.icns\"]\nout-dir = \"{root}/target/packager\"\n\
 binaries-dir = \"{root}/target/release\"\nbinaries = [{{ path = \"{slug}\", main = true }}]\n\
-\n[nsis]\ninstaller-icon = \"{root}/packaging/icon.ico\"\npreinstall-section = '''\n{icon_refresh}\n'''\n",
+\n[nsis]\ninstaller-icon = \"{root}/packaging/icon.ico\"\npreinstall-section = '''\n{icon_refresh}\n'''\n\n[macos]\nsigning-identity = \"-\"\n",
         name = brand.name,
         slug = brand.slug,
         root = root.display().to_string().replace('\\', "/"),
