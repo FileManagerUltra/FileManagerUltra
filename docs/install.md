@@ -10,7 +10,7 @@ The installers are **not signed**, so your OS will warn on first start (see belo
 2. SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**.
 3. Start it from the Start menu. Uninstall via **Settings → Apps**.
 
-## macOS (Apple silicon: `macos-arm64`, Intel: `macos-x64`)
+## macOS (Apple silicon: `macos-arm64`)
 
 1. Unzip, open the `*.dmg` and drag the app to **Applications**.
 2. Because the app is only ad-hoc signed (not notarized), Gatekeeper blocks the first start. Either right-click the app → **Open** → **Open**, or run:

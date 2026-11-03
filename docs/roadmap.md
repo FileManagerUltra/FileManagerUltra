@@ -18,7 +18,7 @@ Additional change, implemented: `git-status-and-diff` (git status markers, Diff 
 Session persistence is already delivered by `workspaces` (saved pane layouts and
 startup behavior). Release packaging is also configured in `.github/workflows/release.yml`:
 Linux `.deb`/AppImage, Windows NSIS `*-setup.exe`, and macOS `.dmg` for Apple silicon
-and Intel. It is not an `.msi` installer. The remaining milestone work is validation,
+only. It is not an `.msi` installer. The remaining milestone work is validation,
 not implementing persistence or packaging from scratch.
 
 **Security is a standing concern, not a change.** The `security` OpenSpec capability starts in change 1 (hostile input, secrets, state-file permissions, symlink policy, no `unsafe`) and each change that adds a behaviour area extends it in the same change: change 3 adds drag & drop / `ops` containment and overwrite rules; change 4 adds credentials, host keys and remote listing caps. A change that adds security-relevant behaviour without a spec + failing-test proof is not done.
