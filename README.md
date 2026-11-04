@@ -21,7 +21,7 @@
   <img src="docs/screenshots/hero-light.webp" alt="FileManagerUltra with several panes: file trees, listings, a terminal and a preview">
 </picture>
 
-> **Status: pre-alpha.** Expect rough edges and changes between releases. Installers are not signed yet, so your OS will warn on first start.
+> **Status: beta.** Core features work, but expect rough edges and changes between releases. Installers are not signed yet, so your OS will warn on first start.
 
 ## Highlights
 

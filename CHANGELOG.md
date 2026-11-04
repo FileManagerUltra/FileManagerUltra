@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-04
+
+First public release (beta).
+
 ### Added
 
 - Web links in the terminal open in your browser with Ctrl+click (Cmd+click on macOS).
@@ -38,3 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - macOS install notes: clear the quarantine flag on the downloaded `.dmg` (`xattr -d com.apple.quarantine`), as the app is not yet signed or notarized.
+
+[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/FileManagerUltra/FileManagerUltra/releases/tag/v0.1.0
