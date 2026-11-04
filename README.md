@@ -154,4 +154,4 @@ cargo xtask ci           # everything CI runs, locally
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Logo source: `packaging/logo.svg`. Bundled Atkinson Hyperlegible fonts use the [SIL Open Font License](crates/ui/assets/fonts/OFL.txt).
+Apache License 2.0, see [LICENSE](LICENSE). Logo source: `packaging/logo.svg`. Bundled Atkinson Hyperlegible fonts use the [SIL Open Font License](crates/ui/assets/fonts/OFL.txt).

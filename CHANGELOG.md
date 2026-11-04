@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- FileManagerUltra is now licensed under the Apache License 2.0 (previously MIT).
 - The log filter bar is shown by default when previewing a log.
 - The Diff toolbar shows a single "Diff" toggle for every file except Markdown, instead of a Preview/Diff pair whose Preview button did nothing.
 

@@ -6,7 +6,7 @@ default-members = ["crates/*", "apps/*", "xtask"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/filemanagerultra/filemanagerultra"
 homepage = "https://github.com/filemanagerultra/filemanagerultra"
 rust-version = "1.95"
