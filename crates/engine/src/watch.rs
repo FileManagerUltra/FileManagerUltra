@@ -239,7 +239,12 @@ impl Watcher {
             self.start(now);
         }
         let mut notice = None;
-        for (k, uri) in wanted {
+        // `want` order is priority order: when the cap is hit, later entries go unwatched.
+        let ordered = want
+            .iter()
+            .filter_map(|u| u.local_path().map(|p| (key(&p), u)))
+            .filter(|(k, _)| wanted.contains_key(k));
+        for (k, uri) in ordered {
             if self.dirs.contains_key(&k) {
                 continue;
             }

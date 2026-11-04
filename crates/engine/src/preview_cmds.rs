@@ -124,10 +124,10 @@ pub enum Body {
     Grid(Vec<(Entry, Arc<Preview>)>),
 }
 
-type Key = (VfsUri, Option<SystemTime>, Option<u64>, bool);
+type Key = (VfsUri, Option<SystemTime>, Option<u64>, bool, bool);
 
-fn key_of(e: &Entry, recursive: bool) -> Key {
-    (e.uri.clone(), e.modified, e.size, recursive)
+fn key_of(e: &Entry, recursive: bool, show_hidden: bool) -> Key {
+    (e.uri.clone(), e.modified, e.size, recursive, show_hidden)
 }
 
 #[derive(Debug)]
@@ -148,6 +148,10 @@ pub struct PreviewSlot {
     pub thumbs: bool,
     /// Index into [`fm_preview::thumbs::EDGES`].
     pub thumb_size: usize,
+    /// Order of the thumbnail grid.
+    pub thumb_sort: fm_preview::arrange::ThumbSort,
+    /// Recursive grids: headings per subfolder instead of one flat list.
+    pub thumb_group: bool,
     /// Entries the grid last asked for: `(first, count)`.
     pub thumb_window: Option<(usize, usize)>,
     /// Playback of a video shown by this pane.
@@ -182,6 +186,8 @@ impl PreviewSlot {
             find: Default::default(),
             thumbs: false,
             thumb_size: 0,
+            thumb_sort: Default::default(),
+            thumb_group: true,
             thumb_window: None,
             video: None,
             target: None,
@@ -399,6 +405,7 @@ impl Session {
     fn advance_slot(&mut self, pane: PaneId, desired: Vec<Entry>, now: Instant) -> bool {
         let mut changed = false;
         let recursive = self.prefs.recursive_preview;
+        let show_hidden = self.show_hidden;
         let Some(slot) = self.previews.slots.get_mut(&pane) else {
             return false;
         };
@@ -421,7 +428,10 @@ impl Session {
                 }
             }
             entries => {
-                let keys: Vec<_> = entries.iter().map(|e| key_of(e, recursive)).collect();
+                let keys: Vec<_> = entries
+                    .iter()
+                    .map(|e| key_of(e, recursive, show_hidden))
+                    .collect();
                 let same_subject = slot
                     .subjects
                     .iter()
@@ -457,11 +467,11 @@ impl Session {
                     || same_log
                 {
                     slot.pending = None;
-                } else if slot
-                    .pending
-                    .as_ref()
-                    .map(|(p, _)| p.iter().map(|e| key_of(e, recursive)).collect::<Vec<_>>())
-                    != Some(keys)
+                } else if slot.pending.as_ref().map(|(p, _)| {
+                    p.iter()
+                        .map(|e| key_of(e, recursive, show_hidden))
+                        .collect::<Vec<_>>()
+                }) != Some(keys)
                 {
                     slot.pending = Some((desired, now + DEBOUNCE));
                     // The cursor moved on: stop the old folder scan right away.
@@ -488,6 +498,7 @@ impl Session {
     fn start_render(&mut self, pane: PaneId) -> bool {
         let token = self.previews.token();
         let recursive = self.prefs.recursive_preview;
+        let show_hidden = self.show_hidden;
         let log_limits = self.prefs.log_limits();
         let filters = self.prefs.preview_filters.clone();
         let Some(slot) = self.previews.slots.get_mut(&pane) else {
@@ -537,7 +548,12 @@ impl Session {
                 .initial_tail
                 .min(crate::preview_multi::MAX_WINDOW);
         }
-        slot.key = Some(entries.iter().map(|e| key_of(e, recursive)).collect());
+        slot.key = Some(
+            entries
+                .iter()
+                .map(|e| key_of(e, recursive, show_hidden))
+                .collect(),
+        );
         slot.subjects = entries.clone();
         slot.subject = Some(entry.clone());
         if !refresh {
@@ -616,6 +632,7 @@ impl Session {
                             &entry,
                             &Limits::unbounded_scan(),
                             true,
+                            show_hidden,
                             Some(&flag),
                             Some(&progress),
                         )
@@ -645,7 +662,15 @@ impl Session {
             return true;
         }
         self.jobs.submit(lane_for(entry.uri.scheme()), move |_ctx| {
-            let preview = render_budgeted(vfs, entry, recursive, log_limits, filters, budget);
+            let preview = render_budgeted(
+                vfs,
+                entry,
+                recursive,
+                show_hidden,
+                log_limits,
+                filters,
+                budget,
+            );
             PreviewHub::push(
                 &inbox,
                 Msg::Rendered {
@@ -1013,6 +1038,7 @@ fn render_budgeted(
     vfs: Arc<dyn Vfs>,
     entry: Entry,
     recursive: bool,
+    show_hidden: bool,
     logs: LogLimits,
     filters: crate::preview_types::PreviewFilters,
     budget: Duration,
@@ -1026,7 +1052,10 @@ fn render_budgeted(
             &*vfs,
             &entry,
             &Limits::default(),
-            fm_preview::RenderOpts { recursive },
+            fm_preview::RenderOpts {
+                recursive,
+                show_hidden,
+            },
             &logs,
             rules.kind(&entry.name),
         )
@@ -1542,7 +1571,7 @@ mod tests {
         slot.token = 7;
         slot.subject = Some(a.clone());
         slot.subjects = vec![a.clone()];
-        slot.key = Some(vec![key_of(&a, false)]);
+        slot.key = Some(vec![key_of(&a, false, false)]);
         slot.body = Body::Loading;
         s.previews.slots.insert(1, slot);
         let now = Instant::now();

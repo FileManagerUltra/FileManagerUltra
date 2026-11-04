@@ -8,6 +8,7 @@ use egui::{FontId, Id, RichText, ScrollArea, Sense, TextFormat, Ui, vec2};
 use fm_engine::Session;
 use fm_engine::preview_cmds::{Body, LogView, Zoom};
 use fm_layout::{PaneId, PreviewSource};
+use fm_preview::arrange::ThumbSort;
 use fm_preview::log::{Level, LogDoc, LogRecord};
 use fm_preview::{DirDoc, HexDoc, ImageDoc, MetaDoc, Preview, Span, StructDoc, TextDoc};
 use serde_json::{Value, json};
@@ -233,6 +234,8 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                                 tokens,
                                 d,
                                 slot.thumb_size,
+                                slot.thumb_sort,
+                                slot.thumb_group,
                                 slot.thumb_window,
                                 &mut actions,
                                 &mut open,
@@ -489,8 +492,11 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                 }
                 Preview::Dir(_) => thumb_toolbar(
                     ui,
+                    pane,
                     slot.thumbs,
                     slot.thumb_size,
+                    slot.thumb_sort,
+                    slot.thumb_group,
                     s.prefs.recursive_preview,
                     actions,
                 ),
@@ -1369,7 +1375,17 @@ fn video_controls(
     });
 }
 
-fn thumb_toolbar(ui: &mut Ui, on: bool, size: usize, recursive: bool, actions: &mut Vec<Action>) {
+#[allow(clippy::too_many_arguments)]
+fn thumb_toolbar(
+    ui: &mut Ui,
+    pane: PaneId,
+    on: bool,
+    size: usize,
+    sort: ThumbSort,
+    group: bool,
+    recursive: bool,
+    actions: &mut Vec<Action>,
+) {
     let r = ui
         .add(egui::Button::selectable(recursive, "Recursive"))
         .on_hover_text("Include subfolders (also in Preferences)");
@@ -1390,6 +1406,34 @@ fn thumb_toolbar(ui: &mut Ui, on: bool, size: usize, recursive: bool, actions: &
                 .on_hover_text(format!("{name} thumbnails"));
             if r.clicked() {
                 actions.push(("preview.thumbs.size", json!({ "size": name })));
+            }
+        }
+        ui.separator();
+        let label_of = |choice: ThumbSort| match choice {
+            ThumbSort::Name => "Name",
+            ThumbSort::Modified => "Modified",
+            ThumbSort::Type => "Type",
+        };
+        egui::ComboBox::from_id_salt(("pv-thumb-sort", pane))
+            .selected_text(format!("Sort: {}", label_of(sort)))
+            .show_ui(ui, |ui| {
+                for (choice, name) in ThumbSort::ALL {
+                    if ui
+                        .selectable_label(sort == choice, label_of(choice))
+                        .clicked()
+                    {
+                        actions.push(("preview.thumbs.sort", json!({ "by": name })));
+                    }
+                }
+            })
+            .response
+            .on_hover_text("Order of the thumbnails");
+        if recursive {
+            let r = ui
+                .add(egui::Button::selectable(group, "By folder"))
+                .on_hover_text("Group files under their subfolder (off: one list of all files)");
+            if r.clicked() {
+                actions.push(("preview.thumbs.group", json!({ "on": !group })));
             }
         }
     }
@@ -1449,6 +1493,172 @@ impl ThumbSel {
     }
 }
 
+#[derive(Clone, Copy)]
+enum RowKind {
+    Header(usize),
+    Cells(usize, usize),
+}
+
+struct PlanRow {
+    top: f32,
+    h: f32,
+    kind: RowKind,
+}
+
+/// Vertical layout of the grid: tile rows, plus a heading row per subfolder when grouped.
+struct GridPlan {
+    rows: Vec<PlanRow>,
+    total: f32,
+    /// Indices into `rows` of the tile rows, in order.
+    cell_rows: Vec<usize>,
+    /// For every item, its position in `cell_rows`.
+    pos_of: Vec<usize>,
+}
+
+impl GridPlan {
+    fn new(a: &fm_preview::arrange::Arranged, cols: usize, row_h: f32, head_h: f32) -> Self {
+        let len = a.items.len();
+        let mut plan = Self {
+            rows: Vec::new(),
+            total: 0.0,
+            cell_rows: Vec::new(),
+            pos_of: vec![0; len],
+        };
+        let spans: Vec<(Option<usize>, usize, usize)> = if a.groups.is_empty() {
+            vec![(None, 0, len)]
+        } else {
+            a.groups
+                .iter()
+                .enumerate()
+                .map(|(i, g)| {
+                    (
+                        Some(i),
+                        g.start,
+                        a.groups.get(i + 1).map_or(len, |n| n.start),
+                    )
+                })
+                .collect()
+        };
+        for (group, start, end) in spans {
+            if let Some(group) = group {
+                plan.push(head_h, RowKind::Header(group));
+            }
+            let mut at = start;
+            while at < end {
+                let next = (at + cols).min(end);
+                plan.cell_rows.push(plan.rows.len());
+                for slot in plan.pos_of.iter_mut().take(next).skip(at) {
+                    *slot = plan.cell_rows.len() - 1;
+                }
+                plan.push(row_h, RowKind::Cells(at, next));
+                at = next;
+            }
+        }
+        plan
+    }
+
+    fn push(&mut self, h: f32, kind: RowKind) {
+        self.rows.push(PlanRow {
+            top: self.total,
+            h,
+            kind,
+        });
+        self.total += h;
+    }
+
+    fn cell_row(&self, index: usize) -> Option<&PlanRow> {
+        self.rows
+            .get(*self.cell_rows.get(*self.pos_of.get(index)?)?)
+    }
+
+    fn top_of(&self, index: usize) -> f32 {
+        self.cell_row(index).map_or(0.0, |r| r.top)
+    }
+
+    /// Move `rows` tile rows up or down, keeping the column where the target row is long enough.
+    fn step_rows(&self, from: usize, rows: isize) -> usize {
+        let Some(RowKind::Cells(start, _)) = self.cell_row(from).map(|r| r.kind) else {
+            return from;
+        };
+        let pos = self.pos_of.get(from).copied().unwrap_or(0) as isize;
+        let last = self.cell_rows.len().saturating_sub(1) as isize;
+        let want = pos + rows;
+        // A page key past either end lands on the first or last tile.
+        if rows.abs() > 1 && !(0..=last).contains(&want) {
+            return if want < 0 {
+                0
+            } else {
+                self.pos_of.len().saturating_sub(1)
+            };
+        }
+        let to = want.clamp(0, last) as usize;
+        let target = self
+            .cell_rows
+            .get(to)
+            .and_then(|r| self.rows.get(*r))
+            .map(|r| r.kind);
+        match target {
+            Some(RowKind::Cells(s, e)) => (s + (from - start)).min(e.saturating_sub(1)),
+            _ => from,
+        }
+    }
+
+    fn visible(&self, y0: f32, y1: f32) -> std::ops::Range<usize> {
+        let first = self.rows.partition_point(|r| r.top + r.h <= y0);
+        let end = self.rows.partition_point(|r| r.top < y1);
+        first..end.max(first)
+    }
+
+    /// `(first, count)` of the tiles on the visible rows.
+    fn window(&self, visible: &std::ops::Range<usize>) -> Option<(usize, usize)> {
+        let mut cells = self
+            .rows
+            .get(visible.clone())?
+            .iter()
+            .filter_map(|r| match r.kind {
+                RowKind::Cells(s, e) => Some((s, e)),
+                RowKind::Header(_) => None,
+            });
+        let (first, mut last) = cells.next()?;
+        for (_, e) in cells {
+            last = e;
+        }
+        Some((first, last - first))
+    }
+}
+
+/// The grid's display order, rebuilt only when the folder document, sort or grouping changes.
+fn arranged_for(
+    ctx: &egui::Context,
+    pane: PaneId,
+    d: &DirDoc,
+    sort: ThumbSort,
+    group: bool,
+) -> Arc<fm_preview::arrange::Arranged> {
+    let key = (
+        d.items.as_ptr() as usize,
+        d.items.len(),
+        d.files,
+        d.bytes,
+        d.recursive,
+        sort,
+        group,
+    );
+    let id = Id::NULL.with(("pv-thumb-arranged", pane));
+    type Cached = (
+        (usize, usize, usize, u64, bool, ThumbSort, bool),
+        Arc<fm_preview::arrange::Arranged>,
+    );
+    if let Some((k, a)) = ctx.data(|dt| dt.get_temp::<Cached>(id))
+        && k == key
+    {
+        return a;
+    }
+    let a = Arc::new(fm_preview::arrange::arrange(d, sort, group));
+    ctx.data_mut(|dt| dt.insert_temp(id, (key, a.clone())));
+    a
+}
+
 #[allow(clippy::too_many_arguments)]
 fn thumb_grid(
     ui: &mut Ui,
@@ -1457,6 +1667,8 @@ fn thumb_grid(
     tokens: &Tokens,
     d: &DirDoc,
     size: usize,
+    sort: ThumbSort,
+    group: bool,
     asked: Option<(usize, usize)>,
     actions: &mut Vec<Action>,
     open: &mut Option<fm_vfs::VfsUri>,
@@ -1466,7 +1678,9 @@ fn thumb_grid(
     use fm_engine::thumbs::ThumbState;
     use fm_preview::thumbs::EDGES;
 
-    if d.items.is_empty() {
+    let arranged = arranged_for(ui.ctx(), pane, d, sort, group);
+    let items = &arranged.items;
+    if items.is_empty() {
         centered(ui, tokens, "(empty folder)");
         return;
     }
@@ -1476,8 +1690,9 @@ fn thumb_grid(
     let width = ui.available_width();
     let cell = (edge as f32 * content_scale(ui)).min((width - gap).max(32.0));
     let cols = (((width + gap) / (cell + gap)).floor() as usize).max(1);
-    let rows = d.items.len().div_ceil(cols);
     let row_h = cell + label_h + gap;
+    let head_h = label_h + gap * 5.5;
+    let plan = GridPlan::new(&arranged, cols, row_h, head_h);
 
     let ctx = ui.ctx().clone();
     let cache_id = Id::NULL.with(("pv-thumb-tex", pane));
@@ -1494,7 +1709,7 @@ fn thumb_grid(
     let (mut cursor, mut offset, view_h): (usize, f32, f32) = ctx
         .data_mut(|dt| dt.get_temp(state_id))
         .unwrap_or((0, 0.0, 0.0));
-    let count = d.items.len();
+    let count = items.len();
     // A grid that was not drawn last frame (just toggled on, or a new folder) takes the focus
     // with the cursor on the first item, so the keys work immediately.
     let pass = ctx.cumulative_pass_nr();
@@ -1540,14 +1755,15 @@ fn thumb_grid(
     ctx.data_mut(|dt| dt.insert_temp(Id::NULL.with("pv-grid-active"), active));
     if active {
         let page_rows = ((view_h / row_h).floor() as usize).saturating_sub(1).max(1);
+        let step = |from: usize, rows: isize| plan.step_rows(from, rows);
         let mut target = cursor;
         ui.input_mut(|i| {
             use egui::{Key, Modifiers};
             if i.consume_key(Modifiers::COMMAND, Key::A) {
-                sel.names = d.items.iter().map(|e| e.name.clone()).collect();
+                sel.names = items.iter().map(|e| e.name.clone()).collect();
             }
             if i.consume_key(Modifiers::NONE, Key::Enter)
-                && let Some(entry) = d.items.get(cursor)
+                && let Some(entry) = items.get(cursor)
             {
                 *open = Some(entry.uri.clone());
             }
@@ -1560,17 +1776,17 @@ fn thumb_grid(
             if key(Key::ArrowRight) {
                 target = (target + 1).min(count - 1);
             }
-            if key(Key::ArrowUp) && target >= cols {
-                target -= cols;
+            if key(Key::ArrowUp) {
+                target = step(target, -1);
             }
-            if key(Key::ArrowDown) && target + cols < count {
-                target += cols;
+            if key(Key::ArrowDown) {
+                target = step(target, 1);
             }
             if key(Key::PageUp) {
-                target = target.saturating_sub(page_rows * cols);
+                target = step(target, -(page_rows as isize));
             }
             if key(Key::PageDown) {
-                target = (target + page_rows * cols).min(count - 1);
+                target = step(target, page_rows as isize);
             }
             if key(Key::Home) {
                 target = 0;
@@ -1581,9 +1797,9 @@ fn thumb_grid(
         });
         if target != cursor {
             cursor = target;
-            sel.click(&d.items, cursor, ui.input(|i| i.modifiers.shift), false);
+            sel.click(items, cursor, ui.input(|i| i.modifiers.shift), false);
             // Minimal scroll: only move when the cursor row leaves the viewport.
-            let top = (cursor / cols) as f32 * row_h;
+            let top = plan.top_of(cursor);
             let bottom = top + row_h - gap;
             if top < offset {
                 scroll_to = Some(top);
@@ -1599,126 +1815,184 @@ fn thumb_grid(
     if let Some(y) = scroll_to {
         area = area.vertical_scroll_offset(y.max(0.0));
     }
-    let out = area.show_rows(ui, row_h, rows, |ui, range| {
-        ui.spacing_mut().item_spacing = vec2(gap, 0.0);
-        window = Some((range.start * cols, range.len() * cols));
-        for row in range {
-            ui.horizontal(|ui| {
-                for col in 0..cols {
-                    let Some(entry) = d.items.get(row * cols + col) else {
-                        break;
-                    };
-                    let index = row * cols + col;
-                    let (rect, resp) =
-                        ui.allocate_exact_size(vec2(cell, row_h - gap), Sense::click_and_drag());
-                    if resp.drag_started() {
-                        if !sel.names.contains(&entry.name) {
-                            cursor = index;
-                            sel.click(&d.items, index, false, false);
-                        }
-                        let sources: Vec<_> = d
-                            .items
-                            .iter()
-                            .filter(|e| sel.names.contains(&e.name))
-                            .map(|e| e.uri.clone())
-                            .collect();
-                        resp.dnd_set_drag_payload(crate::dnd::DragPayload {
-                            sources,
-                            origin: pane,
-                        });
-                    }
-                    if resp.clicked() || resp.secondary_clicked() {
-                        cursor = index;
-                        let m = ui.input(|i| i.modifiers);
-                        if resp.clicked() {
-                            sel.click(&d.items, index, m.shift, m.command);
-                        } else if !sel.names.contains(&entry.name) {
-                            sel.click(&d.items, index, false, false);
-                        }
-                        ctx.memory_mut(|m| {
-                            m.request_focus(grid_id);
-                            m.set_focus_lock_filter(grid_id, ARROW_KEYS);
-                        });
-                    }
-                    if resp.double_clicked() {
-                        *open = Some(entry.uri.clone());
-                    }
-                    crate::context_menu::attach(&resp, s, &entry.uri, open);
-                    let focused = ctx.memory(|m| m.has_focus(grid_id));
-                    if sel.names.contains(&entry.name) {
-                        ui.painter()
-                            .rect_filled(rect, tokens.corner_radius, tokens.selection_bg);
-                    } else if resp.hovered() {
-                        ui.painter()
-                            .rect_filled(rect, tokens.corner_radius, tokens.hover_bg);
-                    }
-                    if focused && index == cursor {
-                        ui.painter().rect_stroke(
-                            rect,
+    let out = area.show_viewport(ui, |ui, viewport| {
+        let origin = ui.cursor().min;
+        ui.allocate_space(vec2(width, plan.total));
+        let visible = plan.visible(viewport.min.y, viewport.max.y);
+        window = plan.window(&visible);
+        for row_ix in visible {
+            let Some(row) = plan.rows.get(row_ix) else {
+                break;
+            };
+            let (first, last) = match row.kind {
+                RowKind::Header(group) => {
+                    if let Some(g) = arranged.groups.get(group) {
+                        let end = arranged
+                            .groups
+                            .get(group + 1)
+                            .map_or(items.len(), |next| next.start);
+                        let title = if g.folder.is_empty() {
+                            "This folder".to_string()
+                        } else {
+                            g.folder.clone()
+                        };
+                        // A filled band with an accent edge, after some air above, so a
+                        // new folder reads as a section break rather than another caption.
+                        let band = egui::Rect::from_min_size(
+                            origin + vec2(0.0, row.top + gap * 3.5),
+                            vec2(width, head_h - gap * 4.0),
+                        );
+                        let painter = ui.painter();
+                        painter.rect_filled(band, tokens.corner_radius, tokens.hover_bg);
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(band.min, vec2(4.0, band.height())),
                             tokens.corner_radius,
-                            egui::Stroke::new(tokens.border_width.max(1.5), tokens.accent),
-                            egui::StrokeKind::Inside,
+                            tokens.accent,
+                        );
+                        let title_pos = band.left_center() + vec2(gap * 2.0, 0.0);
+                        let title_rect = painter.text(
+                            title_pos,
+                            egui::Align2::LEFT_CENTER,
+                            title,
+                            tokens.font(),
+                            tokens.text,
+                        );
+                        painter.text(
+                            title_rect.right_center() + vec2(gap, 0.0),
+                            egui::Align2::LEFT_CENTER,
+                            format!("{} files", end - g.start),
+                            tokens.font(),
+                            tokens.text_muted,
                         );
                     }
-                    let art = egui::Rect::from_min_size(rect.min, vec2(cell, cell));
-                    match s.thumbs.get(entry, edge) {
-                        ThumbState::Ready(t) => {
-                            let key = Arc::as_ptr(&t) as usize;
-                            let (_, tex) = cache.remove(&key).unwrap_or_else(|| {
-                                let ci = egui::ColorImage::from_rgba_unmultiplied(
-                                    [t.width as usize, t.height as usize],
-                                    &t.rgba,
-                                );
-                                let tex = ctx.load_texture(
-                                    format!("pv-thumb-{pane}-{key}"),
-                                    ci,
-                                    egui::TextureOptions::LINEAR,
-                                );
-                                (t.clone(), tex)
-                            });
-                            let natural = vec2(t.width as f32, t.height as f32);
-                            let fit = cell / edge as f32;
-                            let draw = natural * fit;
-                            let at = egui::Rect::from_center_size(art.center(), draw);
-                            egui::Image::new((tex.id(), draw)).paint_at(ui, at);
-                            used.insert(key, (t, tex));
-                        }
-                        state => {
-                            waiting |= matches!(state, ThumbState::Pending);
-                            let inner = art.shrink(gap);
-                            ui.painter().rect_stroke(
-                                inner,
-                                tokens.corner_radius,
-                                egui::Stroke::new(tokens.border_width, tokens.border),
-                                egui::StrokeKind::Inside,
-                            );
-                            let text = if matches!(state, ThumbState::Pending) {
-                                "…".to_string()
-                            } else {
-                                tile_label(entry)
-                            };
-                            ui.painter().text(
-                                inner.center(),
-                                egui::Align2::CENTER_CENTER,
-                                text,
-                                tokens.font(),
-                                tokens.text_muted,
-                            );
-                        }
-                    }
-                    let mut job =
-                        LayoutJob::simple(entry.name.clone(), tokens.font(), tokens.text, cell);
-                    job.wrap.max_rows = 1;
-                    job.wrap.break_anywhere = true;
-                    let galley = ui.fonts_mut(|f| f.layout_job(job));
-                    let pos = egui::pos2(
-                        rect.center().x - galley.size().x / 2.0,
-                        rect.min.y + cell + 1.0,
-                    );
-                    ui.painter().galley(pos, galley, tokens.text);
-                    resp.on_hover_text(&entry.name);
+                    continue;
                 }
-            });
+                RowKind::Cells(first, last) => (first, last),
+            };
+            for index in first..last {
+                let Some(entry) = items.get(index) else {
+                    break;
+                };
+                let col = index - first;
+                let rect = egui::Rect::from_min_size(
+                    origin + vec2(col as f32 * (cell + gap), row.top),
+                    vec2(cell, row_h - gap),
+                );
+                let resp = ui.interact(
+                    rect,
+                    Id::NULL.with(("pv-thumb-cell", pane, index)),
+                    Sense::click_and_drag(),
+                );
+                if resp.drag_started() {
+                    if !sel.names.contains(&entry.name) {
+                        cursor = index;
+                        sel.click(items, index, false, false);
+                    }
+                    let sources: Vec<_> = items
+                        .iter()
+                        .filter(|e| sel.names.contains(&e.name))
+                        .map(|e| e.uri.clone())
+                        .collect();
+                    resp.dnd_set_drag_payload(crate::dnd::DragPayload {
+                        sources,
+                        origin: pane,
+                    });
+                }
+                if resp.clicked() || resp.secondary_clicked() {
+                    cursor = index;
+                    let m = ui.input(|i| i.modifiers);
+                    if resp.clicked() {
+                        sel.click(items, index, m.shift, m.command);
+                    } else if !sel.names.contains(&entry.name) {
+                        sel.click(items, index, false, false);
+                    }
+                    ctx.memory_mut(|m| {
+                        m.request_focus(grid_id);
+                        m.set_focus_lock_filter(grid_id, ARROW_KEYS);
+                    });
+                }
+                if resp.double_clicked() {
+                    *open = Some(entry.uri.clone());
+                }
+                crate::context_menu::attach(&resp, s, &entry.uri, open);
+                let focused = ctx.memory(|m| m.has_focus(grid_id));
+                if sel.names.contains(&entry.name) {
+                    ui.painter()
+                        .rect_filled(rect, tokens.corner_radius, tokens.selection_bg);
+                } else if resp.hovered() {
+                    ui.painter()
+                        .rect_filled(rect, tokens.corner_radius, tokens.hover_bg);
+                }
+                if focused && index == cursor {
+                    ui.painter().rect_stroke(
+                        rect,
+                        tokens.corner_radius,
+                        egui::Stroke::new(tokens.border_width.max(1.5), tokens.accent),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                let art = egui::Rect::from_min_size(rect.min, vec2(cell, cell));
+                match s.thumbs.get(entry, edge) {
+                    ThumbState::Ready(t) => {
+                        let key = Arc::as_ptr(&t) as usize;
+                        let (_, tex) = cache.remove(&key).unwrap_or_else(|| {
+                            let ci = egui::ColorImage::from_rgba_unmultiplied(
+                                [t.width as usize, t.height as usize],
+                                &t.rgba,
+                            );
+                            let tex = ctx.load_texture(
+                                format!("pv-thumb-{pane}-{key}"),
+                                ci,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            (t.clone(), tex)
+                        });
+                        let natural = vec2(t.width as f32, t.height as f32);
+                        let fit = cell / edge as f32;
+                        let draw = natural * fit;
+                        let at = egui::Rect::from_center_size(art.center(), draw);
+                        egui::Image::new((tex.id(), draw)).paint_at(ui, at);
+                        used.insert(key, (t, tex));
+                    }
+                    state => {
+                        waiting |= matches!(state, ThumbState::Pending);
+                        let inner = art.shrink(gap);
+                        ui.painter().rect_stroke(
+                            inner,
+                            tokens.corner_radius,
+                            egui::Stroke::new(tokens.border_width, tokens.border),
+                            egui::StrokeKind::Inside,
+                        );
+                        let text = if matches!(state, ThumbState::Pending) {
+                            "…".to_string()
+                        } else {
+                            tile_label(entry)
+                        };
+                        ui.painter().text(
+                            inner.center(),
+                            egui::Align2::CENTER_CENTER,
+                            text,
+                            tokens.font(),
+                            tokens.text_muted,
+                        );
+                    }
+                }
+                let mut job = LayoutJob::simple(
+                    fm_preview::arrange::base_name(&entry.name).to_string(),
+                    tokens.font(),
+                    tokens.text,
+                    cell,
+                );
+                job.wrap.max_rows = 1;
+                job.wrap.break_anywhere = true;
+                let galley = ui.fonts_mut(|f| f.layout_job(job));
+                let pos = egui::pos2(
+                    rect.center().x - galley.size().x / 2.0,
+                    rect.min.y + cell + 1.0,
+                );
+                ui.painter().galley(pos, galley, tokens.text);
+                resp.on_hover_text(&entry.name);
+            }
         }
     });
     offset = out.state.clamped_offset().y;
@@ -1727,8 +2001,7 @@ fn thumb_grid(
         *published = Some(fm_engine::file_cmds::GridSelection {
             pane,
             dir,
-            items: d
-                .items
+            items: items
                 .iter()
                 .filter(|e| sel.names.contains(&e.name))
                 .map(|e| e.uri.clone())
@@ -1749,7 +2022,7 @@ fn thumb_grid(
         ));
     }
     if d.items_truncated {
-        ui.label(tokens.muted(format!("Showing the first {} entries", d.items.len())));
+        ui.label(tokens.muted(format!("Showing the first {} entries", items.len())));
     }
 }
 

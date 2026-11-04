@@ -1021,13 +1021,26 @@ impl Session {
             None => self.layout.panes(),
         };
         let mut uris: Vec<VfsUri> = Vec::new();
-        for id in panes {
+        for &id in &panes {
             let Some(state) = self.layout.state(id) else {
                 continue;
             };
             let loc = &state.location;
             if state.kind.is_files() && loc.scheme() == Scheme::File && !uris.contains(loc) {
                 uris.push(loc.clone());
+            }
+        }
+        // Expanded tree nodes show their subfolders too, so they are watched as well. They
+        // come after the pane folders so the watch cap never starves a listing.
+        let mut watched = uris.clone();
+        for id in panes {
+            let Some(state) = self.layout.state(id).filter(|s| s.kind.is_files()) else {
+                continue;
+            };
+            for node in state.tree.expanded() {
+                if node.scheme() == Scheme::File && !watched.contains(node) {
+                    watched.push(node.clone());
+                }
             }
         }
         let mounts: Vec<String> = self
@@ -1037,7 +1050,7 @@ impl Session {
             .filter(|d| crate::watch::is_network_filesystem(&d.filesystem))
             .filter_map(|d| d.mount.local_path_string())
             .collect();
-        if let Some(notice) = self.watch.sync(&uris, &mounts) {
+        if let Some(notice) = self.watch.sync(&watched, &mounts) {
             self.notice = Some(notice);
         }
         let drained = self.watch.drain(Instant::now());

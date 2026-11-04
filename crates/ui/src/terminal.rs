@@ -210,6 +210,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused
         &snap,
         focused && exited.is_none(),
     );
+    if exited.is_none() && s.pending_kind.is_none() {
+        link_under_pointer(ui, s, pane, tokens, &response, rect, &m, &snap);
+    }
 
     if let Some(code) = exited {
         banner(ui, s, pane, tokens, rect, code);
@@ -534,6 +537,47 @@ fn handle_pointer(
         } else {
             s.terminal_select(None);
         }
+    }
+}
+
+/// Ctrl+click (Cmd on macOS) opens a web link; while the key is held the link is underlined.
+/// A terminal app that captures the mouse keeps its clicks unless Shift is held.
+#[allow(clippy::too_many_arguments)]
+fn link_under_pointer(
+    ui: &Ui,
+    s: &mut Session,
+    pane: PaneId,
+    tokens: &Tokens,
+    response: &egui::Response,
+    rect: Rect,
+    m: &Metrics,
+    snap: &Snapshot,
+) {
+    let mods = ui.input(|i| i.modifiers);
+    if !mods.command || (snap.mouse.enabled() && !mods.shift) || !response.hovered() {
+        return;
+    }
+    let Some(pos) = ui.input(|i| i.pointer.hover_pos()) else {
+        return;
+    };
+    let (row, col) = cell_at(rect, m, snap, pos);
+    let Some(link) = fm_term::link_at(snap, row, col) else {
+        return;
+    };
+    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    let y = rect.top() + PAD + f32::from(row + 1) * m.ch - 1.0;
+    let x0 = rect.left() + PAD + f32::from(link.start) * m.cw;
+    let x1 = rect.left() + PAD + f32::from(link.end + 1) * m.cw;
+    ui.painter().with_clip_rect(rect).line_segment(
+        [Pos2::new(x0, y), Pos2::new(x1, y)],
+        Stroke::new(1.5, tokens.accent),
+    );
+    if response.clicked() {
+        let _ = s.layout.focus_pane(pane);
+        s.dispatch_or_notice(
+            "term.open_link",
+            &serde_json::json!({ "pane": pane, "row": row, "col": col }),
+        );
     }
 }
 

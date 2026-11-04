@@ -61,6 +61,7 @@ pub mod servers;
 pub mod session;
 pub mod sort_cmds;
 pub mod term_cmds;
+pub mod term_link_cmds;
 pub mod term_mouse_cmds;
 pub mod theme_cmds;
 pub mod thumb_cmds;

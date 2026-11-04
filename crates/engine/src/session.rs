@@ -877,6 +877,39 @@ mod tests {
     }
 
     #[test]
+    fn toggling_hidden_keeps_the_cursor_on_the_same_entry() {
+        let (mut s, mem, uri) = mem_session();
+        mem.put_str(&format!("{}/.aaa", uri.path_str()), b"x").ok();
+        mem.put_str(&format!("{}/zzz_target", uri.path_str()), b"x")
+            .ok();
+        s.submit_read(uri.clone()).expect("submit");
+        wait_ready(&mut s, &uri);
+        let name_at = |s: &mut Session| {
+            let row = s.layout.state(1).expect("pane").listing.focused_row;
+            let (entries, ix) = s.pane_view(1).expect("view");
+            let i = *ix.order.get(row).expect("row");
+            entries.get(i as usize).expect("entry").name.clone()
+        };
+        let (entries, ix) = s.pane_view(1).expect("view");
+        let row = ix
+            .order
+            .iter()
+            .position(|i| {
+                entries
+                    .get(*i as usize)
+                    .is_some_and(|e| e.name == "zzz_target")
+            })
+            .expect("target visible");
+        s.layout.state_mut(1).expect("pane").listing.focused_row = row;
+        s.dispatch("view.hidden.toggle", &serde_json::Value::Null)
+            .expect("on");
+        assert_eq!(name_at(&mut s), "zzz_target");
+        s.dispatch("view.hidden.toggle", &serde_json::Value::Null)
+            .expect("off");
+        assert_eq!(name_at(&mut s), "zzz_target");
+    }
+
+    #[test]
     fn hidden_entries_are_filtered_until_toggled() {
         let (mut s, mem, uri) = mem_session();
         mem.put_str("/d/.secret", b"x").ok();

@@ -16,7 +16,7 @@ pub fn summarize(
     limits: &Limits,
     recursive: bool,
 ) -> Result<DirDoc, FmError> {
-    summarize_cancellable(vfs, entry, limits, recursive, None, None)
+    summarize_cancellable(vfs, entry, limits, recursive, false, None, None)
 }
 
 /// [`summarize`] that stops early (returning the partial document) once `cancel` is set;
@@ -26,6 +26,7 @@ pub fn summarize_cancellable(
     entry: &Entry,
     limits: &Limits,
     recursive: bool,
+    show_hidden: bool,
     cancel: Option<&AtomicBool>,
     progress: Option<&dyn Fn(DirDoc)>,
 ) -> Result<DirDoc, FmError> {
@@ -51,13 +52,24 @@ pub fn summarize_cancellable(
         for c in children.iter().take(limits.dir_entries) {
             count(&mut doc, c, &c.name);
         }
-        let mut shown: Vec<&Entry> = children.iter().filter(|c| !c.hidden).collect();
+        let mut shown: Vec<&Entry> = children
+            .iter()
+            .filter(|c| show_hidden || !is_hidden(c))
+            .collect();
         sort_entries(&mut shown);
         doc.items_truncated = shown.len() > limits.dir_items;
         doc.items = shown.into_iter().take(limits.dir_items).cloned().collect();
         return Ok(doc);
     }
-    Ok(walk(vfs, children, limits, doc, cancel, progress))
+    Ok(walk(
+        vfs,
+        children,
+        limits,
+        doc,
+        show_hidden,
+        cancel,
+        progress,
+    ))
 }
 
 /// One pass over a recursive tree, depth-first so a folder's own files come before its
@@ -67,6 +79,7 @@ fn walk(
     root: Vec<Entry>,
     limits: &Limits,
     mut doc: DirDoc,
+    show_hidden: bool,
     cancel: Option<&AtomicBool>,
     progress: Option<&dyn Fn(DirDoc)>,
 ) -> DirDoc {
@@ -85,7 +98,7 @@ fn walk(
             }
             if visited >= limits.dir_scan_entries || Instant::now() >= deadline {
                 doc.truncated = true;
-                doc.items_truncated |= child_is_shown(&child);
+                doc.items_truncated |= show_hidden || !is_hidden(&child);
                 break 'walk;
             }
             visited += 1;
@@ -101,7 +114,7 @@ fn walk(
                     ..doc.clone()
                 });
             }
-            if !child.hidden {
+            if show_hidden || !(is_hidden(&child) || in_hidden_dir(&prefix)) {
                 if doc.items.len() < limits.dir_items {
                     let mut item = child.clone();
                     item.name = shown.clone();
@@ -132,8 +145,14 @@ fn walk(
     doc
 }
 
-fn child_is_shown(child: &Entry) -> bool {
-    !child.hidden
+/// Hidden on any platform: the OS flag or a leading dot.
+fn is_hidden(entry: &Entry) -> bool {
+    entry.hidden || entry.name.starts_with('.')
+}
+
+/// Whether a `a/.b/` style prefix passes through a dot-folder.
+fn in_hidden_dir(prefix: &str) -> bool {
+    prefix.split('/').any(|part| part.starts_with('.'))
 }
 
 /// Attribute `child` to the direct subfolder of the scanned folder that contains it.
@@ -228,7 +247,7 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::{natural_cmp, summarize};
+    use super::{natural_cmp, summarize, summarize_cancellable};
     use crate::Limits;
     use fm_testkit::{FaultFs, MemFs};
     use fm_vfs::{Entry, Vfs, VfsUri};
@@ -240,6 +259,15 @@ mod tests {
 
     fn entry(fs: &dyn Vfs, path: &str) -> Entry {
         fs.stat(&uri(path)).expect("stat")
+    }
+
+    fn summarize_all(
+        fs: &MemFs,
+        entry: &fm_vfs::Entry,
+        limits: &Limits,
+        recursive: bool,
+    ) -> Result<crate::DirDoc, fm_vfs::FmError> {
+        summarize_cancellable(fs, entry, limits, recursive, true, None, None)
     }
 
     fn tree() -> MemFs {
@@ -257,7 +285,8 @@ mod tests {
     #[test]
     fn shallow_summary_counts_direct_children_only() {
         let fs = tree();
-        let doc = summarize(&fs, &entry(&fs, "/r"), &Limits::default(), false).expect("summary");
+        let doc =
+            summarize_all(&fs, &entry(&fs, "/r"), &Limits::default(), false).expect("summary");
         assert!(!doc.recursive && doc.unreadable == 0);
         assert_eq!((doc.files, doc.dirs), (2, 2));
         assert_eq!(doc.bytes, 8);
@@ -279,7 +308,7 @@ mod tests {
     #[test]
     fn recursive_summary_counts_the_whole_tree() {
         let fs = tree();
-        let doc = summarize(&fs, &entry(&fs, "/r"), &Limits::default(), true).expect("summary");
+        let doc = summarize_all(&fs, &entry(&fs, "/r"), &Limits::default(), true).expect("summary");
         assert!(doc.recursive);
         assert_eq!((doc.files, doc.dirs), (5, 3));
         assert_eq!(doc.bytes, 27);
@@ -343,7 +372,7 @@ mod tests {
             dir_scan_millis: 0,
             ..Limits::default()
         };
-        let doc = summarize(&fs, &entry(&fs, "/r"), &limits, true).expect("summary");
+        let doc = summarize_all(&fs, &entry(&fs, "/r"), &limits, true).expect("summary");
         assert!(doc.truncated && doc.items_truncated);
     }
 
@@ -354,5 +383,31 @@ mod tests {
         assert_eq!(natural_cmp("a", "B"), Ordering::Less);
         assert_eq!(natural_cmp("a", "a1"), Ordering::Less);
         assert_eq!(natural_cmp("", ""), Ordering::Equal);
+    }
+
+    #[test]
+    fn dot_entries_are_listed_only_when_hidden_files_are_shown() {
+        let fs = MemFs::new();
+        fs.mkdirs_str("/r/.cfg").expect("dirs");
+        fs.put_str("/r/.dot.png", b"x").expect("f");
+        fs.put_str("/r/a.png", b"x").expect("f");
+        fs.put_str("/r/.cfg/in.png", b"x").expect("f");
+        for recursive in [false, true] {
+            let run = |show| {
+                let doc = summarize_cancellable(
+                    &fs,
+                    &entry(&fs, "/r"),
+                    &Limits::default(),
+                    recursive,
+                    show,
+                    None,
+                    None,
+                )
+                .expect("summary");
+                doc.items.into_iter().map(|e| e.name).collect::<Vec<_>>()
+            };
+            assert_eq!(run(false), ["a.png"], "recursive={recursive}");
+            assert!(run(true).len() > 1, "recursive={recursive}");
+        }
     }
 }

@@ -3,6 +3,7 @@
 //! the engine runs [`render`] on a job lane. Everything read from disk is hostile:
 //! sizes are capped, dimensions are checked from headers, and parsers are depth-limited.
 
+pub mod arrange;
 pub mod dir;
 pub mod hex;
 pub mod highlight;
@@ -212,6 +213,8 @@ pub fn base_meta(e: &Entry) -> Vec<(String, String)> {
 pub struct RenderOpts {
     /// Directory previews count and list every file below the folder.
     pub recursive: bool,
+    /// Directory previews list hidden entries too.
+    pub show_hidden: bool,
 }
 
 /// Preview `entry`, never panicking: a parser panic becomes an error card.
@@ -285,7 +288,16 @@ fn render_inner(
     detection: Detection,
 ) -> Result<Preview, FmError> {
     if entry.is_dir_like() {
-        return dir::summarize(vfs, entry, limits, opts.recursive).map(Preview::Dir);
+        return dir::summarize_cancellable(
+            vfs,
+            entry,
+            limits,
+            opts.recursive,
+            opts.show_hidden,
+            None,
+            None,
+        )
+        .map(Preview::Dir);
     }
     if !entry.is_file() && !entry.is_symlink() {
         return Ok(Preview::Meta(MetaDoc {

@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use fm_layout::PaneId;
 use fm_preview::Preview;
+use fm_preview::arrange::ThumbSort;
 use fm_preview::thumbs::EDGES;
 use fm_vfs::{Entry, FmError};
 
@@ -56,17 +57,18 @@ pub(crate) fn request(
         return Ok(());
     };
     let (first, count) = window;
-    let len = doc.items.len();
+    let items = fm_preview::arrange::arrange(doc, slot.thumb_sort, slot.thumb_group).items;
+    let len = items.len();
     let (vis_end, ahead_end) = (
         first.saturating_add(count).min(len),
         first.saturating_add(count.saturating_mul(2)).min(len),
     );
     let first = first.min(len);
     let behind = first.saturating_sub(count);
-    let order: Vec<Entry> = doc.items[first..vis_end]
+    let order: Vec<Entry> = items[first..vis_end]
         .iter()
-        .chain(&doc.items[vis_end..ahead_end])
-        .chain(doc.items[behind..first].iter().rev())
+        .chain(&items[vis_end..ahead_end])
+        .chain(items[behind..first].iter().rev())
         .cloned()
         .collect();
     let vfs = s.backends.require(&subject.uri)?;
@@ -136,6 +138,67 @@ pub fn size() -> CommandSpec {
     }
 }
 
+/// `preview.thumbs.sort {by: "name"|"modified"|"type", pane?: number}`.
+pub fn sort() -> CommandSpec {
+    CommandSpec {
+        id: "preview.thumbs.sort",
+        label: "Thumbnail Sort",
+        menu: &["View", "Thumbnail Sort"],
+        shortcut: None,
+        params: "{by: \"name\"|\"modified\"|\"type\", pane?: number}",
+        enabled: has_preview,
+        run: |s, p: &Params| {
+            let pane = s.preview_pane(p)?;
+            let by = object(p)?
+                .and_then(|m| m.get("by"))
+                .and_then(Params::as_str)
+                .and_then(ThumbSort::parse)
+                .ok_or_else(|| {
+                    FmError::InvalidParams("by must be name, modified or type".into())
+                })?;
+            let slot = slot_mut(s, pane);
+            slot.thumb_sort = by;
+            rearranged(s, pane)
+        },
+    }
+}
+
+/// `preview.thumbs.group {on?: bool, pane?: number}` — subfolder headings in recursive grids.
+pub fn group() -> CommandSpec {
+    CommandSpec {
+        id: "preview.thumbs.group",
+        label: "Group Thumbnails by Folder",
+        menu: &["View", "Group Thumbnails by Folder"],
+        shortcut: None,
+        params: "{on?: bool, pane?: number}",
+        enabled: has_preview,
+        run: |s, p: &Params| {
+            let pane = s.preview_pane(p)?;
+            let on = object(p)?
+                .and_then(|m| m.get("on"))
+                .map(|v| {
+                    v.as_bool()
+                        .ok_or_else(|| FmError::InvalidParams("on: bool".into()))
+                })
+                .transpose()?;
+            let slot = slot_mut(s, pane);
+            slot.thumb_group = on.unwrap_or(!slot.thumb_group);
+            rearranged(s, pane)
+        },
+    }
+}
+
+/// The tile order changed: the grid reports its window again from the top.
+fn rearranged(s: &mut Session, pane: PaneId) -> Result<(), FmError> {
+    let slot = slot_mut(s, pane);
+    let window = slot.thumb_window.take();
+    s.thumbs.cancel(pane);
+    if let Some(w) = window {
+        request(s, pane, w)?;
+    }
+    Ok(())
+}
+
 /// `preview.thumbs.visible {first, count, pane?}` — sent by the grid when its window changes.
 pub fn visible() -> CommandSpec {
     CommandSpec {
@@ -190,5 +253,5 @@ pub fn clear_cache() -> CommandSpec {
 }
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![toggle(), size(), visible(), clear_cache()]
+    vec![toggle(), size(), sort(), group(), visible(), clear_cache()]
 }

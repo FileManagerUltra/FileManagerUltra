@@ -107,7 +107,10 @@ impl crate::Session {
             return false;
         }
         match &self.updates.status {
-            UpdateStatus::Failed(message) => self.notice = Some(message.clone()),
+            // The startup check is best-effort: only a manual check reports failures.
+            UpdateStatus::Failed(message) if self.updates.manual => {
+                self.notice = Some(message.clone());
+            }
             UpdateStatus::UpToDate if self.updates.manual => {
                 self.info = Some((
                     "No newer published release is available.".into(),
@@ -143,6 +146,12 @@ fn fetch_latest() -> CheckResult {
         .map_err(|e| format!("Cannot check for updates: {e}"))?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
+    }
+    let status = response.status();
+    if matches!(status.as_u16(), 403 | 429) {
+        return Err(
+            "Cannot check for updates: GitHub is rate limiting requests. Try again later.".into(),
+        );
     }
     let response = response
         .error_for_status()
@@ -352,7 +361,7 @@ mod tests {
                     std::thread::yield_now();
                 }
                 assert!(!s.updates.visible);
-                assert_eq!(s.notice.as_deref(), fail.then_some("offline"));
+                assert_eq!(s.notice.as_deref(), (fail && manual).then_some("offline"));
                 assert_eq!(s.info.is_some(), manual && !fail);
             }
         }

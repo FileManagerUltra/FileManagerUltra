@@ -658,3 +658,18 @@ fn visible_local_folders_pick_up_files_added_behind_the_apps_back() {
             .is_some_and(|e| e.iter().any(|x| x.name == "new.txt"))
     });
 }
+
+#[test]
+fn mkdir_shows_up_in_a_cached_directory_listing() {
+    let fs = MemFs::new();
+    fs.mkdirs_str("/d/old").expect("d");
+    let mut s = session_on(Arc::new(fs.clone()));
+    s.ensure_read(uri("/d")).expect("read");
+    poll_until(&mut s, "listing", |s| s.dirs.state(&uri("/d")).is_ready());
+    dispatch(&mut s, "file.mkdir", json!({"parent": "/d", "name": "new"})).expect("mkdir");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    poll_until(&mut s, "refreshed listing", |s| {
+        s.dirs.entries(&uri("/d")).is_some_and(|e| e.len() == 2)
+    });
+}

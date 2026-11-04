@@ -94,11 +94,14 @@ fn leaving_a_directory_drops_its_watch() {
     let other_uri = VfsUri::parse(&other.path().to_string_lossy()).unwrap();
     s.dispatch("nav.open", &Params::String(other_uri.to_string()))
         .unwrap();
+    // The old folder stays expanded in the tree, so it keeps its watch until collapsed.
+    let pane = s.layout.focused();
+    s.layout.state_mut(pane).unwrap().tree.collapse(&uri);
     assert!(pump(&mut s, Duration::from_secs(5), |s| s
         .watch
         .covers(&other_uri)
         && !s.watch.covers(&uri)));
-    assert_eq!(s.watch.watched(), 1);
+    assert!(!s.watch.covers(&uri));
 }
 
 #[test]
@@ -143,4 +146,31 @@ fn changes_made_while_the_workspace_was_inactive_show_up_on_return() {
         s, &uri
     )
     .contains(&"shot.png".to_string())));
+}
+
+#[test]
+fn external_folder_in_an_expanded_tree_node_appears_in_the_tree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let node = tmp.path().join("node");
+    std::fs::create_dir(&node).unwrap();
+    let (mut s, _) = open(tmp.path());
+    let node_uri = VfsUri::parse(&node.to_string_lossy()).unwrap();
+    // Expanding a node reads it, but the pane stays in the parent folder.
+    let pane = s.layout.focused();
+    s.layout
+        .state_mut(pane)
+        .unwrap()
+        .tree
+        .expand(node_uri.clone());
+    s.submit_read(node_uri.clone()).unwrap();
+    assert!(pump(&mut s, Duration::from_secs(5), |s| s
+        .dirs
+        .state(&node_uri)
+        .is_ready()
+        && s.watch.covers(&node_uri)));
+    std::fs::create_dir(node.join("cloned")).unwrap();
+    assert!(pump(&mut s, Duration::from_millis(1500), |s| names(
+        s, &node_uri
+    )
+    .contains(&"cloned".to_string())));
 }

@@ -316,6 +316,11 @@ impl App {
 }
 
 impl eframe::App for App {
+    // eframe's default is near-black, which shows as dark bars around panels in light mode.
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        visuals.panel_fill.to_normalized_gamma_f32()
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.window.reposition(&ctx);

@@ -67,13 +67,16 @@ pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, f
     } else {
         text.color(tokens.text_muted)
     };
-    let response = ui
-        .add(
-            egui::Label::new(text)
-                .truncate()
-                .sense(egui::Sense::click()),
-        )
-        .on_hover_text(format!("{path}\nClick or Ctrl+L to type a path"));
+    // The whole remaining header width is the click target, not just the text.
+    let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| ui.add(egui::Label::new(text).truncate()),
+    );
+    let response = response.on_hover_text(format!("{path}\nClick or Ctrl+L to type a path"));
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
     }

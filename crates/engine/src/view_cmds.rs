@@ -1,8 +1,10 @@
 //! View-wide toggles that are not per-pane sort state.
 
+use fm_layout::PaneId;
 use fm_vfs::FmError;
 
 use crate::registry::{CommandSpec, Params};
+use crate::session::Session;
 
 /// `view.hidden.toggle` — show or hide dot-files in every pane and tree.
 pub fn toggle_hidden() -> CommandSpec {
@@ -18,18 +20,66 @@ pub fn toggle_hidden() -> CommandSpec {
         params: "none",
         enabled: |_s| true,
         run: |s, _p: &Params| {
-            s.show_hidden = !s.show_hidden;
             let panes = s.layout.panes();
-            for pane in panes {
-                // A selection must never include rows the user cannot see.
-                if let Some(state) = s.layout.state_mut(pane) {
-                    state.listing.clear_selection();
-                    state.listing.focused_row = 0;
-                }
+            // Row numbers shift when entries appear or vanish, so follow the cursor by name.
+            let before: Vec<_> = panes.iter().map(|p| (*p, cursor_context(s, *p))).collect();
+            s.show_hidden = !s.show_hidden;
+            for (pane, context) in before {
                 s.invalidate_view(pane);
+                restore_cursor(s, pane, context);
             }
             Ok::<(), FmError>(())
         },
+    }
+}
+
+/// Visible names in display order plus the cursor row, captured before the view changes.
+type CursorContext = Option<(Vec<String>, usize)>;
+
+fn cursor_context(s: &mut Session, pane: PaneId) -> CursorContext {
+    let row = s.layout.state(pane)?.listing.focused_row;
+    let (entries, ix) = s.pane_view(pane)?;
+    let names = ix
+        .order
+        .iter()
+        .filter_map(|i| entries.get(*i as usize).map(|e| e.name.clone()))
+        .collect();
+    Some((names, row))
+}
+
+/// Put the cursor back on the entry it was on, or the nearest one that is still visible,
+/// and drop selected entries that are no longer shown.
+fn restore_cursor(s: &mut Session, pane: PaneId, context: CursorContext) {
+    let Some((old, row)) = context else {
+        // No loaded view to compare against: a selection must never include unseen rows.
+        if let Some(state) = s.layout.state_mut(pane) {
+            state.listing.clear_selection();
+            state.listing.focused_row = 0;
+        }
+        return;
+    };
+    let Some((entries, ix)) = s.pane_view(pane) else {
+        return;
+    };
+    let new: Vec<String> = ix
+        .order
+        .iter()
+        .filter_map(|i| entries.get(*i as usize).map(|e| e.name.clone()))
+        .collect();
+    let row = row.min(old.len().saturating_sub(1));
+    let after = old.get(row..).unwrap_or_default().iter();
+    let before = old.get(..row).unwrap_or_default().iter().rev();
+    let found = after
+        .chain(before)
+        .find_map(|name| new.iter().position(|n| n == name));
+    let visible: std::collections::BTreeSet<String> = new.into_iter().collect();
+    if let Some(state) = s.layout.state_mut(pane) {
+        state.listing.prune(&visible);
+        if let Some(row) = found {
+            state.listing.focused_row = row;
+        } else {
+            state.listing.focused_row = 0;
+        }
     }
 }
 

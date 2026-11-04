@@ -1177,6 +1177,17 @@ fn thumbnail_mode_requests_only_the_visible_window() {
         r.s.dispatch("preview.thumbs.size", &json!({"size": "huge"}))
             .is_err()
     );
+    r.s.dispatch("preview.thumbs.sort", &json!({"by": "modified"}))
+        .expect("sort");
+    r.s.dispatch("preview.thumbs.group", &json!({"on": false}))
+        .expect("group");
+    for bad in [json!({"by": "size"}), json!({}), json!({"by": 3})] {
+        assert!(r.s.dispatch("preview.thumbs.sort", &bad).is_err(), "{bad}");
+    }
+    assert!(
+        r.s.dispatch("preview.thumbs.group", &json!({"on": "yes"}))
+            .is_err()
+    );
     assert!(
         r.s.dispatch("preview.thumbs.visible", &json!({"first": -1, "count": 5}))
             .is_err()

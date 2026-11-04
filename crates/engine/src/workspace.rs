@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use fm_layout::{Layout, PaneId, PaneKind};
-use fm_vfs::{FmError, VfsUri};
+use fm_vfs::{FmError, Scheme, VfsUri};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -440,6 +440,15 @@ impl Session {
                 st.kind = PaneKind::Network;
                 st.tree = fm_layout::TreeState::new(net.clone());
                 st.navigate(net);
+            }
+            // Only the selected folder is saved: local trees always start at `/`.
+            if st.kind == PaneKind::Files
+                && st.location.scheme() == Scheme::File
+                && st.tree.root.scheme() == Scheme::File
+                && st.tree.root != VfsUri::root_file()
+            {
+                st.tree = fm_layout::TreeState::new(VfsUri::root_file());
+                st.reveal_location();
             }
         }
         let base = self.workspaces.alloc_base();
@@ -979,5 +988,22 @@ mod tests {
         let st = restored.state(restored.focused()).expect("pane");
         assert_eq!(st.kind, PaneKind::Network);
         assert_eq!(st.location, VfsUri::network());
+    }
+
+    #[test]
+    fn restored_local_pane_roots_its_tree_at_the_filesystem_root() {
+        let mut s = crate::Session::new().expect("session");
+        let loc = VfsUri::parse("/home/u/code").expect("uri");
+        let layout = Layout::single_rooted(loc.clone(), VfsUri::parse("/home/u").expect("uri"), 10);
+        let value = serde_json::to_value(Snapshot {
+            layout,
+            previews: BTreeMap::new(),
+        })
+        .expect("json");
+        let restored = s.restore(&value).expect("restore");
+        let st = restored.state(restored.focused()).expect("pane");
+        assert_eq!(st.tree.root, VfsUri::root_file());
+        assert_eq!(st.location, loc);
+        assert!(st.tree.is_expanded(&VfsUri::parse("/home/u").expect("uri")));
     }
 }

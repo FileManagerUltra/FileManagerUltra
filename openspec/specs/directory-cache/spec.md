@@ -32,3 +32,10 @@ A watcher or refresh SHALL invalidate a uri's cache entry (bump revision, drop e
 - **WHEN** `nav.refresh` runs for the focused pane
 - **THEN** the pane's current uri is invalidated and re-read through a job, and a new revision replaces the old entries atomically
 
+
+### Requirement: Visible tree folders stay live
+Local folders whose contents are on screen SHALL be watched for external changes: the Files panes' current folders and every expanded node of their trees. Pane folders SHALL take priority when the watch cap is reached.
+
+#### Scenario: External folder under an expanded tree node
+- **WHEN** another program creates a folder inside a tree node that is expanded but is not the pane's current folder
+- **THEN** the new folder appears under that node without the user refreshing

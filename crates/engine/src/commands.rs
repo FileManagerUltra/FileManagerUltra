@@ -60,6 +60,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(crate::preview_reload_cmds::specs());
     specs.extend(term_cmds::specs());
     specs.extend(crate::term_mouse_cmds::specs());
+    specs.extend(crate::term_link_cmds::specs());
     specs.extend(nav_cmds::specs());
     specs.extend(open_cmds::specs());
     specs.extend(thumb_cmds::specs());
