@@ -13,6 +13,7 @@
   <a href="https://filemanagerultra.com/">Website</a> ·
   <a href="https://github.com/FileManagerUltra/FileManagerUltra/releases">Download</a> ·
   <a href="docs/install.md">Install guide</a> ·
+  <a href="ROADMAP.md">Roadmap</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
