@@ -16,6 +16,8 @@ workspace = true
 
 [dependencies]
 fm-brand.workspace = true
+fm-dragout.workspace = true
+raw-window-handle = "0.6"
 fm-engine.workspace = true
 fm-layout.workspace = true
 fm-ui.workspace = true
@@ -25,6 +27,9 @@ eframe.workspace = true
 egui.workspace = true
 # Feature-only dependency: enables winit's Wayland title bar (see root Cargo.toml).
 winit.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+fm-wayland.workspace = true
 
 [dev-dependencies]
 fm-testkit.workspace = true

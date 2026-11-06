@@ -262,12 +262,38 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     let mut link = None;
                     let view = View {
                         pretty: slot.pretty,
+                        subject: slot.subject.as_ref().map(|e| &e.uri),
                         source: slot.source,
                         wrap: slot.wrap,
                         zoom: slot.zoom,
                     };
-                    if let Some(block) = static_body(ui, pane, tokens, &p, view, &mut link) {
+                    let images = match (&*p, slot.source, slot.subject.as_ref()) {
+                        (Preview::Markdown(m), false, Some(document)) => Some(
+                            markdown::image_urls(m, tokens.dark)
+                                .into_iter()
+                                .map(|url| {
+                                    let state = s.md_images.state(
+                                        document,
+                                        &url,
+                                        s.prefs.preview_remote_images,
+                                    );
+                                    (url, state)
+                                })
+                                .collect(),
+                        ),
+                        _ => None,
+                    };
+                    let mut want = Vec::new();
+                    if let Some(block) =
+                        static_body(ui, pane, tokens, &p, view, &mut link, images, &mut want)
+                    {
                         actions.push(("preview.code.copy", json!({ "block": block })));
+                    }
+                    if !want.is_empty() {
+                        actions.push((
+                            "preview.md_images.want",
+                            json!({ "urls": want, "pane": pane }),
+                        ));
                     }
                     if let Some(url) = link {
                         actions.push(("preview.open_link", json!({ "url": url, "pane": pane })));
@@ -792,13 +818,16 @@ fn markdown_toggle_hint(source: bool) -> &'static str {
 
 /// How a static body is shown.
 #[derive(Clone, Copy)]
-struct View {
+struct View<'a> {
     pretty: bool,
+    /// The file being shown, when it is a single file (the target of "Copy Image").
+    subject: Option<&'a fm_vfs::VfsUri>,
     source: bool,
     wrap: bool,
     zoom: Zoom,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn static_body(
     ui: &mut Ui,
     pane: PaneId,
@@ -806,24 +835,29 @@ fn static_body(
     p: &Arc<Preview>,
     View {
         pretty,
+        subject,
         source,
         wrap,
         zoom,
     }: View,
     link: &mut Option<String>,
+    images: Option<markdown::ImageStates>,
+    want: &mut Vec<String>,
 ) -> Option<usize> {
     match &**p {
         Preview::Text(d) => text_view(ui, pane, tokens, d, wrap),
         Preview::Structured(d) => structured(ui, pane, tokens, d, pretty, wrap),
         Preview::Markdown(m) if source => text_view(ui, pane, tokens, &m.source, wrap),
-        Preview::Markdown(m) => return markdown::show(ui, pane, tokens, m, wrap, link),
-        Preview::Image(i) => image(ui, pane, tokens, p, i, zoom),
+        Preview::Markdown(m) => {
+            return markdown::show(ui, pane, tokens, m, wrap, link, images, want);
+        }
+        Preview::Image(i) => image(ui, pane, tokens, p, i, zoom, subject),
         Preview::Hex(h) => hex(ui, tokens, h),
         Preview::Dir(d) => scrolled(ui, pane, "dir", |ui| dir_card(ui, tokens, d)),
         Preview::Meta(m) => scrolled(ui, pane, "meta", |ui| {
             meta_card(ui, tokens, m);
             if let Some(poster) = &m.poster {
-                image(ui, pane, tokens, p, poster, Zoom::Fit);
+                image(ui, pane, tokens, p, poster, Zoom::Fit, None);
             }
         }),
         Preview::Error(e) => scrolled(ui, pane, "err", |ui| {
@@ -888,8 +922,10 @@ fn multi_grid(
                                     pane,
                                     tokens,
                                     preview,
-                                    View { pretty: false, source: false, wrap: false, zoom: Zoom::Fit },
+                                    View { pretty: false, subject: Some(&entry.uri), source: false, wrap: false, zoom: Zoom::Fit },
                                     &mut link,
+                                    None,
+                                    &mut Vec::new(),
                                 ) {
                                     actions.push(("preview.code.copy", json!({ "block": block, "item": row_index * columns + column_index })));
                                 }
@@ -1042,7 +1078,15 @@ fn structured(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &StructDoc, pretty:
     text_view(ui, pane, tokens, doc, wrap);
 }
 
-fn image(ui: &mut Ui, pane: PaneId, tokens: &Tokens, p: &Arc<Preview>, img: &ImageDoc, zoom: Zoom) {
+fn image(
+    ui: &mut Ui,
+    pane: PaneId,
+    tokens: &Tokens,
+    p: &Arc<Preview>,
+    img: &ImageDoc,
+    zoom: Zoom,
+    subject: Option<&fm_vfs::VfsUri>,
+) {
     if img.frames.is_empty() {
         centered(ui, tokens, "No pixels to show");
         return;
@@ -1102,7 +1146,11 @@ fn image(ui: &mut Ui, pane: PaneId, tokens: &Tokens, p: &Arc<Preview>, img: &Ima
         .auto_shrink(false)
         .max_height(avail.y)
         .show(ui, |ui| {
-            ui.add(egui::Image::new((tex.id(), natural * scale)).sense(Sense::hover()));
+            let response =
+                ui.add(egui::Image::new((tex.id(), natural * scale)).sense(Sense::click()));
+            if let Some(uri) = subject {
+                response.context_menu(|ui| crate::context_menu::copy_image_item(ui, uri));
+            }
         });
     remember_scroll(ui, &output);
     ui.label(tokens.muted(format!(
@@ -1317,7 +1365,7 @@ fn video_body(
                     actions.push(("preview.video.play", json!({})));
                 }
             } else if let Some(poster) = &m.poster {
-                image(ui, pane, tokens, p, poster, Zoom::Fit);
+                image(ui, pane, tokens, p, poster, Zoom::Fit, None);
             } else {
                 ui.allocate_space(vec2(avail.x, size.y.min(120.0)));
             }

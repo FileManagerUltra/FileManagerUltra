@@ -79,6 +79,11 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
             });
             ui.close();
         }
+        if uri.file_name().is_some_and(|n| {
+            fm_preview::thumbs::classify(n) == fm_preview::thumbs::ThumbKind::Image
+        }) {
+            copy_image_item(ui, uri);
+        }
         for entry in ENTRIES {
             match entry {
                 None => {
@@ -88,6 +93,23 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
             }
         }
     });
+}
+
+/// "Copy Image" for an image file: the original pixels go to the system clipboard. The
+/// request carries the uri, so it works from any view (listing, thumbnail, single preview).
+pub fn copy_image_item(ui: &mut Ui, uri: &VfsUri) {
+    if ui.button("Copy Image").clicked() {
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(
+                Id::NULL.with("folder-context-command"),
+                Some(FolderAction {
+                    id: "image.copy",
+                    folder: uri.clone(),
+                }),
+            )
+        });
+        ui.close();
+    }
 }
 
 /// A context command retains its explicit URI target until dispatch, including for dialogs.

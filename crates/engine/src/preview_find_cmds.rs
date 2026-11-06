@@ -123,15 +123,16 @@ fn segments(p: &Preview, pretty: bool, visit: &mut impl FnMut(String)) {
                         markdown(&item.blocks, visit);
                     }
                 }
-                MdBlock::Quote(blocks) => markdown(blocks, visit),
+                MdBlock::Quote(blocks) | MdBlock::Centered(blocks) => markdown(blocks, visit),
                 MdBlock::Table(table) => {
-                    for row in std::iter::once(&table.header).chain(&table.rows) {
+                    let header = (!table.headerless).then_some(&table.header);
+                    for row in header.into_iter().chain(&table.rows) {
                         for column in 0..table.alignments.len().max(1) {
                             visit(inlines(row.get(column).map_or(&[], Vec::as_slice)));
                         }
                     }
                 }
-                MdBlock::Rule => {}
+                MdBlock::Rule | MdBlock::Images(_) => {}
             }
         }
     }

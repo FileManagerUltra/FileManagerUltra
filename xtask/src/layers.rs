@@ -20,6 +20,8 @@ const TABLE: &[(&str, u8)] = &[
     ("fm-discovery", 0),
     ("fm-git", 0),
     ("fm-testkit", 0),
+    ("fm-dragout", 0),
+    ("fm-wayland", 0),
     ("fm-ops", 1),
     ("fm-term", 1),
     ("fm-preview", 1),

@@ -1,0 +1,28 @@
+[package]
+name = "fm-wayland"
+description = "Native Wayland drag and drop on the window's own connection (the only crate allowed to use unsafe)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Not `workspace = true`: the workspace forbids `unsafe`; this crate denies it and allows it
+# in `foreign.rs` only (two calls that adopt winit's connection and surface).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
+dbg_macro = "warn"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+raw-window-handle = "0.6"
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
+rustix = { version = "1", features = ["pipe", "event"] }

@@ -40,7 +40,7 @@ xtask/                layers | brand-check | ci | bench
 ## 3. Golden rules
 
 1. **Never crash.** No `unwrap()`, `expect()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` in non-test code — return `FmError` and propagate with `?`. A vanished file, a dead share, a full disk or a 100 000-entry directory must produce an actionable error. Fix a crash before building on top of it.
-2. **No `unsafe`.** Workspace sets `unsafe_code = "forbid"`. There is no FFI; every backend is pure Rust.
+2. **No `unsafe`.** Workspace sets `unsafe_code = "forbid"`. There is no FFI; every backend is pure Rust. One user-approved exception: `crates/wayland` (`fm-wayland`, native-Wayland drag & drop) sets its own lint and contains two `unsafe` calls in `foreign.rs`; removing it is roadmap priority 1 (winit 0.31).
 3. **Everything is a command.** New behaviour = `CommandSpec` in `crates/engine/src/<area>_cmds.rs` + a `specs()` list extended in `commands.rs`, with id, label, menu path, shortcut, params doc, `enabled`, `run` and tests. The UI, shortcuts and (later) the control channel all dispatch by id. Never call `fm-ops` or a backend from `fm-ui`/`fm-app`.
 4. **The UI thread never blocks.** All filesystem work goes through `engine`'s job lanes (`local`/`smb`/`sftp`). If your change makes a frame wait on I/O, it is wrong.
 5. **Thin, data-driven UI.** View state lives in `fm-layout`'s pane state; colours come from `fm-ui/src/theme.rs` semantic tokens (`Tokens::dark()` / `Tokens::light()`, both exhaustive), never hard-coded — no `Color32::` literals outside `theme.rs`, and every widget must render correctly in both dark and light.

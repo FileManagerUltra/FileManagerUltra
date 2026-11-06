@@ -98,6 +98,7 @@ pub const SELECT_PATTERN: &str = "edit.select_pattern";
 pub const VIEW_FILTER: &str = "view.filter";
 pub const VIEW_FILTER_CLEAR: &str = "view.filter.clear";
 pub const COPY_PATH: &str = "file.copy_path";
+pub const IMAGE_COPY: &str = "image.copy";
 pub const COPY_NAME: &str = "file.copy_name";
 pub const FILE_DUPLICATE: &str = "file.duplicate";
 pub const OPEN_WITH: &str = "file.open_with.dialog";
@@ -197,6 +198,7 @@ pub fn all_ids() -> &'static [&'static str] {
         VIEW_FILTER_CLEAR,
         COPY_PATH,
         COPY_NAME,
+        IMAGE_COPY,
         FILE_DUPLICATE,
         OPEN_WITH,
         COMPARE_WITH,
@@ -487,7 +489,9 @@ pub(crate) fn dispatch_folder(
     let folder = folder.to_string();
     let params = match action.id {
         "file.clip_paste" => serde_json::json!({ "dest": folder }),
-        "nav.refresh" | "bookmark.add" | "preview.open" => serde_json::json!({ "uri": folder }),
+        "nav.refresh" | "bookmark.add" | "preview.open" | "image.copy" => {
+            serde_json::json!({ "uri": folder })
+        }
         _ => serde_json::json!({ "sources": [folder] }),
     };
     if let Err(err) = session.dispatch(action.id, &params) {
@@ -712,6 +716,7 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             ui.separator();
             item(ui, session, dialogs, COPY_PATH);
             item(ui, session, dialogs, COPY_NAME);
+            item(ui, session, dialogs, IMAGE_COPY);
             ui.separator();
             item(ui, session, dialogs, SELECT_ALL);
             item(ui, session, dialogs, SELECT_NONE);

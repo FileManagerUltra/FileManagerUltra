@@ -90,6 +90,32 @@ pub fn decode_still(entry: &Entry, bytes: &[u8], limits: &Limits) -> Preview {
     decode_with(entry, bytes, limits, false)
 }
 
+/// Full-resolution RGBA of the first frame, for the clipboard. The header is checked against
+/// `max_pixels` before any pixel is decoded.
+pub fn decode_original(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32, Vec<u8>), String> {
+    let reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let format = reader.format().ok_or("unknown image format")?;
+    let (w, h) = reader
+        .into_dimensions()
+        .map_err(|e| format!("unreadable header: {e}"))?;
+    if u64::from(w) * u64::from(h) > max_pixels {
+        return Err(format!("{w}×{h} px is too large to copy"));
+    }
+    let mut lim = image::Limits::default();
+    lim.max_alloc = Some(512 << 20);
+    lim.max_image_width = Some(w);
+    lim.max_image_height = Some(h);
+    let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
+    reader.limits(lim);
+    let rgba = reader
+        .decode()
+        .map_err(|e| format!("could not decode: {e}"))?
+        .to_rgba8();
+    Ok((rgba.width(), rgba.height(), rgba.into_raw()))
+}
+
 fn decode_with(entry: &Entry, bytes: &[u8], limits: &Limits, animate: bool) -> Preview {
     let reader = match ImageReader::new(Cursor::new(bytes)).with_guessed_format() {
         Ok(r) => r,

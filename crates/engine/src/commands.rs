@@ -30,6 +30,7 @@ pub fn specs() -> Vec<CommandSpec> {
         prefs_cmds::preferences(),
         prefs_cmds::retarget_links(),
         prefs_cmds::recursive_preview(),
+        prefs_cmds::remote_images(),
         prefs_cmds::terminal_shell(),
         prefs_cmds::sftp_timing(),
         prefs_cmds::smb_encryption(),
@@ -50,6 +51,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(pane_kind_cmds::specs());
     specs.extend(preview_cmds::specs());
     specs.extend(crate::preview_link_cmds::specs());
+    specs.extend(crate::md_images::specs());
     specs.extend(crate::preview_text_cmds::specs());
     specs.extend(crate::preview_find_cmds::specs());
     specs.extend(crate::preview_code_cmds::specs());
@@ -82,6 +84,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(crate::trash_cmds::specs());
     specs.extend(crate::select_cmds::specs());
     specs.extend(crate::item_cmds::specs());
+    specs.extend(crate::image_clip_cmds::specs());
     specs.extend(crate::places_cmds::specs());
     specs.extend(crate::devices_cmds::specs());
     specs.extend(crate::props_cmds::specs());

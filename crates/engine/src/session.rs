@@ -79,8 +79,14 @@ pub struct Session {
     pub preview_text_selection: Option<crate::preview_text_cmds::TextSelection>,
     /// Thumbnails for directory previews (own worker pool, memory + disk cache).
     pub thumbs: crate::thumbs::ThumbService,
+    /// Images of the Markdown preview (own worker pools, byte-capped memory cache).
+    pub md_images: crate::md_images::MdImageService,
     /// Text a command wants on the system clipboard; the app shell drains it.
     pub clipboard_out: Option<String>,
+    /// Pixels a command wants on the system clipboard; the app shell drains it.
+    pub clipboard_image: Option<crate::image_clip_cmds::ClipImage>,
+    /// Background decodes for `image.copy`.
+    pub image_clip: crate::image_clip_cmds::ImageClip,
     /// A pane-type switch waiting for the user to confirm ending a running terminal job.
     pub pending_kind: Option<(PaneId, fm_layout::PaneKind)>,
     /// `app.about` raises this flag; the UI shows the dialog and clears it.
@@ -168,7 +174,10 @@ impl Default for Session {
             previews: Default::default(),
             preview_text_selection: None,
             thumbs: Default::default(),
+            md_images: Default::default(),
             clipboard_out: None,
+            clipboard_image: None,
+            image_clip: Default::default(),
             pending_kind: None,
             about_open: false,
             updates: Default::default(),
@@ -343,6 +352,7 @@ impl Session {
             || self.remote.is_busy()
             || self.previews.is_busy()
             || self.thumbs.is_busy()
+            || self.image_clip.is_busy()
             || self.fileops.jobs().iter().any(|j| j.state.is_running())
     }
 
@@ -358,6 +368,7 @@ impl Session {
         changed |= self.pump_devices();
         changed |= self.pump_remote_lost();
         changed |= self.pump_trash();
+        changed |= self.pump_image_clip();
         changed |= self.pump_git();
         changed |= self.pump_diffs();
         self.sync_servers();

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-06
+
+Beta release.
+
+### Added
+
+- Right-click an image (in the file list, a thumbnail or the image preview) and choose **Copy Image** to put the original, full-size picture on the clipboard, ready to paste into a browser or editor. Also in the Edit menu.
+- Drag files out of a pane and drop them into a browser (upload fields), chat or mail window on Linux. Works with browsers running natively on Wayland as well as X11, and the app now runs natively on Wayland sessions (set `FM_X11=1` to force XWayland); the window position is no longer restored there. macOS and Windows are not supported yet.
+- The Markdown preview shows images (PNG, JPEG, GIF, WebP, BMP, ICO, SVG), including inside tables. Relative images next to the document load automatically; remote (http/https) images load only when you enable "Load remote images in Markdown" in Preferences > Preview.
+- The Markdown preview understands the common HTML in READMEs: centered headings and paragraphs, `<br>`, links, sized images, `<picture>` (showing the dark or light image for the current theme) and `<table>` grids. Scripts, styles and unknown tags are never run or shown.
+
+### Fixed
+
+- A pane could be pushed under the status bar when its neighbour's content (such as a thumbnail grid) did not fit.
+
+### Security
+
+- Remote Markdown images are off by default, never contact private or local addresses, and are limited in size and time.
+
 ## [0.1.0] - 2026-11-04
 
 First public release (beta).
@@ -43,5 +62,6 @@ First public release (beta).
 
 - macOS install notes: clear the quarantine flag on the downloaded `.dmg` (`xattr -d com.apple.quarantine`), as the app is not yet signed or notarized.
 
-[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/FileManagerUltra/FileManagerUltra/releases/tag/v0.1.0

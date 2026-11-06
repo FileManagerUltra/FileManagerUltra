@@ -91,7 +91,8 @@ See `AGENTS.md` §2. `docs/architecture.md` explains why each crate exists and h
   Explorer or delete user shortcuts/cache files. Verify upgrades on Windows;
   config tests on Linux cannot confirm Explorer's cache behavior.
 
-- **Wayland**: window-wide file drops from other applications depend on winit's Wayland support and may be unavailable; in-app pane-to-pane drag & drop is unaffected, and pasting paths from the clipboard always works. See `docs/architecture.md` §11.
+- **Dragging files out** to other apps (`fm-dragout`, XDND source) works on X11 targets (XDND) and on native Wayland (`fm-wayland`, `wl_data_source`). Wayland sessions run natively by default; `FM_X11=1` forces XWayland. macOS/Windows: not implemented.
+- **Wayland**: file drops from other applications are received by `fm-wayland` (winit 0.30 cannot); in-app pane-to-pane drag & drop is unaffected, and pasting paths from the clipboard always works. See `docs/architecture.md` §11.
 
 The main window saves its normal size, position and maximized state about a second
 after they stop changing (and on exit) and restores them on launch, re-asserting the

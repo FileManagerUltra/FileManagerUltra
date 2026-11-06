@@ -1,12 +1,58 @@
 //! Read-only document layout over the worker-produced Markdown tree.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use egui::text::LayoutJob;
 use egui::{Align, FontId, Id, Layout, RichText, ScrollArea, Stroke, TextFormat, Ui, vec2};
+use fm_engine::md_images::MdImageState;
 use fm_layout::PaneId;
-use fm_preview::markdown::{Alignment, CodeBlock, Inline, MdBlock, MdDoc, Table};
+use fm_preview::markdown::{Alignment, CodeBlock, Inline, MdBlock, MdDoc, MdImage, Table};
+use fm_preview::thumbs::Thumb;
 
 use super::{find, paged_scroll, remember_scroll, selection_job};
 use crate::{markdown_fonts, theme::Tokens};
+
+/// What the engine knows about each image URL of the document; `None` = not requested yet.
+pub(super) type ImageStates = HashMap<String, Option<MdImageState>>;
+
+type Textures = HashMap<usize, (Arc<Thumb>, egui::TextureHandle)>;
+
+/// Every distinct image URL of the document, in order.
+pub(super) fn image_urls(doc: &MdDoc, dark: bool) -> Vec<String> {
+    fn walk(blocks: &[MdBlock], dark: bool, out: &mut Vec<String>) {
+        for block in blocks {
+            match block {
+                MdBlock::Images(images) => {
+                    for image in images {
+                        let url = image.url_for(dark);
+                        if !out.iter().any(|u| u == url) {
+                            out.push(url.to_string());
+                        }
+                    }
+                }
+                MdBlock::Table(t) => {
+                    for image in t.images.iter().flatten().flatten() {
+                        let url = image.url_for(dark);
+                        if !out.iter().any(|u| u == url) {
+                            out.push(url.to_string());
+                        }
+                    }
+                }
+                MdBlock::Quote(children) | MdBlock::Centered(children) => walk(children, dark, out),
+                MdBlock::List { items, .. } => {
+                    for item in items {
+                        walk(&item.blocks, dark, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&doc.blocks, dark, &mut out);
+    out
+}
 
 fn inline_job(ui: &Ui, tokens: &Tokens, parts: &[Inline], size: f32, strong: bool) -> LayoutJob {
     let mut job = LayoutJob::default();
@@ -34,6 +80,9 @@ fn inline_job(ui: &Ui, tokens: &Tokens, parts: &[Inline], size: f32, strong: boo
             format.background = tokens.hover_bg;
         }
         job.append(&part.text, 0.0, format);
+    }
+    if ui.layout().horizontal_align() == Align::Center {
+        job.halign = Align::Center;
     }
     selection_job(ui, tokens, job)
 }
@@ -223,6 +272,133 @@ struct CodeActions {
     next: usize,
     clicked: Option<usize>,
     link: Option<String>,
+    /// `None` in cards without image access: images stay text placeholders.
+    images: Option<ImageStates>,
+    /// URLs the engine has not been asked for yet.
+    want: Vec<String>,
+    /// Some image is still loading; repaint soon.
+    waiting: bool,
+    textures: Textures,
+    textures_used: Textures,
+}
+
+/// An image, or the alt-text placeholder explaining why there is none.
+fn image(ui: &mut Ui, tokens: &Tokens, img: &MdImage, actions: &mut CodeActions) {
+    let url = img.url_for(tokens.dark);
+    let state = match &actions.images {
+        None => None,
+        Some(states) => match states.get(url) {
+            Some(Some(state)) => Some(state.clone()),
+            _ => {
+                if !actions.want.iter().any(|u| u == url) {
+                    actions.want.push(url.to_string());
+                }
+                Some(MdImageState::Pending)
+            }
+        },
+    };
+    let label = if img.alt.is_empty() {
+        "[Image]".to_string()
+    } else {
+        format!("[Image: {}]", img.alt)
+    };
+    let hover = if img.title.is_empty() {
+        img.alt.clone()
+    } else {
+        img.title.clone()
+    };
+    let (response, note) = match state {
+        Some(MdImageState::Ready(thumb)) => {
+            let key = Arc::as_ptr(&thumb) as usize;
+            let reused = actions
+                .textures_used
+                .get(&key)
+                .cloned()
+                .or_else(|| actions.textures.remove(&key));
+            let (_, tex) = reused.unwrap_or_else(|| {
+                let ci = egui::ColorImage::from_rgba_unmultiplied(
+                    [thumb.width as usize, thumb.height as usize],
+                    &thumb.rgba,
+                );
+                let tex =
+                    ui.ctx()
+                        .load_texture(format!("pv-md-{key}"), ci, egui::TextureOptions::LINEAR);
+                (thumb.clone(), tex)
+            });
+            let sense = if img.link.is_some() {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            };
+            let size = image_size(ui, &thumb, img, ui.available_width());
+            let response = ui.add(egui::Image::new((tex.id(), size)).sense(sense));
+            actions.textures_used.insert(key, (thumb, tex));
+            (response, None)
+        }
+        Some(MdImageState::Failed(why)) => (ui.label(tokens.muted(&label)), Some(why)),
+        Some(MdImageState::Blocked) => (
+            ui.label(tokens.muted(&label)),
+            Some("Remote image blocked. Enable it in Preferences > Preview.".to_string()),
+        ),
+        Some(MdImageState::Pending) => {
+            actions.waiting = true;
+            (ui.label(tokens.muted(&label)), Some("Loading…".to_string()))
+        }
+        None => (ui.label(tokens.muted(&label)), None),
+    };
+    let response = match (note, hover.is_empty()) {
+        (Some(note), true) => response.on_hover_text(note),
+        (Some(note), false) => response.on_hover_text(format!("{hover}\n{note}")),
+        (None, false) => response.on_hover_text(hover),
+        (None, true) => response,
+    };
+    if let Some(link) = &img.link {
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        if response.clicked() {
+            actions.link = Some(link.clone());
+        }
+    }
+}
+
+fn has_glyphs(g: &egui::Galley) -> bool {
+    g.rows.iter().any(|r| !r.row.glyphs.is_empty())
+}
+
+/// On-screen size: the requested HTML width or the natural size, never wider than `room`.
+fn image_size(ui: &Ui, thumb: &Thumb, img: &MdImage, room: f32) -> egui::Vec2 {
+    let scale = super::content_scale(ui);
+    let natural = vec2(thumb.width as f32, thumb.height as f32) * scale;
+    let wanted = img.width.map_or(natural.x, |w| w as f32 * scale);
+    let fit = (room.max(1.0) / wanted.max(1.0)).min(1.0);
+    vec2(wanted, wanted * natural.y / natural.x.max(1.0)) * fit
+}
+
+/// Height `image` will occupy in a column `width` wide.
+fn image_height(ui: &Ui, tokens: &Tokens, img: &MdImage, width: f32, actions: &CodeActions) -> f32 {
+    if let Some(Some(MdImageState::Ready(thumb))) = actions
+        .images
+        .as_ref()
+        .and_then(|s| s.get(img.url_for(tokens.dark)))
+    {
+        image_size(ui, thumb, img, width).y
+    } else {
+        tokens.font_size * 1.55
+    }
+}
+
+/// One row of images that wraps like text.
+fn images(ui: &mut Ui, tokens: &Tokens, row: &[MdImage], actions: &mut CodeActions) {
+    if ui.layout().horizontal_align() == Align::Center {
+        for img in row {
+            image(ui, tokens, img, actions);
+        }
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        for img in row {
+            image(ui, tokens, img, actions);
+        }
+    });
 }
 
 fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id, actions: &mut CodeActions) {
@@ -238,6 +414,7 @@ fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id, actions: &mut Co
             for (n, row) in std::iter::once(&table.header)
                 .chain(table.rows.iter())
                 .enumerate()
+                .skip(usize::from(table.headerless))
             {
                 let cells: Vec<_> = (0..columns)
                     .map(|col| {
@@ -259,9 +436,26 @@ fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id, actions: &mut Co
                         (ui.fonts_mut(|f| f.layout_job(job)), active)
                     })
                     .collect();
+                let no_images: &[Vec<MdImage>] = &[];
+                let row_images = table.images.get(n).map_or(no_images, Vec::as_slice);
                 let height = cells
                     .iter()
-                    .map(|(g, _)| g.size().y)
+                    .enumerate()
+                    .map(|(col, (g, _))| {
+                        let pics = row_images.get(col).map_or(&[][..], Vec::as_slice);
+                        let text = if pics.is_empty() || has_glyphs(g) {
+                            g.size().y
+                        } else {
+                            0.0
+                        };
+                        text + pics
+                            .iter()
+                            .map(|i| {
+                                image_height(ui, tokens, i, width, actions)
+                                    + ui.spacing().item_spacing.y
+                            })
+                            .sum::<f32>()
+                    })
                     .fold(tokens.font_size * 1.55, f32::max)
                     + padding * 2.0;
                 let (rect, _) = ui.allocate_exact_size(
@@ -296,19 +490,25 @@ fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id, actions: &mut Co
                             .layout(Layout::top_down(galley.job.halign)),
                     );
                     child.set_clip_rect(cell.intersect(ui.clip_rect()));
-                    let response = child.add(egui::Label::new(galley.clone()).selectable(true));
-                    find::reveal(&child, response.rect, &galley, active);
+                    let pics = row_images.get(col).map_or(&[][..], Vec::as_slice);
                     let parts = if n == 0 {
                         &table.header
                     } else {
                         &table.rows[n - 1]
                     };
-                    follow_link(
-                        &response,
-                        &galley,
-                        parts.get(col).map_or(&[], Vec::as_slice),
-                        actions,
-                    );
+                    if pics.is_empty() || has_glyphs(&galley) {
+                        let response = child.add(egui::Label::new(galley.clone()).selectable(true));
+                        find::reveal(&child, response.rect, &galley, active);
+                        follow_link(
+                            &response,
+                            &galley,
+                            parts.get(col).map_or(&[], Vec::as_slice),
+                            actions,
+                        );
+                    }
+                    for pic in pics {
+                        image(&mut child, tokens, pic, actions);
+                    }
                 }
             }
         });
@@ -430,6 +630,13 @@ fn blocks(
                 table(ui, tokens, t, path, actions);
                 ui.add_space(tokens.font_size * 0.6);
             }
+            MdBlock::Centered(children) => {
+                ui.vertical_centered(|ui| blocks(ui, tokens, children, wrap, path, actions));
+            }
+            MdBlock::Images(row) => {
+                images(ui, tokens, row, actions);
+                ui.add_space(tokens.font_size * 0.4);
+            }
             MdBlock::Rule => {
                 ui.add_space(tokens.font_size * 0.5);
                 ui.separator();
@@ -439,6 +646,7 @@ fn blocks(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn show(
     ui: &mut Ui,
     pane: PaneId,
@@ -446,8 +654,18 @@ pub(super) fn show(
     doc: &MdDoc,
     wrap: bool,
     link: &mut Option<String>,
+    images: Option<ImageStates>,
+    want: &mut Vec<String>,
 ) -> Option<usize> {
-    let mut actions = CodeActions::default();
+    let texture_id = Id::NULL.with(("pv-md-tex", pane));
+    let mut actions = CodeActions {
+        images,
+        textures: ui
+            .ctx()
+            .data_mut(|d| d.remove_temp::<Textures>(texture_id))
+            .unwrap_or_default(),
+        ..CodeActions::default()
+    };
     markdown_fonts::install(ui.ctx());
     let mut document_tokens = *tokens;
     document_tokens.font_size *= 1.14;
@@ -483,6 +701,13 @@ pub(super) fn show(
         });
     remember_scroll(ui, &output);
     *link = actions.link;
+    *want = std::mem::take(&mut actions.want);
+    if actions.waiting {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(100));
+    }
+    let used = std::mem::take(&mut actions.textures_used);
+    ui.ctx().data_mut(|d| d.insert_temp(texture_id, used));
     actions.clicked
 }
 
@@ -565,6 +790,38 @@ mod tests {
     }
 
     #[test]
+    fn images_request_loading_and_show_placeholder_when_blocked() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let doc = MdDoc {
+            blocks: fm_preview::markdown::parse("![logo](a.png)\n\n![far](https://x.test/b.png)"),
+            ..Default::default()
+        };
+        assert_eq!(
+            image_urls(&doc, false),
+            vec!["a.png", "https://x.test/b.png"]
+        );
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            let doc = doc.clone();
+            let mut harness = Harness::builder()
+                .with_size(vec2(600.0, 300.0))
+                .build_ui_state(
+                    move |ui, want: &mut Vec<String>| {
+                        crate::theme::apply_to(ui.ctx(), &tokens);
+                        let mut link = None;
+                        let mut states = ImageStates::new();
+                        states.insert("a.png".into(), None);
+                        states.insert("https://x.test/b.png".into(), Some(MdImageState::Blocked));
+                        show(ui, 1, &tokens, &doc, true, &mut link, Some(states), want);
+                    },
+                    Vec::new(),
+                );
+            harness.run();
+            assert_eq!(harness.state(), &["a.png".to_string()]);
+            harness.get_by_label_contains("far");
+        }
+    }
+
+    #[test]
     fn clicking_a_link_reports_its_url_and_plain_text_does_not() {
         use egui_kittest::{Harness, kittest::Queryable};
         let doc = MdDoc {
@@ -580,7 +837,7 @@ mod tests {
                 move |ui, got: &mut Vec<String>| {
                     crate::theme::apply_to(ui.ctx(), &tokens);
                     let mut link = None;
-                    show(ui, 1, &tokens, &doc, true, &mut link);
+                    show(ui, 1, &tokens, &doc, true, &mut link, None, &mut Vec::new());
                     got.extend(link);
                 },
                 Vec::new(),

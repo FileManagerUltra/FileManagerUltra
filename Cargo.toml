@@ -4,7 +4,7 @@ members = ["crates/*", "apps/*", "xtask"]
 default-members = ["crates/*", "apps/*", "xtask"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/filemanagerultra/filemanagerultra"
@@ -21,6 +21,8 @@ fm-fs-sftp = { path = "crates/fs-sftp" }
 fm-discovery = { path = "crates/discovery" }
 fm-git = { path = "crates/git" }
 fm-testkit = { path = "crates/testkit" }
+fm-dragout = { path = "crates/dragout" }
+fm-wayland = { path = "crates/wayland" }
 fm-ops = { path = "crates/ops" }
 fm-layout = { path = "crates/layout" }
 fm-term = { path = "crates/term" }

@@ -1,5 +1,8 @@
-//! Bounded Markdown document model. HTML and image descriptions remain inert text;
-//! links and images never cause resource loads.
+//! Bounded Markdown document model. A small HTML subset is interpreted (see `html`); links
+//! never cause resource loads. Images are only described here (URL and alt text): loading them, with all limits,
+//! is the engine's job.
+
+mod html;
 
 use std::iter::Peekable;
 
@@ -16,6 +19,30 @@ pub struct Inline {
     pub strike: bool,
     pub code: bool,
     pub link: Option<String>,
+}
+
+/// An image taken out of a paragraph; it is shown as a block after the paragraph's text.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MdImage {
+    pub alt: String,
+    /// The destination exactly as written; untrusted until the engine resolves it.
+    pub url: String,
+    pub title: String,
+    /// The image sits inside a link (a badge).
+    pub link: Option<String>,
+    /// From `<picture>`: the image to show instead when the theme is dark.
+    pub dark_url: Option<String>,
+    /// Requested display width in pixels (HTML `width`), already range-checked.
+    pub width: Option<u32>,
+}
+
+impl MdImage {
+    pub fn url_for(&self, dark: bool) -> &str {
+        match (&self.dark_url, dark) {
+            (Some(url), true) => url,
+            _ => &self.url,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,6 +71,10 @@ pub struct Table {
     pub alignments: Vec<Alignment>,
     pub header: Vec<Vec<Inline>>,
     pub rows: Vec<Vec<Vec<Inline>>>,
+    /// Images per cell; index 0 is the header row, then one entry per body row.
+    pub images: Vec<Vec<Vec<MdImage>>>,
+    /// HTML tables without `<th>`: `header` is empty and index 0 of `images` is unused.
+    pub headerless: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,6 +88,10 @@ pub enum MdBlock {
     },
     Quote(Vec<MdBlock>),
     Table(Table),
+    /// Consecutive images of one paragraph, shown as one wrapping row.
+    Images(Vec<MdImage>),
+    /// Blocks laid out centered (HTML `align="center"`).
+    Centered(Vec<MdBlock>),
     Rule,
 }
 
@@ -75,12 +110,15 @@ const MAX_DEPTH: usize = 32;
 const MAX_INLINES: usize = 30_000;
 const MAX_CELLS: usize = 4_096;
 const MAX_COLUMNS: usize = 64;
+const MAX_IMAGES: usize = 200;
+const MAX_ALT_CHARS: usize = 300;
 
 #[derive(Default)]
 struct Budget {
     blocks: usize,
     inlines: usize,
     cells: usize,
+    images: usize,
     truncated: bool,
     exhausted: bool,
 }
@@ -114,14 +152,38 @@ fn level(l: HeadingLevel) -> u8 {
     }
 }
 
-fn inlines(events: &mut Events<'_>, budget: &mut Budget, task: &mut Option<bool>) -> Vec<Inline> {
+/// Text of an image's description, consuming events up to the image's end tag.
+fn image_alt(events: &mut Events<'_>) -> String {
+    let (mut alt, mut depth) = (String::new(), 0usize);
+    for event in events.by_ref() {
+        match event {
+            Event::Start(Tag::Image { .. }) => depth += 1,
+            Event::End(TagEnd::Image) if depth == 0 => break,
+            Event::End(TagEnd::Image) => depth -= 1,
+            Event::Text(t) | Event::Code(t) => alt.push_str(&t),
+            Event::SoftBreak | Event::HardBreak => alt.push(' '),
+            _ => {}
+        }
+    }
+    alt.chars().take(MAX_ALT_CHARS).collect()
+}
+
+/// Inline runs; with `images` set, images are collected there instead of becoming
+/// `[Image: alt]` text (headings keep the text form).
+fn inlines(
+    events: &mut Events<'_>,
+    budget: &mut Budget,
+    task: &mut Option<bool>,
+    mut images: Option<&mut Vec<MdImage>>,
+) -> Vec<Inline> {
     let mut out = Vec::new();
     let (mut bold, mut italic, mut strike) = (0usize, 0usize, 0usize);
     let mut link = None;
+    let mut html_code = 0usize;
     while !budget.exhausted {
         let Some(event) = events.peek() else { break };
         let (text, code) = match event {
-            Event::Text(t) | Event::Html(t) | Event::InlineHtml(t) => (t.to_string(), false),
+            Event::Text(t) => (t.to_string(), false),
             Event::Code(t) => (t.to_string(), true),
             Event::SoftBreak => (" ".into(), false),
             Event::HardBreak => ("\n".into(), false),
@@ -170,6 +232,66 @@ fn inlines(events: &mut Events<'_>, budget: &mut Budget, task: &mut Option<bool>
                 events.next();
                 continue;
             }
+            Event::Start(Tag::Image {
+                dest_url, title, ..
+            }) if images.is_some() && budget.images < MAX_IMAGES => {
+                let (url, title) = (dest_url.to_string(), title.to_string());
+                events.next();
+                budget.images += 1;
+                let alt = image_alt(events);
+                if let Some(images) = images.as_deref_mut() {
+                    images.push(MdImage {
+                        alt,
+                        url,
+                        title,
+                        link: link.clone(),
+                        ..MdImage::default()
+                    });
+                }
+                continue;
+            }
+            Event::InlineHtml(raw) => {
+                let raw = raw.to_string();
+                events.next();
+                for token in html::tokenize(&raw) {
+                    let html::Token::Tag(tag) = token else {
+                        continue;
+                    };
+                    let closing = tag.closing;
+                    let step =
+                        |n: &mut usize| *n = if closing { n.saturating_sub(1) } else { *n + 1 };
+                    match tag.name.as_str() {
+                        "b" | "strong" => step(&mut bold),
+                        "i" | "em" => step(&mut italic),
+                        "code" | "tt" | "kbd" => step(&mut html_code),
+                        "a" if closing => link = None,
+                        "a" => link = tag.attr("href").filter(|h| !h.is_empty()).map(String::from),
+                        "br" if budget.inlines < MAX_INLINES => {
+                            budget.inlines += 1;
+                            out.push(Inline {
+                                text: "\n".into(),
+                                ..Inline::default()
+                            });
+                        }
+                        "img" if !closing && budget.images < MAX_IMAGES => {
+                            budget.images += 1;
+                            match (images.as_deref_mut(), html::image(&tag, None, link.clone())) {
+                                (Some(images), Some(img)) => images.push(img),
+                                (None, Some(img)) if budget.inlines < MAX_INLINES => {
+                                    budget.inlines += 1;
+                                    out.push(Inline {
+                                        text: format!("[Image: {}]", img.alt),
+                                        ..Inline::default()
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                continue;
+            }
             Event::Start(Tag::Image { .. }) => ("[Image: ".into(), false),
             Event::End(TagEnd::Image) => ("]".into(), false),
             _ => break,
@@ -185,7 +307,7 @@ fn inlines(events: &mut Events<'_>, budget: &mut Budget, task: &mut Option<bool>
             bold: bold > 0,
             italic: italic > 0,
             strike: strike > 0,
-            code,
+            code: code || html_code > 0,
             link: link.clone(),
         });
     }
@@ -216,8 +338,11 @@ fn table(events: &mut Events<'_>, budget: &mut Budget, alignments: Vec<Alignment
         alignments,
         header: Vec::new(),
         rows: Vec::new(),
+        images: Vec::new(),
+        headerless: false,
     };
     let mut row = Vec::new();
+    let mut row_images = Vec::new();
     while !budget.exhausted {
         match events.next() {
             Some(Event::Start(Tag::TableCell)) => {
@@ -226,15 +351,33 @@ fn table(events: &mut Events<'_>, budget: &mut Budget, alignments: Vec<Alignment
                     break;
                 }
                 budget.cells += 1;
-                row.push(inlines(events, budget, &mut None));
+                let mut cell_images = Vec::new();
+                row.push(inlines(events, budget, &mut None, Some(&mut cell_images)));
+                row_images.push(cell_images);
             }
-            Some(Event::End(TagEnd::TableHead)) => table.header = std::mem::take(&mut row),
-            Some(Event::End(TagEnd::TableRow)) => table.rows.push(std::mem::take(&mut row)),
+            Some(Event::End(TagEnd::TableHead)) => {
+                table.header = std::mem::take(&mut row);
+                table.images.push(std::mem::take(&mut row_images));
+            }
+            Some(Event::End(TagEnd::TableRow)) => {
+                table.rows.push(std::mem::take(&mut row));
+                table.images.push(std::mem::take(&mut row_images));
+            }
             Some(Event::End(TagEnd::Table)) | None => break,
             _ => {}
         }
     }
     table
+}
+
+/// A paragraph followed by its images; a paragraph holding only images has no text block.
+fn push_para(out: &mut Vec<MdBlock>, parts: Vec<Inline>, images: Vec<MdImage>) {
+    if !parts.is_empty() || images.is_empty() {
+        out.push(MdBlock::Para(parts));
+    }
+    if !images.is_empty() {
+        out.push(MdBlock::Images(images));
+    }
 }
 
 fn blocks(
@@ -279,7 +422,9 @@ fn blocks(
             if !budget.block() {
                 break;
             }
-            out.push(MdBlock::Para(inlines(events, budget, task)));
+            let mut images = Vec::new();
+            let parts = inlines(events, budget, task, Some(&mut images));
+            push_para(&mut out, parts, images);
             continue;
         }
         let Some(event) = events.next() else { break };
@@ -288,13 +433,16 @@ fn blocks(
                 if !budget.block() {
                     break;
                 }
-                MdBlock::Para(inlines(events, budget, task))
+                let mut images = Vec::new();
+                let parts = inlines(events, budget, task, Some(&mut images));
+                push_para(&mut out, parts, images);
+                continue;
             }
             Event::Start(Tag::Heading { level: l, .. }) => {
                 if !budget.block() {
                     break;
                 }
-                MdBlock::Heading(level(l), inlines(events, budget, task))
+                MdBlock::Heading(level(l), inlines(events, budget, task, None))
             }
             Event::Start(Tag::BlockQuote(kind)) => {
                 if !budget.block() {
@@ -362,13 +510,16 @@ fn blocks(
                 MdBlock::Table(table(events, budget, alignments))
             }
             Event::Html(t) => {
-                if !budget.block() {
-                    break;
+                let mut src = t.to_string();
+                while src.len() < html::MAX_INPUT {
+                    let Some(Event::Html(more)) = events.peek() else {
+                        break;
+                    };
+                    src.push_str(more);
+                    events.next();
                 }
-                MdBlock::Para(vec![Inline {
-                    text: t.to_string(),
-                    ..Default::default()
-                }])
+                out.extend(html::blocks(&src, budget));
+                continue;
             }
             Event::Rule => {
                 if !budget.block() {
@@ -430,7 +581,18 @@ pub fn plain_text(blocks: &[MdBlock]) -> String {
                 MdBlock::Heading(_, parts) | MdBlock::Para(parts) => out.push(inline(parts)),
                 MdBlock::Code(c) => out.push(c.text.clone()),
                 MdBlock::Rule => out.push("---".into()),
-                MdBlock::Quote(children) => collect(children, indent, out),
+                MdBlock::Images(images) => {
+                    out.push(
+                        images
+                            .iter()
+                            .map(|i| i.alt.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    );
+                }
+                MdBlock::Quote(children) | MdBlock::Centered(children) => {
+                    collect(children, indent, out)
+                }
                 MdBlock::List { start, items } => {
                     for (n, item) in items.iter().enumerate() {
                         let marker = match item.checked {
@@ -451,13 +613,15 @@ pub fn plain_text(blocks: &[MdBlock]) -> String {
                     }
                 }
                 MdBlock::Table(t) => {
-                    out.push(
-                        t.header
-                            .iter()
-                            .map(|c| inline(c))
-                            .collect::<Vec<_>>()
-                            .join("\t"),
-                    );
+                    if !t.headerless {
+                        out.push(
+                            t.header
+                                .iter()
+                                .map(|c| inline(c))
+                                .collect::<Vec<_>>()
+                                .join("\t"),
+                        );
+                    }
                     for row in &t.rows {
                         out.push(row.iter().map(|c| inline(c)).collect::<Vec<_>>().join("\t"));
                     }
@@ -499,8 +663,96 @@ mod tests {
                 .any(|i| i.link.as_deref() == Some("https://example.org"))
         );
         assert!(plain_text(&b).contains(" soft\nhard"));
-        assert!(plain_text(&b).contains("[Image: alt]"));
-        assert!(plain_text(&b).contains("<script>no()</script>"));
+        assert!(plain_text(&b).contains("\nalt"));
+        assert!(!plain_text(&b).contains("no()"));
+    }
+
+    #[test]
+    fn html_blocks_and_inline_html_are_interpreted() {
+        let b = parse(
+            "<p align=\"center\">\n  <img src=\"logo.svg\" alt=\"L\" width=\"96\">\n</p>\n\n<h1 align=\"center\">Name</h1>\n\nline<br>two <b>bold</b> <img src=\"i.png\" alt=\"I\">",
+        );
+        assert!(
+            matches!(&b[0], MdBlock::Centered(c) if matches!(&c[0], MdBlock::Images(i) if i[0].width == Some(96)))
+        );
+        assert!(matches!(&b[1], MdBlock::Centered(c) if matches!(&c[0], MdBlock::Heading(1, _))));
+        let MdBlock::Para(p) = &b[2] else {
+            panic!("{b:?}")
+        };
+        assert!(p.iter().any(|i| i.text == "\n"));
+        assert!(p.iter().any(|i| i.bold && i.text == "bold"));
+        assert!(matches!(&b[3], MdBlock::Images(i) if i[0].url == "i.png"));
+    }
+
+    #[test]
+    fn paragraph_images_become_a_row_after_the_text() {
+        let b = parse("See ![a](x.png \"T\") and [![badge](https://h/b.png)](https://h/) now");
+        assert_eq!(b.len(), 2);
+        let MdBlock::Para(p) = &b[0] else {
+            panic!("text first")
+        };
+        assert_eq!(
+            p.iter().map(|i| i.text.as_str()).collect::<String>(),
+            "See  and  now"
+        );
+        let MdBlock::Images(images) = &b[1] else {
+            panic!("images second")
+        };
+        assert_eq!(images.len(), 2);
+        assert_eq!(
+            (
+                images[0].alt.as_str(),
+                images[0].url.as_str(),
+                images[0].title.as_str()
+            ),
+            ("a", "x.png", "T")
+        );
+        assert_eq!(images[0].link, None);
+        assert_eq!(images[1].link.as_deref(), Some("https://h/"));
+    }
+
+    #[test]
+    fn an_image_only_paragraph_has_no_text_block() {
+        let b = parse("![only](a.png)");
+        assert!(matches!(b.as_slice(), [MdBlock::Images(i)] if i.len() == 1));
+        let b = parse("- ![in list](a.png)\n- text");
+        let MdBlock::List { items, .. } = &b[0] else {
+            panic!("list")
+        };
+        assert!(matches!(items[0].blocks.as_slice(), [MdBlock::Images(_)]));
+    }
+
+    #[test]
+    fn headings_keep_the_placeholder_and_table_cells_collect_images() {
+        let b = parse("# T ![h](h.png)\n\n| a |\n|---|\n| ![c](c.png) |");
+        assert!(plain_text(&b).contains("[Image: h]"));
+        assert!(!b.iter().any(|x| matches!(x, MdBlock::Images(_))));
+        let MdBlock::Table(t) = &b[1] else {
+            panic!("table")
+        };
+        assert_eq!(t.images.len(), 2);
+        assert_eq!(t.images[1][0][0].url, "c.png");
+    }
+
+    #[test]
+    fn images_are_capped_per_document_and_alt_text_is_bounded() {
+        let many = "![x](a.png) ".repeat(MAX_IMAGES + 50);
+        let b = parse(&many);
+        let count = b
+            .iter()
+            .map(|x| match x {
+                MdBlock::Images(i) => i.len(),
+                _ => 0,
+            })
+            .sum::<usize>();
+        assert_eq!(count, MAX_IMAGES);
+        assert!(plain_text(&b).contains("[Image: x]"));
+        let long = format!("![{}](a.png)", "w".repeat(10_000));
+        let b = parse(&long);
+        let MdBlock::Images(i) = &b[0] else {
+            panic!("images")
+        };
+        assert_eq!(i[0].alt.chars().count(), MAX_ALT_CHARS);
     }
 
     #[test]

@@ -124,6 +124,9 @@ pub struct Prefs {
     /// A folder in the preview pane counts (and thumbnails) every file below it.
     #[serde(default)]
     pub recursive_preview: bool,
+    /// Markdown previews may fetch `http`/`https` images (capability `preview-pane`).
+    #[serde(default)]
+    pub preview_remote_images: bool,
     #[serde(default = "default_log_poll_ms")]
     pub log_poll_ms: u64,
     /// Zero removes the initial-window limit, not the preview safety caps.
@@ -446,6 +449,7 @@ impl Default for Prefs {
             last_dir: None,
             retarget_links: true,
             recursive_preview: false,
+            preview_remote_images: false,
             log_poll_ms: default_log_poll_ms(),
             log_tail_mib: default_log_tail_mib(),
             preview_filters: crate::preview_types::PreviewFilters::default(),
@@ -775,6 +779,7 @@ mod tests {
                 "log_poll_ms",
                 "log_tail_mib",
                 "preview_filters",
+                "preview_remote_images",
                 "preview_time_secs",
                 "profiles",
                 "recursive_preview",

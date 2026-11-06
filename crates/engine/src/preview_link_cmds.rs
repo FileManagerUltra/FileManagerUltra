@@ -8,7 +8,7 @@ use crate::registry::{CommandSpec, Params};
 const MAX_URL: usize = 2048;
 
 #[derive(Debug, PartialEq)]
-enum Link<'a> {
+pub(crate) enum Link<'a> {
     /// An `http`, `https` or `mailto` URL.
     External(&'a str),
     /// A path relative to the document, still percent-encoded and possibly with `?`/`#` parts.
@@ -17,7 +17,7 @@ enum Link<'a> {
 
 /// Links in a document are untrusted: only plain web/mail links are launched and everything
 /// else must be a path relative to the document, never another scheme.
-fn classify(url: &str) -> Result<Link<'_>, FmError> {
+pub(crate) fn classify(url: &str) -> Result<Link<'_>, FmError> {
     let refuse = |why: &str| Err(FmError::InvalidParams(why.into()));
     if url.len() > MAX_URL || url.chars().any(char::is_control) {
         return refuse("The link is too long or contains control characters");
@@ -69,7 +69,7 @@ fn percent_decode(s: &str) -> Result<String, FmError> {
 }
 
 /// Resolve a relative link against the folder holding the document.
-fn resolve(document: &VfsUri, link: &str) -> Result<VfsUri, FmError> {
+pub(crate) fn resolve(document: &VfsUri, link: &str) -> Result<VfsUri, FmError> {
     let path = link.split(['?', '#']).next().unwrap_or_default();
     if path.is_empty() {
         return Err(FmError::InvalidParams(

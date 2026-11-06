@@ -10,6 +10,7 @@
     windows_subsystem = "windows"
 )]
 
+mod dragout;
 mod menu;
 mod window;
 
@@ -35,6 +36,7 @@ struct App {
     dialogs: fm_ui::dialogs::Dialogs,
     last_ws_tick: std::time::Instant,
     window: window::Tracker,
+    out_drag: dragout::OutDrag,
 }
 
 impl App {
@@ -139,6 +141,20 @@ fn divider(
 
 /// Render the pane tree recursively. `Split` nodes lay out two children along
 /// their axis with a drag handle that writes the ratio back into the layout.
+/// A pane's slot is a fixed rectangle: content that wants more room is clipped, never allowed
+/// to grow the split and push its neighbours under the status bar.
+fn slot(ui: &mut egui::Ui, size: egui::Vec2, add: impl FnOnce(&mut egui::Ui)) {
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    child.set_min_size(rect.size());
+    add(&mut child);
+}
+
 fn render_pane_node(
     ui: &mut egui::Ui,
     session: &mut Session,
@@ -163,16 +179,11 @@ fn render_pane_node(
                         let total = ui.available_width();
                         let handle_w = 6.0;
                         let a_w = ((total - handle_w) * ratio).clamp(80.0, total - handle_w - 80.0);
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(a_w, ui.available_height()),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                ui.set_min_size(ui.available_size());
-                                if let Some(target) = render_pane_node(ui, session, a, tokens) {
-                                    open = Some(target);
-                                }
-                            },
-                        );
+                        slot(ui, egui::vec2(a_w, ui.available_height()), |ui| {
+                            if let Some(target) = render_pane_node(ui, session, a, tokens) {
+                                open = Some(target);
+                            }
+                        });
                         divider(
                             ui,
                             session,
@@ -183,11 +194,10 @@ fn render_pane_node(
                             total,
                             tokens,
                         );
-                        ui.allocate_ui_with_layout(
+                        slot(
+                            ui,
                             egui::vec2(ui.available_width(), ui.available_height()),
-                            egui::Layout::top_down(egui::Align::Min),
                             |ui| {
-                                ui.set_min_size(ui.available_size());
                                 if let Some(target) = render_pane_node(ui, session, b, tokens) {
                                     open = Some(target);
                                 }
@@ -200,16 +210,11 @@ fn render_pane_node(
                         let total = ui.available_height();
                         let handle_w = 6.0;
                         let a_h = ((total - handle_w) * ratio).clamp(60.0, total - handle_w - 60.0);
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(ui.available_width(), a_h),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                ui.set_min_size(ui.available_size());
-                                if let Some(target) = render_pane_node(ui, session, a, tokens) {
-                                    open = Some(target);
-                                }
-                            },
-                        );
+                        slot(ui, egui::vec2(ui.available_width(), a_h), |ui| {
+                            if let Some(target) = render_pane_node(ui, session, a, tokens) {
+                                open = Some(target);
+                            }
+                        });
                         divider(
                             ui,
                             session,
@@ -220,11 +225,10 @@ fn render_pane_node(
                             total,
                             tokens,
                         );
-                        ui.allocate_ui_with_layout(
+                        slot(
+                            ui,
                             egui::vec2(ui.available_width(), ui.available_height()),
-                            egui::Layout::top_down(egui::Align::Min),
                             |ui| {
-                                ui.set_min_size(ui.available_size());
                                 if let Some(target) = render_pane_node(ui, session, b, tokens) {
                                     open = Some(target);
                                 }
@@ -250,11 +254,21 @@ fn import_os_drops(ctx: &egui::Context, session: &mut Session) {
             .map(|p| p.to_string_lossy().into_owned())
             .collect()
     });
+    import_paths(ctx, session, paths, None);
+}
+
+/// `at` overrides the pointer position (Wayland reports it with the drop).
+fn import_paths(
+    ctx: &egui::Context,
+    session: &mut Session,
+    paths: Vec<String>,
+    at: Option<egui::Pos2>,
+) {
     if paths.is_empty() {
         return;
     }
-    let pane = ctx
-        .input(|i| i.pointer.latest_pos())
+    let pane = at
+        .or_else(|| ctx.input(|i| i.pointer.latest_pos()))
         .and_then(|pos| fm_ui::dnd::pane_at(ctx, pos))
         .unwrap_or_else(|| session.layout.focused());
     let _ = session.layout.focus_pane(pane);
@@ -274,13 +288,13 @@ fn import_os_drops(ctx: &egui::Context, session: &mut Session) {
     );
 }
 
-/// winit's Wayland backend cannot receive file drops from other apps, so on Linux we use
-/// XWayland (XDND) when an X display exists. `FM_WAYLAND=1` opts back into native Wayland.
+/// Native Wayland is the default on a Wayland session: drag and drop with other apps runs
+/// through `fm-wayland`. `FM_X11=1` forces XWayland (XDND) when an X display exists.
 #[cfg(target_os = "linux")]
 fn prefer_x11() -> Option<eframe::EventLoopBuilderHook> {
     use winit::platform::x11::EventLoopBuilderExtX11;
     let has_x = std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty());
-    if !has_x || std::env::var_os("FM_WAYLAND").is_some() {
+    if !has_x || std::env::var_os("FM_X11").is_none() {
         return None;
     }
     Some(Box::new(|builder| {
@@ -321,6 +335,10 @@ impl eframe::App for App {
         visuals.panel_fill.to_normalized_gamma_f32()
     }
 
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.out_drag.raw_input(raw_input);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.window.reposition(&ctx);
@@ -336,6 +354,14 @@ impl eframe::App for App {
         // cancels it before the menu/tree/listing can act on it.
         menu::consume_shortcuts(&ctx, &mut self.session, &mut self.dialogs);
         import_os_drops(&ctx, &mut self.session);
+        for drop in self.out_drag.update(&ctx, &mut self.session) {
+            let paths = drop
+                .paths
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            import_paths(&ctx, &mut self.session, paths, Some(drop.pos));
+        }
         self.sync_theme(&ctx);
         let _ = self.session.poll();
         let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
@@ -368,6 +394,12 @@ impl eframe::App for App {
         }
         if let Some(text) = self.session.clipboard_out.take() {
             ctx.copy_text(text);
+        }
+        if let Some(img) = self.session.clipboard_image.take() {
+            ctx.copy_image(egui::ColorImage::from_rgba_unmultiplied(
+                [img.width, img.height],
+                &img.rgba,
+            ));
         }
 
         // The title is set on the native window at creation, but some
@@ -632,6 +664,7 @@ fn main() -> eframe::Result {
                 dialogs: fm_ui::dialogs::Dialogs::default(),
                 last_ws_tick: std::time::Instant::now(),
                 window: tracker,
+                out_drag: dragout::OutDrag::new(cc),
             }))
         }),
     )

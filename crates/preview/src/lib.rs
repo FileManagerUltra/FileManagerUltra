@@ -14,6 +14,7 @@ pub mod platform;
 pub mod player;
 pub mod sniff;
 pub mod structured;
+pub mod svg;
 pub mod text;
 pub mod thumbs;
 pub mod video;

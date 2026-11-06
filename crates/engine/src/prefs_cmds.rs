@@ -79,6 +79,29 @@ pub fn terminal_shell() -> CommandSpec {
     }
 }
 
+/// `prefs.preview.remote_images` — whether Markdown previews may fetch `http`/`https`
+/// images. Off by default; without `value` the setting is toggled.
+pub fn remote_images() -> CommandSpec {
+    CommandSpec {
+        id: "prefs.preview.remote_images",
+        label: "Load Remote Images in Markdown",
+        menu: &["File", "Preferences", "Load remote images in Markdown"],
+        shortcut: None,
+        params: "value?: bool",
+        enabled: |_session| true,
+        run: |session, params| {
+            session.prefs.preview_remote_images = match object(params)?.and_then(|m| m.get("value"))
+            {
+                None => !session.prefs.preview_remote_images,
+                Some(v) => v.as_bool().ok_or_else(|| {
+                    FmError::InvalidParams("value must be true or false".to_string())
+                })?,
+            };
+            Ok(())
+        },
+    }
+}
+
 /// `prefs.preview.recursive` — whether a folder in the preview pane counts and thumbnails
 /// every file below it. Without `value` the setting is toggled.
 pub fn recursive_preview() -> CommandSpec {
@@ -296,6 +319,18 @@ mod tests {
             (2, 6)
         );
         fm_fs_sftp::set_timeouts(10, 5);
+    }
+
+    #[test]
+    fn remote_images_default_off_toggle_and_reject_bad_values() {
+        let mut s = Session::default();
+        assert!(!s.prefs.preview_remote_images);
+        (remote_images().run)(&mut s, &Params::Null).expect("toggle");
+        assert!(s.prefs.preview_remote_images);
+        (remote_images().run)(&mut s, &json!({"value": false})).expect("set");
+        assert!(!s.prefs.preview_remote_images);
+        assert!((remote_images().run)(&mut s, &json!({"value": "yes"})).is_err());
+        assert!(!s.prefs.preview_remote_images, "unchanged on error");
     }
 
     #[test]

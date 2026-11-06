@@ -51,7 +51,7 @@ impl Thumb {
         self.rgba.len()
     }
 
-    fn valid(&self) -> bool {
+    pub fn valid(&self) -> bool {
         self.width > 0
             && self.height > 0
             && self.rgba.len() == (self.width as usize) * (self.height as usize) * 4

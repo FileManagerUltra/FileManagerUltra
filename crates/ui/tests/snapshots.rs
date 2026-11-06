@@ -526,8 +526,20 @@ const TINY_PNG: &[u8] = &[
 /// With `vanish`, the file is removed after the directory read: the preview job then
 /// fails and the pane renders its error card — a deterministic fixture for that state.
 fn preview_fixture(name: &str, bytes: &[u8], vanish: bool) -> (Session, u64) {
+    preview_fixture_with(name, bytes, vanish, &[])
+}
+
+fn preview_fixture_with(
+    name: &str,
+    bytes: &[u8],
+    vanish: bool,
+    extra: &[(&str, &[u8])],
+) -> (Session, u64) {
     let mem = MemFs::new();
     mem.mkdirs_str("/home/alice").expect("mkdirs");
+    for (n, b) in extra {
+        mem.put_str(&format!("/home/alice/{n}"), b).expect("put");
+    }
     mem.put_str(&format!("/home/alice/{name}"), bytes)
         .expect("put");
     let mem = Arc::new(mem);
@@ -3500,4 +3512,159 @@ fn opening_the_preview_source_list_does_not_panic_and_lists_numbered_panes() {
     harness.get_by_label("Preview source").click();
     harness.run();
     harness.get_by_label_contains("Pane 1");
+}
+
+#[test]
+fn markdown_images_load_and_replace_their_placeholders() {
+    use egui_kittest::kittest::Queryable;
+    let doc = "![logo](l.svg)\n\n![hero](p.webp#gh-dark-mode-only)\n\n| a |\n|---|\n| ![cell](p.webp) |\n";
+    let (mut s, pane) = preview_fixture_with(
+        "doc.md",
+        doc.as_bytes(),
+        false,
+        &[
+            (
+                "p.webp",
+                include_bytes!("../../../docs/screenshots/network-dark.webp"),
+            ),
+            ("l.svg", include_bytes!("../../../packaging/logo.svg")),
+        ],
+    );
+    s.layout.focus_pane(pane).expect("focus");
+    let tokens = Tokens::dark();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(600.0, 400.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                theme::apply_to(ui.ctx(), &tokens);
+                fm_ui::preview::show(ui, s, pane, &tokens);
+            },
+            s,
+        );
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.run_steps(2);
+        let placeholders = harness.query_all_by_label_contains("[Image").count();
+        if placeholders == 0 || Instant::now() > end {
+            assert_eq!(
+                placeholders,
+                0,
+                "images still placeholders; notice {:?}",
+                harness.state().notice
+            );
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn markdown_html_pictures_follow_the_theme() {
+    use egui_kittest::kittest::Queryable;
+    let doc = "<h1 align=\"center\">Centered Title</h1>\n\n<picture>\n  <source media=\"(prefers-color-scheme: dark)\" srcset=\"p.webp\">\n  <img src=\"missing-light.webp\" alt=\"hero\">\n</picture>\n\n<table>\n  <tr>\n    <td>\n      <picture>\n        <source media=\"(prefers-color-scheme: dark)\" srcset=\"p.webp\">\n        <img src=\"missing-light.webp\" alt=\"cell\" width=\"120\">\n      </picture>\n    </td>\n  </tr>\n</table>\n";
+    let run = |tokens: Tokens, settle: bool| {
+        let (mut s, pane) = preview_fixture_with(
+            "doc.md",
+            doc.as_bytes(),
+            false,
+            &[(
+                "p.webp",
+                include_bytes!("../../../docs/screenshots/network-dark.webp"),
+            )],
+        );
+        s.layout.focus_pane(pane).expect("focus");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(600.0, 500.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    fm_ui::preview::show(ui, s, pane, &tokens);
+                },
+                s,
+            );
+        let start = Instant::now();
+        loop {
+            harness.run_steps(2);
+            let placeholders = harness.query_all_by_label_contains("[Image").count();
+            let settled = if settle {
+                start.elapsed() > Duration::from_millis(1500)
+            } else {
+                placeholders == 0 || start.elapsed() > Duration::from_secs(10)
+            };
+            if settled {
+                return (
+                    placeholders,
+                    harness
+                        .query_all_by_label_contains("Centered Title")
+                        .count(),
+                );
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let (dark_placeholders, title) = run(Tokens::dark(), false);
+    assert_eq!(title, 1, "centered heading text is rendered, not markup");
+    assert_eq!(dark_placeholders, 0, "dark theme loads the dark source");
+    let (light_placeholders, _) = run(Tokens::light(), true);
+    assert_eq!(
+        light_placeholders, 2,
+        "light theme uses the missing fallback"
+    );
+}
+
+#[test]
+fn markdown_html_readme_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    let doc = "<p align=\"center\">\n  <img src=\"l.svg\" alt=\"logo\" width=\"96\">\n</p>\n\n<h1 align=\"center\">Product</h1>\n\n<p align=\"center\">\n  A multi-pane file manager.<br>\n  Native <code>egui</code> UI.\n</p>\n\n<p align=\"center\">\n  <a href=\"a.md\">Website</a> &middot;\n  <a href=\"b.md\">Download</a>\n</p>\n\n<picture>\n  <source media=\"(prefers-color-scheme: dark)\" srcset=\"n-dark.webp\">\n  <img src=\"n-light.webp\" alt=\"hero\">\n</picture>\n\n<table>\n  <tr>\n    <td>\n      <picture>\n        <source media=\"(prefers-color-scheme: dark)\" srcset=\"n-dark.webp\">\n        <img src=\"n-light.webp\" alt=\"one\">\n      </picture>\n    </td>\n    <td>\n      <picture>\n        <source media=\"(prefers-color-scheme: dark)\" srcset=\"n-dark.webp\">\n        <img src=\"n-light.webp\" alt=\"two\">\n      </picture>\n    </td>\n  </tr>\n</table>\n";
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let (mut s, pane) = preview_fixture_with(
+            "a-readme.md",
+            doc.as_bytes(),
+            false,
+            &[
+                (
+                    "n-dark.webp",
+                    include_bytes!("../../../docs/screenshots/network-dark.webp"),
+                ),
+                (
+                    "n-light.webp",
+                    include_bytes!("../../../docs/screenshots/network-light.webp"),
+                ),
+                ("l.svg", include_bytes!("../../../packaging/logo.svg")),
+            ],
+        );
+        s.layout.focus_pane(pane).expect("focus");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(700.0, 1000.0))
+            .renderer(renderer)
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    fm_ui::preview::show(ui, s, pane, &tokens);
+                },
+                s,
+            );
+        let end = Instant::now() + Duration::from_secs(10);
+        loop {
+            harness.run_steps(2);
+            use egui_kittest::kittest::Queryable;
+            let placeholders = harness.query_all_by_label_contains("[Image").count();
+            if placeholders == 0 || Instant::now() > end {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        harness.run_steps(4);
+        harness.snapshot(format!("markdown_html_readme_{theme}"));
+        results.extend_harness(&mut harness);
+    }
 }

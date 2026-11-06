@@ -399,6 +399,19 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                 s.dispatch_or_notice("prefs.preview.recursive", &json!({"value": recursive}));
             }
             ui.add_space(18.0);
+            section_heading(ui, tokens, "Markdown");
+            let mut remote = s.prefs.preview_remote_images;
+            let response = ui
+                .checkbox(&mut remote, "Load remote images in Markdown")
+                .on_hover_text(
+                    "Fetch http(s) images referenced by a Markdown file. The image host \
+                     learns your IP address and that you opened the file. Private and \
+                     local addresses are never contacted. Relative images load regardless.",
+                );
+            if response.changed() {
+                s.dispatch_or_notice("prefs.preview.remote_images", &json!({"value": remote}));
+            }
+            ui.add_space(18.0);
             section_heading(ui, tokens, "Log previews");
             let mut poll = s.prefs.log_poll_ms.clamp(
                 *fm_engine::prefs::LOG_POLL_RANGE.start(),
