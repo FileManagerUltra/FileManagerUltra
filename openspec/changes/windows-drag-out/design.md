@@ -23,7 +23,8 @@ The workspace forbids `unsafe`. COM interop on Windows cannot be written without
 2. **`windows` crate with minimal features** (`Win32_System_Ole`, `Win32_System_Com`, `Win32_System_Memory`, `Win32_System_DataExchange`, `Win32_UI_Shell`, `Win32_Foundation`). It is already in `Cargo.lock`; no new vendor. Alternative: raw `extern "system"` declarations; rejected as larger `unsafe` surface.
 3. **Shell data object from the dragged paths** (`SHParseDisplayName` + `SHCreateDataObject`), instead of a hand-written `IDataObject`. The shell object offers the standard file-drop formats (`CF_HDROP`, shell ID list) that Explorer and browsers expect, and keeps our `unsafe` to a handful of calls. Paths come from a safe validator (absolute, no NUL, count cap shared with `fm_dragout`, `\\?\\` prefixes stripped). Alternative: custom `IDataObject` with a `DROPFILES` block; rejected as more `unsafe` and less receiver compatibility.
 
-4. **Run `DoDragDrop` on a helper thread** that calls `OleInitialize` (STA) and owns the data object, like the X11 helper, so the egui frame loop keeps running. Result (`Dropped`/`NoTarget`/`Cancelled`) comes back over a channel polled each frame. Risk: OLE drag loops expect the thread that owns the mouse capture; if the helper-thread approach does not receive the button state, fall back to running on the UI thread (still bounded by the user's button hold). The first smoke check decides; the API (`start` + `poll`) is the same either way.
+4. **Run `DoDragDrop` on the UI thread.** OLE reads the mouse button state and takes capture from the calling thread, which must own the window the press happened in. A first version on a helper thread saw the button as released and ended every drag at once (indicator vanished, nothing dropped). The call blocks the frame loop for the duration of the user's drag, which is inherent to OLE's modal loop; `ReleaseCapture` afterwards returns the mouse to the system because winit never sees the release. API: `fm_winout::drag(paths) -> Result<Outcome>`. Alternative: helper thread; tried and rejected.
+
 5. **Allowed effects: Copy | Move | Link-free.** `DROPEFFECT_COPY | DROPEFFECT_MOVE`; Explorer defaults to Move on the same volume (Shift/Ctrl modify it) and nothing is deleted by us. We do not act on a Move result: files are never removed by the source on a "Move" outcome, to avoid data loss from receivers that misreport. The UI reports "Dropped files into another application".
 6. **Start rule unchanged:** `dragout.rs` starts the OS drag when the in-app payload leaves the window with the primary button down; the missed button release is injected like on Linux.
 
@@ -31,10 +32,10 @@ The workspace forbids `unsafe`. COM interop on Windows cannot be written without
 
 - [`unsafe` in a second crate] → single module, documented invariants, no `unsafe` outside it (`#![deny(unsafe_code)]` elsewhere), reviewed in the PR; listed in `docs/architecture.md` and `AGENTS.md`; removed when winit 0.31 `start_drag` lands.
 - [Cannot run in Linux CI] → pure logic is unit-tested everywhere; the OLE path is cross-checked with `cargo check --target x86_64-pc-windows-msvc|gnu` in CI and covered by a manual Windows smoke check in `docs/development.md`.
-- [Helper-thread OLE may not see mouse capture] → design decision 4 fallback.
+- [Blocking the UI thread during the drag] → inherent to OLE; bounded by the user's button hold, ended by release or Escape.
 - [Receivers that refuse `CF_HDROP` from a temp-less path] → paths are the real files; nothing is copied or staged.
 - [Antivirus/SmartScreen prompts] → none expected; no execution or staging.
 
 ## Open Questions
 
-- Does `DoDragDrop` work reliably from the helper thread under winit's message pump? Resolve with the first Windows build.
+- Does OLE's modal loop on the UI thread coexist with winit's message handling (no stuck capture, no event-handler reentrancy)? Resolve with the next Windows build.

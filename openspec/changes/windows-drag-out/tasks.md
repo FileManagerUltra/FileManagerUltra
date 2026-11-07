@@ -6,7 +6,7 @@
 ## 2. OLE drag source (Windows only)
 
 - [x] 2.1 `ole.rs` (the only module allowing `unsafe`): shell data object (`SHCreateDataObject`), `IDropSource` with Escape/button handling, `OleInitialize` on a helper thread, `DoDragDrop` with Copy|Move, result via channel; document every `unsafe` invariant
-- [x] 2.2 Public API `Drag::start(paths)` / `poll()` / cancel-on-drop returning `Outcome::{Dropped, NoTarget, Cancelled}` or `DragError`; never panics, HRESULT failures map to `DragError::System`
+- [x] 2.2 Public API `drag(paths)` (blocking, UI thread) returning `Outcome::{Dropped, NoTarget, Cancelled}` or `DragError`; never panics, HRESULT failures map to `DragError::System`
 
 ## 3. App wiring
 

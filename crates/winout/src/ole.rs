@@ -7,8 +7,6 @@
 #![allow(unsafe_code)]
 
 use std::ptr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use fm_dragout::{DragError, Outcome};
 use windows::Win32::Foundation::{
@@ -20,6 +18,7 @@ use windows::Win32::System::Ole::{
     IDropSource_Impl, OleInitialize, OleUninitialize,
 };
 use windows::Win32::System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS};
+use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{ILFree, SHCreateDataObject, SHParseDisplayName};
 use windows::core::{BOOL, HRESULT, PCWSTR, implement};
@@ -28,15 +27,13 @@ fn system(what: &str, err: windows::core::Error) -> DragError {
     DragError::System(format!("{what}: {err}"))
 }
 
-/// Ends the drag on Escape, on `cancel`, or when the primary button is released.
+/// Ends the drag on Escape or when the primary button is released.
 #[implement(IDropSource)]
-struct Source {
-    cancel: Arc<AtomicBool>,
-}
+struct Source;
 
 impl IDropSource_Impl for Source_Impl {
     fn QueryContinueDrag(&self, escape: BOOL, keys: MODIFIERKEYS_FLAGS) -> HRESULT {
-        if escape.as_bool() || self.cancel.load(Ordering::Relaxed) {
+        if escape.as_bool() {
             DRAGDROP_S_CANCEL
         } else if !keys.contains(MK_LBUTTON) {
             DRAGDROP_S_DROP
@@ -63,14 +60,19 @@ impl Drop for Pidls {
     }
 }
 
-/// Runs the drag; blocks until the button is released, Escape or `cancel`. `wide` holds
-/// NUL-terminated UTF-16 absolute paths (see `paths::wide_paths`).
-pub fn run(wide: &[Vec<u16>], cancel: Arc<AtomicBool>) -> Result<Outcome, DragError> {
+/// Runs the drag; blocks until the button is released or Escape. Must be called on the
+/// thread that owns the window the button was pressed in: OLE reads the button state and
+/// takes the mouse capture from the calling thread. `wide` holds NUL-terminated UTF-16
+/// absolute paths (see `paths::wide_paths`).
+pub fn run(wide: &[Vec<u16>]) -> Result<Outcome, DragError> {
     // SAFETY: OLE is initialised on this thread before any COM call and uninitialised after
     // the last COM object created here is released (`drag` returns before it).
     unsafe {
         OleInitialize(None).map_err(|e| system("OLE initialisation failed", e))?;
-        let result = drag(wide, cancel);
+        let result = drag(wide);
+        // The window system's own capture (taken on button press) never sees the button
+        // release that ended the drag; drop it so other windows get the mouse back.
+        let _ = ReleaseCapture();
         OleUninitialize();
         result
     }
@@ -78,7 +80,7 @@ pub fn run(wide: &[Vec<u16>], cancel: Arc<AtomicBool>) -> Result<Outcome, DragEr
 
 /// # Safety
 /// OLE must be initialised on the calling thread.
-unsafe fn drag(wide: &[Vec<u16>], cancel: Arc<AtomicBool>) -> Result<Outcome, DragError> {
+unsafe fn drag(wide: &[Vec<u16>]) -> Result<Outcome, DragError> {
     let mut pidls = Pidls(Vec::with_capacity(wide.len()));
     for path in wide {
         let mut pidl: *mut ITEMIDLIST = ptr::null_mut();
@@ -97,7 +99,7 @@ unsafe fn drag(wide: &[Vec<u16>], cancel: Arc<AtomicBool>) -> Result<Outcome, Dr
         SHCreateDataObject(None, Some(&list), None::<&IDataObject>)
             .map_err(|e| system("cannot create the drag data", e))?
     };
-    let source: IDropSource = Source { cancel }.into();
+    let source: IDropSource = Source.into();
     let mut effect = DROPEFFECT_NONE;
     // SAFETY: `data` and `source` are live COM objects and `effect` is a valid out pointer.
     let hr = unsafe {

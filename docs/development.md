@@ -466,7 +466,7 @@ Manual, on Windows (the OLE drag cannot run in CI; `cargo check --target x86_64-
 3. Press Escape mid-drag, or release over the desktop or an app that takes no files: nothing happens, no error notice, and the next click in the window works.
 4. Drag a file with non-ASCII characters, a long path (over 260 characters) and a UNC/mapped-drive path: each is received intact.
 5. Drag items from an SFTP/SMB pane out of the window: a notice says only local files can be dragged out.
-6. If nothing starts or the window freezes during the drag, the helper-thread approach is not viable (design question in `openspec/changes/windows-drag-out/design.md`): report it.
+6. The window is unresponsive while the OS drag runs (OLE's modal loop on the UI thread); it must come back to normal as soon as the button is released, and clicks must not stay captured by the app.
 
 ## Dev log
 
