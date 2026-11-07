@@ -1,30 +1,45 @@
 //! The OLE drag source: the only module of this crate allowed to use `unsafe`.
 //!
-//! Every `unsafe` block states the invariant it relies on. The data object is the shell's
-//! own (`SHCreateDataObject`) built from the dragged paths, so receivers get the standard
-//! file-drop formats (`CF_HDROP`, shell ID list); nothing else is offered and the files
-//! are never opened.
+//! Every `unsafe` block states the invariant it relies on. The data object offers exactly
+//! one format, `CF_HDROP` (the classic file list, built in safe code by
+//! `paths::dropfiles`), so receivers take their plain "dropped files" route and nothing
+//! else is exposed; the files themselves are never opened.
 #![allow(unsafe_code)]
 
 use std::ptr;
 
 use fm_dragout::{DragError, Outcome};
 use windows::Win32::Foundation::{
-    DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, S_OK,
+    DATA_S_SAMEFORMATETC, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS,
+    DV_E_FORMATETC, DV_E_TYMED, E_NOTIMPL, E_OUTOFMEMORY, GlobalFree, HGLOBAL,
+    OLE_E_ADVISENOTSUPPORTED, S_OK,
 };
-use windows::Win32::System::Com::{IBindCtx, IDataObject};
+use windows::Win32::System::Com::{
+    DATADIR_GET, DVASPECT_CONTENT, FORMATETC, IAdviseSink, IDataObject, IDataObject_Impl,
+    IEnumFORMATETC, IEnumSTATDATA, STGMEDIUM, STGMEDIUM_0, TYMED_HGLOBAL,
+};
+use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows::Win32::System::Ole::{
-    DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_MOVE, DROPEFFECT_NONE, DoDragDrop, IDropSource,
-    IDropSource_Impl, OleInitialize, OleUninitialize,
+    CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_MOVE, DROPEFFECT_NONE, DoDragDrop,
+    IDropSource, IDropSource_Impl, OleInitialize, OleUninitialize,
 };
 use windows::Win32::System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS};
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
-use windows::Win32::UI::Shell::Common::ITEMIDLIST;
-use windows::Win32::UI::Shell::{ILFree, SHCreateDataObject, SHParseDisplayName};
-use windows::core::{BOOL, HRESULT, PCWSTR, implement};
+use windows::Win32::UI::Shell::SHCreateStdEnumFmtEtc;
+use windows::core::{BOOL, HRESULT, Ref, Result, implement};
 
 fn system(what: &str, err: windows::core::Error) -> DragError {
     DragError::System(format!("{what}: {err}"))
+}
+
+fn hdrop_format() -> FORMATETC {
+    FORMATETC {
+        cfFormat: CF_HDROP.0,
+        ptd: ptr::null_mut(),
+        dwAspect: DVASPECT_CONTENT.0,
+        lindex: -1,
+        tymed: TYMED_HGLOBAL.0 as u32,
+    }
 }
 
 /// Ends the drag on Escape or when the primary button is released.
@@ -47,29 +62,110 @@ impl IDropSource_Impl for Source_Impl {
     }
 }
 
-/// Item ID lists from `SHParseDisplayName`, released with `ILFree` on drop.
-struct Pidls(Vec<*mut ITEMIDLIST>);
+/// A data object holding one `CF_HDROP` block (a `DROPFILES` header and the paths).
+#[implement(IDataObject)]
+struct Files {
+    blob: Vec<u8>,
+}
 
-impl Drop for Pidls {
-    fn drop(&mut self) {
-        for pidl in self.0.drain(..) {
-            // SAFETY: each pointer came from a successful `SHParseDisplayName`, is non-null
-            // and is freed exactly once here.
-            unsafe { ILFree(Some(pidl.cast_const())) };
+/// `Ok` when `format` asks for the file list in global memory.
+///
+/// # Safety
+/// `format` must be null or point to a valid `FORMATETC`.
+unsafe fn check(format: *const FORMATETC) -> Result<()> {
+    // SAFETY: the caller guarantees a null or valid pointer.
+    let Some(f) = (unsafe { format.as_ref() }) else {
+        return Err(DV_E_FORMATETC.into());
+    };
+    if f.cfFormat != CF_HDROP.0 || f.dwAspect & DVASPECT_CONTENT.0 == 0 {
+        return Err(DV_E_FORMATETC.into());
+    }
+    if f.tymed & TYMED_HGLOBAL.0 as u32 == 0 {
+        return Err(DV_E_TYMED.into());
+    }
+    Ok(())
+}
+
+impl IDataObject_Impl for Files_Impl {
+    fn GetData(&self, format: *const FORMATETC) -> Result<STGMEDIUM> {
+        // SAFETY: COM passes a valid `FORMATETC` pointer (or null, which `check` rejects).
+        unsafe { check(format)? };
+        let len = self.blob.len();
+        // SAFETY: the block is allocated for `len` bytes, locked while copying exactly `len`
+        // bytes from a slice of that length, then unlocked. Ownership of the HGLOBAL passes
+        // to the receiver, which releases it (`pUnkForRelease` is null).
+        unsafe {
+            let global: HGLOBAL = GlobalAlloc(GMEM_MOVEABLE, len)?;
+            let dst = GlobalLock(global);
+            if dst.is_null() {
+                let _ = GlobalFree(Some(global));
+                return Err(E_OUTOFMEMORY.into());
+            }
+            ptr::copy_nonoverlapping(self.blob.as_ptr(), dst.cast::<u8>(), len);
+            let _ = GlobalUnlock(global);
+            Ok(STGMEDIUM {
+                tymed: TYMED_HGLOBAL.0 as u32,
+                u: STGMEDIUM_0 { hGlobal: global },
+                pUnkForRelease: std::mem::ManuallyDrop::new(None),
+            })
         }
+    }
+
+    fn GetDataHere(&self, _format: *const FORMATETC, _medium: *mut STGMEDIUM) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+
+    fn QueryGetData(&self, format: *const FORMATETC) -> HRESULT {
+        // SAFETY: COM passes a valid `FORMATETC` pointer (or null, which `check` rejects).
+        match unsafe { check(format) } {
+            Ok(()) => S_OK,
+            Err(e) => e.code(),
+        }
+    }
+
+    fn GetCanonicalFormatEtc(&self, _in: *const FORMATETC, out: *mut FORMATETC) -> HRESULT {
+        // SAFETY: COM passes a valid output pointer (or null, which is skipped).
+        if let Some(out) = unsafe { out.as_mut() } {
+            out.ptd = ptr::null_mut();
+        }
+        DATA_S_SAMEFORMATETC
+    }
+
+    fn SetData(&self, _f: *const FORMATETC, _m: *const STGMEDIUM, _release: BOOL) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+
+    fn EnumFormatEtc(&self, direction: u32) -> Result<IEnumFORMATETC> {
+        if direction != DATADIR_GET.0 as u32 {
+            return Err(E_NOTIMPL.into());
+        }
+        // SAFETY: the slice is valid for the call; the shell copies the formats.
+        unsafe { SHCreateStdEnumFmtEtc(&[hdrop_format()]) }
+    }
+
+    fn DAdvise(&self, _f: *const FORMATETC, _advf: u32, _sink: Ref<IAdviseSink>) -> Result<u32> {
+        Err(OLE_E_ADVISENOTSUPPORTED.into())
+    }
+
+    fn DUnadvise(&self, _connection: u32) -> Result<()> {
+        Err(OLE_E_ADVISENOTSUPPORTED.into())
+    }
+
+    fn EnumDAdvise(&self) -> Result<IEnumSTATDATA> {
+        Err(OLE_E_ADVISENOTSUPPORTED.into())
     }
 }
 
 /// Runs the drag; blocks until the button is released or Escape. Must be called on the
 /// thread that owns the window the button was pressed in: OLE reads the button state and
-/// takes the mouse capture from the calling thread. `wide` holds NUL-terminated UTF-16
-/// absolute paths (see `paths::wide_paths`).
-pub fn run(wide: &[Vec<u16>]) -> Result<Outcome, DragError> {
+/// takes the mouse capture from the calling thread. `blob` is the `CF_HDROP` payload from
+/// `paths::dropfiles`.
+pub fn run(blob: Vec<u8>) -> Result2 {
     // SAFETY: OLE is initialised on this thread before any COM call and uninitialised after
     // the last COM object created here is released (`drag` returns before it).
     unsafe {
         OleInitialize(None).map_err(|e| system("OLE initialisation failed", e))?;
-        let result = drag(wide);
+        let result = drag(blob);
         // The window system's own capture (taken on button press) never sees the button
         // release that ended the drag; drop it so other windows get the mouse back.
         let _ = ReleaseCapture();
@@ -78,27 +174,12 @@ pub fn run(wide: &[Vec<u16>]) -> Result<Outcome, DragError> {
     }
 }
 
+type Result2 = std::result::Result<Outcome, DragError>;
+
 /// # Safety
 /// OLE must be initialised on the calling thread.
-unsafe fn drag(wide: &[Vec<u16>]) -> Result<Outcome, DragError> {
-    let mut pidls = Pidls(Vec::with_capacity(wide.len()));
-    for path in wide {
-        let mut pidl: *mut ITEMIDLIST = ptr::null_mut();
-        // SAFETY: `path` is NUL-terminated (guaranteed by `wide_paths`) and outlives the
-        // call; `pidl` is a valid out pointer. On success the pidl is owned by `pidls`.
-        unsafe {
-            SHParseDisplayName(PCWSTR(path.as_ptr()), None::<&IBindCtx>, &mut pidl, 0, None)
-                .map_err(|e| system("cannot resolve a dragged file", e))?;
-        }
-        pidls.0.push(pidl);
-    }
-    let list: Vec<*const ITEMIDLIST> = pidls.0.iter().map(|p| p.cast_const()).collect();
-    // SAFETY: every pointer in `list` is a live absolute pidl owned by `pidls`, which
-    // outlives the data object's creation (the shell copies what it needs).
-    let data: IDataObject = unsafe {
-        SHCreateDataObject(None, Some(&list), None::<&IDataObject>)
-            .map_err(|e| system("cannot create the drag data", e))?
-    };
+unsafe fn drag(blob: Vec<u8>) -> Result2 {
+    let data: IDataObject = Files { blob }.into();
     let source: IDropSource = Source.into();
     let mut effect = DROPEFFECT_NONE;
     // SAFETY: `data` and `source` are live COM objects and `effect` is a valid out pointer.

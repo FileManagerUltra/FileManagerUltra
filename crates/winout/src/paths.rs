@@ -79,6 +79,29 @@ pub fn wide_paths(paths: &[PathBuf]) -> Result<Vec<Vec<u16>>, DragError> {
         .collect()
 }
 
+/// Size of the fixed `DROPFILES` header.
+const HEADER: u32 = 20;
+/// Largest `CF_HDROP` block built (bytes).
+const MAX_BLOB: usize = 16 * 1024 * 1024;
+
+/// The `CF_HDROP` payload: a `DROPFILES` header (offset, point, non-client flag, wide flag)
+/// followed by the NUL-terminated paths and a final extra NUL.
+pub fn dropfiles(wide: &[Vec<u16>]) -> Result<Vec<u8>, DragError> {
+    let units: usize = wide.iter().map(Vec::len).sum::<usize>() + 1;
+    if units * 2 + HEADER as usize > MAX_BLOB {
+        return Err(DragError::BadPayload("the selection is too large".into()));
+    }
+    let mut out = Vec::with_capacity(HEADER as usize + units * 2);
+    out.extend_from_slice(&HEADER.to_le_bytes());
+    out.extend_from_slice(&[0; 8]);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&1u32.to_le_bytes());
+    for unit in wide.iter().flatten().chain(std::iter::once(&0)) {
+        out.extend_from_slice(&unit.to_le_bytes());
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +131,33 @@ mod tests {
     fn terminates_every_path_with_nul() {
         let out = wide_paths(&[PathBuf::from("/ü b")]).expect("paths");
         assert_eq!(out, vec![[w("/ü b"), vec![0]].concat()]);
+    }
+
+    #[test]
+    fn dropfiles_has_header_paths_and_double_nul() {
+        let blob = dropfiles(&[
+            [w("C:\\a"), vec![0]].concat(),
+            [w("D:\\b"), vec![0]].concat(),
+        ])
+        .expect("blob");
+        assert_eq!(blob[..4], 20u32.to_le_bytes());
+        assert_eq!(blob[16..20], 1u32.to_le_bytes());
+        let units: Vec<u16> = blob[20..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes(*c))
+            .collect();
+        assert_eq!(
+            units,
+            [w("C:\\a"), vec![0], w("D:\\b"), vec![0, 0]].concat()
+        );
+    }
+
+    #[test]
+    fn dropfiles_refuses_oversized_selections() {
+        let huge = vec![vec![1u16; MAX_UNITS]; 300];
+        assert!(dropfiles(&huge).is_err());
     }
 
     #[test]

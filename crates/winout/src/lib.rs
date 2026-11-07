@@ -16,22 +16,22 @@ pub use fm_dragout::{DragError, Outcome};
 mod ole;
 mod paths;
 
-pub use paths::wide_paths;
+pub use paths::{dropfiles, wide_paths};
 
 /// Drag `paths` (absolute local paths) from the current pointer position and wait for the
 /// result. The primary mouse button must be held.
 pub fn drag(paths: Vec<PathBuf>) -> Result<Outcome, DragError> {
-    let wide = wide_paths(&paths)?;
-    run(&wide)
+    let blob = dropfiles(&wide_paths(&paths)?)?;
+    run(blob)
 }
 
 #[cfg(windows)]
-fn run(wide: &[Vec<u16>]) -> Result<Outcome, DragError> {
-    ole::run(wide)
+fn run(blob: Vec<u8>) -> Result<Outcome, DragError> {
+    ole::run(blob)
 }
 
 #[cfg(not(windows))]
-fn run(_wide: &[Vec<u16>]) -> Result<Outcome, DragError> {
+fn run(_blob: Vec<u8>) -> Result<Outcome, DragError> {
     Err(DragError::Unsupported("only Windows is implemented"))
 }
 
