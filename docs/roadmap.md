@@ -106,8 +106,9 @@ This is a planned feature idea, not approved implementation scope.
 - Nothing is "done" until `cargo test`, `cargo clippy -D warnings`, `cargo xtask layers`, `cargo xtask brand-check` and `cargo fmt --check` are green, tests are added, and `log/devlog.md` has an entry.
 - Scope cuts happen in the proposal, not mid-change: if a task turns out wrong, edit the change's `tasks.md`/`design.md` before continuing.
 
-## PRIORITY 1: remove the `unsafe` in `fm-wayland` (winit 0.31 `start_drag`)
+## PRIORITY 1: remove the `unsafe` in `fm-wayland` and `fm-winout` (winit 0.31 `start_drag`)
 - Decision (2026-11-05): native-Wayland drag-out and drops ship in `fm-wayland` with one documented `unsafe` exception (`crates/wayland/src/foreign.rs`: adopts winit's `wl_display`/`wl_surface`, because only the connection that got the button press can start a drag).
-- Goal: delete `fm-wayland` and use winit 0.31's safe `ActiveEventLoop::start_drag` (rust-windowing/winit#4571) once eframe moves to winit 0.31 (egui#7731; community 0.30 patch egui#8805). Unverified by us; check before starting.
+- Decision (2026-11-07): Windows drag-out ships in `fm-winout` (OLE `DoDragDrop`; `unsafe` confined to `crates/winout/src/ole.rs`), same removal plan.
+- Goal: delete `fm-wayland` and `fm-winout` and use winit 0.31's safe `ActiveEventLoop::start_drag` (rust-windowing/winit#4571) once eframe moves to winit 0.31 (egui#7731; community 0.30 patch egui#8805). Unverified by us; check before starting.
 - Background: https://notes.nickdiego.dev/chromium/wayland-events-during-drag (GNOME: origin loses pointer events during a drag; drop is signalled via data_source events).
 - Status: unit tests only; verify by hand against Chrome/Brave on native Wayland (GNOME/mutter).

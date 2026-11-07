@@ -23,6 +23,7 @@ fm-git = { path = "crates/git" }
 fm-testkit = { path = "crates/testkit" }
 fm-dragout = { path = "crates/dragout" }
 fm-wayland = { path = "crates/wayland" }
+fm-winout = { path = "crates/winout" }
 fm-ops = { path = "crates/ops" }
 fm-layout = { path = "crates/layout" }
 fm-term = { path = "crates/term" }

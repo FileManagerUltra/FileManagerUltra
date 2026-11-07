@@ -1818,6 +1818,7 @@ dependencies = [
  "fm-ui",
  "fm-vfs",
  "fm-wayland",
+ "fm-winout",
  "raw-window-handle",
  "serde_json",
  "winit",
@@ -2016,6 +2017,15 @@ dependencies = [
  "rustix 1.1.5",
  "wayland-backend",
  "wayland-client",
+]
+
+[[package]]
+name = "fm-winout"
+version = "0.1.1"
+dependencies = [
+ "fm-dragout",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

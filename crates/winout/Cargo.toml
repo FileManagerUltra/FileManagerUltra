@@ -1,0 +1,37 @@
+[package]
+name = "fm-winout"
+description = "Starts a native Windows (OLE) drag of local files towards other applications; one of two crates allowed to use unsafe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Not `workspace = true`: the workspace forbids `unsafe`; this crate denies it and allows it
+# in `ole.rs` only (the COM calls). Path validation and conversion stay in safe code.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
+dbg_macro = "warn"
+
+[dependencies]
+fm-dragout.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# The `implement` macro expands to paths in `windows_core`, so it must be a direct dependency.
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_SystemServices",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+] }

@@ -12,6 +12,9 @@ use fm_ui::dnd::DragPayload;
 #[derive(Default)]
 pub struct OutDrag {
     active: Option<DragOut>,
+    /// The Windows OLE drag, polled until it ends.
+    #[cfg(windows)]
+    win: Option<fm_winout::Drag>,
     /// The compositor owns the pointer during an OS drag, so egui never sees the button
     /// release and would ignore the next press. Inject it where the drag started.
     release_at: Option<egui::Pos2>,
@@ -78,6 +81,8 @@ impl OutDrag {
                 Self::report(session, drag);
             }
         }
+        #[cfg(windows)]
+        self.poll_windows(ctx, session);
         self.start_if_leaving(ctx, session);
         incoming
     }
@@ -113,6 +118,29 @@ impl OutDrag {
     #[cfg(not(target_os = "linux"))]
     fn poll_wayland(&mut self, _ctx: &egui::Context, _session: &mut Session) -> Vec<Incoming> {
         Vec::new()
+    }
+
+    #[cfg(windows)]
+    fn poll_windows(&mut self, ctx: &egui::Context, session: &mut Session) {
+        let Some(drag) = self.win.as_ref() else {
+            return;
+        };
+        match drag.poll() {
+            None => ctx.request_repaint_after(std::time::Duration::from_millis(30)),
+            Some(result) => {
+                self.win = None;
+                match result {
+                    Ok(Outcome::Dropped) => {
+                        session.info = Some((
+                            "Dropped files into another application".to_string(),
+                            std::time::Instant::now(),
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(err) => session.notice = Some(err.to_string()),
+                }
+            }
+        }
     }
 
     fn report(session: &mut Session, drag: DragOut) {
@@ -164,7 +192,21 @@ impl OutDrag {
             }
             return;
         }
-        // A still-running earlier drag is replaced (dropping it cancels it).
+        self.start_native(paths, session);
+    }
+
+    /// A still-running earlier drag is replaced (dropping it cancels it).
+    #[cfg(windows)]
+    fn start_native(&mut self, paths: Vec<PathBuf>, session: &mut Session) {
+        match fm_winout::Drag::start(paths) {
+            Ok(drag) => self.win = Some(drag),
+            Err(err) => session.notice = Some(err.to_string()),
+        }
+    }
+
+    /// A still-running earlier drag is replaced (dropping it cancels it).
+    #[cfg(not(windows))]
+    fn start_native(&mut self, paths: Vec<PathBuf>, session: &mut Session) {
         match DragOut::start(paths) {
             Ok(drag) => self.active = Some(drag),
             Err(err) => session.notice = Some(err.to_string()),

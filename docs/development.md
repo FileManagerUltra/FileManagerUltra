@@ -91,7 +91,7 @@ See `AGENTS.md` §2. `docs/architecture.md` explains why each crate exists and h
   Explorer or delete user shortcuts/cache files. Verify upgrades on Windows;
   config tests on Linux cannot confirm Explorer's cache behavior.
 
-- **Dragging files out** to other apps (`fm-dragout`, XDND source) works on X11 targets (XDND) and on native Wayland (`fm-wayland`, `wl_data_source`). Wayland sessions run natively by default; `FM_X11=1` forces XWayland. macOS/Windows: not implemented.
+- **Dragging files out** to other apps (`fm-dragout`, XDND source) works on X11 targets (XDND) and on native Wayland (`fm-wayland`, `wl_data_source`). Wayland sessions run natively by default; `FM_X11=1` forces XWayland. On Windows, `fm-winout` starts an OLE drag (`DoDragDrop` with the shell's file data object); macOS: not implemented.
 - **Wayland**: file drops from other applications are received by `fm-wayland` (winit 0.30 cannot); in-app pane-to-pane drag & drop is unaffected, and pasting paths from the clipboard always works. See `docs/architecture.md` §11.
 
 The main window saves its normal size, position and maximized state about a second
@@ -456,6 +456,17 @@ Run on Linux, macOS and Windows (manual smoke; the OS watchers differ per platfo
 5. Preferences > Files > Git toggles the markers. Opening a huge repo must keep the UI responsive.
 6. Tests: `cargo test -p fm-git -p fm-engine --test git_status --test diff_pane`; snapshots `preview_diff_*` and `listing_git_markers_*` in `crates/ui/tests/snapshots.rs` (`UPDATE_SNAPSHOTS=1` to refresh). The fixtures call the real `git` binary; the product never does.
 7. Windows/CRLF is untested on real hardware: check that a `core.autocrlf=true` checkout shows no markers.
+
+## Windows drag-out checks
+
+Manual, on Windows (the OLE drag cannot run in CI; `cargo check --target x86_64-pc-windows-msvc` covers compilation):
+
+1. Select files in a Files pane and drag them out of the window onto an open Explorer window: they are copied (Ctrl) or moved (Shift/same drive default), the status bar says "Dropped files into another application", and the pane refreshes.
+2. Drag onto a Chrome/Edge upload field, an Outlook/Teams/Slack message: the files attach.
+3. Press Escape mid-drag, or release over the desktop or an app that takes no files: nothing happens, no error notice, and the next click in the window works.
+4. Drag a file with non-ASCII characters, a long path (over 260 characters) and a UNC/mapped-drive path: each is received intact.
+5. Drag items from an SFTP/SMB pane out of the window: a notice says only local files can be dragged out.
+6. If nothing starts or the window freezes during the drag, the helper-thread approach is not viable (design question in `openspec/changes/windows-drag-out/design.md`): report it.
 
 ## Dev log
 
