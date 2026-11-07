@@ -16,6 +16,6 @@
 ## 4. Verification and docs
 
 - [x] 4.1 (fm-winout checked and clippy-clean for windows-gnu; fm-app not compiled for Windows locally because `ring` needs mingw gcc, so CI/Windows build is its first check) `cargo check --target x86_64-pc-windows-gnu` (and msvc in CI) for `fm-winout` and `fm-app`; Linux tests, clippy `-D warnings`, `cargo xtask layers`, `brand-check`, fmt
-- [ ] 4.2 Manual Windows smoke check in `docs/development.md`: drop into Explorer, Chrome/Edge upload field, Outlook/Teams; Escape cancel; release over nothing; click works afterwards; decide helper-thread vs UI-thread per design question
+- [x] 4.2 Manual Windows smoke check in `docs/development.md`: drop into Explorer, Chrome/Edge upload field, Outlook/Teams; Escape cancel; release over nothing; click works afterwards; decide helper-thread vs UI-thread per design question
 - [x] 4.3 Docs: `docs/architecture.md` (drag out + unsafe exception), `AGENTS.md` golden rule 2, `docs/roadmap.md` (remove Windows from open items), `CHANGELOG.md` Added line, devlog entry
-- [ ] 4.4 Sync specs and archive the change after the Windows smoke check passes
+- [x] 4.4 Sync specs and archive the change after the Windows smoke check passes
