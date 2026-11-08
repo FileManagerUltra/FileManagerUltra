@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-08
+## [0.1.2] - 2026-11-08
 
 ### Added
 
@@ -77,7 +77,7 @@ First public release (beta).
 
 - macOS install notes: clear the quarantine flag on the downloaded `.dmg` (`xattr -d com.apple.quarantine`), as the app is not yet signed or notarized.
 
-[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.1...v0.2.0
+[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/FileManagerUltra/FileManagerUltra/releases/tag/v0.1.0
