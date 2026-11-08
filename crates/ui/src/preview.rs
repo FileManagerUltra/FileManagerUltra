@@ -48,8 +48,24 @@ fn mono(tokens: &Tokens) -> FontId {
     FontId::monospace(tokens.font_size)
 }
 
+/// Preview content (thumbnails, pages) is much taller than a listing row, so egui's default
+/// wheel step feels slow there.
+const WHEEL_BOOST: f32 = 3.0;
+
+fn boost_wheel(ui: &Ui) {
+    let hovered = ui.rect_contains_pointer(ui.max_rect());
+    if hovered {
+        ui.input_mut(|i| {
+            if !i.modifiers.command {
+                i.smooth_scroll_delta *= WHEEL_BOOST;
+            }
+        });
+    }
+}
+
 /// Render the preview pane body.
 pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Option<fm_vfs::VfsUri> {
+    boost_wheel(ui);
     fm_engine::preview_find_cmds::prepare(s, pane);
     let find_keyboard = s.layout.focused() == pane
         && !crate::dialogs::window_owns_keyboard(s)

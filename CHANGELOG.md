@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Drag files out of a pane and drop them into Explorer, a browser upload field or a mail/chat window on Windows. Press Escape to cancel.
 
+### Changed
+
+- Scrolling with the mouse wheel is faster in the preview panel (thumbnails and documents).
+
 ## [0.1.1] - 2026-11-06
 
 Beta release.
