@@ -280,7 +280,7 @@ impl Watcher {
                     self.retries
                         .insert(uri.clone(), Retry::after_failure(previous, now));
                     // A vanished folder is not a watcher problem; the read reports it.
-                    if previous.is_none() && !matches!(err.kind, notify::ErrorKind::PathNotFound) {
+                    if previous.is_none() && !is_missing(&err, &path) {
                         notice = Some(format!(
                             "Live refresh is unavailable for some folders ({err}); they refresh periodically instead."
                         ));
@@ -357,6 +357,14 @@ fn mark(shared: &Mutex<Shared>, event: &notify::Event) -> bool {
         }
     }
     marked
+}
+
+/// Whether a watch failed because the folder is gone or unreachable (the Windows backend
+/// reports this wrapped in a generic error), which the directory read reports itself.
+fn is_missing(err: &notify::Error, path: &Path) -> bool {
+    matches!(err.kind, notify::ErrorKind::PathNotFound)
+        || err.to_string().contains("PathNotFound")
+        || !path.is_dir()
 }
 
 #[cfg(test)]
@@ -586,6 +594,15 @@ mod tests {
             .add_path(PathBuf::new());
         assert!(!mark(&shared, &event));
         assert!(lock(&shared).dirty.is_empty());
+    }
+
+    #[test]
+    fn wrapped_path_not_found_counts_as_missing() {
+        let wrapped = notify::Error::generic("Error { kind: PathNotFound, paths: [] }");
+        assert!(is_missing(&wrapped, Path::new(".")));
+        let other = notify::Error::generic("boom");
+        assert!(!is_missing(&other, Path::new(".")));
+        assert!(is_missing(&other, Path::new("/nowhere/at/all")));
     }
 
     #[test]

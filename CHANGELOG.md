@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Scrolling with the mouse wheel is faster in the preview panel (thumbnails and documents).
 
+### Fixed
+
+- On Windows, a folder that cannot be watched (for example an inaccessible profile folder) no longer shows a "Live refresh is unavailable" warning; it is simply refreshed periodically.
+
 ## [0.1.1] - 2026-11-06
 
 Beta release.
