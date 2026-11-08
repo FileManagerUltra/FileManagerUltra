@@ -31,6 +31,7 @@ pub mod job_cmds;
 pub mod jobs;
 pub mod log_prefs_cmds;
 pub mod md_images;
+pub mod messages;
 pub mod nav_cmds;
 pub mod network;
 pub mod open_cmds;

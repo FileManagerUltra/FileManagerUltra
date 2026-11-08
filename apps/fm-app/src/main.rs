@@ -445,18 +445,6 @@ impl eframe::App for App {
                 .map(|p| p.location.clone())
                 .and_then(|uri| fm_ui::git_marks::branch_label(&mut self.session, &uri));
             ui.horizontal(|ui| {
-                if let Some(notice) = self.session.notice.clone() {
-                    let text = egui::RichText::new(notice.clone())
-                        .color(tokens.error)
-                        .font(tokens.font());
-                    if ui
-                        .add(egui::Button::new(text).frame(false).truncate())
-                        .on_hover_text(notice)
-                        .clicked()
-                    {
-                        self.session.notice = None;
-                    }
-                }
                 if let Some((msg, at)) = self.session.info.clone() {
                     const SHOWN: std::time::Duration = std::time::Duration::from_secs(3);
                     let left = SHOWN.saturating_sub(at.elapsed());
@@ -483,6 +471,7 @@ impl eframe::App for App {
                     ui.label(tokens.muted(branch));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    fm_ui::jobs::icon_button(ui, &self.session, &tokens);
                     let label = if self.session.show_hidden {
                         "Hidden: shown (Ctrl+H)"
                     } else {

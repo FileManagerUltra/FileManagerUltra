@@ -58,8 +58,11 @@ pub struct Session {
     pub clipboard_outbox: Option<String>,
     /// `app.quit` flips this; the eframe loop stops on it.
     pub running: bool,
-    /// Last command failure the user should see (status bar); the UI clears it.
+    /// Last command failure the user should see; the UI moves it into [`Session::messages`]
+    /// with [`Session::drain_notices`].
     pub notice: Option<String>,
+    /// Recent failures and warnings, shown in the jobs panel.
+    pub messages: crate::messages::MessageLog,
     /// Short confirmation for the status bar; the UI hides it after a few seconds.
     pub info: Option<(String, std::time::Instant)>,
     /// Dot-files are hidden by default; `view.hidden.toggle` flips this for every pane.
@@ -164,6 +167,7 @@ impl Default for Session {
             clipboard_outbox: None,
             running: true,
             notice: None,
+            messages: Default::default(),
             info: None,
             show_hidden: false,
             show_link_targets: true,
@@ -231,6 +235,17 @@ impl Session {
             .ok_or_else(|| FmError::UnknownCommand(id.to_string()))?
             .run;
         run(self, params)
+    }
+
+    /// Move a pending [`Session::notice`] into the message log; true when one was moved.
+    pub fn drain_notices(&mut self) -> bool {
+        match self.notice.take() {
+            Some(text) => {
+                self.messages.push(&text);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Dispatch on behalf of the UI: a failure becomes the visible [`Session::notice`]

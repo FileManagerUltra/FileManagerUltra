@@ -39,3 +39,13 @@ On completion the engine SHALL invalidate the `DirCache` entries of every touche
 - **WHEN** a copy into the other pane's directory finishes
 - **THEN** that pane's listing shows the new items without manual refresh
 
+### Requirement: Recent messages in the jobs panel
+Command failures and warnings SHALL be kept in a bounded log of recent messages shown in the jobs panel, not in the status bar. A new message SHALL open the panel and close it again after 5 seconds unless the pointer is over it or the user opened it explicitly. An always-visible status-bar icon SHALL toggle the panel, and `messages.clear` SHALL empty the log.
+
+#### Scenario: A failure appears in the panel
+- **WHEN** a command fails
+- **THEN** the jobs panel opens with the message and closes by itself after 5 seconds
+
+#### Scenario: Messages stay reachable
+- **WHEN** the panel has closed
+- **THEN** clicking the status-bar icon shows the recent messages again
