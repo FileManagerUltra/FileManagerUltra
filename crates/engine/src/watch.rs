@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,9 @@ pub const MAX_WATCHES: usize = 64;
 const MAX_EVENT_PATHS: usize = 4;
 const RETRY_INITIAL: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(60);
+/// How long [`Watcher::sync`] waits for freshly requested watches before carrying on;
+/// a sleeping disk can take seconds to open, and the UI thread must not wait for it.
+const WATCH_WAIT: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy)]
 struct Retry {
@@ -86,8 +90,59 @@ pub fn is_network_filesystem(fs: &str) -> bool {
         || matches!(fs.as_str(), "afs" | "ceph" | "webdav" | "davfs" | "sshfs")
 }
 
+enum Cmd {
+    Watch { key: PathBuf, path: PathBuf },
+    Unwatch(PathBuf),
+}
+
+struct Done {
+    key: PathBuf,
+    /// The OS error text and whether the folder is gone (reported by the directory read).
+    result: Result<(), (String, bool)>,
+}
+
+/// Owns the OS watcher on its own thread: creating a watch opens the directory, which
+/// blocks while a sleeping disk spins up.
+struct WatchWorker {
+    cmds: Sender<Cmd>,
+    done: Receiver<Done>,
+}
+
+impl WatchWorker {
+    fn spawn(mut watcher: notify::RecommendedWatcher, waker: Arc<Mutex<Option<Waker>>>) -> Self {
+        let (cmds, cmd_rx) = channel::<Cmd>();
+        let (done_tx, done) = channel::<Done>();
+        // If the thread cannot start the command channel closes and folders are polled.
+        let _ = std::thread::Builder::new()
+            .name("fs-watch".into())
+            .spawn(move || {
+                while let Ok(cmd) = cmd_rx.recv() {
+                    match cmd {
+                        Cmd::Watch { key, path } => {
+                            let result = watcher
+                                .watch(&path, RecursiveMode::NonRecursive)
+                                .map_err(|err| (err.to_string(), is_missing(&err, &path)));
+                            if done_tx.send(Done { key, result }).is_err() {
+                                break;
+                            }
+                            let wake = waker.lock().unwrap_or_else(|p| p.into_inner()).clone();
+                            if let Some(wake) = wake {
+                                wake();
+                            }
+                        }
+                        Cmd::Unwatch(path) => {
+                            let _ = watcher.unwatch(&path);
+                        }
+                    }
+                }
+            });
+        Self { cmds, done }
+    }
+}
+
 pub struct Watcher {
-    inner: Option<notify::RecommendedWatcher>,
+    inner: Option<WatchWorker>,
+    inflight: HashMap<PathBuf, VfsUri>,
     started: bool,
     startup_error: Option<String>,
     startup_retry: Option<Retry>,
@@ -119,6 +174,7 @@ impl Watcher {
     pub fn new() -> Self {
         Self {
             inner: None,
+            inflight: HashMap::new(),
             started: false,
             startup_error: None,
             startup_retry: None,
@@ -153,7 +209,7 @@ impl Watcher {
             }
         }) {
             Ok(watcher) => {
-                self.inner = Some(watcher);
+                self.inner = Some(WatchWorker::spawn(watcher, self.waker.clone()));
                 self.startup_retry = None;
             }
             Err(err) => {
@@ -170,6 +226,7 @@ impl Watcher {
     pub fn disable(&mut self) {
         self.started = true;
         self.inner = None;
+        self.inflight.clear();
         self.startup_retry = None;
         self.retries.clear();
         self.pending.clear();
@@ -187,7 +244,7 @@ impl Watcher {
 
     /// Whether debounced work is waiting (the app must keep ticking).
     pub fn has_pending(&self) -> bool {
-        !self.pending.is_empty()
+        !self.pending.is_empty() || !self.inflight.is_empty()
     }
 
     pub fn watched(&self) -> usize {
@@ -239,25 +296,27 @@ impl Watcher {
             self.start(now);
         }
         let mut notice = None;
+        self.collect(&wanted, now, &mut notice);
+        let mut requested = false;
         // `want` order is priority order: when the cap is hit, later entries go unwatched.
         let ordered = want
             .iter()
             .filter_map(|u| u.local_path().map(|p| (key(&p), u)))
             .filter(|(k, _)| wanted.contains_key(k));
         for (k, uri) in ordered {
-            if self.dirs.contains_key(&k) {
+            if self.dirs.contains_key(&k) || self.inflight.contains_key(&k) {
                 continue;
             }
             let Some(path) = uri.local_path() else {
                 continue;
             };
             if is_non_event_path(&path.to_string_lossy(), network_mounts)
-                || self.dirs.len() >= MAX_WATCHES
+                || self.dirs.len() + self.inflight.len() >= MAX_WATCHES
                 || self.retries.get(uri).is_some_and(|retry| now < retry.at)
             {
                 continue;
             }
-            let Some(inner) = self.inner.as_mut() else {
+            let Some(inner) = self.inner.as_ref() else {
                 if let Some(err) = self.startup_error.take() {
                     notice = Some(format!(
                         "Live refresh is unavailable ({err}); folders refresh periodically instead."
@@ -266,29 +325,90 @@ impl Watcher {
                 continue;
             };
             lock(&self.shared).watched.insert(k.clone());
-            match inner.watch(&path, RecursiveMode::NonRecursive) {
-                Ok(()) => {
-                    self.retries.remove(uri);
-                    self.dirs.insert(k, uri.clone());
-                    // The cached listing may predate this watch (e.g. the pane's workspace
-                    // was inactive), so re-read once now that changes are being tracked.
-                    self.pending.entry(uri.clone()).or_insert(now);
-                }
-                Err(err) => {
-                    lock(&self.shared).watched.remove(&k);
-                    let previous = self.retries.get(uri).copied();
-                    self.retries
-                        .insert(uri.clone(), Retry::after_failure(previous, now));
-                    // A vanished folder is not a watcher problem; the read reports it.
-                    if previous.is_none() && !is_missing(&err, &path) {
-                        notice = Some(format!(
-                            "Live refresh is unavailable for some folders ({err}); they refresh periodically instead."
-                        ));
-                    }
-                }
+            let cmd = Cmd::Watch {
+                key: k.clone(),
+                path,
+            };
+            if inner.cmds.send(cmd).is_ok() {
+                self.inflight.insert(k, uri.clone());
+                requested = true;
+            } else {
+                lock(&self.shared).watched.remove(&k);
+            }
+        }
+        let deadline = Instant::now() + WATCH_WAIT;
+        loop {
+            self.collect(&wanted, now, &mut notice);
+            if !requested || self.inflight.is_empty() || Instant::now() >= deadline {
+                break;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if let Some(done) = self
+                .inner
+                .as_ref()
+                .and_then(|w| w.done.recv_timeout(left).ok())
+            {
+                self.finish(done, &wanted, now, &mut notice);
+            } else {
+                break;
             }
         }
         notice
+    }
+
+    /// Take the watches the worker has finished since the last call.
+    fn collect(
+        &mut self,
+        wanted: &HashMap<PathBuf, &VfsUri>,
+        now: Instant,
+        notice: &mut Option<String>,
+    ) {
+        while let Some(done) = self.inner.as_ref().and_then(|w| w.done.try_recv().ok()) {
+            self.finish(done, wanted, now, notice);
+        }
+    }
+
+    fn finish(
+        &mut self,
+        done: Done,
+        wanted: &HashMap<PathBuf, &VfsUri>,
+        now: Instant,
+        notice: &mut Option<String>,
+    ) {
+        let Some(uri) = self.inflight.remove(&done.key) else {
+            return;
+        };
+        let still_wanted = wanted.contains_key(&done.key);
+        match done.result {
+            Ok(()) if still_wanted => {
+                self.retries.remove(&uri);
+                self.dirs.insert(done.key, uri.clone());
+                // The cached listing may predate this watch (e.g. the pane's workspace
+                // was inactive), so re-read once now that changes are being tracked.
+                self.pending.entry(uri).or_insert(now);
+            }
+            Ok(()) => {
+                // The pane moved on while the disk was waking up.
+                if let (Some(inner), Some(path)) = (self.inner.as_ref(), uri.local_path()) {
+                    let _ = inner.cmds.send(Cmd::Unwatch(path));
+                }
+                let mut shared = lock(&self.shared);
+                shared.watched.remove(&done.key);
+                shared.dirty.remove(&done.key);
+            }
+            Err((text, missing)) => {
+                lock(&self.shared).watched.remove(&done.key);
+                let previous = self.retries.get(&uri).copied();
+                self.retries
+                    .insert(uri, Retry::after_failure(previous, now));
+                // A vanished folder is not a watcher problem; the read reports it.
+                if previous.is_none() && !missing {
+                    *notice = Some(format!(
+                        "Live refresh is unavailable for some folders ({text}); they refresh periodically instead."
+                    ));
+                }
+            }
+        }
     }
 
     /// Directories whose debounce window elapsed and need a re-read.
@@ -323,10 +443,10 @@ impl Watcher {
     }
 
     fn unwatch(&mut self, k: &Path) {
-        if let (Some(uri), Some(inner)) = (self.dirs.remove(k), self.inner.as_mut())
+        if let (Some(uri), Some(inner)) = (self.dirs.remove(k), self.inner.as_ref())
             && let Some(path) = uri.local_path()
         {
-            let _ = inner.unwatch(&path);
+            let _ = inner.cmds.send(Cmd::Unwatch(path));
         }
         let mut shared = lock(&self.shared);
         shared.watched.remove(k);
