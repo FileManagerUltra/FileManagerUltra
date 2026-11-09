@@ -14,3 +14,7 @@
 #### Scenario: Leave while playing video
 - **WHEN** a Media pane playing video switches to `Files`
 - **THEN** the video decoder process no longer exists
+
+#### Scenario: Only one Media pane
+- **WHEN** a Media pane exists and `pane.kind.set {"kind":"media"}` runs on another pane
+- **THEN** the existing Media pane is focused and the other pane is unchanged

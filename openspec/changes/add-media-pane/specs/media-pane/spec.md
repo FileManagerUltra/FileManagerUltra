@@ -61,7 +61,7 @@ Files and Preview panes SHALL offer Play, Add to queue and Play folder for suppo
 - **THEN** they are appended to the queue in order and the first plays if nothing was playing
 
 ### Requirement: Transport and tracks
-`media.seek` SHALL move to an absolute or relative position clamped to the item's duration; volume SHALL be 0–100 and persist; speed SHALL offer at least 0.5×–2× with pitch kept for audio where the decoder supports it. For video, the pane SHALL list embedded audio and subtitle tracks and let the user choose one or none, and SHALL support frame step while paused. Keyboard control SHALL work while the pane is focused: Space play/pause, ←/→ seek, ↑/↓ volume, M mute, N/P next/previous, F fullscreen.
+`media.seek` SHALL move to an absolute or relative position clamped to the item's duration; volume SHALL be 0–100 and persist; speed SHALL follow the playback-speed requirement of `media-audio-pipeline`. For video, the pane SHALL list embedded audio and subtitle tracks and let the user choose one or none (subtitles per `media-subtitles`), and SHALL support frame step while paused. Keyboard control SHALL work while the pane is focused: Space play/pause, ←/→ seek, ↑/↓ volume, M mute, N/P next/previous, F fullscreen.
 
 #### Scenario: Seek past the end
 - **WHEN** `media.seek` is given a position beyond the duration
@@ -97,6 +97,13 @@ Audio SHALL be the master clock. For video, frames SHALL be dropped when late an
 - **WHEN** `media.fullscreen` runs and nothing is playing
 - **THEN** it returns an error and the layout is unchanged
 
+### Requirement: Exactly one Media pane
+At most one Media pane SHALL exist at a time. Asking for another (`pane.kind.set media`, Play with none focused, a workspace that contains two) SHALL focus the existing one instead; a saved workspace with several SHALL restore the first and turn the rest into Files panes. Preview's player and the Media pane's player SHALL stay separate views of the one-player-at-a-time rule.
+
+#### Scenario: Second Media pane
+- **WHEN** a Media pane exists and `pane.kind.set media` runs on another pane
+- **THEN** the existing Media pane gets focus and the other pane's kind is unchanged
+
 ### Requirement: Remote and unavailable files
 A file on a remote backend SHALL be copied through a job to an owner-only temporary spool, with progress shown, before playing; the spool SHALL follow the rules for temporary opened files (size cap, deleted on quit). Without a usable decoder the pane SHALL show metadata and an install hint instead of failing. A file that vanishes or fails to decode SHALL produce an error notice and playback SHALL advance to the next item.
 
@@ -109,7 +116,7 @@ A file on a remote backend SHALL be copied through a job to an owner-only tempor
 - **THEN** a notice names it and the next item plays
 
 ### Requirement: Media commands
-All media behaviour SHALL be commands with id, label, menu path, shortcut, params documentation and `enabled`: `media.play`, `media.pause`, `media.toggle`, `media.stop`, `media.next`, `media.prev`, `media.seek`, `media.volume`, `media.mute`, `media.speed`, `media.enqueue`, `media.play_folder`, `media.remove`, `media.move`, `media.clear`, `media.shuffle`, `media.repeat`, `media.track.audio`, `media.track.subtitle`, `media.step`, `media.fullscreen`, `media.playlist.load` and `media.playlist.save`. Bad, oversized or malformed params SHALL return an error and never panic; the command fuzzer SHALL cover them.
+All media behaviour SHALL be commands with id, label, menu path, shortcut, params documentation and `enabled`: `media.play`, `media.pause`, `media.toggle`, `media.stop`, `media.next`, `media.prev`, `media.seek`, `media.volume`, `media.mute`, `media.speed`, `media.enqueue`, `media.play_folder`, `media.remove`, `media.move`, `media.clear`, `media.shuffle`, `media.repeat`, `media.track.audio`, `media.track.subtitle`, `media.step`, `media.fullscreen`, `media.playlist.load`, `media.playlist.save`, `media.loop`, `media.sleep`, `media.eq`, `media.skip`, `media.chapter`, `media.subtitle.load`, `media.subtitle.delay`, `media.bookmark`, `media.finished` and `media.book`. Bad, oversized or malformed params SHALL return an error and never panic; the command fuzzer SHALL cover them.
 
 #### Scenario: Malformed params
 - **WHEN** `media.seek` receives a string, a negative index, NaN or an object without the expected fields
