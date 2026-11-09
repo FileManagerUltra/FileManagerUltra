@@ -20,11 +20,19 @@ pub const MAX_REPOS: usize = 8;
 const DEBOUNCE: Duration = Duration::from_millis(300);
 const STAMP_POLL: Duration = Duration::from_secs(2);
 const ROOT_CACHE_CAP: usize = 256;
+const MAX_LOOKUPS: usize = 16;
 /// A repository nobody shows is dropped after this long.
 const GRACE: Duration = Duration::from_secs(30);
 
 type Stamp = Option<(std::time::SystemTime, std::time::SystemTime)>;
 type Done = Vec<(PathBuf, Stamp, Result<RepoStatus, String>)>;
+
+/// Result of a background look at the disk: repository roots for folders and the
+/// repositories whose `.git/index`/`HEAD` changed.
+struct Checked {
+    roots: Vec<(PathBuf, Option<PathBuf>)>,
+    changed: Vec<PathBuf>,
+}
 
 struct Repo {
     root: PathBuf,
@@ -42,6 +50,10 @@ pub struct GitState {
     repos: Vec<Repo>,
     roots: HashMap<PathBuf, Option<PathBuf>>,
     done: Arc<Mutex<Done>>,
+    checked: Arc<Mutex<Vec<Checked>>>,
+    /// Folders whose repository root is being looked up (a sleeping disk can take seconds).
+    looking: std::collections::HashSet<PathBuf>,
+    checking: bool,
     last_stamp_check: Option<Instant>,
 }
 
@@ -54,16 +66,45 @@ impl std::fmt::Debug for GitState {
 }
 
 impl GitState {
+    /// The repository root of `dir` once known. The lookup touches the disk, so it runs on
+    /// a thread; until it lands the folder simply shows no git marks.
     fn root_of(&mut self, dir: &Path) -> Option<PathBuf> {
         if let Some(hit) = self.roots.get(dir) {
             return hit.clone();
         }
-        if self.roots.len() >= ROOT_CACHE_CAP {
-            self.roots.clear();
+        if self.looking.len() < MAX_LOOKUPS && self.looking.insert(dir.to_path_buf()) {
+            self.spawn_check(vec![dir.to_path_buf()], Vec::new());
         }
-        let root = fm_git::discover(dir);
-        self.roots.insert(dir.to_path_buf(), root.clone());
-        root
+        None
+    }
+
+    /// Look at the disk off the UI thread: discover the roots of `dirs` and compare the
+    /// stamps of `repos`.
+    fn spawn_check(&mut self, dirs: Vec<PathBuf>, repos: Vec<(PathBuf, Stamp)>) {
+        let out = self.checked.clone();
+        let spawned = std::thread::Builder::new()
+            .name("git-roots".into())
+            .spawn(move || {
+                let roots = dirs
+                    .into_iter()
+                    .map(|d| {
+                        let root = fm_git::discover(&d);
+                        (d, root)
+                    })
+                    .collect();
+                let changed = repos
+                    .into_iter()
+                    .filter(|(root, stamp)| fm_git::fingerprint(root) != *stamp)
+                    .map(|(root, _)| root)
+                    .collect();
+                out.lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(Checked { roots, changed });
+            });
+        if spawned.is_err() {
+            self.looking.clear();
+            self.checking = false;
+        }
     }
 
     fn repo_mut(&mut self, root: &Path) -> &mut Repo {
@@ -96,11 +137,21 @@ impl GitState {
 
     /// Mark every cached repository stale (`git.refresh`).
     pub fn invalidate_all(&mut self) {
-        self.roots.clear();
+        self.refresh_roots();
         let now = Instant::now() - DEBOUNCE;
         for r in &mut self.repos {
             r.dirty_at = Some(now);
         }
+    }
+
+    /// Re-discover every cached root in the background (a folder may have become a repo).
+    fn refresh_roots(&mut self) {
+        if self.checking {
+            return;
+        }
+        self.checking = true;
+        let dirs = self.roots.keys().cloned().collect();
+        self.spawn_check(dirs, Vec::new());
     }
 
     /// A working-tree folder changed: its repository needs a rescan.
@@ -169,14 +220,17 @@ impl Session {
             .is_none_or(|t| t.elapsed() >= STAMP_POLL);
         if check {
             self.git.last_stamp_check = Some(now);
-            self.git.roots.clear();
-            for r in &mut self.git.repos {
-                if r.status.is_some()
-                    && r.dirty_at.is_none()
-                    && fm_git::fingerprint(&r.root) != r.stamp
-                {
-                    r.dirty_at = Some(now);
-                }
+            if !self.git.checking {
+                self.git.checking = true;
+                let dirs = self.git.roots.keys().cloned().collect();
+                let repos = self
+                    .git
+                    .repos
+                    .iter()
+                    .filter(|r| r.status.is_some() && r.dirty_at.is_none())
+                    .map(|r| (r.root.clone(), r.stamp))
+                    .collect();
+                self.git.spawn_check(dirs, repos);
             }
         }
         self.git
@@ -214,9 +268,9 @@ impl Session {
 
     /// Apply finished scans; returns whether anything visible changed.
     pub(crate) fn pump_git(&mut self) -> bool {
+        let mut changed = self.pump_git_checks();
         let finished: Done =
             std::mem::take(&mut *self.git.done.lock().unwrap_or_else(|p| p.into_inner()));
-        let mut changed = false;
         for (root, stamp, result) in finished {
             let Some(repo) = self.git.repos.iter_mut().find(|r| r.root == root) else {
                 continue;
@@ -246,11 +300,41 @@ impl Session {
         changed
     }
 
+    fn pump_git_checks(&mut self) -> bool {
+        let batches: Vec<Checked> =
+            std::mem::take(&mut *self.git.checked.lock().unwrap_or_else(|p| p.into_inner()));
+        if batches.is_empty() {
+            return false;
+        }
+        let now = Instant::now();
+        let mut changed = false;
+        for batch in batches {
+            for (dir, root) in batch.roots {
+                self.git.looking.remove(&dir);
+                if self.git.roots.len() >= ROOT_CACHE_CAP && !self.git.roots.contains_key(&dir) {
+                    self.git.roots.clear();
+                }
+                changed |= self.git.roots.insert(dir, root.clone()) != Some(root);
+            }
+            for root in batch.changed {
+                if let Some(r) = self.git.repos.iter_mut().find(|r| r.root == root)
+                    && r.dirty_at.is_none()
+                {
+                    r.dirty_at = Some(now);
+                }
+            }
+        }
+        self.git.checking = false;
+        changed
+    }
+
     /// Whether git work is outstanding (keeps the UI repainting until it lands).
     pub(crate) fn git_busy(&self) -> bool {
         self.git
             .repos
             .iter()
             .any(|r| r.inflight || r.dirty_at.is_some())
+            || !self.git.looking.is_empty()
+            || self.git.checking
     }
 }

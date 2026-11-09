@@ -70,13 +70,16 @@ fn one_repo_is_shared_and_cache_is_bounded() {
     assert!(wait(&mut s, &uri, |_| true));
     std::fs::create_dir(tmp.path().join("sub")).unwrap();
     let sub = VfsUri::parse(&tmp.path().join("sub").to_string_lossy()).unwrap();
-    assert!(s.git_view(&sub).is_some());
+    assert!(
+        wait(&mut s, &sub, |_| true),
+        "the root lookup is asynchronous"
+    );
     assert_eq!(s.git.cached(), 1);
     for _ in 0..12 {
         let t = tempfile::tempdir().unwrap();
         git(t.path(), &["init", "-q"]);
         let u = VfsUri::parse(&t.path().to_string_lossy()).unwrap();
-        s.git_view(&u);
+        wait(&mut s, &u, |_| true);
     }
     assert!(s.git.cached() <= fm_engine::git::MAX_REPOS);
 }
