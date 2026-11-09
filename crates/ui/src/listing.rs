@@ -1018,7 +1018,7 @@ fn entry_row_ui(
         if let Some(state) = s.layout.state_mut(pane) {
             state.tree.active = false;
             if modifiers.shift {
-                state.listing.extend_to(&names, row);
+                state.listing.extend_click(&names, row);
             } else if modifiers.command {
                 state.listing.toggle(&entry.name, row);
             } else if selected && state.listing.selected_count() == 1 && !response.double_clicked()

@@ -69,14 +69,13 @@ impl SortSpec {
 
     fn cmp_secondary(&self, a: &Entry, b: &Entry) -> std::cmp::Ordering {
         let ord = match self.key {
-            SortKey::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            SortKey::Name => natural_cmp(&a.name, &b.name),
             SortKey::Size => a.size.unwrap_or(0).cmp(&b.size.unwrap_or(0)),
             SortKey::Mtime => a.modified.cmp(&b.modified),
             SortKey::Type => {
                 let ta = kind_rank(&a.kind);
                 let tb = kind_rank(&b.kind);
-                ta.cmp(&tb)
-                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                ta.cmp(&tb).then_with(|| natural_cmp(&a.name, &b.name))
             }
         };
         match self.dir {
@@ -97,6 +96,42 @@ impl SortSpec {
     /// Sort a slice in place.
     pub fn sort(&self, entries: &mut [Entry]) {
         entries.sort_by(|a, b| self.compare(a, b));
+    }
+}
+
+/// Case-insensitive name order where digit runs compare by value (`f2` < `f10`).
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (a, b) = (a.to_lowercase(), b.to_lowercase());
+    let (mut ai, mut bi) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (ai.peek().copied(), bi.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let run = |it: &mut std::iter::Peekable<std::str::Chars<'_>>| {
+                    let mut digits = String::new();
+                    while let Some(c) = it.next_if(char::is_ascii_digit) {
+                        digits.push(c);
+                    }
+                    digits
+                };
+                let (da, db) = (run(&mut ai), run(&mut bi));
+                let (da, db) = (da.trim_start_matches('0'), db.trim_start_matches('0'));
+                let ord = da.len().cmp(&db.len()).then_with(|| da.cmp(db));
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+            (Some(x), Some(y)) => {
+                if x != y {
+                    return x.cmp(&y);
+                }
+                ai.next();
+                bi.next();
+            }
+        }
     }
 }
 
@@ -266,6 +301,29 @@ impl ListingState {
         for name in &order[lo..=hi] {
             self.selection.insert(name.clone());
         }
+        self.focused_row = row;
+    }
+
+    /// Shift-click: grow the selection to `row`. Below the selection the range starts at its
+    /// first row, above it at its last row, so earlier picks are kept; inside it shrinks to
+    /// the range from its first row. With nothing selected it behaves like [`Self::extend_to`].
+    pub fn extend_click(&mut self, order: &[String], row: usize) {
+        let selected: Vec<usize> = order
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| self.selection.contains(*name))
+            .map(|(i, _)| i)
+            .collect();
+        let (Some(&lo), Some(&hi)) = (selected.first(), selected.last()) else {
+            self.extend_to(order, row);
+            return;
+        };
+        let row = row.min(order.len() - 1);
+        let (from, to) = if row < lo { (row, hi) } else { (lo, row) };
+        self.selection.clear();
+        self.on_current = false;
+        self.on_parent = false;
+        self.selection.extend(order[from..=to].iter().cloned());
         self.focused_row = row;
     }
 
@@ -976,6 +1034,20 @@ mod tests {
     }
 
     #[test]
+    fn sort_by_name_is_natural() {
+        let mut es: Vec<_> = ["f10", "F2", "f1", "f11", "f02", "a100b", "a99b"]
+            .iter()
+            .map(|n| entry(n, EntryKind::File, None))
+            .collect();
+        SortSpec::default().sort(&mut es);
+        let names: Vec<_> = es.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["a99b", "a100b", "f1", "F2", "f02", "f10", "f11"]
+        );
+    }
+
+    #[test]
     fn sort_dirs_first_off_and_size() {
         let mut es = vec![
             entry("big", EntryKind::File, Some(100)),
@@ -1038,6 +1110,28 @@ mod tests {
         assert!(!l.is_selected("a"));
         l.select_all(&order);
         assert_eq!(l.selected_count(), 4);
+    }
+
+    #[test]
+    fn shift_click_adds_below_and_above_the_selection() {
+        let order: Vec<String> = ["a", "b", "c", "d", "e", "f", "g"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let picked = |l: &ListingState| l.selection().cloned().collect::<Vec<_>>().join("");
+        let mut l = ListingState::default();
+        l.select_only(Some("c"), 2);
+        l.extend_click(&order, 3);
+        assert_eq!(picked(&l), "cd");
+        l.extend_click(&order, 5); // below: keeps c, d
+        assert_eq!(picked(&l), "cdef");
+        l.extend_click(&order, 0); // above: keeps everything down to f
+        assert_eq!(picked(&l), "abcdef");
+        l.extend_click(&order, 2); // inside: shrinks from the first row
+        assert_eq!(picked(&l), "abc");
+        l.select_only(None, 4);
+        l.extend_click(&order, 6); // nothing selected: from the cursor row
+        assert_eq!(picked(&l), "efg");
     }
 
     #[test]
