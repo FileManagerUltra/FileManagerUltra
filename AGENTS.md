@@ -72,7 +72,7 @@ The project uses [Semantic Versioning](https://semver.org/). The single source o
 1. Pick the next version: patch for fixes, minor for new features, major for breaking changes (while `0.x`, breaking changes bump minor).
 2. Move the `[Unreleased]` entries in `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`, start a fresh empty `[Unreleased]`, and update the compare links.
 3. Bump `version` in the root `Cargo.toml`, run `cargo check` so `Cargo.lock` follows, and commit (`Release X.Y.Z`).
-4. Tag exactly `vX.Y.Z` and push the tag. The release workflow refuses a tag that differs from the `Cargo.toml` version, then builds the installers and publishes the GitHub release.
+4. Tag exactly `vX.Y.Z` as an **annotated tag whose description is the changelog**: copy the `## [X.Y.Z]` section from `CHANGELOG.md` (the `Added`/`Changed`/`Fixed`… lists) into the tag message, e.g. `git tag -a vX.Y.Z -F <file with the section>`. A release without notes shows only a "Full Changelog" compare link. Then push the tag. The release workflow publishes the tag description as the release notes, followed by a "Full changelog" link to `CHANGELOG.md` at that tag, anchored to the version heading (e.g. `#012---2026-11-08`), so the `## [X.Y.Z] - date` heading format must stay unchanged. The release workflow refuses a tag that differs from the `Cargo.toml` version, then builds the installers and publishes the GitHub release.
 
 Never publish a pre-release or draft expecting users to be notified: the update check ignores them. Never reuse or move a published tag.
 
