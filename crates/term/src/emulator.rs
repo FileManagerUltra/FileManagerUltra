@@ -3,6 +3,7 @@ use std::num::NonZeroU16;
 use vt100::Parser;
 
 use crate::charset::Charsets;
+use crate::clip::ClipSink;
 use crate::mouse::{MouseEvent, MouseProtocol};
 use crate::queries::{Queries, Query};
 
@@ -116,7 +117,7 @@ fn dim(v: u16, max: u16) -> NonZeroU16 {
 /// The VT parser and screen model. Pure data: feed it bytes, read snapshots.
 pub struct Emulator {
     scrollback_capacity: usize,
-    parser: Parser,
+    parser: Parser<ClipSink>,
     charsets: Charsets,
     scratch: Vec<u8>,
     queries: Queries,
@@ -140,7 +141,12 @@ impl Emulator {
         let capacity = capacity.clamp(5_000, 1_000_000);
         Self {
             scrollback_capacity: capacity,
-            parser: Parser::new(dim(rows, MAX_ROWS), dim(cols, MAX_COLS), capacity),
+            parser: Parser::new_with_callbacks(
+                dim(rows, MAX_ROWS),
+                dim(cols, MAX_COLS),
+                capacity,
+                ClipSink::default(),
+            ),
             charsets: Charsets::default(),
             queries: Queries::default(),
             replies: Vec::new(),
@@ -180,6 +186,11 @@ impl Emulator {
         if self.replies.len() + reply.len() <= MAX_REPLIES {
             self.replies.extend_from_slice(reply.as_bytes());
         }
+    }
+
+    /// Text the program asked to copy (OSC 52) since the last call.
+    pub fn take_clipboard(&mut self) -> Option<String> {
+        self.parser.callbacks_mut().take()
     }
 
     /// Replies owed to the program since the last call.
@@ -317,6 +328,17 @@ impl Emulator {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn osc52_write_is_offered_once_and_reads_are_ignored() {
+        let mut e = Emulator::new(24, 80);
+        e.feed(b"\x1b]52;c;aGVsbG8=\x07");
+        assert_eq!(e.take_clipboard().as_deref(), Some("hello"));
+        assert_eq!(e.take_clipboard(), None);
+        e.feed(b"\x1b]52;c;?\x07");
+        assert_eq!(e.take_clipboard(), None);
+        assert!(e.take_replies().is_empty());
+    }
 
     #[test]
     fn application_controls_mouse_reporting_and_reset() {

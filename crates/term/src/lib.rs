@@ -4,6 +4,7 @@
 //! [`Snapshot`]s and sends bytes back. All pty I/O runs on helper threads.
 
 mod charset;
+mod clip;
 mod emulator;
 mod links;
 mod mouse;

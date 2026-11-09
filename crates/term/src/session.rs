@@ -195,6 +195,11 @@ impl TermSession {
         }
     }
 
+    /// Text the program asked to copy to the clipboard (OSC 52) since the last call.
+    pub fn take_clipboard(&mut self) -> Option<String> {
+        self.emulator.take_clipboard()
+    }
+
     /// The command language of the running shell, for quoting paths sent to it.
     pub fn dialect(&self) -> Dialect {
         self.dialect

@@ -138,6 +138,12 @@ impl Session {
             let selected = self.terminal_selection.is_some_and(|sel| sel.pane == pane);
             let before = selected.then(|| t.snapshot());
             let p = t.pump();
+            // Only the focused pane may write the host clipboard; others are dropped.
+            if let Some(text) = t.take_clipboard()
+                && pane == self.layout.focused()
+            {
+                self.clipboard_out = Some(text);
+            }
             if p.changed
                 && let Some(before) = before
             {

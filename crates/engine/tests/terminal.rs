@@ -122,6 +122,34 @@ fn terminal_starts_in_the_pane_directory_and_echoes_input() {
 }
 
 #[test]
+fn program_clipboard_writes_reach_the_host_from_the_focused_pane_only() {
+    let mut s = Session::new().expect("session");
+    if !has_pty(&mut s) {
+        return;
+    }
+    let pane = s.layout.focused();
+    let send = "printf '\\033]52;c;aGVsbG8=\\007'; echo done-$((6*7))\r";
+    s.dispatch("term.input", &json!({"data": send}))
+        .expect("input");
+    assert!(wait_for(&mut s, pane, "done-42"));
+    assert_eq!(s.clipboard_out.take().as_deref(), Some("hello"));
+
+    let other = s
+        .layout
+        .split(pane, fm_layout::Axis::Vertical, 0.5)
+        .expect("split");
+    s.layout.focus_pane(pane).expect("focus");
+    s.dispatch(
+        "term.input",
+        &json!({"data": send.replace("done-42", "done-43").replace("6*7", "6*7+1")}),
+    )
+    .expect("input");
+    s.layout.focus_pane(other).expect("focus");
+    assert!(wait_for(&mut s, pane, "done-43"));
+    assert_eq!(s.clipboard_out, None);
+}
+
+#[test]
 #[cfg(unix)]
 fn terminal_resize_reflows_real_shell_output() {
     let dir = tempfile::tempdir().expect("tmp");
