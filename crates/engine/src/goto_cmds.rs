@@ -132,6 +132,13 @@ pub fn resolve(base: &VfsUri, text: &str) -> Result<VfsUri, FmError> {
     if let Some(uri) = windows_shortcut(text, cfg!(windows)) {
         return Ok(uri);
     }
+    // Windows already reaches `\\server\share` natively; elsewhere (and when typed into a
+    // network pane) it opens the in-app SMB connection.
+    if (!cfg!(windows) || matches!(base.scheme(), Scheme::Smb | Scheme::Network))
+        && let Some(uri) = unc_to_smb(text)?
+    {
+        return Ok(uri);
+    }
     if is_anchored(text) {
         return VfsUri::parse(text);
     }
@@ -144,6 +151,25 @@ pub fn resolve(base: &VfsUri, text: &str) -> Result<VfsUri, FmError> {
         };
     }
     Ok(cur)
+}
+
+/// `\\host\share\dir` as `smb://host/share/dir`; `None` when `text` is not a UNC path.
+fn unc_to_smb(text: &str) -> Result<Option<VfsUri>, FmError> {
+    let Some(rest) = text.strip_prefix("\\\\") else {
+        return Ok(None);
+    };
+    if rest.starts_with(['?', '.']) {
+        return Ok(None);
+    }
+    let mut segments = rest.split('\\').filter(|s| !s.is_empty());
+    let host = segments
+        .next()
+        .ok_or_else(|| FmError::invalid_uri("missing server name"))?;
+    let mut uri = VfsUri::parse(&format!("smb://{host}/"))?;
+    for seg in segments {
+        uri = uri.join(seg)?;
+    }
+    Ok(Some(uri))
 }
 
 /// Split typed text into the directory part (including the trailing separator) and the
@@ -449,6 +475,18 @@ mod tests {
         assert!(resolve(&base, "").is_err());
         assert!(resolve(&base, &"a/".repeat(5000)).is_err());
         assert!(resolve(&base, "bad\u{7}name").is_err());
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn unc_paths_open_the_in_app_smb_connection() {
+        let base = VfsUri::parse("/home/alice").expect("uri");
+        let host = resolve(&base, r"\\192.168.0.50").expect("host");
+        assert_eq!(host.as_str(), "smb://192.168.0.50/");
+        let dir = resolve(&base, r"\\nas\media\Movies\2024").expect("dir");
+        assert_eq!(dir.as_str(), "smb://nas/media/Movies/2024");
+        assert!(resolve(&base, r"\\").is_err());
+        assert!(resolve(&base, r"\\nas\a\..\x").is_err());
     }
 
     #[test]
