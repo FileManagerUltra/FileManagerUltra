@@ -111,6 +111,11 @@ pub fn specs() -> Vec<CommandSpec> {
             match classify(&url)? {
                 Link::External(url) => {
                     let url = url.to_string();
+                    let shown: String = url.chars().take(80).collect();
+                    let ellipsis = if shown.len() < url.len() { "…" } else { "" };
+                    s.notice = Some(format!(
+                        "Opening {shown}{ellipsis} in your default browser. If it does not come to the front, check your other windows."
+                    ));
                     s.jobs.submit(crate::JobLane::Local, move |_| {
                         opener::open_browser(url).map_err(|e| {
                             FmError::backend("preview", format!("Cannot open link: {e}"))

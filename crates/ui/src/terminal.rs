@@ -451,6 +451,13 @@ fn handle_pointer(
         };
         let inside = response.hovered() && pos.is_some_and(|p| rect.contains(p));
         let cell = pos.map(|p| cell_at(rect, m, snap, p));
+        if inside
+            && mods.command
+            && matches!(event, Event::PointerButton { .. })
+            && cell.is_some_and(|(row, col)| fm_term::link_at(snap, row, col).is_some())
+        {
+            continue;
+        }
         for event in state.event(&event, snap, cell, inside, mods, m.ch) {
             if matches!(
                 event.action,
@@ -541,7 +548,7 @@ fn handle_pointer(
 }
 
 /// Ctrl+click (Cmd on macOS) opens a web link; while the key is held the link is underlined.
-/// A terminal app that captures the mouse keeps its clicks unless Shift is held.
+/// This also works while a terminal app captures the mouse: the click is kept from the app.
 #[allow(clippy::too_many_arguments)]
 fn link_under_pointer(
     ui: &Ui,
@@ -554,7 +561,7 @@ fn link_under_pointer(
     snap: &Snapshot,
 ) {
     let mods = ui.input(|i| i.modifiers);
-    if !mods.command || (snap.mouse.enabled() && !mods.shift) || !response.hovered() {
+    if !mods.command || !response.hovered() {
         return;
     }
     let Some(pos) = ui.input(|i| i.pointer.hover_pos()) else {
