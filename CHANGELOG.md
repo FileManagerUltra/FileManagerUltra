@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Sorting by name (and type) is now natural: `f2` comes before `f10`, numbers inside names compare by value.
+
+### Fixed
+
+- Typing a Windows-style network address such as `\\192.168.0.50` or `\\nas\media\Movies` in the path bar now connects to that server over SMB (on Windows this applies in network panes; file panes keep using Windows' own network access).
+- Shift-click now adds to the selection: clicking below it extends from its first file, clicking above it extends from its last file, instead of replacing it.
+- The window no longer waits for a sleeping hard disk to spin up at start-up when a folder on it was open in the last session.
+
 ## [0.1.2] - 2026-11-08
 
 ### Added
