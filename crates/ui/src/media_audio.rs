@@ -44,8 +44,7 @@ pub(crate) fn equalizer_window(ui: &Ui, s: &Session, actions: &mut Actions) {
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
-        .pivot(egui::Align2::CENTER_CENTER)
-        .default_pos(ui.ctx().content_rect().center())
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ui.ctx(), |ui| equalizer(ui, s, actions));
     ui.data_mut(|d| d.insert_temp(id, open));
 }
@@ -66,8 +65,8 @@ fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
                 actions.push(("media.eq", json!({"enabled": enabled})));
             }
             ui.add_space(8.0);
-            ui.weak("Preset");
-            egui::ComboBox::from_id_salt("eq_preset")
+            let preset_label = ui.weak("Preset");
+            let combo = egui::ComboBox::from_id_salt("eq_preset")
                 .selected_text(label)
                 .show_ui(ui, |ui| {
                     for (name, _) in PRESETS {
@@ -89,41 +88,37 @@ fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
                         });
                     }
                 });
+            combo.response.labelled_by(preset_label.id);
         });
         ui.add_space(6.0);
         ui.separator();
         ui.add_space(6.0);
-        let accent = ui.visuals().selection.bg_fill;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
             ui.vertical(|ui| {
-                ui.set_height(150.0);
-                ui.label(format!("+{MAX_BAND_DB:.0} dB"));
+                ui.set_height(BAND_HEIGHT + 24.0);
+                ui.add_space(24.0);
+                ui.small(format!("+{MAX_BAND_DB:.0} dB"));
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    ui.label(format!("-{MAX_BAND_DB:.0} dB"));
+                    ui.small(format!("-{MAX_BAND_DB:.0} dB"));
                 });
             });
             for (band, hz) in BAND_HZ.iter().enumerate() {
                 ui.allocate_ui_with_layout(
-                    egui::vec2(36.0, 0.0),
+                    egui::vec2(34.0, 0.0),
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| {
-                        let mut gain = eq.bands[band];
-                        ui.spacing_mut().slider_width = 150.0;
-                        ui.visuals_mut().selection.bg_fill = accent;
-                        let response = ui.add(
-                            egui::Slider::new(&mut gain, -MAX_BAND_DB..=MAX_BAND_DB)
-                                .vertical()
-                                .step_by(0.5)
-                                .show_value(false),
-                        );
-                        if response.changed() {
+                        let band_name = ui.label(band_label(*hz));
+                        let gain = eq.bands[band];
+                        if let Some(new) =
+                            band_slider(ui, gain).map(|g| g.clamp(-MAX_BAND_DB, MAX_BAND_DB))
+                        {
                             let mut bands = eq.bands;
-                            bands[band] = gain;
+                            bands[band] = new;
                             actions.push(("media.eq", json!({"bands": bands})));
                         }
-                        ui.label(band_label(*hz));
                         ui.small(format!("{gain:+.1}"));
+                        let _ = band_name;
                     },
                 );
             }
@@ -206,4 +201,58 @@ fn sleep_menu(ui: &mut Ui, s: &Session, actions: &mut Actions) {
             ui.close();
         }
     });
+}
+
+const BAND_HEIGHT: f32 = 130.0;
+
+/// A vertical band slider: a track with a zero line, filled from zero to the knob.
+fn band_slider(ui: &mut Ui, gain: f32) -> Option<f32> {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(24.0, BAND_HEIGHT), egui::Sense::click_and_drag());
+    let visuals = ui.visuals().clone();
+    let track = egui::Rect::from_center_size(rect.center(), egui::vec2(4.0, rect.height()));
+    let span = track.height() - 8.0;
+    let y_of = |g: f32| track.center().y - g / MAX_BAND_DB * span / 2.0;
+    let painter = ui.painter();
+    painter.rect_filled(
+        track,
+        2.0,
+        visuals
+            .widgets
+            .noninteractive
+            .fg_stroke
+            .color
+            .gamma_multiply(0.3),
+    );
+    painter.hline(
+        rect.x_range(),
+        y_of(0.0),
+        egui::Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color),
+    );
+    let knob = egui::pos2(track.center().x, y_of(gain));
+    painter.rect_filled(
+        egui::Rect::from_two_pos(
+            egui::pos2(track.min.x, y_of(0.0)),
+            egui::pos2(track.max.x, knob.y),
+        ),
+        2.0,
+        visuals.selection.bg_fill,
+    );
+    let big = response.hovered() || response.dragged();
+    painter.circle_filled(
+        knob,
+        if big { 7.0 } else { 6.0 },
+        visuals.selection.stroke.color,
+    );
+    response.widget_info(|| egui::WidgetInfo::slider(true, f64::from(gain), "Equalizer band"));
+    let changed = if response.dragged() || response.clicked() {
+        response.interact_pointer_pos().map(|pos| {
+            let g = (track.center().y - pos.y) / (span / 2.0) * MAX_BAND_DB;
+            (g / 0.5).round() * 0.5
+        })
+    } else {
+        None
+    };
+    response.on_hover_text(format!("{gain:+.1} dB"));
+    changed
 }

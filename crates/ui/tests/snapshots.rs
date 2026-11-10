@@ -141,6 +141,43 @@ fn media_video_controls() {
     media_preview_controls(true, true, false);
 }
 
+#[test]
+fn media_equalizer_window() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (name, tokens) in [("dark", Tokens::dark()), ("light", Tokens::light())] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = Session::new().expect("session");
+        session
+            .dispatch("pane.kind.set", &serde_json::json!({"kind": "media"}))
+            .expect("media");
+        let pane = session.layout.focused();
+        session
+            .dispatch("media.eq", &serde_json::json!({"preset": "Rock"}))
+            .expect("preset");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(640.0, 420.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                ui.data_mut(|d| d.insert_temp(egui::Id::NULL.with("media-eq-window-open"), true));
+                egui::CentralPanel::default().show(ui, |ui| {
+                    fm_ui::media::show(ui, &mut session, pane, &tokens);
+                });
+            });
+        harness.run();
+        harness.snapshot(format!("media_equalizer_{name}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
 fn media_preview_controls(video: bool, in_media: bool, fullscreen: bool) {
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();
