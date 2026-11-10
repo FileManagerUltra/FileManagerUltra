@@ -276,6 +276,10 @@ fn parse_probe(raw: &[u8]) -> Option<Probe> {
                     && (1..=16_384).contains(&w)
                     && (1..=16_384).contains(&h)
                 {
+                    // Anamorphic video: stretch to the display aspect ratio, not the coded one.
+                    let w = (f64::from(w) * pixel_aspect(text(s, "sample_aspect_ratio").as_deref()))
+                        .round()
+                        .clamp(1.0, 16_384.0) as u32;
                     video = Some((w, h, rate.unwrap_or(25.0).min(120.0)));
                 }
                 let fps = rate.map(|f| format!(" · {f:.2} fps")).unwrap_or_default();
@@ -367,6 +371,16 @@ fn track_label(stream: &serde_json::Value, codec: &str, channels: Option<u64>) -
     }
     parts.push(detail);
     parts.join(" · ")
+}
+
+/// `sample_aspect_ratio` such as "16:11"; 1.0 when missing, unknown ("0:1") or absurd.
+fn pixel_aspect(r: Option<&str>) -> f64 {
+    r.and_then(|r| r.split_once(':'))
+        .and_then(|(n, d)| Some((n.parse::<f64>().ok()?, d.parse::<f64>().ok()?)))
+        .filter(|(n, d)| *n > 0.0 && *d > 0.0)
+        .map(|(n, d)| n / d)
+        .filter(|a| (0.25..=4.0).contains(a))
+        .unwrap_or(1.0)
 }
 
 fn frame_rate(r: &str) -> Option<f64> {
@@ -487,6 +501,15 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn anamorphic_video_uses_the_display_aspect() {
+        let raw = br#"{"streams":[{"codec_type":"video","codec_name":"mpeg2video","width":720,"height":576,"sample_aspect_ratio":"64:45","avg_frame_rate":"25/1"}]}"#;
+        let (w, h, _) = parse_probe(raw).and_then(|p| p.video).expect("video");
+        assert_eq!((w, h), (1024, 576));
+        assert_eq!(pixel_aspect(Some("0:1")), 1.0);
+        assert_eq!(pixel_aspect(None), 1.0);
+    }
+
     #[test]
     fn chapters_parse_sorted_and_skip_garbage() {
         let raw = br#"{"chapters":[{"start_time":"10.0","end_time":"20.0","tags":{"title":"B"}},{"start_time":"0.0","end_time":"10.0"},{"start_time":"x","end_time":"1"},{"start_time":"5","end_time":"1"}]}"#;

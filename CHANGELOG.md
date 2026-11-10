@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redesigned the Media pane in a Winamp style: a now-playing display with artwork, title and clock, an icon-based control row with tooltips, a numbered playlist, and an Options menu holding the equalizer, sleep timer, A-B loop, speed, tracks, gapless and other settings.
 
 ### Fixed
+- Widescreen videos stored with non-square pixels (many DVD and broadcast files) are no longer squeezed to 4:3 in Preview and Media.
 
 - The Windows installer now includes ffmpeg and ffprobe, so video (and Preview video) works without installing anything else.
 - In a Media audiobook folder, the files before the one you are on now show a check mark ("Played") in the gutter.
