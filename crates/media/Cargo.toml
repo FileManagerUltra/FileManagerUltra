@@ -1,0 +1,21 @@
+[package]
+name = "fm-media"
+description = "Bounded audio decoding and native output shared by Preview and Media panes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+fm-vfs.workspace = true
+cpal.workspace = true
+symphonia.workspace = true
+rubato.workspace = true
+rtrb.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

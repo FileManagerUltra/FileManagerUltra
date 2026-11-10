@@ -29,6 +29,23 @@ remain future work (the command registry is already in place).
 
 ## Current focus
 
+`add-media-pane` is in progress: shared native audio decoding/output and simple
+audio playback in Preview are implemented, including video sound, audio-clock
+synchronization, volume/mute and separate audio/video autoplay preferences.
+The dedicated Media pane now plays local audio with a session-owned queue,
+transport controls, auto-advance, shuffle/repeat and background playback. Shared
+`AudioOwner` arbitration pauses Preview or Media when the other starts.
+The local queue and playback settings now persist and restore paused.
+Local M3U/M3U8/PLS import, M3U8 export, Play folder and drag-and-drop enqueue are
+implemented. Files/Preview local-audio actions now append, play next or play
+immediately without discarding the playlist; Preview Play transfers its position.
+Local video now uses the shared decoder/clock, fitted frames, transport and paused
+frame stepping. Files/folders/playlists accept video, and Preview video hands off
+its position. Video stops when its Media pane is closed or hidden by a workspace
+switch; audio retains its background preference. Video speed control is
+implemented; audio-only speed, track selection, fullscreen, YouTube-style keyboard
+controls and advanced playback remain pending.
+
 Recent interaction improvements include rich native Markdown previews (nested lists,
 tasks, highlighted code and aligned tables), full-loaded-document selection/copy,
 per-preview 50%-400% zoom, configurable terminal scrollback (5,000-1,000,000 rows,

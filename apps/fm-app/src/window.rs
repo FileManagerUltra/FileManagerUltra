@@ -15,10 +15,14 @@ fn capture_geometry(
     if viewport.minimized == Some(true) {
         return;
     }
+    // Fullscreen never replaces the normal geometry or the maximized flag.
+    if viewport.fullscreen == Some(true) {
+        return;
+    }
     if let Some(maximized) = viewport.maximized {
         prefs.window_maximized = maximized;
     }
-    if viewport.maximized.unwrap_or(prefs.window_maximized) || viewport.fullscreen == Some(true) {
+    if viewport.maximized.unwrap_or(prefs.window_maximized) {
         return;
     }
     let Some(rect) = viewport.inner_rect else {
@@ -215,6 +219,32 @@ mod tests {
         capture_geometry(&viewport, 1.0, 2.0, &mut prefs);
         assert!(prefs.window_maximized);
         assert_eq!(prefs.window_geometry, Some(saved));
+    }
+
+    #[test]
+    fn fullscreen_changes_neither_geometry_nor_the_maximized_flag() {
+        let mut prefs = Prefs {
+            window_maximized: false,
+            window_geometry: Some(WindowGeometry {
+                size: [900.0, 600.0],
+                position: Some([10.0, 20.0]),
+                scale_factor: 1.0,
+            }),
+            ..Prefs::default()
+        };
+        let viewport = egui::ViewportInfo {
+            inner_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1920.0, 1080.0),
+            )),
+            maximized: Some(true),
+            fullscreen: Some(true),
+            ..Default::default()
+        };
+        let before = prefs.window_geometry;
+        capture_geometry(&viewport, 1.0, 1.0, &mut prefs);
+        assert!(!prefs.window_maximized);
+        assert_eq!(prefs.window_geometry, before);
     }
 
     #[test]

@@ -32,17 +32,25 @@ struct Inner {
 #[derive(Clone, Debug, Default)]
 pub struct MemFs {
     inner: Arc<Mutex<Inner>>,
+    scheme: Option<Scheme>,
 }
 
 impl MemFs {
     pub fn new() -> Self {
         let fs = Self {
             inner: Arc::new(Mutex::new(Inner::default())),
+            scheme: None,
         };
         if let Ok(root) = VfsUri::parse("/") {
             fs.lock().nodes.insert(root.to_string(), Node::Dir);
         }
         fs
+    }
+
+    /// Serve `scheme` (default `file`), to stand in for a remote backend.
+    pub fn with_scheme(mut self, scheme: Scheme) -> Self {
+        self.scheme = Some(scheme);
+        self
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -274,7 +282,7 @@ impl Drop for MemWriter {
 
 impl Vfs for MemFs {
     fn scheme(&self) -> Scheme {
-        Scheme::File
+        self.scheme.unwrap_or(Scheme::File)
     }
 
     fn read_dir(&self, uri: &VfsUri) -> Result<Vec<Entry>, FmError> {

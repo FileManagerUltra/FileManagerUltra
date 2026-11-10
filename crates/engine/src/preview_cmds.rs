@@ -156,6 +156,7 @@ pub struct PreviewSlot {
     pub thumb_window: Option<(usize, usize)>,
     /// Playback of a video shown by this pane.
     pub video: Option<crate::video_cmds::VideoState>,
+    pub audio: Option<crate::preview_audio_cmds::AudioState>,
     /// The Files pane being previewed (for the header).
     pub target: Option<PaneId>,
     /// Something changed inside the previewed folder; re-render it in place.
@@ -173,6 +174,10 @@ pub struct PreviewSlot {
 }
 
 impl PreviewSlot {
+    pub(crate) fn playback_ready(&self) -> bool {
+        self.pending.is_none()
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             subject: None,
@@ -190,6 +195,7 @@ impl PreviewSlot {
             thumb_group: true,
             thumb_window: None,
             video: None,
+            audio: None,
             target: None,
             stale: false,
             updates_available: false,
@@ -381,6 +387,8 @@ impl Session {
         changed |= self.drain_previews();
         changed |= self.thumbs.take_changed();
         changed |= self.video_tick();
+        changed |= self.audio_preview_tick();
+        self.reconcile_audio_owner();
         changed
     }
 
@@ -476,6 +484,8 @@ impl Session {
                     slot.pending = Some((desired, now + DEBOUNCE));
                     // The cursor moved on: stop the old folder scan right away.
                     slot.scan = None;
+                    slot.audio = None;
+                    slot.video = None;
                     if matches!(slot.body, Body::Loading) {
                         slot.token = 0;
                     }
@@ -1554,6 +1564,61 @@ pub fn specs() -> Vec<CommandSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn selection_change_stops_players_before_the_debounce_and_does_not_restart_them() {
+        for video in [false, true] {
+            let a = Entry::new(VfsUri::parse("/a.mp3").expect("uri"), EntryKind::File);
+            let b = Entry::new(VfsUri::parse("/b.mp3").expect("uri"), EntryKind::File);
+            let mut s = Session::default();
+            let mut slot = PreviewSlot::new();
+            slot.subject = Some(a.clone());
+            slot.subjects = vec![a.clone()];
+            slot.key = Some(vec![key_of(&a, false, false)]);
+            slot.body = Body::Static(Arc::new(Preview::Meta(fm_preview::MetaDoc {
+                rows: vec![],
+                hint: None,
+                poster: None,
+                video: video.then(|| fm_preview::VideoInfo {
+                    path: "/a.mp4".into(),
+                    width: 640,
+                    height: 360,
+                    fps: 25.0,
+                    duration: 60.0,
+                    audio: None,
+                    audio_delay: 0.0,
+                    tracks: Default::default(),
+                }),
+                audio: (!video).then(|| fm_preview::audio::AudioDoc {
+                    path: "/a.mp3".into(),
+                    duration: Some(60.0),
+                }),
+            })));
+            s.previews.slots.insert(1, slot);
+            s.audio_preview_tick();
+            s.video_tick();
+            let slot = s.previews.slot(1).expect("slot");
+            assert_eq!(slot.audio.is_some(), !video);
+            assert_eq!(slot.video.is_some(), video);
+
+            s.advance_slot(1, vec![b], Instant::now());
+            assert!(s.previews.slot(1).expect("slot").audio.is_none());
+            s.prefs.preview_audio_autoplay = true;
+            s.audio_preview_tick();
+            s.video_tick();
+            let slot = s.previews.slot(1).expect("slot");
+            assert!(slot.pending.is_some());
+            assert!(
+                slot.audio.is_none(),
+                "old audio must not restart while settling"
+            );
+            assert!(
+                slot.video.is_none(),
+                "old video must not restart while settling"
+            );
+        }
+    }
 
     #[test]
     #[allow(clippy::expect_used)]

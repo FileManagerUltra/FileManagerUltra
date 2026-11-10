@@ -292,7 +292,7 @@ pub fn open_file() -> CommandSpec {
 const MAX_OPEN_DOWNLOAD: u64 = 1 << 30;
 
 /// A remote name reduced to one harmless path component.
-fn safe_file_name(name: &str) -> String {
+pub(crate) fn safe_file_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .map(|c| {
@@ -407,6 +407,13 @@ pub(crate) fn download_to_temp(
         progress(done, total);
     }
     out.flush().map_err(FmError::Io)?;
+    // `take` stops silently at the cap; a file that long with no known size is cut short.
+    if size.is_none() && done >= MAX_OPEN_DOWNLOAD {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(FmError::Unsupported(
+            "file is too large to open directly; copy it to a local folder first",
+        ));
+    }
     Ok(path)
 }
 

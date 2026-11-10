@@ -41,7 +41,7 @@ jobs:
           key: ${{ matrix.target }}
       - name: Linux packaging tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfuse2 desktop-file-utils
+        run: sudo apt-get update && sudo apt-get install -y libfuse2 desktop-file-utils pkg-config libasound2-dev
       - name: Install cargo-packager
         run: cargo install cargo-packager --locked
       - name: Build

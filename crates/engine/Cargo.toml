@@ -22,6 +22,7 @@ fm-layout.workspace = true
 fm-ops.workspace = true
 fm-term.workspace = true
 fm-preview.workspace = true
+fm-media.workspace = true
 opener.workspace = true
 reqwest.workspace = true
 semver.workspace = true
@@ -34,6 +35,7 @@ directories.workspace = true
 sysinfo.workspace = true
 jiff.workspace = true
 regex.workspace = true
+tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 plist = "1"
@@ -41,7 +43,6 @@ plist = "1"
 [dev-dependencies]
 plist = "1"
 flate2 = "1"
-tempfile.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
 fm-testkit.workspace = true
 fm-fs-sftp = { workspace = true, features = ["test-server"] }

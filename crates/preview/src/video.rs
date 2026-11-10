@@ -5,6 +5,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use fm_vfs::Entry;
@@ -49,7 +50,15 @@ pub(crate) fn command(tool: &Path) -> Command {
 }
 
 /// Run `cmd`, keep at most `max` bytes of stdout, and kill it after `timeout`.
-fn run(mut cmd: Command, timeout: Duration, max: u64) -> Option<Vec<u8>> {
+fn run(
+    mut cmd: Command,
+    timeout: Duration,
+    max: u64,
+    cancelled: Option<&AtomicBool>,
+) -> Option<Vec<u8>> {
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        return None;
+    }
     let mut child = cmd.spawn().ok()?;
     let mut out = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
@@ -61,7 +70,12 @@ fn run(mut cmd: Command, timeout: Duration, max: u64) -> Option<Vec<u8>> {
     let ok = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status.success(),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(15)),
+            Ok(None)
+                if Instant::now() < deadline
+                    && !cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) =>
+            {
+                std::thread::sleep(Duration::from_millis(15))
+            }
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -78,9 +92,56 @@ struct Probe {
     duration: Option<f64>,
     /// Width, height and frame rate of the first video stream.
     video: Option<(u32, u32, f64)>,
+    audio: Option<fm_media::AudioFormat>,
+    audio_delay: f64,
+    tracks: crate::Tracks,
 }
 
-fn probe(ffprobe: &Path, path: &str) -> Option<Probe> {
+impl Probe {
+    fn playback_info(&self, path: &str) -> Option<crate::VideoInfo> {
+        let (width, height, fps) = self.video?;
+        Some(crate::VideoInfo {
+            path: path.to_string(),
+            width,
+            height,
+            fps,
+            duration: self.duration.unwrap_or(0.0),
+            audio: self.audio,
+            audio_delay: self.audio_delay,
+            tracks: crate::Tracks {
+                selected_audio: self
+                    .tracks
+                    .audio
+                    .iter()
+                    .position(|track| track.format.is_some())
+                    .unwrap_or(0),
+                ..self.tracks.clone()
+            },
+        })
+    }
+}
+
+/// Probe local video for playback without decoding a poster. Call only on a worker.
+pub fn playback_info(
+    uri: &fm_vfs::VfsUri,
+    cancelled: &AtomicBool,
+) -> Result<crate::VideoInfo, fm_vfs::FmError> {
+    let fail = |message| fm_vfs::FmError::backend("video playback", message);
+    let path = uri
+        .local_path_string()
+        .filter(|path| safe_path(path))
+        .ok_or_else(|| fail("Choose a safe local video path."))?;
+    let ffprobe = find_tool("ffprobe")
+        .ok_or_else(|| fail("Install ffmpeg and ffprobe to play this video."))?;
+    if find_tool("ffmpeg").is_none() {
+        return Err(fail("Install ffmpeg and ffprobe to play this video."));
+    }
+    probe(&ffprobe, &path, Some(cancelled))
+        .and_then(|probe| probe.playback_info(&path))
+        .ok_or_else(|| fail("ffprobe could not read a supported video stream."))
+}
+
+fn probe(ffprobe: &Path, path: &str, cancelled: Option<&AtomicBool>) -> Option<Probe> {
     let mut c = command(ffprobe);
     c.args([
         "-v",
@@ -94,7 +155,7 @@ fn probe(ffprobe: &Path, path: &str) -> Option<Probe> {
         "-i",
     ])
     .arg(path);
-    let raw = run(c, PROBE_TIMEOUT, PROBE_BYTES)?;
+    let raw = run(c, PROBE_TIMEOUT, PROBE_BYTES, cancelled)?;
     parse_probe(&raw)
 }
 
@@ -105,6 +166,20 @@ fn parse_probe(raw: &[u8]) -> Option<Probe> {
     let mut rows = Vec::new();
     let mut duration = None;
     let mut video = None;
+    let mut audio = None;
+    let mut audio_delay = 0.0;
+    let mut tracks = crate::Tracks::default();
+    let timestamp = |value: &serde_json::Value| {
+        value
+            .as_str()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|v| v.is_finite())
+    };
+    let start = v
+        .get("format")
+        .and_then(|v| v.get("start_time"))
+        .and_then(timestamp)
+        .unwrap_or(0.0);
     if let Some(f) = v.get("format") {
         if let Some(n) = text(f, "format_long_name") {
             rows.push(("Container".to_string(), n));
@@ -147,6 +222,30 @@ fn parse_probe(raw: &[u8]) -> Option<Probe> {
                 rows.push(("Video".to_string(), format!("{codec}{size}{fps}")));
             }
             Some("audio") => {
+                let format = text(s, "sample_rate")
+                    .and_then(|rate| rate.parse::<u32>().ok())
+                    .zip(s.get("channels").and_then(|v| v.as_u64()))
+                    .and_then(|(rate, channels)| {
+                        usize::try_from(channels)
+                            .ok()
+                            .and_then(|channels| fm_media::AudioFormat::new(rate, channels).ok())
+                    });
+                let delay = s
+                    .get("start_time")
+                    .and_then(timestamp)
+                    .map_or(0.0, |time| (time - start).max(0.0));
+                if audio.is_none() && format.is_some() {
+                    audio = format;
+                    audio_delay = delay;
+                }
+                if tracks.audio.len() < crate::MAX_TRACKS {
+                    let channels = s.get("channels").and_then(|x| x.as_u64());
+                    tracks.audio.push(crate::AudioTrack {
+                        label: track_label(s, &codec, channels),
+                        format,
+                        delay,
+                    });
+                }
                 let ch = s
                     .get("channels")
                     .and_then(|x| x.as_u64())
@@ -157,15 +256,57 @@ fn parse_probe(raw: &[u8]) -> Option<Probe> {
                     .unwrap_or_default();
                 rows.push(("Audio".to_string(), format!("{codec}{ch}{hz}")));
             }
-            Some("subtitle") => rows.push(("Subtitles".to_string(), codec)),
+            Some("subtitle") => {
+                if tracks.subtitles.len() < crate::MAX_TRACKS {
+                    tracks.subtitles.push(crate::SubtitleTrack {
+                        label: track_label(s, &codec, None),
+                    });
+                }
+                rows.push(("Subtitles".to_string(), codec));
+            }
             _ => {}
         }
     }
     Some(Probe {
+        tracks,
         rows,
         duration,
         video,
+        audio,
+        audio_delay,
     })
+}
+
+/// Tag text is hostile: drop control characters and cap the length before it is displayed.
+fn clean_tag(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(48)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+fn track_label(stream: &serde_json::Value, codec: &str, channels: Option<u64>) -> String {
+    let tag = |name: &str| {
+        stream
+            .get("tags")
+            .and_then(|tags| tags.get(name))
+            .and_then(|value| value.as_str())
+            .map(clean_tag)
+            .filter(|value| !value.is_empty())
+    };
+    let mut parts: Vec<String> = [tag("title"), tag("language")]
+        .into_iter()
+        .flatten()
+        .collect();
+    let mut detail = clean_tag(codec);
+    if let Some(channels) = channels {
+        detail.push_str(&format!(" {channels} ch"));
+    }
+    parts.push(detail);
+    parts.join(" · ")
 }
 
 fn frame_rate(r: &str) -> Option<f64> {
@@ -202,7 +343,7 @@ fn poster(
     .args(["-frames:v", "1", "-vf"])
     .arg(format!("scale='min({width},iw)':-2"))
     .args(["-f", "image2pipe", "-c:v", "png", "-"]);
-    let png = run(c, POSTER_TIMEOUT, POSTER_BYTES)?;
+    let png = run(c, POSTER_TIMEOUT, POSTER_BYTES, None)?;
     match image_prev::decode(entry, &png, limits) {
         Preview::Image(doc) => Some(doc),
         _ => None,
@@ -222,7 +363,7 @@ pub fn thumbnail(entry: &Entry, edge: u32) -> Option<ImageDoc> {
     let ffmpeg = ffmpeg.as_ref()?;
     let duration = ffprobe
         .as_ref()
-        .and_then(|p| probe(p, path))
+        .and_then(|p| probe(p, path, None))
         .and_then(|p| p.duration);
     let at = duration.map_or(0.0, |d| (d * 0.1).min(10.0));
     let limits = Limits {
@@ -241,6 +382,7 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
             hint: Some("Video previews need a local file; copy it locally to preview.".into()),
             poster: None,
             video: None,
+            audio: None,
         });
     };
     let (Some(ffprobe), Some(ffmpeg)) = (find_tool("ffprobe"), find_tool("ffmpeg")) else {
@@ -249,6 +391,7 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
             hint: Some("Install ffmpeg (ffprobe + ffmpeg on PATH) to see video details and a poster frame.".into()),
             poster: None,
             video: None,
+            audio: None,
         });
     };
     if !safe_path(path) {
@@ -257,9 +400,10 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
             hint: Some("This path cannot be passed safely to ffmpeg.".into()),
             poster: None,
             video: None,
+            audio: None,
         });
     }
-    let info = probe(&ffprobe, path);
+    let info = probe(&ffprobe, path, None);
     let at = info
         .as_ref()
         .and_then(|p| p.duration)
@@ -271,21 +415,13 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
         }
         None => Some("ffprobe could not read this file.".to_string()),
     };
-    let video = info.as_ref().and_then(|p| {
-        let (width, height, fps) = p.video?;
-        Some(crate::VideoInfo {
-            path: path.to_string(),
-            width,
-            height,
-            fps,
-            duration: p.duration.unwrap_or(0.0),
-        })
-    });
+    let video = info.as_ref().and_then(|p| p.playback_info(path));
     Preview::Meta(MetaDoc {
         rows,
         hint,
         poster: poster(&ffmpeg, path, at, 1280, entry, limits).map(Box::new),
         video,
+        audio: None,
     })
 }
 
@@ -311,6 +447,10 @@ mod tests {
                        {"codec_type":"audio","codec_name":"aac","channels":2,"sample_rate":"48000"}]}"#;
         let p = parse_probe(j).expect("probe");
         assert_eq!(p.duration, Some(3725.5));
+        assert_eq!(
+            p.audio,
+            Some(fm_media::AudioFormat::new(48_000, 2).expect("audio"))
+        );
         let get = |k: &str| p.rows.iter().find(|r| r.0 == k).map(|r| r.1.clone());
         assert_eq!(get("Duration").as_deref(), Some("1:02:06"));
         assert_eq!(
@@ -324,6 +464,37 @@ mod tests {
     }
 
     #[test]
+    fn probe_preserves_the_audio_start_relative_to_the_container() {
+        let p = parse_probe(
+            br#"{"format":{"start_time":"2.0"},"streams":[
+            {"codec_type":"audio","channels":2,"sample_rate":"44100","start_time":"2.4"}]}"#,
+        )
+        .expect("probe");
+        assert!((p.audio_delay - 0.4).abs() < 0.0001);
+    }
+
+    #[test]
+    fn probe_lists_every_audio_and_subtitle_stream_with_sanitized_labels() {
+        let p = parse_probe(
+            br#"{"format":{"duration":"10"},"streams":[
+            {"codec_type":"video","codec_name":"h264","width":640,"height":360,"r_frame_rate":"25/1"},
+            {"codec_type":"audio","codec_name":"aac","channels":2,"sample_rate":"48000","tags":{"language":"eng"}},
+            {"codec_type":"audio","codec_name":"ac3","channels":6,"sample_rate":"48000","tags":{"title":"Comm\u0007entary"}},
+            {"codec_type":"subtitle","codec_name":"subrip","tags":{"language":"nld"}}]}"#,
+        )
+        .expect("probe");
+        assert_eq!(p.tracks.audio.len(), 2);
+        assert_eq!(p.tracks.subtitles.len(), 1);
+        assert!(p.tracks.audio.iter().all(|t| t.format.is_some()));
+        assert!(
+            p.tracks
+                .audio
+                .iter()
+                .all(|t| !t.label.chars().any(char::is_control))
+        );
+    }
+
+    #[test]
     fn a_hanging_tool_is_killed() {
         if cfg!(windows) {
             return;
@@ -331,8 +502,27 @@ mod tests {
         let mut c = Command::new("sleep");
         c.arg("30").stdout(Stdio::piped());
         let t = Instant::now();
-        assert!(run(c, Duration::from_millis(100), 10).is_none());
+        assert!(run(c, Duration::from_millis(100), 10, None).is_none());
         assert!(t.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn cancelled_probe_kills_the_running_tool_without_waiting_for_its_timeout() {
+        if cfg!(windows) {
+            return;
+        }
+        let cancelled = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = cancelled.clone();
+        let cancel = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            flag.store(true, Ordering::Release);
+        });
+        let mut command = Command::new("sleep");
+        command.arg("30").stdout(Stdio::piped());
+        let start = Instant::now();
+        assert!(run(command, Duration::from_secs(30), 10, Some(&cancelled)).is_none());
+        cancel.join().expect("cancel thread");
+        assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

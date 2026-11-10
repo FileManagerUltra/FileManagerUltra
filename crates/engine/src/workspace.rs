@@ -407,6 +407,7 @@ impl Session {
     fn kick_reads(&mut self) {
         // Unconnected SFTP panes fall back to Saved servers instead of asking to sign in.
         self.normalize_sftp_panes();
+        self.media_visibility_changed();
         let locations: Vec<VfsUri> = self
             .layout
             .states
@@ -414,7 +415,7 @@ impl Session {
             .filter(|st| {
                 !matches!(
                     st.kind,
-                    PaneKind::Terminal | PaneKind::Preview | PaneKind::Trash
+                    PaneKind::Terminal | PaneKind::Preview | PaneKind::Trash | PaneKind::Media
                 )
             })
             .map(|st| st.location.clone())
@@ -451,6 +452,7 @@ impl Session {
                 st.reveal_location();
             }
         }
+        layout.normalize_media_panes();
         let base = self.workspaces.alloc_base();
         let map = layout.relabel(base);
         for (old, settings) in previews {
@@ -988,6 +990,33 @@ mod tests {
         let st = restored.state(restored.focused()).expect("pane");
         assert_eq!(st.kind, PaneKind::Network);
         assert_eq!(st.location, VfsUri::network());
+    }
+
+    #[test]
+    fn duplicate_media_panes_in_saved_workspace_restore_as_files() {
+        let mut s = crate::Session::new().expect("session");
+        let mut layout = home_layout(10);
+        let first = layout.focused();
+        let second = layout
+            .split(first, fm_layout::Axis::Vertical, 0.5)
+            .expect("split");
+        layout.state_mut(first).expect("first").kind = PaneKind::Media;
+        layout.state_mut(second).expect("second").kind = PaneKind::Media;
+        let value = serde_json::to_value(Snapshot {
+            layout,
+            previews: BTreeMap::new(),
+        })
+        .expect("json");
+        let restored = s.restore(&value).expect("restore");
+        let panes = restored.panes();
+        assert_eq!(
+            restored.state(panes[0]).expect("first").kind,
+            PaneKind::Media
+        );
+        assert_eq!(
+            restored.state(panes[1]).expect("second").kind,
+            PaneKind::Files
+        );
     }
 
     #[test]

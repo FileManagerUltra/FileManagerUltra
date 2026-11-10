@@ -235,6 +235,31 @@ pub fn finish_terminal(ctx: &Context, s: &mut Session, pane: PaneId, rect: Rect,
     }
 }
 
+/// Media drops enqueue paths; copy/move modifiers never change files.
+pub fn finish_media(ctx: &Context, s: &mut Session, rect: Rect, tokens: &Tokens) {
+    let Some(payload) = DragAndDrop::payload::<DragPayload>(ctx) else {
+        return;
+    };
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        DragAndDrop::clear_payload(ctx);
+        return;
+    }
+    let Some(pos) = ctx.pointer_interact_pos().filter(|pos| rect.contains(*pos)) else {
+        return;
+    };
+    if !s.command_enabled("media.drop") {
+        ctx.set_cursor_icon(CursorIcon::NoDrop);
+        return;
+    }
+    paint_feedback(ctx, rect, pos, "Add to media queue", tokens);
+    if ctx.input(|i| i.pointer.any_released())
+        && DragAndDrop::take_payload::<DragPayload>(ctx).is_some()
+    {
+        let paths: Vec<String> = payload.sources.iter().map(VfsUri::to_string).collect();
+        s.dispatch_or_notice("media.drop", &json!({"uris": paths}));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +317,74 @@ mod tests {
         let p = payload_for(&s, 1, "z", &u("/d/z"));
         assert_eq!(p.sources, vec![u("/d/z")]);
         assert_eq!(p.origin, 1);
+    }
+
+    #[test]
+    fn media_drop_enqueues_once_ignores_copy_move_modifiers_and_escape_cancels() {
+        for cancel in [false, true] {
+            let ctx = Context::default();
+            let mut s = Session::new().expect("session");
+            s.backends
+                .register(std::sync::Arc::new(fm_testkit::MemFs::new()));
+            let tokens = Tokens::dark();
+            let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 300.0));
+            let pos = rect.center();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed: true,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |_| {},
+            );
+            output.textures_delta.clear();
+            DragAndDrop::set_payload(
+                &ctx,
+                DragPayload {
+                    sources: vec![u("/music/song.mp3")],
+                    origin: 1,
+                },
+            );
+            let mut events = vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            }];
+            if cancel {
+                events.push(egui::Event::Key {
+                    key: Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    finish_media(ctx, &mut s, rect, &tokens);
+                    finish_media(ctx, &mut s, rect, &tokens);
+                },
+            );
+            output.textures_delta.clear();
+            assert!(!DragAndDrop::has_payload_of_type::<DragPayload>(&ctx));
+            assert_eq!(
+                s.command_enabled("media.drop"),
+                cancel,
+                "a noncancelled drop submits one import"
+            );
+            assert!(s.fileops.jobs().is_empty(), "never copy or move files");
+        }
     }
 }

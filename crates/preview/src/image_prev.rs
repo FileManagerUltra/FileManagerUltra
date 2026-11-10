@@ -18,6 +18,7 @@ fn error_card(entry: &Entry, why: String) -> Preview {
         hint: Some("The image was not decoded.".into()),
         poster: None,
         video: None,
+        audio: None,
     })
 }
 

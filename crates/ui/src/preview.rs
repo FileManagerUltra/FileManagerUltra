@@ -268,6 +268,11 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                         }
                     }
                 }
+                Body::Static(p) if slot.audio.is_some() => {
+                    if let (Preview::Meta(meta), Some(audio)) = (&**p, &slot.audio) {
+                        audio_body(ui, pane, tokens, p, meta, audio, &mut actions);
+                    }
+                }
                 Body::Static(p) if slot.video.is_some() => {
                     if let (Preview::Meta(m), Some(v)) = (&**p, &slot.video) {
                         video_body(ui, pane, tokens, p, m, v, &mut actions);
@@ -1323,6 +1328,112 @@ fn meta_card(ui: &mut Ui, tokens: &Tokens, m: &MetaDoc) {
     });
 }
 
+fn audio_body(
+    ui: &mut Ui,
+    pane: PaneId,
+    tokens: &Tokens,
+    model: &Arc<Preview>,
+    meta: &MetaDoc,
+    audio: &fm_engine::preview_audio_cmds::AudioState,
+    actions: &mut Vec<Action>,
+) {
+    let output = paged_scroll(ui, ScrollArea::vertical(), ("pv-audio", pane))
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            if let Some(cover) = &meta.poster {
+                image(ui, pane, tokens, model, cover, Zoom::Fit, None);
+            }
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .button(if audio.playing { "Pause" } else { "Play" })
+                    .clicked()
+                {
+                    actions.push(("preview.audio.play", json!({})));
+                }
+                let duration = audio.doc.duration.unwrap_or(0.0);
+                ui.label(format!("{} / {}", clock(audio.position), clock(duration)));
+                let id = Id::NULL.with(("pv-audio-seek", pane));
+                let dragging: Option<f64> = ui.data(|d| d.get_temp(id));
+                let mut value = dragging.unwrap_or(audio.position).clamp(0.0, duration);
+                let response = ui.add_enabled(
+                    duration > 0.0,
+                    egui::Slider::new(&mut value, 0.0..=duration.max(0.1))
+                        .show_value(false)
+                        .text("Seek"),
+                );
+                if response.dragged() {
+                    ui.data_mut(|d| d.insert_temp(id, value));
+                } else {
+                    ui.data_mut(|d| d.remove::<f64>(id));
+                    if response.changed() || response.drag_stopped() {
+                        actions.push(("preview.audio.seek", json!({"to": value})));
+                    }
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                let mut volume = audio.volume;
+                if ui
+                    .add(egui::Slider::new(&mut volume, 0.0..=100.0).text("Volume"))
+                    .changed()
+                {
+                    actions.push(("preview.audio.volume", json!({"value": volume})));
+                }
+                let mut muted = audio.muted;
+                if ui.checkbox(&mut muted, "Mute").changed() {
+                    actions.push(("preview.audio.mute", json!({"on": muted})));
+                }
+            });
+            if let Some(error) = &audio.error {
+                ui.colored_label(tokens.error, error);
+            }
+            ui.horizontal_wrapped(|ui| media_actions(ui, actions))
+                .response
+                .context_menu(|ui| {
+                    if media_actions(ui, actions) {
+                        ui.close();
+                    }
+                });
+            meta_card(ui, tokens, meta);
+        });
+    remember_scroll(ui, &output);
+    if audio.playing {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(50));
+    }
+}
+
+fn media_actions(ui: &mut Ui, actions: &mut Vec<Action>) -> bool {
+    let mut chosen = false;
+    for (label, command, hint) in [
+        (
+            "Play in Media",
+            "media.play",
+            "Insert after the current Media item and play from the Preview position.",
+        ),
+        (
+            "Play next",
+            "media.play_next",
+            "Insert after the current Media item without interrupting playback.",
+        ),
+        (
+            "Add to queue",
+            "media.enqueue",
+            "Append to the end without interrupting playback.",
+        ),
+        (
+            "Play folder",
+            "media.play_folder",
+            "Insert this folder's media after the current Media item and play.",
+        ),
+    ] {
+        if ui.button(label).on_hover_text(hint).clicked() {
+            actions.push((command, json!({})));
+            chosen = true;
+        }
+    }
+    chosen
+}
+
 /// A playable video: the newest frame (or the poster before one arrives), a play/seek bar
 /// and the metadata rows below.
 fn video_body(
@@ -1343,7 +1454,7 @@ fn video_body(
     let output = paged_scroll(ui, ScrollArea::both(), ("pv-video", pane))
         .auto_shrink(false)
         .show(ui, |ui| {
-            let controls_h = ui.spacing().interact_size.y + ui.spacing().item_spacing.y * 2.0;
+            let controls_h = 2.0 * ui.spacing().interact_size.y + ui.spacing().item_spacing.y * 3.0;
             let aspect = v.info.height as f32 / v.info.width.max(1) as f32;
             let w = avail
                 .x
@@ -1351,28 +1462,7 @@ fn video_body(
             let size = vec2(w, w * aspect) * content_scale(ui);
             if let Some(f) = &v.frame {
                 let id = Id::NULL.with(("pv-video-tex", pane));
-                let ctx = ui.ctx().clone();
-                let cached: Option<(usize, egui::TextureHandle)> = ctx.data_mut(|d| d.get_temp(id));
-                let key = Arc::as_ptr(f) as usize;
-                let image = || {
-                    egui::ColorImage::from_rgba_unmultiplied(
-                        [f.width as usize, f.height as usize],
-                        &f.rgba,
-                    )
-                };
-                let tex = match cached {
-                    Some((k, t)) if k == key => t,
-                    Some((_, mut t)) => {
-                        t.set(image(), egui::TextureOptions::LINEAR);
-                        t
-                    }
-                    None => ctx.load_texture(
-                        format!("pv-video-{pane}"),
-                        image(),
-                        egui::TextureOptions::LINEAR,
-                    ),
-                };
-                ctx.data_mut(|d| d.insert_temp(id, (key, tex.clone())));
+                let tex = video_texture(ui.ctx(), id, f);
                 let (rect, resp) =
                     ui.allocate_exact_size(vec2(avail.x.max(size.x), size.y), Sense::click());
                 let at = egui::Rect::from_center_size(rect.center(), size);
@@ -1386,8 +1476,18 @@ fn video_body(
                 ui.allocate_space(vec2(avail.x, size.y.min(120.0)));
             }
             video_controls(ui, pane, v, actions);
+            ui.horizontal_wrapped(|ui| media_actions(ui, actions))
+                .response
+                .context_menu(|ui| {
+                    if media_actions(ui, actions) {
+                        ui.close();
+                    }
+                });
             if let Some(e) = &v.error {
                 ui.colored_label(tokens.error, e);
+            }
+            if let Some(hint) = &v.hint {
+                crate::dialog_style::hint(ui, tokens, hint);
             }
             ui.push_id(("pv-video-meta", pane), |ui| meta_card(ui, tokens, m));
         });
@@ -1396,6 +1496,31 @@ fn video_body(
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(16));
     }
+}
+
+pub(crate) fn video_texture(
+    ctx: &egui::Context,
+    id: Id,
+    frame: &Arc<fm_preview::player::Frame>,
+) -> egui::TextureHandle {
+    let cached =
+        ctx.data(|d| d.get_temp::<(Arc<fm_preview::player::Frame>, egui::TextureHandle)>(id));
+    let image = || {
+        egui::ColorImage::from_rgba_unmultiplied(
+            [frame.width as usize, frame.height as usize],
+            &frame.rgba,
+        )
+    };
+    let texture = match cached {
+        Some((old, texture)) if Arc::ptr_eq(&old, frame) => texture,
+        Some((_, mut texture)) => {
+            texture.set(image(), egui::TextureOptions::LINEAR);
+            texture
+        }
+        None => ctx.load_texture("video-frame", image(), egui::TextureOptions::LINEAR),
+    };
+    ctx.data_mut(|d| d.insert_temp(id, (frame.clone(), texture.clone())));
+    texture
 }
 
 fn clock(secs: f64) -> String {
@@ -1423,10 +1548,12 @@ fn video_controls(
         let dragging: Option<f64> = ui.data(|d| d.get_temp(id));
         let mut value = dragging.unwrap_or(v.pos).clamp(0.0, dur);
         ui.label(format!("{} / {}", clock(value), clock(dur)));
-        ui.spacing_mut().slider_width = (ui.available_width() - 16.0).max(60.0);
+        ui.spacing_mut().slider_width = (ui.available_width() - 60.0).max(60.0);
         let resp = ui.add_enabled(
             dur > 0.0,
-            egui::Slider::new(&mut value, 0.0..=dur.max(0.1)).show_value(false),
+            egui::Slider::new(&mut value, 0.0..=dur.max(0.1))
+                .show_value(false)
+                .text("Seek"),
         );
         if resp.dragged() {
             ui.data_mut(|d| d.insert_temp(id, value));
@@ -1435,6 +1562,19 @@ fn video_controls(
             if resp.changed() || resp.drag_stopped() {
                 actions.push(("preview.video.seek", json!({ "to": value })));
             }
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        let mut volume = v.volume;
+        if ui
+            .add(egui::Slider::new(&mut volume, 0.0..=100.0).text("Volume"))
+            .changed()
+        {
+            actions.push(("preview.video.volume", json!({"value": volume})));
+        }
+        let mut muted = v.muted;
+        if ui.checkbox(&mut muted, "Mute").changed() {
+            actions.push(("preview.video.mute", json!({"on": muted})));
         }
     });
 }
@@ -2698,6 +2838,73 @@ pub fn grid_has_keyboard(ctx: &egui::Context) -> bool {
 mod tests {
     use super::*;
     use fm_layout::PaneKind;
+
+    #[test]
+    fn preview_add_button_targets_its_own_media_without_interrupting_it() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        for video in [false, true] {
+            let mut s = Session::new().expect("session");
+            s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+                .expect("preview");
+            let pane = s.layout.focused();
+            s.poll();
+            s.previews.slots.get_mut(&pane).expect("slot").body =
+                Body::Static(Arc::new(Preview::Meta(MetaDoc {
+                    rows: Vec::new(),
+                    hint: None,
+                    poster: None,
+                    video: video.then(|| fm_preview::VideoInfo {
+                        path: "/music/preview.mkv".into(),
+                        width: 320,
+                        height: 180,
+                        fps: 25.0,
+                        duration: 120.0,
+                        audio: None,
+                        audio_delay: 0.0,
+                        tracks: Default::default(),
+                    }),
+                    audio: (!video).then(|| fm_preview::audio::AudioDoc {
+                        path: "/music/preview.mp3".into(),
+                        duration: Some(120.0),
+                    }),
+                })));
+            s.poll();
+            let slot = s.previews.slots.get_mut(&pane).expect("slot");
+            if let Some(video) = &mut slot.video {
+                video.pos = 42.0;
+                video.playing = true;
+            } else {
+                let audio = slot.audio.as_mut().expect("audio");
+                audio.position = 42.0;
+                audio.playing = true;
+            }
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(640.0, 360.0))
+                .build_ui_state(
+                    move |ui, s| {
+                        show(ui, s, pane, &Tokens::dark());
+                    },
+                    s,
+                );
+            harness.run();
+            harness.get_by_label("Add to queue").click();
+            harness.run();
+            assert_eq!(harness.state().media.queue.items().len(), 1);
+            assert_eq!(
+                harness.state().media.queue.items()[0].file_name(),
+                Some(if video { "preview.mkv" } else { "preview.mp3" })
+            );
+            let slot = &harness.state().previews.slots[&pane];
+            if let Some(video) = &slot.video {
+                assert!(video.playing);
+                assert_eq!(video.pos, 42.0);
+            } else {
+                let audio = slot.audio.as_ref().expect("audio");
+                assert!(audio.playing);
+                assert_eq!(audio.position, 42.0);
+            }
+        }
+    }
 
     #[test]
     fn subject_title_identifies_files_folders_and_remote_paths() {

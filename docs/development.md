@@ -3,11 +3,28 @@
 ## Prerequisites
 
 - Rust stable via [rustup](https://rustup.rs) (`cargo 1.99+`). The workspace uses edition 2024.
-- No system `-dev` packages are required to **build** (verified: `eframe 0.37` + winit/wgpu compile on stock Ubuntu 24.04 with only `gcc`, `make` present).
+- Linux audio output (`fm-media`, `cpal`) requires `pkg-config` and ALSA development headers: `sudo apt install pkg-config libasound2-dev`. This is an approved exception to the no-system-build-dependencies rule; the windowing stack itself needs no development packages. Windows and macOS use their native audio APIs.
+- Linux audio runtime: `libasound2` (or `libasound2t64` on newer distributions), plus the desktop's ALSA output or PipeWire/PulseAudio ALSA compatibility plugin. A missing output device is reported rather than crashing.
 - A display is required to **run** the app (Wayland or X11). CI and headless work use the test/snapshot paths that never open a window.
 - Linux runtime packages for the window itself: `libxkbcommon0`, `libwayland-client0`, `libGL.so.1`, `libEGL.so.1` — present on a normal desktop install; a bare server may need them (`sudo apt install libxkbcommon0 libgl1 libegl1`).
 
 ## Everyday commands
+
+Single-file audio previews offer Play/Pause, seek, volume and mute, with tags and
+cover art when present. Preferences > Preview > Audio can enable autoplay (off by
+default). Playback stops when the preview selection changes or its pane closes.
+Video previews play with sound and offer volume/mute controls. Video autoplay is
+on by default and can be disabled in Preferences > Preview > Playback. Without an
+audio device, video plays silently with a hint. ffmpeg and ffprobe must currently
+be installed separately; bundled installers and the dedicated Media pane are
+still in progress under `openspec/changes/add-media-pane/`.
+
+Playback smoke checks (Linux, Windows and macOS): preview a video with speech,
+check picture/sound alignment, pause/resume, seek and adjust volume/mute. Browse
+to another file, close/switch the Preview pane, switch workspaces and quit while
+playing; sound must stop and no ffmpeg child should remain. Check an audio-only
+file with autoplay off/on, a silent video, a delayed soundtrack and a machine
+without an output device (silent video plus hint, actionable error for audio).
 
 ```sh
 cargo run -p fm-app                 # run the desktop app
@@ -235,7 +252,7 @@ Use a scratch directory with a few files, a subfolder and one name that exists i
 1. Pane header, right side: the type button (Files / Terminal / Preview; Sftp and Network show "(soon)"). Switching a pane with a running foreground job asks "End running process?".
 2. Terminal: shell prompt in the pane's directory; `top`/`vim` redraw; Backspace, Ctrl+C/D/L work; Ctrl+Shift+C/V copy/paste; drag a file from a Files pane (or the OS) onto it to paste its quoted path, and the terminal regains focus. Select output, scroll with the wheel or Shift+PageUp/PageDown, then Shift-click to extend: selection stays anchored to the original text, and copy includes off-screen rows without moving the view. Drag near the top/bottom edge to extend selection with automatic scrolling. Resizing or clearing/evicting history may clear selection. Print long lines mixed with explicit newlines, colours and wide characters, then narrow/widen the pane: normal output and scrollback reflow, hard line breaks remain, and typing continues at the right position. Repeat while scrolled up; the same logical line should remain at the top unless history was evicted (10 000 visual-row cap). Resize `vim`/`top`: alternate-screen content is not reflowed and the app redraws; exit and check the reflowed shell output is restored. In mouse-enabled applications such as `mc` and `btop`, click menus, drag, and scroll the wheel; hold Shift to select text or scroll terminal history instead. After exiting the application, ordinary selection and scrollback work again.
 3. `Ctrl+Shift+E` split right, `Ctrl+Shift+O` split down (new pane next to the active one); `Ctrl+Shift+Arrows` resize the nearest divider, `Ctrl+Shift+B` equalize, `Ctrl+Shift+R` rotate, `Ctrl+Shift+X` zoom toggle. All also work with a terminal focused.
-5. Preview: `Ctrl+Shift+P` opens a preview to the right of the active pane and toggles it closed. Arrow through text, JSON (Pretty button), Markdown, an image, a binary (hex) and a folder; the preview follows the cursor, or pin it with the source picker. A `*.log` switches to Log mode: level/search/time filters, Live tail (`Ctrl+Shift+F`) while another process appends, Mark (`Ctrl+Shift+M`) to drop a divider rule at the current end, folded stack traces, access-log columns. Time offers quick ranges starting the selected interval before Apply time with To left open for new Live tail rows, or custom `YYYY-MM-DD` dates (also calendars) and `HH:MM[:SS]` times in UTC. Check open-ended bounds, invalid/reversed input, Cancel without changes, and Clear keeping other filters; only loaded records are filtered and From does not slide automatically. Video shows metadata and a poster frame when ffmpeg is installed (no playback yet).
+5. Preview: `Ctrl+Shift+P` opens a preview to the right of the active pane and toggles it closed. Arrow through text, JSON (Pretty button), Markdown, an image, a binary (hex) and a folder; the preview follows the cursor, or pin it with the source picker. A `*.log` switches to Log mode: level/search/time filters, Live tail (`Ctrl+Shift+F`) while another process appends, Mark (`Ctrl+Shift+M`) to drop a divider rule at the current end, folded stack traces, access-log columns. Time offers quick ranges starting the selected interval before Apply time with To left open for new Live tail rows, or custom `YYYY-MM-DD` dates (also calendars) and `HH:MM[:SS]` times in UTC. Check open-ended bounds, invalid/reversed input, Cancel without changes, and Clear keeping other filters; only loaded records are filtered and From does not slide automatically. Video plays with sound when ffmpeg is installed, with metadata and a poster frame before playback.
 4. Drag a pane by its outer border (the edge highlights) onto another: the outer quarter of an edge inserts there, the middle swaps; Esc cancels. Terminals keep running through moves. Switch focus repeatedly between panes: only the accent outlines change, never header/body size or content positions, in either theme.
 5. Dividers highlight on hover; double-click resets to an equal split. In a Files pane drag the tree divider and the listing header borders (double-click resets).
 

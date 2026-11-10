@@ -35,6 +35,11 @@ pub fn split_vertical() -> CommandSpec {
 fn split(s: &mut Session, axis: Axis) -> Result<(), FmError> {
     let focused = s.layout.focused();
     let new_id = s.layout.split(focused, axis, 0.5)?;
+    if let Some(state) = s.layout.state_mut(new_id)
+        && state.kind == fm_layout::PaneKind::Media
+    {
+        state.kind = fm_layout::PaneKind::Files;
+    }
     // The new pane inherits the location; make sure its listing is loaded
     // (no-op when the shared cache already has it).
     if let Some(state) = s.layout.state(new_id) {
@@ -65,6 +70,7 @@ pub fn close() -> CommandSpec {
             };
             s.layout.close(target)?;
             s.drop_terminal(target);
+            s.media_visibility_changed();
             Ok(())
         },
     }

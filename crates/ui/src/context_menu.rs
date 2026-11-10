@@ -10,6 +10,8 @@ use fm_layout::PaneId;
 use fm_vfs::VfsUri;
 
 const FOLDER_ENTRIES: &[Option<&str>] = &[
+    Some("media.play_folder"),
+    None,
     Some("file.mkdir"),
     Some("file.newfile"),
     None,
@@ -83,6 +85,39 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
             fm_preview::thumbs::classify(n) == fm_preview::thumbs::ThumbKind::Image
         }) {
             copy_image_item(ui, uri);
+        }
+        if s.command_enabled("media.enqueue") {
+            ui.separator();
+            for id in ["media.play", "media.play_next", "media.enqueue"] {
+                command_item(ui, s, id);
+            }
+        }
+        let parent = uri.parent();
+        let is_folder = parent
+            .as_ref()
+            .and_then(|parent| s.dirs.entries(parent))
+            .is_some_and(|entries| {
+                entries
+                    .iter()
+                    .any(|entry| entry.uri == *uri && entry.is_dir())
+            });
+        if let Some(folder) = if is_folder { Some(uri.clone()) } else { parent }
+            && folder.local_path().is_some()
+            && let Some(spec) = s.registry.get("media.play_folder")
+            && ui
+                .add_enabled((spec.enabled)(s), egui::Button::new(spec.label))
+                .clicked()
+        {
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(
+                    Id::NULL.with("folder-context-command"),
+                    Some(FolderAction {
+                        id: spec.id,
+                        folder,
+                    }),
+                )
+            });
+            ui.close();
         }
         for entry in ENTRIES {
             match entry {
@@ -175,6 +210,7 @@ pub fn attach_folder(response: &Response, s: &mut Session, pane: PaneId, folder:
                             fm_vfs::Scheme::Network | fm_vfs::Scheme::Servers
                         );
                     let enabled = (spec.enabled)(s)
+                        && (*id != "media.play_folder" || folder.local_path().is_some())
                         && !(virtual_folder
                             && matches!(*id, "file.mkdir" | "file.newfile" | "file.clip_paste"));
                     if ui.add_enabled(enabled, button).clicked() {
@@ -480,6 +516,56 @@ mod tests {
                 .dispatch("preview.open", &params)
                 .expect("reuse preview");
             assert_eq!(harness.state().0.layout.panes().len(), 3);
+        }
+    }
+
+    #[test]
+    fn media_context_menu_queues_each_distinct_media_action() {
+        for (file, label, command) in [
+            ("song.mp3", "Play in Media", "media.play"),
+            ("song.mp3", "Play Next", "media.play_next"),
+            ("song.mp3", "Add to Queue", "media.enqueue"),
+            ("movie.mkv", "Play in Media", "media.play"),
+            ("movie.mkv", "Play Next", "media.play_next"),
+            ("movie.mkv", "Add to Queue", "media.enqueue"),
+        ] {
+            let mut s = folder_session(false);
+            s.layout
+                .state_mut(1)
+                .expect("pane")
+                .listing
+                .select_only(Some(file), 0);
+            let uri = VfsUri::parse(&format!("/d/{file}")).expect("uri");
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(700.0, 500.0))
+                .build_ui_state(
+                    move |ui, (s, action)| {
+                        let response = ui.button("Audio file");
+                        attach(&response, s, &uri, &mut None);
+                        if let Some(command) = take_command(ui.ctx()) {
+                            *action = Some(command);
+                        }
+                    },
+                    (s, None::<&'static str>),
+                );
+            harness.run();
+            let pos = harness.get_by_label("Audio file").rect().center();
+            for pressed in [true, false] {
+                harness.input_mut().events.extend([
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+                harness.step();
+            }
+            harness.run();
+            harness.get_by_label(label).click();
+            harness.run();
+            assert_eq!(harness.state().1, Some(command));
         }
     }
 

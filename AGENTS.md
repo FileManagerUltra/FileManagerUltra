@@ -27,6 +27,7 @@ crates/
   fs-sftp      L0  SSH/SFTP (russh + russh-sftp)
   testkit      L0  in-memory Vfs, temp-tree builders, command fuzzing
   ops          L1  copy/move/delete/mkdir/rename pipelines, conflicts, progress
+  media        L1  shared audio decoder, bounded PCM pipeline and native device output
   layout       L2  pane tree, per-pane history/selection/state
   engine       L3  Session, command registry, job scheduler, watcher, dir cache
   ui           L4  egui widgets (tree, virtualized listing, dialogs, theme)
@@ -93,6 +94,7 @@ Never publish a pre-release or draft expecting users to be notified: the update 
 
 ## 7. Dependencies to know about
 
+- **Approved media exception (2026-11-09):** `fm-media` uses the safe `cpal` API for native audio. This permits platform FFI inside that dependency and requires `pkg-config`/`libasound2-dev` to build on Linux (CI installs them). It does not permit `unsafe` or direct audio FFI in workspace code. Windows/macOS use native audio APIs.
 - `smb` (SMB) is used in its blocking mode and needs every opened handle closed explicitly → SMB work stays on the `smb` lane (2 workers); never call it from the UI thread. `sspi` is vendored in `vendor/` (rc crypto pins relaxed to coexist with `russh`).
 - `russh-sftp` is async → the `fs-sftp` crate owns a tokio runtime and blocks on it inside its `Vfs` impl; no other crate depends on tokio directly.
 - `trash` handles XDG/Recycle Bin/macOS trash — deletes must go through `ops::trash`, never `fs::remove_dir_all`.

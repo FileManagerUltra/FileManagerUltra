@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 
+use crate::audio_owner::AudioOwner;
 use fm_layout::PaneId;
+use fm_media::Gain;
 use fm_preview::player::{Frame, MAX_WIDTH, MIN_WIDTH, PlaySpec, Player};
 use fm_preview::{Preview, VideoInfo};
 
@@ -22,6 +24,11 @@ const WIDTH_STEP: u32 = 64;
 /// Within this many seconds of the end, Play starts over.
 const END_SLACK: f64 = 0.25;
 
+/// Wait for decoder cleanup only after the UI event loop is leaving.
+pub fn shutdown_players() -> Result<(), FmError> {
+    fm_preview::player::shutdown()
+}
+
 #[derive(Debug)]
 pub struct VideoState {
     pub info: VideoInfo,
@@ -34,22 +41,39 @@ pub struct VideoState {
     pub frame: Option<Arc<Frame>>,
     /// Why playback is unavailable.
     pub error: Option<String>,
+    /// Recoverable degradation, such as a missing audio device.
+    pub hint: Option<String>,
+    pub volume: f32,
+    pub muted: bool,
+    pub speed: f64,
+    gain: Gain,
     player: Option<Player>,
     need_start: bool,
 }
 
 impl VideoState {
-    fn new(info: VideoInfo) -> Self {
+    pub(crate) fn new(info: VideoInfo, autoplay: bool) -> Self {
         Self {
             info,
             width: None,
-            playing: true,
+            playing: autoplay,
             pos: 0.0,
             frame: None,
             error: None,
+            hint: None,
+            volume: 100.0,
+            muted: false,
+            speed: 1.0,
+            gain: Gain::default(),
             player: None,
-            need_start: true,
+            need_start: autoplay,
         }
+    }
+
+    pub(crate) fn with_gain(info: VideoInfo, autoplay: bool, gain: Gain) -> Self {
+        let mut video = Self::new(info, autoplay);
+        video.gain = gain;
+        video
     }
 
     /// No decoder is running (paused, ended or not started).
@@ -57,9 +81,25 @@ impl VideoState {
         self.player.is_none() && !self.need_start
     }
 
-    fn restart(&mut self) {
+    pub(crate) fn restart(&mut self) {
         self.player = None;
         self.need_start = true;
+    }
+
+    pub(crate) fn stop(&mut self) {
+        self.player = None;
+        self.need_start = false;
+    }
+
+    pub(crate) fn pause(&mut self) {
+        self.playing = false;
+        self.stop();
+    }
+
+    pub(crate) fn seek(&mut self, to: f64) {
+        self.pos = to;
+        self.error = None;
+        self.restart();
     }
 
     fn duration(&self) -> f64 {
@@ -88,10 +128,11 @@ impl Session {
     /// Create, start, feed and finish the per-pane players; true when the UI should repaint.
     pub(crate) fn video_tick(&mut self) -> bool {
         let mut changed = false;
+        let mut started = None;
         for (pane, slot) in self.previews.slots.iter_mut() {
             // A video in a background workspace stops (the decoder is killed).
             let active = self.layout.states.contains_key(pane);
-            let info = if active {
+            let info = if active && slot.playback_ready() {
                 video_info(slot).cloned()
             } else {
                 None
@@ -101,9 +142,17 @@ impl Session {
                 continue;
             };
             if slot.video.as_ref().is_none_or(|v| v.info != info) {
-                slot.video = Some(VideoState::new(info));
+                slot.video = Some(VideoState::new(info, self.prefs.preview_video_autoplay));
+                if self.prefs.preview_video_autoplay {
+                    started = Some(*pane);
+                }
                 changed = true;
             }
+        }
+        if let Some(pane) = started {
+            self.claim_audio(AudioOwner::PreviewVideo(pane));
+        }
+        for slot in self.previews.slots.values_mut() {
             if let Some(v) = &mut slot.video {
                 changed |= pump(v);
             }
@@ -112,7 +161,7 @@ impl Session {
     }
 }
 
-fn pump(v: &mut VideoState) -> bool {
+pub(crate) fn pump(v: &mut VideoState) -> bool {
     let mut changed = false;
     if v.need_start
         && let Some(width) = v.width
@@ -122,13 +171,14 @@ fn pump(v: &mut VideoState) -> bool {
             info: v.info.clone(),
             from: v.pos,
             width,
+            speed: v.speed,
             still: !v.playing,
         };
-        match Player::start(&spec) {
-            Some(p) => v.player = Some(p),
-            None => {
+        match Player::start(&spec, v.gain.clone()) {
+            Ok(p) => v.player = Some(p),
+            Err(err) => {
                 v.playing = false;
-                v.error = Some("Playback needs ffmpeg and a local file".into());
+                v.error = Some(err.to_string());
                 changed = true;
             }
         }
@@ -140,13 +190,28 @@ fn pump(v: &mut VideoState) -> bool {
         && !v.frame.as_ref().is_some_and(|old| Arc::ptr_eq(old, &f))
     {
         v.frame = Some(f);
-        if v.playing {
-            v.pos = player.position().min(v.duration().max(player.position()));
-        }
+        changed = true;
+    }
+    if v.playing {
+        let position = player.position();
+        let position = if v.duration() > 0.0 {
+            position.min(v.duration())
+        } else {
+            position
+        };
+        changed |= (v.pos - position).abs() > 0.02;
+        v.pos = position;
+    }
+    let hint = player.hint();
+    if v.hint != hint {
+        v.hint = hint;
         changed = true;
     }
     if player.finished() {
-        if v.playing && !player.still {
+        if let Some(err) = player.error() {
+            v.error = Some(err);
+            v.playing = false;
+        } else if v.playing && !player.still {
             v.playing = false;
             v.pos = v.duration();
         }
@@ -201,8 +266,12 @@ pub fn play() -> CommandSpec {
                         .ok_or_else(|| FmError::InvalidParams("on: bool".into()))
                 })
                 .transpose()?;
+            let want = on.unwrap_or(!video_slot(s, p)?.1.playing);
+            let pane = video_slot(s, p)?.0;
+            if want {
+                s.claim_audio(AudioOwner::PreviewVideo(pane));
+            }
             let (_, v) = video_slot(s, p)?;
-            let want = on.unwrap_or(!v.playing);
             if want == v.playing {
                 return Ok(());
             }
@@ -216,6 +285,7 @@ pub fn play() -> CommandSpec {
             } else {
                 v.player = None;
                 v.need_start = false;
+                s.release_audio(AudioOwner::PreviewVideo(pane));
             }
             Ok(())
         },
@@ -272,7 +342,51 @@ pub fn fit() -> CommandSpec {
 }
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![play(), seek(), fit()]
+    vec![play(), seek(), fit(), volume(), mute()]
+}
+
+fn volume() -> CommandSpec {
+    CommandSpec {
+        id: "preview.video.volume",
+        label: "Video Volume",
+        menu: &["View", "Preview", "Video volume"],
+        shortcut: None,
+        params: "{value: number, pane?: number}: volume from 0 to 100",
+        enabled: has_video,
+        run: |s, params| {
+            let value = number(params, "value")?
+                .filter(|v| (0.0..=100.0).contains(v))
+                .ok_or_else(|| FmError::InvalidParams("value: volume from 0 to 100".into()))?;
+            let (_, video) = video_slot(s, params)?;
+            video.gain.set_volume(value as f32)?;
+            video.volume = value as f32;
+            Ok(())
+        },
+    }
+}
+
+fn mute() -> CommandSpec {
+    CommandSpec {
+        id: "preview.video.mute",
+        label: "Mute Video",
+        menu: &["View", "Preview", "Mute video"],
+        shortcut: None,
+        params: "{on?: bool, pane?: number}: toggle or set mute",
+        enabled: has_video,
+        run: |s, params| {
+            let on = object(params)?
+                .and_then(|map| map.get("on"))
+                .map(|v| {
+                    v.as_bool()
+                        .ok_or_else(|| FmError::InvalidParams("on: bool".into()))
+                })
+                .transpose()?;
+            let (_, video) = video_slot(s, params)?;
+            video.muted = on.unwrap_or(!video.muted);
+            video.gain.set_muted(video.muted);
+            Ok(())
+        },
+    }
 }
 
 #[cfg(test)]
@@ -297,13 +411,19 @@ mod tests {
     }
 
     fn state() -> VideoState {
-        VideoState::new(VideoInfo {
-            path: "/v.mp4".into(),
-            width: 640,
-            height: 360,
-            fps: 25.0,
-            duration: 10.0,
-        })
+        VideoState::new(
+            VideoInfo {
+                path: "/v.mp4".into(),
+                width: 640,
+                height: 360,
+                fps: 25.0,
+                duration: 10.0,
+                audio: None,
+                audio_delay: 0.0,
+                tracks: Default::default(),
+            },
+            true,
+        )
     }
 
     #[test]
@@ -316,6 +436,34 @@ mod tests {
     }
 
     #[test]
+    fn disabling_video_autoplay_leaves_the_poster_without_starting_a_decoder() {
+        let mut s = Session::new().expect("session");
+        s.prefs.preview_video_autoplay = false;
+        s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+            .expect("kind");
+        let pane = s.layout.focused();
+        let mut slot = PreviewSlot::new();
+        slot.body = Body::Static(Arc::new(Preview::Meta(fm_preview::MetaDoc {
+            rows: vec![],
+            hint: None,
+            poster: None,
+            audio: None,
+            video: Some(state().info),
+        })));
+        s.previews.slots.insert(pane, slot);
+        s.video_tick();
+        let video = s.previews.slots[&pane].video.as_ref().expect("video");
+        assert!(!video.playing && video.player_is_idle());
+        assert!(
+            s.dispatch(
+                "prefs.set",
+                &json!({"key": "preview_video_autoplay", "value": "yes"})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn an_unavailable_decoder_pauses_with_a_message() {
         let mut v = state();
         v.info.path = "-i".into();
@@ -323,5 +471,64 @@ mod tests {
         assert!(pump(&mut v));
         assert!(!v.playing);
         assert!(v.error.is_some());
+    }
+
+    fn insert_video(s: &mut Session, pane: PaneId) {
+        let mut slot = PreviewSlot::new();
+        slot.video = Some(state());
+        s.previews.slots.insert(pane, slot);
+    }
+
+    #[test]
+    fn volume_mute_and_invalid_commands_do_not_restart_the_decoder() {
+        let mut s = Session::new().expect("session");
+        s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+            .expect("kind");
+        let pane = s.layout.focused();
+        insert_video(&mut s, pane);
+        for (command, params) in [
+            ("preview.video.volume", json!({"value": -1})),
+            ("preview.video.volume", json!({"value": 101})),
+            ("preview.video.volume", json!({"value": "loud"})),
+            ("preview.video.mute", json!({"on": 1})),
+        ] {
+            assert!(s.dispatch(command, &params).is_err(), "{command}");
+        }
+        s.dispatch("preview.video.volume", &json!({"value": 37}))
+            .expect("volume");
+        s.dispatch("preview.video.mute", &json!({"on": true}))
+            .expect("mute");
+        let video = s.previews.slots[&pane].video.as_ref().expect("video");
+        assert_eq!(video.volume, 37.0);
+        assert!(video.muted);
+        assert!(
+            video.player.is_none(),
+            "volume/mute must not start a decoder"
+        );
+    }
+
+    #[test]
+    fn starting_a_second_preview_video_pauses_the_first() {
+        let mut s = Session::new().expect("session");
+        s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+            .expect("kind");
+        let first = s.layout.focused();
+        let second = s
+            .layout
+            .split(first, fm_layout::Axis::Horizontal, 0.5)
+            .expect("split");
+        insert_video(&mut s, first);
+        insert_video(&mut s, second);
+        s.dispatch("preview.video.play", &json!({"pane": second, "on": true}))
+            .expect("play");
+        let old = s.previews.slots[&first].video.as_ref().expect("video");
+        assert!(!old.playing && !old.need_start && old.player.is_none());
+        assert!(
+            s.previews.slots[&second]
+                .video
+                .as_ref()
+                .expect("video")
+                .playing
+        );
     }
 }

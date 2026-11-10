@@ -28,6 +28,7 @@ fm-ops = { path = "crates/ops" }
 fm-layout = { path = "crates/layout" }
 fm-term = { path = "crates/term" }
 fm-preview = { path = "crates/preview" }
+fm-media = { path = "crates/media" }
 fm-engine = { path = "crates/engine" }
 fm-ui = { path = "crates/ui" }
 
@@ -70,6 +71,12 @@ gix = { version = "0.90", default-features = false, features = ["sha1", "status"
 similar = "3"
 portable-pty = "0.9"
 vt100 = "0.18"
+
+# external — media (fm-media only; cpal needs ALSA headers on Linux)
+cpal = "0.18"
+symphonia = { version = "0.5.5", features = ["aac", "alac", "mp3", "isomp4"] }
+rubato = { version = "0.16", default-features = false }
+rtrb = "0.3"
 
 # external — SFTP (fm-fs-sftp only; tokio never leaks to other crates)
 russh = "0.64"
@@ -119,7 +126,9 @@ sspi = { path = "vendor/sspi" }
 smb-transport = { path = "vendor/smb-transport" }
 vt100 = { path = "vendor/vt100" }
 
+# Fat LTO with one codegen unit: faster and smaller. Panics are caught on purpose
+# (see engine), so no panic=abort. opt-level stays 3 because decode speed matters most.
 [profile.release]
-lto = "thin"
-codegen-units = 4
+lto = "fat"
+codegen-units = 1
 strip = true

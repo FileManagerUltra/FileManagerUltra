@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 fm-vfs.workspace = true
+fm-media.workspace = true
 regex.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 serde.workspace = true

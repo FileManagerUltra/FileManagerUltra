@@ -39,6 +39,16 @@ pub struct ViewIndex {
 /// performs work itself.
 #[derive(Debug)]
 pub struct Session {
+    /// Session-wide lease for the single active audio output.
+    pub audio_owner: crate::audio_owner::AudioOwner,
+    pub media: crate::media_cmds::MediaSession,
+    /// Set while the Media pane fills the window (Media > Fullscreen).
+    pub media_fullscreen: Option<crate::media_fullscreen_cmds::MediaFullscreen>,
+    /// Requested native window fullscreen; the app applies it. Never persisted.
+    pub window_fullscreen: bool,
+    pub(crate) media_store: crate::media_store::MediaStore,
+    pub(crate) playlist_job: crate::media_playlist_cmds::PlaylistJob,
+    pub(crate) media_source: crate::media_source_cmds::MediaSourceJob,
     pub registry: Registry,
     pub prefs: Prefs,
     /// OS timezone captured at startup; conversions during rendering do no filesystem I/O.
@@ -156,6 +166,13 @@ impl Default for Session {
             compare: None,
             app_catalog: None,
             registry: Registry::new(),
+            audio_owner: crate::audio_owner::AudioOwner::None,
+            media: Default::default(),
+            media_fullscreen: None,
+            window_fullscreen: false,
+            media_store: Default::default(),
+            playlist_job: Default::default(),
+            media_source: Default::default(),
             prefs: Prefs::default(),
             file_time_zone: jiff::tz::TimeZone::UTC,
             jobs: JobQueue::new(),
@@ -366,6 +383,10 @@ impl Session {
             || self.diff_busy()
             || self.remote.is_busy()
             || self.previews.is_busy()
+            || self.media.is_busy()
+            || self.media_store_busy()
+            || self.playlist_job.is_busy()
+            || self.media_source.is_busy()
             || self.thumbs.is_busy()
             || self.image_clip.is_busy()
             || self.fileops.jobs().iter().any(|j| j.state.is_running())
@@ -390,6 +411,11 @@ impl Session {
         self.normalize_sftp_panes();
         self.remote_tick();
         changed |= self.refresh_previews();
+        changed |= self.media_tick();
+        changed |= self.media_store_tick();
+        changed |= self.media_playlist_tick();
+        changed |= self.media_source_tick();
+        self.reconcile_audio_owner();
         for ev in &events {
             if self.finish_device_removal(ev) {
                 continue;

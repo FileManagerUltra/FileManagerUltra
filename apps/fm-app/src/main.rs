@@ -33,6 +33,8 @@ struct App {
     /// Set once the native window title has been explicitly sent (see `ui`).
     title_sent: bool,
     was_focused: bool,
+    /// Native fullscreen state last sent to the window (`window.fullscreen`).
+    window_fullscreen_sent: bool,
     dialogs: fm_ui::dialogs::Dialogs,
     last_ws_tick: std::time::Instant,
     window: window::Tracker,
@@ -279,6 +281,10 @@ fn import_paths(
         );
         return;
     }
+    if session.pane_kind(pane) == Some(fm_layout::PaneKind::Media) {
+        session.dispatch_or_notice("media.drop", &serde_json::json!({"uris": paths}));
+        return;
+    }
     let Some(dest) = session.layout.state(pane).map(|p| p.location.to_string()) else {
         return;
     };
@@ -410,17 +416,32 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(fm_brand::APP_NAME.to_string()));
         }
 
-        egui::Panel::top("menu_bar").show(ui, |ui| {
-            menu::menu_bar(ui, &mut self.session, &mut self.dialogs);
-        });
-        let tab_tokens = self.look;
-        egui::Panel::top("workspace_tabs").show(ui, |ui| {
-            fm_ui::workspaces::tab_bar(ui, &mut self.session, &tab_tokens, &mut self.dialogs);
-        });
+        if self.session.window_fullscreen != self.window_fullscreen_sent {
+            self.window_fullscreen_sent = self.session.window_fullscreen;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(
+                self.window_fullscreen_sent,
+            ));
+        }
+        // Media fullscreen shows only the Media pane; chrome and other panes keep their state.
+        let media_fullscreen = self
+            .session
+            .media_fullscreen_active()
+            .then(|| self.session.media_pane())
+            .flatten();
+        if media_fullscreen.is_none() {
+            egui::Panel::top("menu_bar").show(ui, |ui| {
+                menu::menu_bar(ui, &mut self.session, &mut self.dialogs);
+            });
+            let tab_tokens = self.look;
+            egui::Panel::top("workspace_tabs").show(ui, |ui| {
+                fm_ui::workspaces::tab_bar(ui, &mut self.session, &tab_tokens, &mut self.dialogs);
+            });
+        }
         self.persist_workspaces(&ctx, false);
 
         let tokens = self.look;
-        egui::Panel::bottom("status_bar").show(ui, |ui| {
+        let mut status_bar = media_fullscreen.is_none();
+        egui::Panel::bottom("status_bar").show_collapsible(ui, &mut status_bar, |ui| {
             let focused = self.session.layout.focused();
             let (count, selected) = {
                 let state = self.session.layout.state(focused);
@@ -460,6 +481,7 @@ impl eframe::App for App {
                     }
                 }
                 fm_ui::jobs::indicator(ui, &self.session, &tokens);
+                fm_ui::media::indicator(ui, &mut self.session, &tokens);
                 ui.label(tokens.muted(format!("{count} items")));
                 if let Some(space) = space {
                     ui.label(tokens.muted(space));
@@ -492,9 +514,13 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                let root = self.session.layout.root.clone();
-                if let Some(uri) = render_pane_node(ui, &mut self.session, &root, &tokens) {
-                    open_uri(&mut self.session, &mut self.dialogs, &uri);
+                if let Some(pane) = media_fullscreen {
+                    fm_ui::media::show(ui, &mut self.session, pane, &tokens);
+                } else {
+                    let root = self.session.layout.root.clone();
+                    if let Some(uri) = render_pane_node(ui, &mut self.session, &root, &tokens) {
+                        open_uri(&mut self.session, &mut self.dialogs, &uri);
+                    }
                 }
                 if let Some(id) = fm_ui::context_menu::take_command(ui.ctx()) {
                     menu::dispatch(&mut self.session, &mut self.dialogs, id);
@@ -543,6 +569,12 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Err(err) = self.session.media_store_finish() {
+            eprintln!("failed to save media queue: {err}");
+        }
+        if let Err(err) = fm_engine::video_cmds::shutdown_players() {
+            eprintln!("failed to stop video playback: {err}");
+        }
         fm_engine::open_cmds::sweep_open_temp(true);
         self.persist_workspaces(&egui::Context::default(), true);
         if let Some(dir) = &self.config_dir
@@ -578,6 +610,7 @@ fn main() -> eframe::Result {
     fm_engine::open_cmds::sweep_open_temp(false);
     if let Some(dir) = &config_dir {
         session.remote.set_config_dir(dir.clone());
+        session.media_store_start(dir.clone());
     }
     if !session
         .thumbs
@@ -650,6 +683,7 @@ fn main() -> eframe::Result {
                 look,
                 title_sent: false,
                 was_focused: true,
+                window_fullscreen_sent: false,
                 dialogs: fm_ui::dialogs::Dialogs::default(),
                 last_ws_tick: std::time::Instant::now(),
                 window: tracker,
@@ -704,6 +738,25 @@ mod tests {
         let mut session = Session::new().expect("session");
         session.dispatch(menu::QUIT, &Params::Null).expect("quit");
         assert!(!session.running);
+    }
+
+    #[test]
+    fn external_media_drops_enqueue_instead_of_copying_files() {
+        let ctx = egui::Context::default();
+        let mut session = Session::new().expect("session");
+        session
+            .layout
+            .state_mut(session.layout.focused())
+            .expect("pane")
+            .kind = fm_layout::PaneKind::Media;
+        import_paths(
+            &ctx,
+            &mut session,
+            vec!["https://host/song.mp3".into()],
+            None,
+        );
+        assert!(!session.command_enabled("media.drop"), "import submitted");
+        assert!(session.fileops.jobs().is_empty(), "never submit a copy job");
     }
 
     /// Render the pane tree headlessly and return the solid fill rects that

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Play local audio in a dedicated Media pane with a queue, seeking, volume, mute, shuffle and repeat. Audio can keep playing after the pane closes, with a Stop control in the status bar; starting Preview playback pauses it.
+- The Media queue and playback settings now return paused after restarting; missing files are skipped with a notice.
+- Import local M3U, M3U8 and PLS playlists, or save the queue as a new M3U8 file. Unsafe links, missing files and unsupported entries are skipped with notices.
+- Drop local audio files or folders onto Media to queue them without copying or moving files. Folders play in natural filename order; idle drops start playback.
+- Files and Preview now offer Play, Play next, Add to queue and Play folder for local audio. Add appends; Play next inserts after the current track; Play inserts there and starts immediately without discarding the playlist. Playing from Preview continues at its current position.
+- Play local video in Media with sound, seeking and frame-by-frame stepping while paused. Files, folders, playlists and Preview handoff also accept video; closing the Media pane stops video without clearing the queue.
+- Adjust local video playback speed from 0.5× to 3× while preserving pitch.
+- Choose the audio track and toggle subtitles for videos with several streams (subtitle rendering is not yet available).
+- Fullscreen video in Media (F, double-click or the Fullscreen button; Esc leaves) with controls and cursor that hide after 3 seconds, plus F11 for window fullscreen.
+- YouTube-style keyboard controls in Media (Space/K, J/L, arrows, 0–9, Home/End, M, N/P, comma/period, < and >); a Keys menu lists them, and Preview audio and video get the basic transport keys.
+- Play audio and video from SFTP and SMB: the file is downloaded to a private temporary folder first, with progress shown, and removed afterwards.
+- Gapless playback: consecutive local tracks join without a pause, honouring encoder delay and padding (can be switched off in the Media pane).
+- A ten-band equalizer for Media audio and video with built-in and saved presets, an automatic preamp to avoid clipping, and settings that persist.
+- A-B loop to repeat part of a track, and a sleep timer (minutes or end of the current item) that fades out before pausing.
+- Play individual audio files in Preview, with Play/Pause, seeking, volume, mute, tags and embedded cover art. Audio autoplay is optional and off by default.
+- Preview videos now play with sound, volume and mute controls, and synchronized picture and audio. Video autoplay can be disabled in Preferences; a missing audio device leaves the video playing silently with a hint.
+
 ## [0.1.3] - 2026-11-09
 
 ### Changed

@@ -4,6 +4,7 @@
 //! sizes are capped, dimensions are checked from headers, and parsers are depth-limited.
 
 pub mod arrange;
+pub mod audio;
 pub mod dir;
 pub mod hex;
 pub mod highlight;
@@ -173,6 +174,8 @@ pub struct MetaDoc {
     pub poster: Option<Box<ImageDoc>>,
     /// Set when the video can be played in the pane.
     pub video: Option<VideoInfo>,
+    /// Local audio metadata and playback source; loaded on an engine worker.
+    pub audio: Option<audio::AudioDoc>,
 }
 
 /// What the player needs to know about a local video.
@@ -185,6 +188,57 @@ pub struct VideoInfo {
     pub fps: f64,
     /// Seconds; 0 when unknown.
     pub duration: f64,
+    /// Native format of the first audio stream, if present and supported.
+    pub audio: Option<fm_media::AudioFormat>,
+    /// Delay of the first audio stream relative to the container timeline.
+    pub audio_delay: f64,
+    /// Embedded audio and subtitle streams; empty when only `audio` is known.
+    pub tracks: Tracks,
+}
+
+/// Embedded streams of a video, in container order and capped at [`MAX_TRACKS`] each.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Tracks {
+    pub audio: Vec<AudioTrack>,
+    pub subtitles: Vec<SubtitleTrack>,
+    /// Audio stream decoded by the player: an index into `audio`.
+    pub selected_audio: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioTrack {
+    /// Display text from the stream's language, title and codec, sanitized and capped.
+    pub label: String,
+    /// `None` when the stream cannot be decoded, which makes it unselectable.
+    pub format: Option<fm_media::AudioFormat>,
+    pub delay: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SubtitleTrack {
+    pub label: String,
+}
+
+pub const MAX_TRACKS: usize = 16;
+
+impl VideoInfo {
+    /// Format and start delay of the selected audio stream.
+    pub fn audio_source(&self) -> Option<(fm_media::AudioFormat, f64)> {
+        if self.tracks.audio.is_empty() {
+            return self.audio.map(|format| (format, self.audio_delay));
+        }
+        let track = self.tracks.audio.get(self.tracks.selected_audio)?;
+        Some((track.format?, track.delay))
+    }
+
+    /// First decodable audio stream, the one chosen when a video starts.
+    pub fn default_audio_track(&self) -> usize {
+        self.tracks
+            .audio
+            .iter()
+            .position(|track| track.format.is_some())
+            .unwrap_or(0)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -306,6 +360,7 @@ fn render_inner(
             hint: Some("Special files are never opened.".into()),
             poster: None,
             video: None,
+            audio: None,
         }));
     }
     let head = read_head(vfs, entry, 8192)?;
@@ -322,11 +377,13 @@ fn render_inner(
         Kind::Structured(f) => structured::render(vfs, entry, limits, f),
         Kind::Markdown => markdown::render(vfs, entry, limits),
         Kind::Video => Ok(video::render(entry, limits)),
-        Kind::Audio | Kind::Pdf => Ok(Preview::Meta(MetaDoc {
+        Kind::Audio => audio::render(entry, limits),
+        Kind::Pdf => Ok(Preview::Meta(MetaDoc {
             rows: base_meta(entry),
             hint: Some(kind.hint().into()),
             poster: None,
             video: None,
+            audio: None,
         })),
         Kind::Binary => hex::render(vfs, entry, limits).map(Preview::Hex),
     }

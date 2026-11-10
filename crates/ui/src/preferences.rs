@@ -386,6 +386,27 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
             );
         }
         Topic::Preview => {
+            section_heading(ui, tokens, "Playback");
+            let mut autoplay = s.prefs.preview_audio_autoplay;
+            if ui
+                .checkbox(&mut autoplay, "Autoplay audio previews")
+                .changed()
+            {
+                set(s, "preview_audio_autoplay", json!(autoplay));
+            }
+            hint(
+                ui,
+                tokens,
+                "Off by default: select a music file and press Play to listen.",
+            );
+            let mut video_autoplay = s.prefs.preview_video_autoplay;
+            if ui
+                .checkbox(&mut video_autoplay, "Autoplay video previews")
+                .changed()
+            {
+                set(s, "preview_video_autoplay", json!(video_autoplay));
+            }
+            ui.add_space(18.0);
             section_heading(ui, tokens, "Folders");
             let mut recursive = s.prefs.recursive_preview;
             let response = ui
@@ -1107,9 +1128,29 @@ mod tests {
     }
 
     #[test]
+    fn preview_audio_autoplay_is_opt_in() {
+        let mut h = harness(Tokens::dark(), egui::vec2(900.0, 650.0));
+        h.get_by_label("Preview").click();
+        h.run();
+        assert!(!h.state().prefs.preview_audio_autoplay);
+        assert!(h.state().prefs.preview_video_autoplay);
+        h.get_by_label("Autoplay video previews").click();
+        h.run();
+        assert!(!h.state().prefs.preview_video_autoplay);
+        h.get_by_label("Autoplay audio previews").click();
+        h.run();
+        assert!(h.state().prefs.preview_audio_autoplay);
+        h.get_by_label("Autoplay audio previews").click();
+        h.run();
+        assert!(!h.state().prefs.preview_audio_autoplay);
+    }
+
+    #[test]
     fn log_settings_dispatch_and_unlimited_keeps_safety_caps() {
         let mut h = harness(Tokens::dark(), egui::vec2(900.0, 650.0));
         h.get_by_label("Preview").click();
+        h.run();
+        h.get_by_label("Live tail interval (ms)").scroll_to_me();
         h.run();
         h.get_by_label("Live tail interval (ms)").click();
         h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
@@ -1118,6 +1159,8 @@ mod tests {
         h.key_press(Key::Enter);
         h.run();
         assert_eq!(h.state().prefs.log_poll_ms, 2000);
+        h.get_by_label("Unlimited initial tail").scroll_to_me();
+        h.run();
         h.get_by_label("Unlimited initial tail").click();
         h.run();
         assert_eq!(h.state().prefs.log_tail_mib, 0);

@@ -54,6 +54,10 @@ pub enum Dialog {
         sources: Vec<VfsUri>,
         dest: String,
     },
+    Playlist {
+        save: bool,
+        path: String,
+    },
 }
 
 /// Open-dialog state held by the app.
@@ -89,6 +93,32 @@ pub fn window_owns_keyboard(s: &Session) -> bool {
 /// The dialog a command needs before it can run, if any. The app calls this for shortcuts and
 /// menu items; `None` means dispatch the command directly.
 pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
+    if matches!(id, "media.playlist.load" | "media.playlist.save") {
+        let save = id == "media.playlist.save";
+        let dir = file_cmds::focused_dir(s)
+            .filter(|dir| dir.local_path().is_some())
+            .or_else(|| {
+                s.layout
+                    .panes()
+                    .into_iter()
+                    .filter_map(|pane| s.layout.state(pane))
+                    .find(|state| state.kind.is_files() && state.location.local_path().is_some())
+                    .map(|state| state.location.clone())
+            })
+            .unwrap_or_else(fm_engine::workspace::home_location);
+        let path = if save {
+            dir.join("queue.m3u8").ok()?.to_string()
+        } else {
+            file_cmds::focused_selection(s)
+                .first()
+                .filter(|uri| {
+                    fm_engine::media_playlist_cmds::validate_path(&uri.to_string(), false).is_ok()
+                })
+                .map(VfsUri::to_string)
+                .unwrap_or_default()
+        };
+        return Some(Dialog::Playlist { save, path });
+    }
     if id == "workspace.rename" {
         let tab = s.workspaces.active;
         return Some(Dialog::RenameWorkspace {
@@ -169,6 +199,30 @@ impl Dialogs {
         let enter = ctx.input(|i| i.key_pressed(Key::Enter));
         let focus = std::mem::take(&mut self.focus_next);
         let keep = match &mut dialog {
+            Dialog::Playlist { save, path } => {
+                let verdict = fm_engine::media_playlist_cmds::validate_path(path, *save)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string());
+                let title = if *save {
+                    "Save playlist as new M3U8 file"
+                } else {
+                    "Load playlist (M3U, M3U8 or PLS)"
+                };
+                let (go, cancel) = name_dialog(ctx, tokens, title, path, &verdict, focus);
+                if !cancel && !esc && (go || enter) && verdict.is_ok() {
+                    s.dispatch_or_notice(
+                        if *save {
+                            "media.playlist.save"
+                        } else {
+                            "media.playlist.load"
+                        },
+                        &json!({"uri": path.as_str()}),
+                    );
+                    false
+                } else {
+                    !(cancel || esc)
+                }
+            }
             Dialog::Mkdir { dir, name } => {
                 let verdict = file_cmds::validate_new_name(s, dir, name, None);
                 let (go, cancel) = name_dialog(ctx, tokens, "New folder", name, &verdict, focus);

@@ -535,13 +535,10 @@ impl History {
 
 /// What a pane shows. Only `Files` state lives in [`PaneState`]; other kinds keep their
 /// runtime state in the engine and merely tag the pane here.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum PaneKind {
     /// `Diff` was a pane kind in unreleased builds; saved workspaces fall back to Files.
     #[default]
-    #[serde(alias = "Diff")]
     Files,
     Terminal,
     Preview,
@@ -550,16 +547,38 @@ pub enum PaneKind {
     Smb,
     Network,
     Trash,
+    Media,
+}
+
+impl<'de> serde::Deserialize<'de> for PaneKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "Terminal" => Self::Terminal,
+            "Preview" => Self::Preview,
+            "Sftp" => Self::Sftp,
+            "Smb" => Self::Smb,
+            "Network" => Self::Network,
+            "Trash" => Self::Trash,
+            "Media" => Self::Media,
+            "Diff" | "Files" => Self::Files,
+            _ => Self::Files,
+        })
+    }
 }
 
 impl PaneKind {
-    pub const ALL: [PaneKind; 6] = [
+    pub const ALL: [PaneKind; 7] = [
         Self::Files,
         Self::Terminal,
         Self::Preview,
         Self::Sftp,
         Self::Network,
         Self::Trash,
+        Self::Media,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -571,6 +590,7 @@ impl PaneKind {
             Self::Smb => "smb",
             Self::Network => "network",
             Self::Trash => "trash",
+            Self::Media => "media",
         }
     }
 
@@ -583,6 +603,7 @@ impl PaneKind {
             Self::Smb => "SMB",
             Self::Network => "Network",
             Self::Trash => "Trash",
+            Self::Media => "Media",
         }
     }
 
@@ -627,6 +648,17 @@ pub struct PaneState {
     /// Which Places sections are collapsed (persisted per pane).
     #[serde(default)]
     pub places: PlacesState,
+    /// Media pane queue selection and scroll state.
+    #[serde(default)]
+    pub media: MediaPaneState,
+}
+
+/// View state for a Media pane; queue contents are owned by the session, not the layout.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct MediaPaneState {
+    pub selected: Option<usize>,
+    pub queue_scroll: f32,
 }
 
 /// One side of a comparison.
@@ -745,6 +777,7 @@ impl PaneState {
             col_widths: DEFAULT_COL_WIDTHS,
             preview_source: PreviewSource::Follow,
             places: PlacesState::default(),
+            media: MediaPaneState::default(),
         };
         if pane.location != pane.tree.root {
             pane.reveal_location();
@@ -958,6 +991,37 @@ mod tests {
         assert_eq!(k, PaneKind::Smb);
         assert!(!PaneKind::ALL.contains(&PaneKind::Smb));
     }
+
+    #[test]
+    fn unknown_saved_pane_kinds_fall_back_to_files() {
+        assert_eq!(
+            serde_json::from_str::<PaneKind>("\"Diff\"").expect("legacy diff"),
+            PaneKind::Files
+        );
+        assert_eq!(
+            serde_json::from_str::<PaneKind>("\"FutureKind\"").expect("unknown kind"),
+            PaneKind::Files
+        );
+        assert_eq!(
+            serde_json::from_str::<PaneKind>("\"Media\"").expect("media kind"),
+            PaneKind::Media
+        );
+    }
+
+    #[test]
+    fn media_view_state_round_trips_and_defaults_for_older_panes() {
+        let mut pane = PaneState::new(VfsUri::parse("/d").expect("uri"));
+        pane.media.selected = Some(3);
+        pane.media.queue_scroll = 24.0;
+        let value = serde_json::to_value(&pane).expect("serialize");
+        let restored: PaneState = serde_json::from_value(value.clone()).expect("restore");
+        assert_eq!(restored.media, pane.media);
+        let mut legacy = value;
+        legacy.as_object_mut().expect("pane object").remove("media");
+        let restored: PaneState = serde_json::from_value(legacy).expect("legacy pane");
+        assert_eq!(restored.media, MediaPaneState::default());
+    }
+
     #[test]
     fn column_widths_clamp_reject_garbage_and_reset() {
         let mut p = PaneState::new(VfsUri::parse("/d").expect("uri"));

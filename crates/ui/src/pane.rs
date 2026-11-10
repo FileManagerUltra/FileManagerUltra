@@ -130,6 +130,10 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 open = crate::preview::show(ui, s, pane, tokens);
                 return;
             }
+            if kind == PaneKind::Media {
+                crate::media::show(ui, s, pane, tokens);
+                return;
+            }
 
             let height = ui.available_height();
             let max_tree = (ui.available_width() - 160.0).clamp(MIN_TREE, MAX_TREE);
@@ -203,6 +207,8 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let dragging = egui::DragAndDrop::has_payload_of_type::<crate::dnd::DragPayload>(ui.ctx());
     if kind == PaneKind::Terminal {
         crate::dnd::finish_terminal(ui.ctx(), s, pane, area, tokens);
+    } else if kind == PaneKind::Media {
+        crate::dnd::finish_media(ui.ctx(), s, area, tokens);
     } else {
         crate::dnd::finish(ui.ctx(), s, area, tokens);
     }
@@ -247,6 +253,7 @@ fn kind_menu(ui: &mut Ui, s: &mut Session, pane: PaneId, current: PaneKind) {
                     | PaneKind::Sftp
                     | PaneKind::Network
                     | PaneKind::Trash
+                    | PaneKind::Media
             );
             let label = if supported {
                 kind.label().to_string()
@@ -490,6 +497,23 @@ mod tests {
                     assert!(open.is_none());
                 });
             });
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
+    fn media_pane_renders_in_both_palettes() {
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            let mut s = ready_session();
+            s.layout.state_mut(1).expect("pane").kind = PaneKind::Media;
+            let ctx = egui::Context::default();
+            crate::theme::apply_to(&ctx, &tokens);
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    assert!(show(ui, &mut s, 1, &tokens).is_none());
+                });
+            });
+            assert!(!output.shapes.is_empty());
             output.textures_delta.clear();
         }
     }

@@ -29,6 +29,28 @@ The playback queue, current item, position, volume, shuffle and repeat state SHA
 ### Requirement: Queue and playlists
 The queue SHALL support enqueue, play now, play folder (supported media files of a folder in natural name order), remove, reorder, clear, shuffle and repeat (off, all, one). The player SHALL advance automatically at the end of an item and stop after the last item unless repeat is on. Playlists in M3U, M3U8 and PLS format SHALL be loadable and the queue SHALL be savable as M3U8; relative entries resolve against the playlist's folder. Entries that are missing or unsupported SHALL be skipped with a notice naming them.
 
+"Add to queue" SHALL append to the end without changing playback. "Play next"
+SHALL insert the requested files after the current Media item, preserving request
+order, without interrupting playback. "Play" SHALL insert there and immediately
+start the first requested item. With no current item, Play/Play next SHALL insert
+at the front; only Play starts playback. Explicit Play next requests SHALL take
+precedence over shuffle, forward navigation history and repeat-one at the next
+item boundary. Queue entries SHALL NOT be removed automatically when played,
+skipped, finished or interrupted; only explicit remove/clear actions remove them.
+Selecting an existing queue row SHALL play that row without inserting a duplicate.
+
+#### Scenario: Three queue actions
+- **WHEN** B is current in queue A, B, C and the user adds D to queue, then requests E as Play next
+- **THEN** the queue is A, B, E, C, D and B keeps playing
+
+#### Scenario: Play without discarding the playlist
+- **WHEN** B is current in queue A, B, C and the user chooses Play for D
+- **THEN** the queue is A, B, D, C and D starts immediately, with A, B and C retained
+
+#### Scenario: Play next with shuffle and repeat-one
+- **WHEN** shuffle and repeat-one are enabled and the user requests D as Play next
+- **THEN** D plays at the next item boundary before ordinary shuffled or repeated playback resumes
+
 #### Scenario: Auto-advance
 - **WHEN** a track ends and another follows in the queue
 - **THEN** the next track starts
@@ -50,7 +72,7 @@ The queue SHALL support enqueue, play now, play folder (supported media files of
 - **THEN** the same items appear in the same order
 
 ### Requirement: Entry points
-Files and Preview panes SHALL offer Play, Add to queue and Play folder for supported media (context menu and menu bar); dropping supported files or a folder on a Media pane SHALL enqueue them; a Preview video card SHALL offer "Play in Media pane". If no Media pane exists, Play SHALL switch a suitable pane to `Media` (or open one beside the focused pane) rather than fail.
+Files and Preview panes SHALL offer Play, Play next, Add to queue and Play folder for supported media (context menu and menu bar); dropping supported files or a folder on a Media pane SHALL enqueue them; a Preview video card SHALL offer "Play in Media pane". If no Media pane exists, Play SHALL switch a suitable pane to `Media` (or open one beside the focused pane) rather than fail.
 
 #### Scenario: Play from a Files pane
 - **WHEN** a Files pane has an mp3 selected and `media.play` runs for it with no Media pane open
@@ -61,7 +83,7 @@ Files and Preview panes SHALL offer Play, Add to queue and Play folder for suppo
 - **THEN** they are appended to the queue in order and the first plays if nothing was playing
 
 ### Requirement: Transport and tracks
-`media.seek` SHALL move to an absolute or relative position clamped to the item's duration; volume SHALL be 0–100 and persist; speed SHALL follow the playback-speed requirement of `media-audio-pipeline`. For video, the pane SHALL list embedded audio and subtitle tracks and let the user choose one or none (subtitles per `media-subtitles`), and SHALL support frame step while paused. Keyboard control SHALL work while the pane is focused: Space play/pause, ←/→ seek, ↑/↓ volume, M mute, N/P next/previous, F fullscreen.
+`media.seek` SHALL move to an absolute or relative position clamped to the item's duration; volume SHALL be 0–100 and persist; speed SHALL follow the playback-speed requirement of `media-audio-pipeline`. For video, the pane SHALL list embedded audio and subtitle tracks and let the user choose one or none (subtitles per `media-subtitles`), and SHALL support frame step while paused.
 
 #### Scenario: Seek past the end
 - **WHEN** `media.seek` is given a position beyond the duration
@@ -70,6 +92,48 @@ Files and Preview panes SHALL offer Play, Add to queue and Play folder for suppo
 #### Scenario: Choose an audio track
 - **WHEN** a video with two audio tracks plays and the second is chosen
 - **THEN** playback continues from the same position with the second track
+
+### Requirement: Familiar player keyboard controls
+The focused Media pane SHALL provide YouTube-style keyboard controls through engine commands, in normal and fullscreen modes:
+
+| Key | Action |
+|---|---|
+| Space or K | Toggle play/pause |
+| J / L | Seek backward/forward 10 seconds |
+| Left / Right | Seek backward/forward 5 seconds |
+| Up / Down | Increase/decrease volume by 5 percentage points |
+| M | Toggle mute |
+| 0–9 | Seek to 0%–90% of the current item's duration |
+| Home / End | Seek to the start/end of the current item |
+| F | Toggle Media pane fullscreen |
+| Esc | Leave Media fullscreen when active |
+| Shift+N / Shift+P | Play next/previous queue item |
+| N / P | Aliases for next/previous queue item |
+| Comma / Period | Step backward/forward one video frame while paused |
+| < / > | Decrease/increase speed by 0.25×, clamped to 0.5×–3× |
+| C | Toggle subtitles off/on, retaining the last selected track |
+
+These shortcuts SHALL NOT intercept terminal input, text editing, modal dialogs or keys owned by an interactive widget (including a focused slider or queue navigation). Each key event SHALL trigger at most one action. Unsupported actions SHALL be disabled: percentage/end seeking requires a known duration, frame stepping requires paused video, and subtitle toggling requires an available track. Subtitle toggling with no prior selection SHALL select the first available track. Seeking and volume SHALL use the normal clamping and end-of-item rules. A discoverable shortcut reference SHALL be available from the Media pane, and control tooltips SHALL include their shortcuts.
+
+#### Scenario: Familiar seeking
+- **WHEN** the Media pane owns keyboard input at 1:00 and the user presses J, then Right
+- **THEN** the position moves to 0:50, then 0:55, without changing pause state
+
+#### Scenario: Percentage seeking
+- **WHEN** an item with a known duration of ten minutes plays and the user presses 5
+- **THEN** playback seeks to five minutes
+
+#### Scenario: Typing is not playback control
+- **WHEN** a terminal, text editor, text field or modal dialog owns keyboard input and the user presses K, J, Space or F
+- **THEN** playback and fullscreen state remain unchanged and the input owner receives the keys
+
+#### Scenario: Widget owns arrows
+- **WHEN** a volume slider has keyboard focus and the user presses Right
+- **THEN** the slider handles the key and no playback seek is dispatched
+
+#### Scenario: Frame and speed controls
+- **WHEN** a video is paused and the user presses Period, then >
+- **THEN** it advances one frame and increases the configured playback speed by 0.25× without resuming
 
 ### Requirement: Audio output and A/V sync
 Audio SHALL be the master clock. For video, frames SHALL be dropped when late and held when early so that picture and sound stay in sync; a video without audio SHALL use a monotonic clock. Memory SHALL stay bounded: only the newest few decoded frames and a bounded audio buffer are kept however slow the UI is. If no audio device is available, video SHALL play silently with a hint and audio items SHALL report an error and be skipped.
@@ -116,7 +180,7 @@ A file on a remote backend SHALL be copied through a job to an owner-only tempor
 - **THEN** a notice names it and the next item plays
 
 ### Requirement: Media commands
-All media behaviour SHALL be commands with id, label, menu path, shortcut, params documentation and `enabled`: `media.play`, `media.pause`, `media.toggle`, `media.stop`, `media.next`, `media.prev`, `media.seek`, `media.volume`, `media.mute`, `media.speed`, `media.enqueue`, `media.play_folder`, `media.remove`, `media.move`, `media.clear`, `media.shuffle`, `media.repeat`, `media.track.audio`, `media.track.subtitle`, `media.step`, `media.fullscreen`, `media.playlist.load`, `media.playlist.save`, `media.loop`, `media.sleep`, `media.eq`, `media.skip`, `media.chapter`, `media.subtitle.load`, `media.subtitle.delay`, `media.bookmark`, `media.finished` and `media.book`. Bad, oversized or malformed params SHALL return an error and never panic; the command fuzzer SHALL cover them.
+All media behaviour SHALL be commands with id, label, menu path, shortcut, params documentation and `enabled`: `media.play`, `media.play_next`, `media.pause`, `media.toggle`, `media.stop`, `media.next`, `media.prev`, `media.seek`, `media.volume`, `media.mute`, `media.speed`, `media.enqueue`, `media.play_folder`, `media.remove`, `media.move`, `media.clear`, `media.shuffle`, `media.repeat`, `media.track.audio`, `media.track.subtitle`, `media.step`, `media.fullscreen`, `media.playlist.load`, `media.playlist.save`, `media.loop`, `media.sleep`, `media.eq`, `media.skip`, `media.chapter`, `media.subtitle.load`, `media.subtitle.delay`, `media.bookmark`, `media.finished` and `media.book`. Bad, oversized or malformed params SHALL return an error and never panic; the command fuzzer SHALL cover them.
 
 #### Scenario: Malformed params
 - **WHEN** `media.seek` receives a string, a negative index, NaN or an object without the expected fields

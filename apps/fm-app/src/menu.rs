@@ -18,6 +18,7 @@ pub const THEME_DARK: &str = "view.theme.dark";
 pub const THEME_LIGHT: &str = "view.theme.light";
 pub const THEME_SYSTEM: &str = "view.theme.system";
 pub const THEME_TOGGLE: &str = "view.theme.toggle";
+pub const WINDOW_FULLSCREEN: &str = "window.fullscreen";
 pub const PANE_SPLIT_H: &str = "pane.split.horizontal";
 pub const PANE_SPLIT_V: &str = "pane.split.vertical";
 pub const PANE_CLOSE: &str = "pane.close";
@@ -55,6 +56,9 @@ pub const THUMBS_TOGGLE: &str = "preview.thumbs.toggle";
 pub const THUMBS_SIZE: &str = "preview.thumbs.size";
 pub const THUMBS_CLEAR: &str = "preview.thumbs.clear_cache";
 pub const VIDEO_PLAY: &str = "preview.video.play";
+pub const VIDEO_MUTE: &str = "preview.video.mute";
+pub const AUDIO_PLAY: &str = "preview.audio.play";
+pub const AUDIO_MUTE: &str = "preview.audio.mute";
 pub const LOG_EARLIER: &str = "preview.log.earlier";
 pub const TERM_RESTART: &str = "term.restart";
 pub const PANE_FOCUS_NEXT: &str = "pane.focus.next";
@@ -120,6 +124,7 @@ pub fn all_ids() -> &'static [&'static str] {
         THEME_LIGHT,
         THEME_SYSTEM,
         THEME_TOGGLE,
+        WINDOW_FULLSCREEN,
         PANE_SPLIT_H,
         PANE_SPLIT_V,
         PANE_CLOSE,
@@ -157,6 +162,28 @@ pub fn all_ids() -> &'static [&'static str] {
         THUMBS_SIZE,
         THUMBS_CLEAR,
         VIDEO_PLAY,
+        VIDEO_MUTE,
+        AUDIO_PLAY,
+        AUDIO_MUTE,
+        "media.play",
+        "media.enqueue",
+        "media.play_next",
+        "media.play_folder",
+        "media.toggle",
+        "media.stop",
+        "media.next",
+        "media.prev",
+        "media.step",
+        "media.speed",
+        "media.eq",
+        "media.loop",
+        "media.sleep",
+        "media.fullscreen",
+        "media.mute",
+        "media.shuffle",
+        "media.clear",
+        "media.playlist.load",
+        "media.playlist.save",
         NAV_UP,
         NAV_BACK,
         NAV_FORWARD,
@@ -232,6 +259,10 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
         (
             THEME_TOGGLE,
             egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::T),
+        ),
+        (
+            WINDOW_FULLSCREEN,
+            egui::KeyboardShortcut::new(Modifiers::NONE, Key::F11),
         ),
         (
             PANE_SWAP,
@@ -489,7 +520,7 @@ pub(crate) fn dispatch_folder(
     let folder = folder.to_string();
     let params = match action.id {
         "file.clip_paste" => serde_json::json!({ "dest": folder }),
-        "nav.refresh" | "bookmark.add" | "preview.open" | "image.copy" => {
+        "nav.refresh" | "bookmark.add" | "preview.open" | "image.copy" | "media.play_folder" => {
             serde_json::json!({ "uri": folder })
         }
         _ => serde_json::json!({ "sources": [folder] }),
@@ -822,6 +853,9 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
                 item(ui, session, dialogs, THUMBS_SIZE);
                 item(ui, session, dialogs, THUMBS_CLEAR);
                 item(ui, session, dialogs, VIDEO_PLAY);
+                item(ui, session, dialogs, VIDEO_MUTE);
+                item(ui, session, dialogs, AUDIO_PLAY);
+                item(ui, session, dialogs, AUDIO_MUTE);
                 ui.separator();
                 item(ui, session, dialogs, LOG_FOLLOW);
                 item(ui, session, dialogs, LOG_COLUMNS);
@@ -844,6 +878,33 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
                 ui.separator();
                 item(ui, session, dialogs, SORT_DIRS_FIRST);
             });
+            ui.separator();
+            item(ui, session, dialogs, WINDOW_FULLSCREEN);
+        });
+        ui.menu_button("Media", |ui| {
+            for id in [
+                "media.play",
+                "media.play_next",
+                "media.enqueue",
+                "media.play_folder",
+                "media.toggle",
+                "media.stop",
+                "media.next",
+                "media.prev",
+                "media.step",
+                "media.speed",
+                "media.eq",
+                "media.loop",
+                "media.sleep",
+                "media.fullscreen",
+                "media.mute",
+                "media.shuffle",
+                "media.clear",
+                "media.playlist.load",
+                "media.playlist.save",
+            ] {
+                item(ui, session, dialogs, id);
+            }
         });
         ui.menu_button("Help", |ui| {
             item(ui, session, dialogs, CHECK_UPDATES);
@@ -954,6 +1015,11 @@ pub fn consume_shortcuts(
                 }
                 None => session.dispatch_or_notice(id, &serde_json::Value::Null),
             };
+            fired.push(id);
+        }
+    }
+    if !terminal && !dialogs.is_open() {
+        for id in fm_ui::media_keys::handle(ctx, session, typing) {
             fired.push(id);
         }
     }
@@ -1081,6 +1147,34 @@ mod tests {
     }
 
     #[test]
+    fn media_folder_context_dispatch_preserves_the_explicit_target() {
+        let mut s = Session::new().expect("session");
+        let fs = fm_testkit::MemFs::new();
+        fs.mkdirs_str("/clicked/folder").expect("folder");
+        s.backends.register(std::sync::Arc::new(fs));
+        dispatch_folder(
+            &mut s,
+            &mut Dialogs::default(),
+            fm_ui::context_menu::FolderAction {
+                id: "media.play_folder",
+                folder: fm_vfs::VfsUri::parse("/clicked/folder").expect("uri"),
+            },
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !s.command_enabled("media.drop") {
+            s.poll();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(s.messages.recent().any(|message| {
+            message
+                .text
+                .contains("No supported local media files in folder")
+        }));
+        assert!(s.media.queue.items().is_empty());
+    }
+
+    #[test]
     fn clipboard_events_become_file_clipboard_commands() {
         let ctx = egui::Context::default();
         let raw = egui::RawInput {
@@ -1167,6 +1261,7 @@ mod tests {
             Key::L => "L",
             Key::Z => "Z",
             Key::F2 => "F2",
+            Key::F11 => "F11",
             Key::F5 => "F5",
             Key::F6 => "F6",
             Key::F7 => "F7",

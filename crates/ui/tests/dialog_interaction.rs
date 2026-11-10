@@ -75,6 +75,14 @@ fn operation_dialogs_drag_and_title_close_cancels_without_dispatch() {
                 pattern: "*".into(),
                 mode: "replace",
             },
+            Dialog::Playlist {
+                save: false,
+                path: "/music/list.m3u8".into(),
+            },
+            Dialog::Playlist {
+                save: true,
+                path: "/music/queue.m3u8".into(),
+            },
             Dialog::ConfirmDelete {
                 sources: vec![root.clone()],
             },
@@ -132,6 +140,7 @@ fn closing_key_picker_leaves_connection_form_open() {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+
         let mut h = harness(tokens, s, fm_ui::sftp_popup::sftp_prompt_dialog);
         h.get_by_label("Browse…").click();
         h.run_steps(3);
@@ -149,6 +158,48 @@ fn closing_key_picker_leaves_connection_form_open() {
         assert_eq!(h.get_all_by_label("Close window").count(), 1);
         h.get_by_label("Host");
     }
+}
+
+#[test]
+fn playlist_dialog_from_media_dispatches_load_without_a_files_selection() {
+    let fs = fm_testkit::MemFs::new();
+    fs.mkdirs_str("/music").expect("folder");
+    fs.put_str("/music/list.m3u8", b"song.mp3\n")
+        .expect("playlist");
+    fs.put_str("/music/song.mp3", b"song").expect("audio");
+    let mut s = Session::new().expect("session");
+    s.backends.register(std::sync::Arc::new(fs));
+    s.layout.state_mut(s.layout.focused()).expect("pane").kind = fm_layout::PaneKind::Media;
+    let mut dialog =
+        fm_ui::dialogs::dialog_for("media.playlist.load", &s).expect("dialog from Media");
+    if let Dialog::Playlist { path, .. } = &mut dialog {
+        *path = "/music/list.m3u8".into();
+    }
+    let mut dialogs = Dialogs::default();
+    dialogs.request(dialog);
+    let mut h = Harness::builder().build_ui_state(
+        |ui, (dialogs, s): &mut (Dialogs, Session)| {
+            dialogs.show(ui.ctx(), s, &Tokens::dark());
+        },
+        (dialogs, s),
+    );
+    h.run();
+    h.get_by_label("OK").click();
+    h.run();
+    assert!(!h.state().0.is_open());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.state().1.media.queue.items().is_empty() {
+        h.state_mut().1.poll();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "playlist load timed out"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(
+        h.state().1.media.queue.items()[0].file_name(),
+        Some("song.mp3")
+    );
 }
 
 type Show = fn(&Context, &mut Session, &Tokens);

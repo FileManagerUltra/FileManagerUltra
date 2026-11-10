@@ -76,6 +76,191 @@ fn with_fixed_places(mut s: Session) -> Session {
     s
 }
 
+#[test]
+fn audio_preview_controls() {
+    media_preview_controls(false, false, false);
+}
+
+#[test]
+fn media_audio_queue_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (name, tokens) in [("dark", Tokens::dark()), ("light", Tokens::light())] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = Session::new().expect("session");
+        session.dispatch("media.enqueue", &serde_json::json!({
+            "uris": ["/music/First track.mp3", "/music/Second track.flac", "/music/Third track.ogg"]
+        })).expect("enqueue");
+        let pane = session.media_pane().expect("media");
+        session.media.queue.select(0).expect("current");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(640.0, 480.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                egui::CentralPanel::default().show(ui, |ui| {
+                    fm_ui::media::show(ui, &mut session, pane, &tokens);
+                });
+            });
+        harness.run();
+        harness.snapshot(format!("media_audio_queue_{name}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
+fn video_preview_controls() {
+    media_preview_controls(true, false, false);
+}
+
+#[test]
+fn media_video_fullscreen() {
+    media_preview_controls(true, true, true);
+}
+
+#[test]
+fn media_video_controls() {
+    media_preview_controls(true, true, false);
+}
+
+fn media_preview_controls(video: bool, in_media: bool, fullscreen: bool) {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (name, tokens) in [("dark", Tokens::dark()), ("light", Tokens::light())] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = Session::new().expect("session");
+        session
+            .dispatch("pane.kind.set", &serde_json::json!({"kind": "preview"}))
+            .expect("preview");
+        let mut pane = session.layout.focused();
+        session.poll();
+        session.previews.slots.get_mut(&pane).expect("slot").body =
+            fm_engine::preview_cmds::Body::Static(Arc::new(fm_preview::Preview::Meta(
+                fm_preview::MetaDoc {
+                    rows: vec![
+                        ("Title".into(), "Sample track".into()),
+                        ("Artist".into(), "Example artist".into()),
+                    ],
+                    hint: None,
+                    poster: None,
+                    video: video.then(|| fm_preview::VideoInfo {
+                        path: "/sample/movie.mkv".into(),
+                        width: 640,
+                        height: 360,
+                        fps: 25.0,
+                        duration: 215.0,
+                        audio: None,
+                        audio_delay: 0.0,
+                        tracks: Default::default(),
+                    }),
+                    audio: (!video).then(|| fm_preview::audio::AudioDoc {
+                        path: "/sample/track.flac".into(),
+                        duration: Some(215.0),
+                    }),
+                },
+            )));
+        session.poll();
+        if video {
+            session
+                .dispatch("preview.video.play", &serde_json::json!({"on": false}))
+                .expect("pause");
+            let state = session
+                .previews
+                .slots
+                .get_mut(&pane)
+                .expect("slot")
+                .video
+                .as_mut()
+                .expect("video");
+            state.frame = Some(Arc::new(fm_preview::player::Frame {
+                width: 32,
+                height: 18,
+                rgba: vec![128; 32 * 18 * 4],
+                seq: 1,
+            }));
+            state.hint = Some("Playing silently: no audio output device.".into());
+        }
+        if in_media {
+            let mut state = session
+                .previews
+                .slots
+                .get_mut(&pane)
+                .expect("slot")
+                .video
+                .take()
+                .expect("video");
+            state.pos = 42.0;
+            session
+                .dispatch(
+                    "media.enqueue",
+                    &serde_json::json!({
+                        "uris": ["/sample/movie.mkv", "/sample/next.mp4"]
+                    }),
+                )
+                .expect("queue video");
+            session.media.queue.select(0).expect("current");
+            session.media.position = 42.0;
+            if fullscreen {
+                let track = |label: &str| fm_preview::AudioTrack {
+                    label: label.into(),
+                    format: None,
+                    delay: 0.0,
+                };
+                state.info.tracks = fm_preview::Tracks {
+                    audio: vec![track("English"), track("Commentary")],
+                    subtitles: vec![fm_preview::SubtitleTrack {
+                        label: "English".into(),
+                    }],
+                    selected_audio: 0,
+                };
+            }
+            session.media.video = Some(state);
+            pane = session.media_pane().expect("media");
+            if fullscreen {
+                session
+                    .dispatch("media.fullscreen", &serde_json::Value::Null)
+                    .expect("fullscreen");
+            }
+        }
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(640.0, if video { 560.0 } else { 360.0 }))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                egui::CentralPanel::default().show(ui, |ui| {
+                    if in_media {
+                        fm_ui::media::show(ui, &mut session, pane, &tokens);
+                    } else {
+                        fm_ui::preview::show(ui, &mut session, pane, &tokens);
+                    }
+                });
+            });
+        harness.run();
+        let kind = if video { "video" } else { "audio" };
+        let view = match (in_media, fullscreen) {
+            (true, true) => "media_fullscreen",
+            (true, false) => "media",
+            _ => "preview",
+        };
+        harness.snapshot(format!("{view}_{kind}_{name}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
 fn test_session() -> Session {
     with_fixed_places(Session::default())
 }
@@ -1313,6 +1498,9 @@ fn preview_zoom_shortcuts_scale_each_renderer_without_changing_ui() {
                 height: 360,
                 fps: 24.0,
                 duration: 42.0,
+                audio: None,
+                audio_delay: 0.0,
+                tracks: Default::default(),
             });
             s.previews.slots.get_mut(&pane).expect("slot").body =
                 fm_engine::preview_cmds::Body::Static(Arc::new(fm_preview::Preview::Meta(
@@ -1321,6 +1509,7 @@ fn preview_zoom_shortcuts_scale_each_renderer_without_changing_ui() {
                         hint: None,
                         poster: None,
                         video,
+                        audio: None,
                     },
                 )));
             // Initialise state before the UI supplies a decode width; no decoder is spawned.

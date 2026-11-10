@@ -127,6 +127,15 @@ pub struct Prefs {
     /// Markdown previews may fetch `http`/`https` images (capability `preview-pane`).
     #[serde(default)]
     pub preview_remote_images: bool,
+    /// Browsing music stays quiet unless explicitly enabled.
+    #[serde(default)]
+    pub preview_audio_autoplay: bool,
+    #[serde(default = "default_true")]
+    pub preview_video_autoplay: bool,
+    #[serde(default = "default_true")]
+    pub media_background_audio: bool,
+    #[serde(default = "default_true")]
+    pub media_gapless: bool,
     #[serde(default = "default_log_poll_ms")]
     pub log_poll_ms: u64,
     /// Zero removes the initial-window limit, not the preview safety caps.
@@ -450,6 +459,10 @@ impl Default for Prefs {
             retarget_links: true,
             recursive_preview: false,
             preview_remote_images: false,
+            preview_audio_autoplay: false,
+            preview_video_autoplay: true,
+            media_background_audio: true,
+            media_gapless: true,
             log_poll_ms: default_log_poll_ms(),
             log_tail_mib: default_log_tail_mib(),
             preview_filters: crate::preview_types::PreviewFilters::default(),
@@ -778,9 +791,13 @@ mod tests {
                 "last_dir",
                 "log_poll_ms",
                 "log_tail_mib",
+                "media_background_audio",
+                "media_gapless",
+                "preview_audio_autoplay",
                 "preview_filters",
                 "preview_remote_images",
                 "preview_time_secs",
+                "preview_video_autoplay",
                 "profiles",
                 "recursive_preview",
                 "remote_keepalive_secs",

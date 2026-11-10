@@ -11,8 +11,8 @@ mod state;
 pub use node::{Axis, Edge, MAX_RATIO, MIN_RATIO, PaneNode};
 pub use state::{
     DEFAULT_COL_WIDTHS, DEFAULT_TREE_WIDTH, DiffMode, DiffSide, DiffState, Focus, History,
-    ListingState, MAX_COL_WIDTH, MIN_COL_WIDTH, PaneKind, PaneState, PlacesState, PreviewSource,
-    SortDir, SortKey, SortSpec, TreeState,
+    ListingState, MAX_COL_WIDTH, MIN_COL_WIDTH, MediaPaneState, PaneKind, PaneState, PlacesState,
+    PreviewSource, SortDir, SortKey, SortSpec, TreeState,
 };
 
 /// Stable id of a pane (leaf). Never reused within a layout.
@@ -309,6 +309,27 @@ impl Layout {
         self.root.panes()
     }
 
+    /// Keep the first Media pane in painting order and demote any restored duplicates.
+    pub fn normalize_media_panes(&mut self) -> bool {
+        let mut found = false;
+        let mut changed = false;
+        for pane in self.panes() {
+            let Some(state) = self.states.get_mut(&pane) else {
+                continue;
+            };
+            if state.kind != PaneKind::Media {
+                continue;
+            }
+            if found {
+                state.kind = PaneKind::Files;
+                changed = true;
+            } else {
+                found = true;
+            }
+        }
+        changed
+    }
+
     pub fn state(&self, id: PaneId) -> Option<&PaneState> {
         self.states.get(&id)
     }
@@ -405,6 +426,18 @@ mod tests {
             panic!("expected split");
         }
         assert_eq!(l.focused(), c, "new pane is focused");
+    }
+
+    #[test]
+    fn media_normalization_keeps_first_pane_in_painting_order() {
+        let mut l = layout();
+        let second = l.split(1, Axis::Vertical, 0.5).expect("split");
+        l.state_mut(1).expect("first").kind = PaneKind::Media;
+        l.state_mut(second).expect("second").kind = PaneKind::Media;
+        assert!(l.normalize_media_panes());
+        assert_eq!(l.state(1).expect("first").kind, PaneKind::Media);
+        assert_eq!(l.state(second).expect("second").kind, PaneKind::Files);
+        assert!(!l.normalize_media_panes());
     }
 
     #[test]
