@@ -30,18 +30,21 @@ fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
         if ui.checkbox(&mut enabled, "Enabled").changed() {
             actions.push(("media.eq", json!({"enabled": enabled})));
         }
-        ui.menu_button(
-            s.media
-                .extras
-                .eq_preset
-                .clone()
-                .unwrap_or_else(|| "Custom".into()),
-            |ui| {
+        let label = s
+            .media
+            .extras
+            .eq_preset
+            .clone()
+            .unwrap_or_else(|| "Custom".into());
+        let keep_open = egui::containers::menu::MenuConfig::new()
+            .close_behavior(egui::PopupCloseBehavior::IgnoreClicks);
+        egui::containers::menu::MenuButton::new(label)
+            .config(keep_open)
+            .ui(ui, |ui| {
                 for (name, _) in PRESETS {
                     let selected = s.media.extras.eq_preset.as_deref() == Some(*name);
                     if ui.selectable_label(selected, *name).clicked() {
                         actions.push(("media.eq", json!({"preset": name})));
-                        ui.close();
                     }
                 }
                 for preset in &s.media.extras.user_presets {
@@ -49,15 +52,13 @@ fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
                         let selected = s.media.extras.eq_preset.as_deref() == Some(&preset.name);
                         if ui.selectable_label(selected, &preset.name).clicked() {
                             actions.push(("media.eq", json!({"preset": preset.name})));
-                            ui.close();
                         }
                         if ui.small_button("Delete").clicked() {
                             actions.push(("media.eq", json!({"delete": preset.name})));
                         }
                     });
                 }
-            },
-        );
+            });
         ui.horizontal(|ui| {
             for (band, hz) in BAND_HZ.iter().enumerate() {
                 ui.vertical(|ui| {
