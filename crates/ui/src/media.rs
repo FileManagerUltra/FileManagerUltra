@@ -326,6 +326,7 @@ fn transport(ui: &mut Ui, s: &Session, tokens: &Tokens, actions: &mut Vec<(&'sta
         ui.separator();
         let menu = button(ui, tokens, Icon::Menu, "Options", true, false);
         egui::Popup::menu(&menu).show(|ui| options_menu(ui, s, actions));
+        crate::media_audio::equalizer_window(ui, s, actions);
     });
 }
 

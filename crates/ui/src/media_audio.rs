@@ -10,7 +10,11 @@ type Actions = Vec<(&'static str, Value)>;
 
 /// The submenus for the audio extras, inside the Options menu.
 pub(crate) fn menus(ui: &mut Ui, s: &Session, actions: &mut Actions) {
-    equalizer(ui, s, actions);
+    if ui.button("Equalizer…").clicked() {
+        let id = eq_open_id(ui);
+        ui.data_mut(|d| d.insert_temp(id, true));
+        ui.close();
+    }
     sleep_menu(ui, s, actions);
     loop_menu(ui, s, actions);
 }
@@ -23,9 +27,30 @@ fn band_label(hz: f32) -> String {
     }
 }
 
+/// Global, because the menu and the window are built from different `Ui` scopes.
+fn eq_open_id(_ui: &Ui) -> egui::Id {
+    egui::Id::NULL.with("media-eq-window-open")
+}
+
+/// The equalizer lives in its own window so picking a preset never dismisses it.
+pub(crate) fn equalizer_window(ui: &Ui, s: &Session, actions: &mut Actions) {
+    let id = eq_open_id(ui);
+    let mut open: bool = ui.data(|d| d.get_temp(id).unwrap_or(false));
+    if !open {
+        return;
+    }
+    egui::Window::new("Equalizer")
+        .id(egui::Id::NULL.with("media-eq-window"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .show(ui.ctx(), |ui| equalizer(ui, s, actions));
+    ui.data_mut(|d| d.insert_temp(id, open));
+}
+
 fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
     let eq = s.media.gain_eq();
-    ui.menu_button("Equalizer", |ui| {
+    {
         let mut enabled = eq.enabled;
         if ui.checkbox(&mut enabled, "Enabled").changed() {
             actions.push(("media.eq", json!({"enabled": enabled})));
@@ -93,7 +118,7 @@ fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
             }
         });
         ui.data_mut(|d| d.insert_temp(name_id, name));
-    });
+    }
 }
 
 fn loop_menu(ui: &mut Ui, s: &Session, actions: &mut Actions) {
