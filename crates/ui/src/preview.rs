@@ -1340,9 +1340,6 @@ fn audio_body(
     let output = paged_scroll(ui, ScrollArea::vertical(), ("pv-audio", pane))
         .auto_shrink(false)
         .show(ui, |ui| {
-            if let Some(cover) = &meta.poster {
-                image(ui, pane, tokens, model, cover, Zoom::Fit, None);
-            }
             crate::player_controls::player_row(
                 ui,
                 tokens,
@@ -1370,6 +1367,9 @@ fn audio_body(
                         ui.close();
                     }
                 });
+            if let Some(cover) = &meta.poster {
+                image(ui, pane, tokens, model, cover, Zoom::Fit, None);
+            }
             meta_card(ui, tokens, meta);
         });
     remember_scroll(ui, &output);
