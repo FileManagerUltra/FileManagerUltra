@@ -113,6 +113,7 @@ impl MediaSession {
             .map(|video| video.info.duration)
             .filter(|duration| *duration > 0.0)
             .or_else(|| self.info.as_ref().and_then(|info| info.duration))
+            .or_else(|| self.cached_length())
     }
 
     pub fn is_video(&self) -> bool {

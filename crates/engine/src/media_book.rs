@@ -462,6 +462,39 @@ impl MediaSession {
             .collect()
     }
 
+    /// Position of the current item for the saved queue, in 5 s steps like the item states.
+    pub(crate) fn saved_position(&self) -> Option<f64> {
+        self.queue.current_index()?;
+        Some((self.position / SAVE_STEP_SECS).floor() * SAVE_STEP_SECS).filter(|p| *p > 0.0)
+    }
+
+    pub(crate) fn saved_length(&self) -> Option<f64> {
+        self.duration()
+    }
+
+    /// Show the saved spot of the restored current item; playing starts there.
+    pub(crate) fn restore_position(&mut self, position: Option<f64>, length: Option<f64>) {
+        let Some(uri) = self.queue.current().cloned() else {
+            return;
+        };
+        if let Some(length) = length.filter(|l| *l > 0.0) {
+            self.books
+                .durations
+                .insert(uri.path_str().to_string(), length);
+        }
+        self.position = position.unwrap_or(0.0);
+    }
+
+    /// Length remembered from an earlier run, for display before the item is opened.
+    pub(crate) fn cached_length(&self) -> Option<f64> {
+        let uri = self.queue.current()?;
+        self.books
+            .durations
+            .get(uri.path_str())
+            .copied()
+            .filter(|d| *d > 0.0)
+    }
+
     pub(crate) fn restore_books(&mut self, items: Vec<ItemState>, marked: Vec<String>) {
         self.books.items = items;
         self.books.marked = marked;

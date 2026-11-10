@@ -36,6 +36,11 @@ struct Snapshot {
     items: Vec<ItemState>,
     #[serde(default)]
     marked: Vec<String>,
+    /// Where the current item stopped, and its length, so a restart shows and resumes there.
+    #[serde(default)]
+    position: Option<f64>,
+    #[serde(default)]
+    length: Option<f64>,
 }
 
 /// A playlist folder: a run of `len` items starting at `start`.
@@ -362,6 +367,9 @@ impl Session {
         queue.set_repeat(saved.repeat.into());
         queue.set_shuffle(saved.shuffle, 0x9e37_79b9);
         self.media_set_restored(queue, saved.volume)?;
+        if saved.index.is_some() {
+            self.media.restore_position(saved.position, saved.length);
+        }
         if let Some((settings, preset, user)) = saved.eq.as_ref().and_then(EqSnapshot::restore) {
             self.media_restore_eq(settings, preset, user)?;
         }
@@ -414,6 +422,8 @@ fn snapshot(session: &Session) -> Snapshot {
         resume: session.media.resume_snapshot(),
         items: session.media.items_snapshot(),
         marked: session.media.books.marked.clone(),
+        position: session.media.saved_position(),
+        length: session.media.saved_length(),
         eq: Some({
             let eq = session.media.gain.eq();
             EqSnapshot {
@@ -498,6 +508,9 @@ fn read_snapshot(path: &Path) -> Result<Option<Restored>, FmError> {
         .marked
         .retain(|key| !key.is_empty() && key.len() <= 4096);
     saved.marked.truncate(crate::media_book::MAX_MARKED);
+    let sane = |v: &f64| v.is_finite() && (0.0..=1.0e7).contains(v);
+    saved.position = saved.position.filter(sane);
+    saved.length = saved.length.filter(sane);
     Ok(Some(Restored {
         snapshot: saved,
         missing,
@@ -589,6 +602,11 @@ mod tests {
         original.media.queue.select(1).expect("select");
         original.media.queue.set_repeat(RepeatMode::All);
         original.media.queue.set_shuffle(true, 5);
+        original.media.position = 123.7;
+        original
+            .media
+            .books
+            .set_duration_for_tests(b.to_str().expect("utf8"), 600.0);
         original
             .media_set_restored(original.media.queue.clone(), 42.0)
             .expect("volume");
@@ -610,6 +628,8 @@ mod tests {
         assert!(restored.media.queue.shuffle());
         assert_eq!(restored.media.queue.repeat(), RepeatMode::All);
         assert!(!restored.media.playing);
+        assert_eq!(restored.media.position, 120.0);
+        assert_eq!(restored.media.duration(), Some(600.0));
         assert!(restored.media.gain.eq().enabled);
         assert_eq!(restored.media.extras.user_presets.len(), 1);
         assert_eq!(restored.media.extras.eq_preset.as_deref(), Some("Mine"));
@@ -672,6 +692,8 @@ mod tests {
             groups: Vec::new(),
             items: Vec::new(),
             marked: Vec::new(),
+            position: None,
+            length: None,
         };
         write_snapshot(dir.path(), &saved).expect("save");
         let mut session = Session::new().expect("session");
@@ -708,6 +730,8 @@ mod tests {
             groups: Vec::new(),
             items: Vec::new(),
             marked: Vec::new(),
+            position: None,
+            length: None,
         };
         assert!(write_snapshot(dir.path(), &saved).is_err());
         assert!(!dir.path().join(FILE).exists());
@@ -756,6 +780,8 @@ mod tests {
             groups: Vec::new(),
             items: Vec::new(),
             marked: Vec::new(),
+            position: None,
+            length: None,
         };
         write_snapshot(&dir, &saved).expect("save");
         assert_eq!(
