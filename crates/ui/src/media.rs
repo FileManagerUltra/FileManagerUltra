@@ -1470,8 +1470,8 @@ pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
     }
     let mut actions: Vec<(&'static str, Value)> = Vec::new();
     let on = |command| s.command_enabled(command);
-    if button(ui, tokens, Icon::Prev, "Previous", on("media.prev"), false).clicked() {
-        actions.push(("media.prev", Value::Null));
+    if button(ui, tokens, Icon::Next, "Next", on("media.next"), false).clicked() {
+        actions.push(("media.next", Value::Null));
     }
     let (icon, label) = if s.media.playing {
         (Icon::Pause, "Pause")
@@ -1481,8 +1481,8 @@ pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
     if button(ui, tokens, icon, label, on("media.toggle"), false).clicked() {
         actions.push(("media.toggle", Value::Null));
     }
-    if button(ui, tokens, Icon::Next, "Next", on("media.next"), false).clicked() {
-        actions.push(("media.next", Value::Null));
+    if button(ui, tokens, Icon::Prev, "Previous", on("media.prev"), false).clicked() {
+        actions.push(("media.prev", Value::Null));
     }
     let muted = s.media.muted;
     let (icon, label) = if muted {
