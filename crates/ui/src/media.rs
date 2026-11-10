@@ -42,6 +42,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
     let top = ui.cursor().top();
     display(ui, s, pane, tokens, &mut actions);
     transport(ui, s, tokens, &mut actions);
+    crate::media_book::controls(ui, s, &mut actions);
     if s.media.is_video() {
         let used = ui.cursor().top() - top;
         ui.data_mut(|d| d.insert_temp(Id::NULL.with("media-controls-height"), used));
@@ -239,6 +240,14 @@ fn chips(s: &Session) -> Vec<(String, String)> {
             "Sleep: end of item".into(),
             "Playback stops at the end of this item".into(),
         ));
+    }
+    if let Some(view) = s.media.book_view() {
+        if view.finished {
+            chips.push(("Finished".into(), "Marked as finished".into()));
+        } else if let Some(total) = view.total.filter(|t| *t > 0.0) {
+            let percent = (view.position / total * 100.0).floor().clamp(0.0, 100.0);
+            chips.push((format!("{percent}%"), "Progress through the book".into()));
+        }
     }
     if s.media.speed != 1.0 {
         chips.push((format!("{}×", s.media.speed), "Playback speed".into()));
@@ -657,6 +666,11 @@ fn playlist(
                         actions.push(("media.play", json!({"index": index})));
                         ui.close();
                     }
+                    if ui.button("Play from start").clicked() {
+                        actions.push(("media.play", json!({"index": index, "from_start": true})));
+                        ui.close();
+                    }
+                    crate::media_book::menu_items(ui, index, actions);
                     let many = multi.len() > 1 && multi.contains(&index);
                     let label = if many {
                         format!("Remove {} items", multi.len())
@@ -1126,9 +1140,13 @@ fn group_header(
             .add_enabled(group.len > 0, egui::Button::new("Play from start"))
             .clicked()
         {
-            actions.push(("media.play", json!({"index": group.start})));
+            actions.push((
+                "media.play",
+                json!({"index": group.start, "from_start": true}),
+            ));
             ui.close();
         }
+        crate::media_book::menu_items(ui, group.start, actions);
         if ui.button("Rename…").clicked() {
             *renaming = Some((group.id, group.name.clone(), false));
             ui.close();
@@ -1177,12 +1195,14 @@ fn seek_bar(
     actions: &mut Vec<(&'static str, Value)>,
 ) {
     let media = &s.media;
-    let duration = media.duration().unwrap_or(0.0);
+    let book = media
+        .book_view()
+        .and_then(|view| view.total.map(|t| (t, view.position)));
+    let duration = book.map_or_else(|| media.duration().unwrap_or(0.0), |(total, _)| total);
+    let current = book.map_or(media.position, |(_, position)| position);
     let id = Id::NULL.with(("media-seek", pane));
     let dragging: Option<f64> = ui.data(|d| d.get_temp(id));
-    let position = dragging
-        .unwrap_or(media.position)
-        .clamp(0.0, duration.max(0.0));
+    let position = dragging.unwrap_or(current).clamp(0.0, duration.max(0.0));
     let fraction = if duration > 0.0 {
         (position / duration) as f32
     } else {
@@ -1203,10 +1223,12 @@ fn seek_bar(
         }
         Some(change) => {
             ui.data_mut(|d| d.remove::<f64>(id));
-            actions.push((
-                "media.seek",
-                json!({"to": f64::from(change.fraction) * duration}),
-            ));
+            let target = f64::from(change.fraction) * duration;
+            if book.is_some() {
+                actions.push(("media.skip", json!({"by": target - current})));
+            } else {
+                actions.push(("media.seek", json!({"to": target})));
+            }
         }
         None => {
             if dragging.is_some() {
@@ -1515,6 +1537,14 @@ fn spool_label(done: u64, total: u64) -> String {
 
 pub(crate) fn clock(seconds: f64) -> String {
     let seconds = seconds.max(0.0) as u64;
+    if seconds >= 3600 {
+        return format!(
+            "{}:{:02}:{:02}",
+            seconds / 3600,
+            seconds / 60 % 60,
+            seconds % 60
+        );
+    }
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
@@ -1546,6 +1576,35 @@ mod tests {
                 },
                 s,
             )
+    }
+
+    #[test]
+    fn book_controls_show_for_audiobooks_and_skip_by_the_preference() {
+        let mut h = harness(Tokens::dark());
+        assert!(h.query_by_label_contains("Back ").is_none());
+        h.state_mut()
+            .dispatch("media.enqueue", &json!({"uris": ["/music/solo.mp3"]}))
+            .expect("enqueue");
+        h.state_mut()
+            .dispatch("media.book", &json!({"index": 2, "on": true}))
+            .expect("mark");
+        h.state_mut().media.queue.select(2).expect("select");
+        h.state_mut().media.position = 100.0;
+        h.run();
+        h.get_by_label_contains("Back 15s").click();
+        h.run();
+        assert_eq!(
+            h.state().media.position,
+            100.0 - h.state().prefs.media_skip_back_secs as f64
+        );
+        h.get_by_label_contains("Bookmarks").click();
+        h.run();
+        h.get_by_label("Add bookmark here").click();
+        h.run();
+        assert_eq!(
+            h.state().media.book_view().map(|v| v.bookmarks.len()),
+            Some(1)
+        );
     }
 
     #[test]

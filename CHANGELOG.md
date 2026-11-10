@@ -9,10 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Audiobooks in Media: `.m4b` files, files tagged "Audiobook", and folders or files you mark ("Treat as audiobook" in the right-click menu) get Back/Forward skip buttons (15 s / 30 s, adjustable in Preferences), previous/next chapter, a chapter list, bookmarks, and a seek bar and progress percentage that span the whole book, even across many files. Playing a book or video again continues where you stopped (rewound a few seconds); a book counts as finished near its end and then starts over. Mark books finished or unfinished from the menu, and clear everything remembered from Preferences.
 - Make your own folders in the Media playlist ("New folder" button or right-click menu): drag playlist rows or files from the Files pane onto a folder header or any row inside it to add them there (dropping Files-pane files on playlist rows used to be ignored), drag a row out to ungroup, and rename or delete folders. A folder is a playlist inside the playlist: playback stops at its end and is ready at its first item. Folders are remembered between sessions.
 - The Media playlist has icon buttons (New folder, Clear playlist) on the right.
 - Audiobooks whose AAC header has a quirk (such as some `.m4b` files that failed with "unexpected end of bitstream") now play.
-- Dropping or adding a folder tree to Media (such as a series of audiobooks) scans its subfolders: each book folder (two or more audio files, or a single .m4b in its own folder) becomes its own playlist folder named after its path ("Series / Book 1"), and each one remembers where you left off.
+- Dropping or adding a folder tree to Media (such as a series of audiobooks) scans its subfolders: each folder with audio files, even a single .m4b, becomes its own playlist folder named after its path ("Series / Book 1"), and each one remembers where you left off.
 - Files inside a Media playlist folder are indented under the folder header with a guide line and numbered from 1 within the folder.
 - Files dragged from the Files pane into the Media playlist land where the line shows (after a row, before or after a folder) instead of at the end.
 - Lock a Media playlist folder (right-click its header) so nothing can be dropped in or taken out by accident; a padlock marks it. Folders from added directories, such as audiobooks, start locked. Locked folders can still be moved, renamed, played and deleted.

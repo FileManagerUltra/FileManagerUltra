@@ -15,7 +15,7 @@ use crate::session::Session;
 const KEYS: &str = "accent (\"default\"|\"#rrggbb\"), density (compact|normal|comfortable), \
     font_size 9-24, terminal_font_size 9-24, terminal_scrollback_rows 5000-1000000, size_units (binary|decimal|bytes), \
     date_format (iso|isoseconds|us|eu), show_hidden, single_click_open, confirm_delete, \
-    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
+    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), media_skip_back_secs 5-300, media_skip_forward_secs 5-300, thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
 
 fn bad(key: &str, expect: &str) -> FmError {
     FmError::InvalidParams(format!("{key} must be {expect}"))
@@ -103,6 +103,12 @@ pub fn set(s: &mut Session, key: &str, value: &Value) -> Result<(), FmError> {
         "preview_audio_autoplay" => s.prefs.preview_audio_autoplay = boolean(key, value)?,
         "preview_video_autoplay" => s.prefs.preview_video_autoplay = boolean(key, value)?,
         "media_gapless" => s.prefs.media_gapless = boolean(key, value)?,
+        "media_skip_back_secs" => {
+            s.prefs.media_skip_back_secs = ranged(key, value, &crate::prefs::SKIP_RANGE)?;
+        }
+        "media_skip_forward_secs" => {
+            s.prefs.media_skip_forward_secs = ranged(key, value, &crate::prefs::SKIP_RANGE)?;
+        }
         "media_background_audio" => {
             s.prefs.media_background_audio = boolean(key, value)?;
             s.media_visibility_changed();

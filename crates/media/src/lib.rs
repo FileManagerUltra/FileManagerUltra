@@ -1,6 +1,7 @@
 //! Shared media playback primitives. Device discovery, decoding and resampling belong on
 //! workers; the UI reads snapshots and never touches an audio device.
 
+mod book;
 mod buffer;
 mod decoder;
 mod device;
@@ -10,6 +11,10 @@ mod player;
 mod playlist;
 mod queue;
 
+pub use book::{
+    Chapter, FINISHED_FRACTION, FINISHED_TAIL_SECS, MAX_CHAPTER_TITLE, MAX_CHAPTERS, Timeline,
+    chapter_index, is_finished, next_chapter, previous_chapter, progress, skip_target,
+};
 pub use buffer::{AudioConsumer, AudioProducer, Clock, audio_buffer};
 pub use decoder::{AudioDecoder, AudioInfo, AudioTags, CoverArt, DecodedAudio};
 pub use device::{AudioSink, DeviceSink};

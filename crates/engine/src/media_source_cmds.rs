@@ -305,8 +305,8 @@ impl Scan {
             }
         }
         let count = self.items.len() - before;
-        // A subfolder is a book even with one file (an .m4b); the dropped folder itself needs two.
-        if count >= 2 || (count >= 1 && depth > 0) {
+        // A dropped folder is a playlist folder even with one file (an .m4b book).
+        if count >= 1 {
             let name: String = rel
                 .join(" / ")
                 .chars()

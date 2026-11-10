@@ -10,6 +10,7 @@ use fm_vfs::{FmError, Scheme, VfsUri};
 use serde::{Deserialize, Serialize};
 
 use crate::media_audio_cmds::{MAX_PRESET_NAME, MAX_USER_PRESETS, UserPreset};
+use crate::media_book::ItemState;
 use crate::media_resume::{MAX_RESUME, ResumePoint};
 use crate::{Session, jobs::JobLane};
 
@@ -31,6 +32,10 @@ struct Snapshot {
     resume: Vec<ResumePoint>,
     #[serde(default)]
     groups: Vec<SavedGroup>,
+    #[serde(default)]
+    items: Vec<ItemState>,
+    #[serde(default)]
+    marked: Vec<String>,
 }
 
 /// A playlist folder: a run of `len` items starting at `start`.
@@ -352,6 +357,8 @@ impl Session {
             }
         }
         self.media.resume = saved.resume.clone();
+        self.media
+            .restore_books(saved.items.clone(), saved.marked.clone());
         queue.set_repeat(saved.repeat.into());
         queue.set_shuffle(saved.shuffle, 0x9e37_79b9);
         self.media_set_restored(queue, saved.volume)?;
@@ -405,6 +412,8 @@ fn snapshot(session: &Session) -> Snapshot {
         shuffle: session.media.queue.shuffle(),
         repeat: session.media.queue.repeat().into(),
         resume: session.media.resume_snapshot(),
+        items: session.media.items_snapshot(),
+        marked: session.media.books.marked.clone(),
         eq: Some({
             let eq = session.media.gain.eq();
             EqSnapshot {
@@ -483,6 +492,12 @@ fn read_snapshot(path: &Path) -> Result<Option<Restored>, FmError> {
     saved.index = selected;
     saved.resume.retain(ResumePoint::is_valid);
     saved.resume.truncate(MAX_RESUME);
+    saved.items.retain(ItemState::is_valid);
+    saved.items.truncate(crate::media_book::MAX_ITEMS);
+    saved
+        .marked
+        .retain(|key| !key.is_empty() && key.len() <= 4096);
+    saved.marked.truncate(crate::media_book::MAX_MARKED);
     Ok(Some(Restored {
         snapshot: saved,
         missing,
@@ -655,6 +670,8 @@ mod tests {
             eq: None,
             resume: Vec::new(),
             groups: Vec::new(),
+            items: Vec::new(),
+            marked: Vec::new(),
         };
         write_snapshot(dir.path(), &saved).expect("save");
         let mut session = Session::new().expect("session");
@@ -689,6 +706,8 @@ mod tests {
             eq: None,
             resume: Vec::new(),
             groups: Vec::new(),
+            items: Vec::new(),
+            marked: Vec::new(),
         };
         assert!(write_snapshot(dir.path(), &saved).is_err());
         assert!(!dir.path().join(FILE).exists());
@@ -735,6 +754,8 @@ mod tests {
             eq: None,
             resume: Vec::new(),
             groups: Vec::new(),
+            items: Vec::new(),
+            marked: Vec::new(),
         };
         write_snapshot(&dir, &saved).expect("save");
         assert_eq!(

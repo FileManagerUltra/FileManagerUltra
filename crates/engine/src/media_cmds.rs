@@ -53,6 +53,8 @@ pub struct MediaSession {
     pub(crate) failed_items: usize,
     /// Last position per folder (audiobook), newest last.
     pub resume: Vec<crate::media_resume::ResumePoint>,
+    /// Audiobooks and videos: chapters, timeline, remembered positions, bookmarks.
+    pub books: crate::media_book::BookExtras,
     pub(crate) cover_job: Option<(
         Receiver<Result<fm_preview::ImageDoc, String>>,
         crate::jobs::JobId,
@@ -82,6 +84,7 @@ impl Default for MediaSession {
             gain: Gain::default(),
             failed_items: 0,
             resume: Vec::new(),
+            books: Default::default(),
             cover_job: None,
         }
     }
@@ -203,8 +206,20 @@ impl MediaSession {
 }
 
 impl Session {
+    /// Play newly added items from `first`, continuing a remembered book or video.
     pub(crate) fn media_play_appended(&mut self, first: usize) -> Result<(), FmError> {
-        self.media_start_at(first, 0.0)
+        self.media_play_row(first, false)
+    }
+
+    /// Select queue row `index` and play it; a remembered book or video continues where it
+    /// was left unless `from_start`.
+    pub(crate) fn media_play_row(&mut self, index: usize, from_start: bool) -> Result<(), FmError> {
+        let position = if from_start {
+            0.0
+        } else {
+            self.media.remembered_position(index).unwrap_or(0.0)
+        };
+        self.media_start_at(index, position)
     }
 
     pub(crate) fn media_start_at(&mut self, first: usize, position: f64) -> Result<(), FmError> {
@@ -349,6 +364,7 @@ impl Session {
         self.media_visibility_changed();
         let mut changed = self.media_spool_poll();
         changed |= self.media_audio_tick();
+        changed |= self.media_book_tick();
         // A selected but idle video shows its first frame instead of a black view.
         if self.media.is_video()
             && !self.media.playing
@@ -463,7 +479,7 @@ impl Session {
             || (self.media.info.is_none() && status.info.is_some());
         self.media.position = status.position;
         if status.state == PlaybackState::Playing {
-            self.media.note_resume();
+            self.media.note_book();
         }
         if self.media.info.is_none()
             && let Some(info) = &status.info
@@ -666,11 +682,17 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Play in Media",
             menu: &["Media", "Play"],
             shortcut: None,
-            params: "{index?: number, uris?: string[], pane?: number}: play a queue row in place, or insert source media after current and play (Preview transfers position)",
+            params: "{index?: number, from_start?: bool, uris?: string[], pane?: number}: play a queue row in place (a remembered audiobook or video continues unless from_start), or insert source media after current and play (Preview transfers position)",
             enabled: |s| !s.media.queue.items().is_empty() || has_sources(s),
             run: |s, params| {
                 let map = object(params)?;
-                allowed(map, &["index", "uris", "pane"])?;
+                allowed(map, &["index", "uris", "pane", "from_start"])?;
+                let from_start = match map.and_then(|m| m.get("from_start")) {
+                    None => false,
+                    Some(value) => value
+                        .as_bool()
+                        .ok_or_else(|| bad("from_start must be true or false"))?,
+                };
                 let selected = map
                     .filter(|m| m.contains_key("index"))
                     .map(|m| index(m, "index"))
@@ -709,8 +731,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     s.stop_handed_off_preview(input.preview);
                     return Ok(());
                 } else if let Some(index) = selected {
-                    s.media.queue.select(index)?;
-                    s.media.reset_item();
+                    return s.media_play_row(index, from_start);
                 }
                 s.media.failed_items = 0;
                 s.media_resume()

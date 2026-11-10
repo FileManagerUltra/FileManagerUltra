@@ -75,6 +75,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(crate::media_source_cmds::specs());
     specs.extend(crate::media_resume::specs());
     specs.extend(crate::media_group_cmds::specs());
+    specs.extend(crate::media_book_cmds::specs());
     specs.extend(crate::media_video_cmds::specs());
     specs.extend(crate::media_track_cmds::specs());
     specs.extend(crate::media_fullscreen_cmds::specs());

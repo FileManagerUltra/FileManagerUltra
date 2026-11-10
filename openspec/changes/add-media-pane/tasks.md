@@ -59,7 +59,7 @@ controls remain pending.
 
 - [x] 5.1 Gapless: expose encoder delay/padding, pre-open the next item, keep the sink open; tests with generated tones
 - [x] 5.2 10-band biquad equalizer with preamp, presets (built-in and user), persistence, `media.eq`; tests for response, range validation and no-dropout changes
-- [ ] 5.3 Speed 0.5×–3× with pitch kept via ffmpeg `atempo` chain; per-book persistence; `media.speed` validation tests (video speed done in 4.x; audio-only speed and per-book persistence are deferred to 7.x with audiobooks)
+- [ ] 5.3 Speed 0.5×–3× with pitch kept via ffmpeg `atempo` chain; per-book persistence; `media.speed` validation tests (video speed done in 4.x; audio-only pitch-preserving speed and per-book persistence are still open: they need a time-stretcher in the audio path)
 - [x] 5.4 A-B loop (`media.loop`) and sleep timer with fade-out (`media.sleep`: minutes, end of item, end of chapter; end of chapter arrives with chapters in 7.x)
 
 ## 6. Subtitles and hardware decoding (slice E)
@@ -71,10 +71,10 @@ controls remain pending.
 
 ## 7. Audiobooks and resume (slice F)
 
-- [ ] 7.1 Book model: m4b, genre tag and user-marked folders; multi-file timeline with per-file chapters; chapters from `ffprobe`
-- [ ] 7.2 Controls: next/previous chapter, ±15/30 s skip, progress percentage, `media.skip`, `media.chapter`, `media.book`
-- [ ] 7.3 Resume store (500 items, size+mtime check, 3 s rewind, finished at 98 % or 30 s), bookmarks (100 per item), `media.bookmark`, `media.finished`, clear from Preferences; owner-only file
-- [ ] 7.4 Tests: boundary-crossing seeks, resume after file replacement, cap eviction, bad params for every new command
+- [x] 7.1 Book model: m4b, genre tag and user-marked folders; multi-file timeline with per-file chapters; chapters from `ffprobe`
+- [x] 7.2 Controls: next/previous chapter, ±15/30 s skip, progress percentage, `media.skip`, `media.chapter`, `media.book`
+- [x] 7.3 Resume store (500 items, size+mtime check, 3 s rewind, finished at 98 % or 30 s), bookmarks (100 per item), `media.bookmark`, `media.finished`, clear from Preferences; owner-only file
+- [x] 7.4 Tests: boundary-crossing seeks, resume after file replacement, cap eviction, bad params for every new command
 
 ## 8. System integration and packaging (slice G)
 

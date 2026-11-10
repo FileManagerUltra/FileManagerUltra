@@ -16,6 +16,7 @@ pub mod locationbar;
 mod markdown_fonts;
 pub mod media;
 pub mod media_audio;
+mod media_book;
 mod media_icons;
 pub mod media_keys;
 pub mod open_with;

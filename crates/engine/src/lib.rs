@@ -33,6 +33,8 @@ pub mod jobs;
 pub mod log_prefs_cmds;
 pub mod md_images;
 pub mod media_audio_cmds;
+pub mod media_book;
+mod media_book_cmds;
 pub mod media_cmds;
 pub mod media_entry_cmds;
 pub mod media_fullscreen_cmds;

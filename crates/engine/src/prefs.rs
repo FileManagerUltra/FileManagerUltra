@@ -136,6 +136,11 @@ pub struct Prefs {
     pub media_background_audio: bool,
     #[serde(default = "default_true")]
     pub media_gapless: bool,
+    /// Seconds the audiobook skip-back and skip-forward buttons jump.
+    #[serde(default = "default_skip_back")]
+    pub media_skip_back_secs: u64,
+    #[serde(default = "default_skip_forward")]
+    pub media_skip_forward_secs: u64,
     #[serde(default = "default_log_poll_ms")]
     pub log_poll_ms: u64,
     /// Zero removes the initial-window limit, not the preview safety caps.
@@ -292,6 +297,16 @@ pub const LOG_TAIL_RANGE: std::ops::RangeInclusive<u64> = 1..=64;
 
 fn default_log_poll_ms() -> u64 {
     500
+}
+
+pub const SKIP_RANGE: std::ops::RangeInclusive<u64> = 5..=300;
+
+fn default_skip_back() -> u64 {
+    15
+}
+
+fn default_skip_forward() -> u64 {
+    30
 }
 
 fn default_log_tail_mib() -> u64 {
@@ -463,6 +478,8 @@ impl Default for Prefs {
             preview_video_autoplay: true,
             media_background_audio: true,
             media_gapless: true,
+            media_skip_back_secs: default_skip_back(),
+            media_skip_forward_secs: default_skip_forward(),
             log_poll_ms: default_log_poll_ms(),
             log_tail_mib: default_log_tail_mib(),
             preview_filters: crate::preview_types::PreviewFilters::default(),
@@ -793,6 +810,8 @@ mod tests {
                 "log_tail_mib",
                 "media_background_audio",
                 "media_gapless",
+                "media_skip_back_secs",
+                "media_skip_forward_secs",
                 "preview_audio_autoplay",
                 "preview_filters",
                 "preview_remote_images",

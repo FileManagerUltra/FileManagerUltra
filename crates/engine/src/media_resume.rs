@@ -77,17 +77,29 @@ impl MediaSession {
         }
     }
 
-    /// The last file of a folder finished: the next play starts from the top.
+    /// An item finished: the last file of a folder (or a lone book or video) restarts next time.
     pub(crate) fn forget_finished_book(&mut self) {
         let Some(index) = self.queue.current_index() else {
             return;
         };
+        let book = self.book_ref(index);
         if let Some(group) = self.queue.group_of(index)
-            && group.last
             && let Some(dir) = group.dir
         {
-            let dir = dir.to_string();
-            self.resume.retain(|p| p.dir != dir);
+            if group.last {
+                let dir = dir.to_string();
+                if book.is_some_and(|b| b.folder.is_some()) {
+                    self.finish_folder(&dir);
+                } else {
+                    self.resume.retain(|p| p.dir != dir);
+                }
+            }
+        } else if let Some(book) = book {
+            let at = self.touch_state(&book.key, true);
+            if let Some(state) = self.books.items.get_mut(at) {
+                state.finished = true;
+                state.position = None;
+            }
         }
     }
 

@@ -365,6 +365,51 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                     });
                 },
             );
+            section(
+                ui,
+                tokens,
+                "Audiobooks",
+                Some("Skip buttons and remembered positions in the Media pane."),
+                |ui| {
+                    for (label, key, current) in [
+                        (
+                            "Skip back",
+                            "media_skip_back_secs",
+                            s.prefs.media_skip_back_secs,
+                        ),
+                        (
+                            "Skip forward",
+                            "media_skip_forward_secs",
+                            s.prefs.media_skip_forward_secs,
+                        ),
+                    ] {
+                        let mut secs = current;
+                        ui.horizontal(|ui| {
+                            let caption = ui.label(label);
+                            let response = ui
+                                .add_sized(
+                                    [110.0, ui.spacing().interact_size.y],
+                                    egui::DragValue::new(&mut secs)
+                                        .range(fm_engine::prefs::SKIP_RANGE)
+                                        .suffix(" s"),
+                                )
+                                .labelled_by(caption.id);
+                            if response.changed() {
+                                set(s, key, json!(secs));
+                            }
+                        });
+                    }
+                    if ui
+                        .button("Forget remembered positions")
+                        .on_hover_text(
+                            "Clears saved positions, bookmarks and finished marks of audiobooks and videos",
+                        )
+                        .clicked()
+                    {
+                        s.dispatch_or_notice("media.resume_clear", &serde_json::Value::Null);
+                    }
+                },
+            );
         }
         Topic::FileOperations => {
             section_heading(ui, tokens, "Symbolic links");

@@ -141,6 +141,66 @@ pub fn playback_info(
         .ok_or_else(|| fail("ffprobe could not read a supported video stream."))
 }
 
+/// Embedded chapters (MP4/m4b, MP3 CHAP, Matroska) of a local file, via `ffprobe`.
+/// A file without chapters gives an empty list. Call only on a worker.
+pub fn chapters(
+    uri: &fm_vfs::VfsUri,
+    cancelled: &AtomicBool,
+) -> Result<Vec<fm_media::Chapter>, fm_vfs::FmError> {
+    let fail = |message| fm_vfs::FmError::backend("chapters", message);
+    let path = uri
+        .local_path_string()
+        .filter(|path| safe_path(path))
+        .ok_or_else(|| fail("Choose a safe local path."))?;
+    let Some(ffprobe) = find_tool("ffprobe") else {
+        return Ok(Vec::new());
+    };
+    let mut c = command(&ffprobe);
+    c.args([
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file",
+        "-print_format",
+        "json",
+        "-show_chapters",
+        "-i",
+    ])
+    .arg(&path);
+    let raw = run(c, PROBE_TIMEOUT, PROBE_BYTES, Some(cancelled))
+        .ok_or_else(|| fail("ffprobe could not read the chapters."))?;
+    Ok(parse_chapters(&raw))
+}
+
+fn parse_chapters(raw: &[u8]) -> Vec<fm_media::Chapter> {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(raw) else {
+        return Vec::new();
+    };
+    let seconds = |o: &serde_json::Value, k: &str| {
+        o.get(k)
+            .and_then(|x| x.as_str())
+            .and_then(|x| x.parse::<f64>().ok())
+    };
+    let mut chapters: Vec<fm_media::Chapter> = v
+        .get("chapters")
+        .and_then(|c| c.as_array())
+        .into_iter()
+        .flatten()
+        .take(fm_media::MAX_CHAPTERS)
+        .enumerate()
+        .filter_map(|(i, c)| {
+            let title = c
+                .get("tags")
+                .and_then(|t| t.get("title"))
+                .and_then(|t| t.as_str())
+                .map_or_else(|| format!("Chapter {}", i + 1), str::to_string);
+            fm_media::Chapter::new(&title, seconds(c, "start_time")?, seconds(c, "end_time")?)
+        })
+        .collect();
+    chapters.sort_by(|a, b| a.start.total_cmp(&b.start));
+    chapters
+}
+
 fn probe(ffprobe: &Path, path: &str, cancelled: Option<&AtomicBool>) -> Option<Probe> {
     let mut c = command(ffprobe);
     c.args([
@@ -427,6 +487,16 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chapters_parse_sorted_and_skip_garbage() {
+        let raw = br#"{"chapters":[{"start_time":"10.0","end_time":"20.0","tags":{"title":"B"}},{"start_time":"0.0","end_time":"10.0"},{"start_time":"x","end_time":"1"},{"start_time":"5","end_time":"1"}]}"#;
+        let c = super::parse_chapters(raw);
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0].title, "Chapter 2");
+        assert_eq!(c[1].title, "B");
+        assert!(super::parse_chapters(b"nope").is_empty());
+    }
+
     use super::*;
 
     #[test]
