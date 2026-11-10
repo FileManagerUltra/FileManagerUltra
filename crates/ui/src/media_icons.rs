@@ -23,6 +23,10 @@ pub(crate) enum Icon {
     Menu,
     NewFolder,
     Clear,
+    SkipBack,
+    SkipForward,
+    ChapterPrev,
+    ChapterNext,
 }
 
 pub(crate) const BUTTON: egui::Vec2 = vec2(28.0, 26.0);
@@ -156,6 +160,24 @@ fn draw(painter: &egui::Painter, icon: Icon, c: Pos2, color: Color32) {
         Icon::Next => {
             bar_rect(painter, c.x + 4.0, c.y - 5.0, 2.0, 10.0, color);
             right_tri(painter, c.x - 5.5, c.y, 9.0, 10.0, color);
+        }
+        Icon::SkipBack => {
+            left_tri(painter, c.x, c.y, 7.0, 10.0, color);
+            left_tri(painter, c.x + 7.0, c.y, 7.0, 10.0, color);
+        }
+        Icon::SkipForward => {
+            right_tri(painter, c.x - 7.0, c.y, 7.0, 10.0, color);
+            right_tri(painter, c.x, c.y, 7.0, 10.0, color);
+        }
+        Icon::ChapterPrev => {
+            bar_rect(painter, c.x - 7.0, c.y - 5.0, 2.0, 10.0, color);
+            bar_rect(painter, c.x - 3.5, c.y - 5.0, 2.0, 10.0, color);
+            left_tri(painter, c.x + 7.0, c.y, 8.0, 10.0, color);
+        }
+        Icon::ChapterNext => {
+            bar_rect(painter, c.x + 5.0, c.y - 5.0, 2.0, 10.0, color);
+            bar_rect(painter, c.x + 1.5, c.y - 5.0, 2.0, 10.0, color);
+            right_tri(painter, c.x - 7.0, c.y, 8.0, 10.0, color);
         }
         Icon::FrameBack => {
             left_tri(painter, c.x + 1.0, c.y, 7.0, 9.0, color);

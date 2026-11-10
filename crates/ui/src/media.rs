@@ -42,7 +42,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
     let top = ui.cursor().top();
     display(ui, s, pane, tokens, &mut actions);
     transport(ui, s, tokens, &mut actions);
-    crate::media_book::controls(ui, s, &mut actions);
+    crate::media_book::controls(ui, s, tokens, &mut actions);
     if s.media.is_video() {
         let used = ui.cursor().top() - top;
         ui.data_mut(|d| d.insert_temp(Id::NULL.with("media-controls-height"), used));
@@ -1581,7 +1581,7 @@ mod tests {
     #[test]
     fn book_controls_show_for_audiobooks_and_skip_by_the_preference() {
         let mut h = harness(Tokens::dark());
-        assert!(h.query_by_label_contains("Back ").is_none());
+        assert!(h.query_by_label("Back 15 s").is_none());
         h.state_mut()
             .dispatch("media.enqueue", &json!({"uris": ["/music/solo.mp3"]}))
             .expect("enqueue");
@@ -1591,15 +1591,15 @@ mod tests {
         h.state_mut().media.queue.select(2).expect("select");
         h.state_mut().media.position = 100.0;
         h.run();
-        h.get_by_label_contains("Back 15s").click();
+        h.get_by_label("Back 15 s").click();
         h.run();
         assert_eq!(
             h.state().media.position,
             100.0 - h.state().prefs.media_skip_back_secs as f64
         );
-        h.get_by_label_contains("Bookmarks").click();
-        h.run();
-        h.get_by_label("Add bookmark here").click();
+        h.state_mut()
+            .dispatch("media.bookmark", &json!({"action": "add"}))
+            .expect("bookmark");
         h.run();
         assert_eq!(
             h.state().media.book_view().map(|v| v.bookmarks.len()),
