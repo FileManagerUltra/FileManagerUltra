@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Preview's audio and video players now use the same icon controls, seek bar and volume as the Media pane. The Media equalizer opens in its own window that stays open while you pick presets, and the right-click menu only shows audiobook entries where they apply.
+- Preview's audio and video players now use the same icon controls, seek bar and volume as the Media pane. The player in Preview is a larger card shown above the cover art. The Media equalizer is redesigned and opens in its own window that stays open while you pick presets, and the right-click menu only shows audiobook entries where they apply.
 
 ### Added
 

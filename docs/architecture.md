@@ -83,6 +83,10 @@ pane closure and workspace changes cancel playback. Audio is quiet by default;
 `preview.audio.*` commands and `prefs.set`'s `preview_audio_autoplay` setting drive
 the controls. Starting Preview audio or video pauses the other Preview players.
 Video autoplay remains on by default and can be disabled in Preferences.
+The Media and Preview panes share their transport widgets (icon buttons, seek bar,
+volume) in `fm-ui`'s `player_controls`; Preview shows them as a framed card above
+the cover art. The Media equalizer is a persistent window (not a menu) so choosing
+a preset never dismisses it.
 
 The Preview video coordinator owns both ffmpeg children off-thread: fixed-cadence
 RGBA frames and native-rate s16le PCM (converted to f32 before the same Rubato
