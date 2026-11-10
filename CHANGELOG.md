@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Preview's audio and video players now use the same icon controls, seek bar and volume as the Media pane. The Media equalizer opens in its own window that stays open while you pick presets, and the right-click menu only shows audiobook entries where they apply.
+
 ### Added
 
 - Media playlist rows with a remembered position show a small half-filled dot in the gutter ("Resumes at 12:34" on hover), and finished books show a check mark.

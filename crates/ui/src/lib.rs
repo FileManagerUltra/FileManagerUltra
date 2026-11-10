@@ -22,6 +22,7 @@ pub mod media_keys;
 pub mod open_with;
 pub mod pane;
 pub mod places;
+mod player_controls;
 pub mod preferences;
 pub mod preview;
 mod preview_filters;

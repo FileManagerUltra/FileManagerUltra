@@ -1241,68 +1241,27 @@ fn seek_bar(
         .and_then(|view| view.total.map(|t| (t, view.position)));
     let duration = book.map_or_else(|| media.duration().unwrap_or(0.0), |(total, _)| total);
     let current = book.map_or(media.position, |(_, position)| position);
-    let id = Id::NULL.with(("media-seek", pane));
-    let dragging: Option<f64> = ui.data(|d| d.get_temp(id));
-    let position = dragging.unwrap_or(current).clamp(0.0, duration.max(0.0));
-    let fraction = if duration > 0.0 {
-        (position / duration) as f32
-    } else {
-        0.0
-    };
-    let change = crate::media_icons::bar(
-        ui,
-        tokens,
-        width,
-        fraction,
-        duration > 0.0,
-        "Seek",
-        &clock(position),
-    );
-    match change {
-        Some(change) if !change.done => {
-            ui.data_mut(|d| d.insert_temp(id, f64::from(change.fraction) * duration));
-        }
-        Some(change) => {
-            ui.data_mut(|d| d.remove::<f64>(id));
-            let target = f64::from(change.fraction) * duration;
-            if book.is_some() {
-                actions.push(("media.skip", json!({"by": target - current})));
-            } else {
-                actions.push(("media.seek", json!({"to": target})));
-            }
-        }
-        None => {
-            if dragging.is_some() {
-                ui.data_mut(|d| d.remove::<f64>(id));
-            }
+    let key = Id::NULL.with(("media-seek", pane));
+    if let Some(target) = crate::player_controls::seek(ui, tokens, key, width, current, duration) {
+        if book.is_some() {
+            actions.push(("media.skip", json!({"by": target - current})));
+        } else {
+            actions.push(("media.seek", json!({"to": target})));
         }
     }
 }
 
 /// Speaker (mute toggle) and a short volume bar.
 fn volume(ui: &mut Ui, s: &Session, tokens: &Tokens, actions: &mut Vec<(&'static str, Value)>) {
-    use crate::media_icons::{Icon, bar, button};
-    let muted = s.media.muted;
-    let (icon, label) = if muted {
-        (Icon::Muted, "Unmute")
-    } else {
-        (Icon::Volume, "Mute")
-    };
-    if button(ui, tokens, icon, label, true, muted).clicked() {
-        actions.push(("media.mute", json!({"on": !muted})));
-    }
-    let shown = if muted { 0.0 } else { s.media.volume };
-    if let Some(change) = bar(
+    crate::player_controls::volume(
         ui,
         tokens,
-        72.0,
-        shown / 100.0,
-        true,
-        "Volume",
-        &format!("{:.0}%", s.media.volume),
-    ) {
-        actions.push(("media.volume", json!({"value": change.fraction * 100.0})));
-    }
+        s.media.volume,
+        s.media.muted,
+        "media.mute",
+        "media.volume",
+        actions,
+    );
 }
 
 /// Audio and subtitle pickers; they appear only when the video has a choice.
@@ -1576,18 +1535,7 @@ fn spool_label(done: u64, total: u64) -> String {
     }
 }
 
-pub(crate) fn clock(seconds: f64) -> String {
-    let seconds = seconds.max(0.0) as u64;
-    if seconds >= 3600 {
-        return format!(
-            "{}:{:02}:{:02}",
-            seconds / 3600,
-            seconds / 60 % 60,
-            seconds % 60
-        );
-    }
-    format!("{}:{:02}", seconds / 60, seconds % 60)
-}
+pub(crate) use crate::player_controls::clock;
 
 #[cfg(test)]
 mod tests {

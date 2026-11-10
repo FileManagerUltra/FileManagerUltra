@@ -1343,46 +1343,23 @@ fn audio_body(
             if let Some(cover) = &meta.poster {
                 image(ui, pane, tokens, model, cover, Zoom::Fit, None);
             }
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .button(if audio.playing { "Pause" } else { "Play" })
-                    .clicked()
-                {
-                    actions.push(("preview.audio.play", json!({})));
-                }
-                let duration = audio.doc.duration.unwrap_or(0.0);
-                ui.label(format!("{} / {}", clock(audio.position), clock(duration)));
-                let id = Id::NULL.with(("pv-audio-seek", pane));
-                let dragging: Option<f64> = ui.data(|d| d.get_temp(id));
-                let mut value = dragging.unwrap_or(audio.position).clamp(0.0, duration);
-                let response = ui.add_enabled(
-                    duration > 0.0,
-                    egui::Slider::new(&mut value, 0.0..=duration.max(0.1))
-                        .show_value(false)
-                        .text("Seek"),
-                );
-                if response.dragged() {
-                    ui.data_mut(|d| d.insert_temp(id, value));
-                } else {
-                    ui.data_mut(|d| d.remove::<f64>(id));
-                    if response.changed() || response.drag_stopped() {
-                        actions.push(("preview.audio.seek", json!({"to": value})));
-                    }
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                let mut volume = audio.volume;
-                if ui
-                    .add(egui::Slider::new(&mut volume, 0.0..=100.0).text("Volume"))
-                    .changed()
-                {
-                    actions.push(("preview.audio.volume", json!({"value": volume})));
-                }
-                let mut muted = audio.muted;
-                if ui.checkbox(&mut muted, "Mute").changed() {
-                    actions.push(("preview.audio.mute", json!({"on": muted})));
-                }
-            });
+            crate::player_controls::player_row(
+                ui,
+                tokens,
+                Id::NULL.with(("pv-audio-seek", pane)),
+                &crate::player_controls::Player {
+                    playing: audio.playing,
+                    position: audio.position,
+                    duration: audio.doc.duration.unwrap_or(0.0),
+                    volume: audio.volume,
+                    muted: audio.muted,
+                    play: "preview.audio.play",
+                    seek: "preview.audio.seek",
+                    volume_command: "preview.audio.volume",
+                    mute: "preview.audio.mute",
+                },
+                actions,
+            );
             if let Some(error) = &audio.error {
                 ui.colored_label(tokens.error, error);
             }
@@ -1475,7 +1452,7 @@ fn video_body(
             } else {
                 ui.allocate_space(vec2(avail.x, size.y.min(120.0)));
             }
-            video_controls(ui, pane, v, actions);
+            video_controls(ui, pane, tokens, v, actions);
             ui.horizontal_wrapped(|ui| media_actions(ui, actions))
                 .response
                 .context_menu(|ui| {
@@ -1523,60 +1500,30 @@ pub(crate) fn video_texture(
     texture
 }
 
-fn clock(secs: f64) -> String {
-    let t = secs.max(0.0) as u64;
-    if t >= 3600 {
-        format!("{}:{:02}:{:02}", t / 3600, t / 60 % 60, t % 60)
-    } else {
-        format!("{}:{:02}", t / 60, t % 60)
-    }
-}
-
 fn video_controls(
     ui: &mut Ui,
     pane: PaneId,
+    tokens: &Tokens,
     v: &fm_engine::video_cmds::VideoState,
     actions: &mut Vec<Action>,
 ) {
-    ui.horizontal(|ui| {
-        let label = if v.playing { "Pause" } else { "Play" };
-        if ui.button(label).clicked() {
-            actions.push(("preview.video.play", json!({})));
-        }
-        let dur = v.info.duration.max(0.0);
-        let id = Id::NULL.with(("pv-video-seek", pane));
-        let dragging: Option<f64> = ui.data(|d| d.get_temp(id));
-        let mut value = dragging.unwrap_or(v.pos).clamp(0.0, dur);
-        ui.label(format!("{} / {}", clock(value), clock(dur)));
-        ui.spacing_mut().slider_width = (ui.available_width() - 60.0).max(60.0);
-        let resp = ui.add_enabled(
-            dur > 0.0,
-            egui::Slider::new(&mut value, 0.0..=dur.max(0.1))
-                .show_value(false)
-                .text("Seek"),
-        );
-        if resp.dragged() {
-            ui.data_mut(|d| d.insert_temp(id, value));
-        } else {
-            ui.data_mut(|d| d.remove::<f64>(id));
-            if resp.changed() || resp.drag_stopped() {
-                actions.push(("preview.video.seek", json!({ "to": value })));
-            }
-        }
-    });
-    ui.horizontal_wrapped(|ui| {
-        let mut volume = v.volume;
-        if ui
-            .add(egui::Slider::new(&mut volume, 0.0..=100.0).text("Volume"))
-            .changed()
-        {
-            actions.push(("preview.video.volume", json!({"value": volume})));
-        }
-        let mut muted = v.muted;
-        if ui.checkbox(&mut muted, "Mute").changed() {
-            actions.push(("preview.video.mute", json!({"on": muted})));
-        }
-    });
+    crate::player_controls::player_row(
+        ui,
+        tokens,
+        Id::NULL.with(("pv-video-seek", pane)),
+        &crate::player_controls::Player {
+            playing: v.playing,
+            position: v.pos,
+            duration: v.info.duration.max(0.0),
+            volume: v.volume,
+            muted: v.muted,
+            play: "preview.video.play",
+            seek: "preview.video.seek",
+            volume_command: "preview.video.volume",
+            mute: "preview.video.mute",
+        },
+        actions,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

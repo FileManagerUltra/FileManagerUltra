@@ -104,24 +104,28 @@ fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
                 });
             });
             for (band, hz) in BAND_HZ.iter().enumerate() {
-                ui.vertical_centered(|ui| {
-                    let mut gain = eq.bands[band];
-                    ui.spacing_mut().slider_width = 150.0;
-                    ui.visuals_mut().selection.bg_fill = accent;
-                    let response = ui.add(
-                        egui::Slider::new(&mut gain, -MAX_BAND_DB..=MAX_BAND_DB)
-                            .vertical()
-                            .step_by(0.5)
-                            .show_value(false),
-                    );
-                    if response.changed() {
-                        let mut bands = eq.bands;
-                        bands[band] = gain;
-                        actions.push(("media.eq", json!({"bands": bands})));
-                    }
-                    ui.label(band_label(*hz));
-                    ui.small(format!("{gain:+.1}"));
-                });
+                ui.allocate_ui_with_layout(
+                    egui::vec2(36.0, 0.0),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        let mut gain = eq.bands[band];
+                        ui.spacing_mut().slider_width = 150.0;
+                        ui.visuals_mut().selection.bg_fill = accent;
+                        let response = ui.add(
+                            egui::Slider::new(&mut gain, -MAX_BAND_DB..=MAX_BAND_DB)
+                                .vertical()
+                                .step_by(0.5)
+                                .show_value(false),
+                        );
+                        if response.changed() {
+                            let mut bands = eq.bands;
+                            bands[band] = gain;
+                            actions.push(("media.eq", json!({"bands": bands})));
+                        }
+                        ui.label(band_label(*hz));
+                        ui.small(format!("{gain:+.1}"));
+                    },
+                );
             }
         });
         ui.add_space(6.0);
