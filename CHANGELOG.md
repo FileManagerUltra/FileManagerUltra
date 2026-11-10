@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Windows installer now includes ffmpeg and ffprobe, so video (and Preview video) works without installing anything else.
 - In a Media audiobook folder, the files before the one you are on now show a check mark ("Played") in the gutter.
 - Folders of mp3 audiobooks are now recognised as books (and get resume markers, chapters and skip buttons) when they sit under a folder called "Audio Books" or most files are named "Chapter…"/"Part…"; use "Treat as audiobook" for any other folder.
 - Resuming an audiobook or track no longer flashes back to 0:00 (and no longer overwrites the remembered position), and an audiobook's clock now shows the time in the whole book, matching the seek bar.

@@ -129,14 +129,28 @@ pub fn packager_config() -> Result<String, String> {
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
         .ok_or("workspace version not found in Cargo.toml")?;
+    // ffmpeg/ffprobe staged next to the app by the release workflow are installed beside it,
+    // where the player looks first.
+    let mut extra = String::new();
+    for tool in ["ffmpeg", "ffprobe"] {
+        let staged = ["", ".exe"].iter().any(|ext| {
+            root.join("target/release")
+                .join(format!("{tool}{ext}"))
+                .is_file()
+        });
+        if staged {
+            extra.push_str(&format!(", {{ path = \"{tool}\" }}"));
+        }
+    }
     let toml = format!(
         "name = \"{slug}\"\nversion = \"{version}\"\nproduct-name = \"{name}\"\nidentifier = \"{id}\"\npublisher = \"{name}\"\n\
 description = \"A cross-platform multi-pane file manager\"\ncategory = \"Utility\"\n\
 icons = [\"{root}/packaging/icon.png\", \"{root}/packaging/icon.ico\", \"{root}/packaging/icon.icns\"]\nout-dir = \"{root}/target/packager\"\n\
-binaries-dir = \"{root}/target/release\"\nbinaries = [{{ path = \"{slug}\", main = true }}]\n\
+binaries-dir = \"{root}/target/release\"\nbinaries = [{{ path = \"{slug}\", main = true }}{extra}]\n\
 \n[nsis]\ninstaller-icon = \"{root}/packaging/icon.ico\"\npreinstall-section = '''\n{icon_refresh}\n'''\n",
         name = brand.name,
         slug = brand.slug,
+        extra = extra,
         root = root.display().to_string().replace('\\', "/"),
         icon_refresh = include_str!("../../packaging/windows-refresh-icons.nsh"),
     );
