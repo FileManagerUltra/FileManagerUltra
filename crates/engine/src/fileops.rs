@@ -16,7 +16,7 @@ use fm_ops::{
 };
 use fm_vfs::{FmError, Vfs, VfsUri};
 
-use crate::backends::{VfsRegistry, lane_for};
+use crate::backends::{VfsRegistry, bulk_lane_for};
 use crate::dircache::DirState;
 use crate::jobs::{JobCtx, JobEvent, JobId};
 use crate::session::Session;
@@ -317,6 +317,8 @@ pub struct OpJob {
     pub summary: Option<OpSummary>,
     kind: Option<OpKind>,
     touched: Vec<VfsUri>,
+    /// When the touched directories were last re-read while the job runs.
+    last_refresh: Option<Instant>,
     /// Sources and destinations, including read-only sources, for safe device removal.
     uris: Vec<VfsUri>,
     shared: Arc<Mutex<Shared>>,
@@ -532,7 +534,7 @@ impl Session {
         let lane_uri = request
             .lane_uri()
             .ok_or_else(|| FmError::InvalidParams("nothing to do".to_string()))?;
-        let lane = lane_for(lane_uri.scheme());
+        let lane = bulk_lane_for(lane_uri.scheme());
         for uri in &uris {
             self.backends.require(uri)?;
         }
@@ -564,6 +566,7 @@ impl Session {
             summary: None,
             kind,
             touched,
+            last_refresh: None,
             uris,
             shared,
             resolver,
@@ -619,7 +622,49 @@ impl Session {
                 changed = true;
             }
         }
+        changed |= self.refresh_while_running();
         changed
+    }
+
+    /// Re-read the directories a running job writes into (and any pane inside them) about
+    /// once a second, so new items show up while the job runs rather than only at its end.
+    fn refresh_while_running(&mut self) -> bool {
+        const EVERY: Duration = Duration::from_secs(1);
+        let now = Instant::now();
+        let mut roots: Vec<VfsUri> = Vec::new();
+        for job in self
+            .fileops
+            .jobs
+            .iter_mut()
+            .filter(|j| j.state.is_running())
+        {
+            if job
+                .last_refresh
+                .is_some_and(|at| now.duration_since(at) < EVERY)
+            {
+                continue;
+            }
+            job.last_refresh = Some(now);
+            roots.extend(job.touched.iter().cloned());
+        }
+        if roots.is_empty() {
+            return false;
+        }
+        let mut dirs = roots.clone();
+        dirs.extend(
+            self.layout
+                .states
+                .values()
+                .map(|state| state.location.clone())
+                .filter(|loc| roots.iter().any(|root| loc.is_same_or_descendant_of(root))),
+        );
+        dirs.dedup();
+        for dir in dirs {
+            if matches!(self.dirs.state(&dir), DirState::Ready { .. }) {
+                self.poll_location(dir);
+            }
+        }
+        false
     }
 
     /// Handle a terminal event of a file job: record the summary and the undo entry,

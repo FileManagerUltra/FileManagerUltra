@@ -20,7 +20,7 @@ pub use playlist::{
     MAX_PLAYLIST_BYTES, MAX_PLAYLIST_LINE_BYTES, Playlist, PlaylistFormat, parse_playlist,
     write_m3u8,
 };
-pub use queue::{MAX_QUEUE_ITEMS, Queue, RepeatMode};
+pub use queue::{Group, GroupRef, MAX_GROUP_NAME, MAX_GROUPS, MAX_QUEUE_ITEMS, Queue, RepeatMode};
 
 use fm_vfs::FmError;
 

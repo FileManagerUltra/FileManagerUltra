@@ -467,6 +467,55 @@ mod transfers {
     }
 
     #[test]
+    fn copying_from_sftp_updates_the_open_local_listing() {
+        let (root, config, server) = start();
+        std::fs::write(root.path().join("a.txt"), b"a").unwrap();
+        std::fs::create_dir(root.path().join("d")).unwrap();
+        std::fs::write(root.path().join("d/b.txt"), b"b").unwrap();
+        std::os::unix::fs::symlink("d", root.path().join("dl")).unwrap();
+        let local = tempfile::tempdir().unwrap();
+        let mut s = session(config.path());
+        connect_and_trust(&mut s, &server);
+        let dest = VfsUri::parse(local.path().to_str().unwrap()).unwrap();
+        s.dispatch("nav.open", &json!({"uri": dest.to_string()}))
+            .unwrap();
+        pump(&mut s, "local listing", |s| {
+            matches!(s.dirs.state(&dest), fm_engine::DirState::Ready { .. })
+        });
+        for (cmd, what) in [("file.copy", "copy"), ("file.clip_paste", "paste")] {
+            let sources = json!([
+                remote_uri(&server, "/a.txt"),
+                remote_uri(&server, "/d"),
+                remote_uri(&server, "/dl")
+            ]);
+            if cmd == "file.copy" {
+                let state = run_op(
+                    &mut s,
+                    cmd,
+                    json!({"sources": sources, "dest": dest.to_string(), "policy": "overwrite"}),
+                );
+                assert_eq!(state, OpState::Finished, "{what}");
+            } else {
+                continue;
+            }
+            pump(&mut s, "listing refresh", |s| {
+                matches!(s.dirs.state(&dest), fm_engine::DirState::Ready { entries, .. }
+                    if entries.iter().any(|e| e.name == "a.txt")
+                        && entries.iter().any(|e| e.name == "d"))
+            });
+        }
+        assert!(local.path().join("d/b.txt").exists());
+        let pane = s.layout.focused();
+        let (entries, ix) = s.pane_view(pane).unwrap();
+        let names: Vec<_> = ix
+            .order
+            .iter()
+            .map(|i| entries[*i as usize].name.clone())
+            .collect();
+        assert!(names.contains(&"a.txt".to_string()), "{names:?}");
+    }
+
+    #[test]
     fn sftp_to_sftp_between_servers() {
         let (root_a, config, server_a) = start();
         let root_b = tempfile::tempdir().unwrap();

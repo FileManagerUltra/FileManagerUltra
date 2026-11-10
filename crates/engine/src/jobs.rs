@@ -15,12 +15,31 @@ use fm_vfs::FmError;
 pub type JobId = u64;
 
 /// Which lane a job runs on. One dedicated thread per lane; SMB, SFTP and local
-/// work never share a lane, so a stalled share cannot starve local disk.
+/// work never share a lane, so a stalled share cannot starve local disk. The `Bulk*` lanes
+/// carry long file operations (copy, move, delete) so directory reads never queue behind them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum JobLane {
     Local,
     Smb,
     Sftp,
+    BulkLocal,
+    BulkSmb,
+    BulkSftp,
+}
+
+const LANES: [JobLane; 6] = [
+    JobLane::Local,
+    JobLane::Smb,
+    JobLane::Sftp,
+    JobLane::BulkLocal,
+    JobLane::BulkSmb,
+    JobLane::BulkSftp,
+];
+
+impl JobLane {
+    fn index(self) -> usize {
+        LANES.iter().position(|lane| *lane == self).unwrap_or(0)
+    }
 }
 
 /// Events flowing back to the UI-facing poll.
@@ -134,7 +153,7 @@ impl JobQueue {
     pub fn new() -> Self {
         let (events_tx, events_rx) = unbounded();
         let cancel_flags: CancelMap = Arc::new(Mutex::new(HashMap::new()));
-        let lanes = [JobLane::Local, JobLane::Smb, JobLane::Sftp]
+        let lanes = LANES
             .into_iter()
             .map(|lane| Self::spawn_lane(lane, events_tx.clone(), cancel_flags.clone()))
             .collect();
@@ -159,6 +178,9 @@ impl JobQueue {
                 JobLane::Local => "local",
                 JobLane::Smb => "smb",
                 JobLane::Sftp => "sftp",
+                JobLane::BulkLocal => "bulk-local",
+                JobLane::BulkSmb => "bulk-smb",
+                JobLane::BulkSftp => "bulk-sftp",
             }
         );
         let events_for_thread = events.clone();
@@ -224,11 +246,7 @@ impl JobQueue {
             cancel,
             work: Box::new(work),
         };
-        let idx = match lane {
-            JobLane::Local => 0,
-            JobLane::Smb => 2,
-            JobLane::Sftp => 2,
-        };
+        let idx = lane.index();
         if self.lanes[idx].0.send(job).is_err() {
             let _ = self.events_tx.send(JobEvent::Failed {
                 id,
@@ -367,5 +385,22 @@ mod tests {
         }
         block_tx.send(()).expect("release");
         q.wait_for_terminal(blocker, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_long_bulk_job_does_not_hold_up_directory_reads() {
+        let q = JobQueue::new();
+        let (block_tx, block_rx) = channel::<()>();
+        let bulk = q.submit(JobLane::BulkLocal, move |_ctx| {
+            block_rx.recv().map_err(|_| FmError::Cancelled)?;
+            Ok(())
+        });
+        let read = q.submit(JobLane::Local, |_ctx| Ok(()));
+        match q.wait_for_terminal(read, Duration::from_secs(5)) {
+            Some(JobEvent::Done(_)) => {}
+            other => panic!("local lane queued behind a bulk job: {other:?}"),
+        }
+        block_tx.send(()).expect("release");
+        q.wait_for_terminal(bulk, Duration::from_secs(5));
     }
 }

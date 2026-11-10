@@ -340,7 +340,13 @@ mod tests {
             .expect("pause before probe finishes");
         wait(&mut s, |s| s.media.video.is_some());
         assert!(!s.media.playing);
-        assert!(s.media.video.as_ref().expect("video").player_is_idle());
+        // The paused video decodes one still frame, then goes idle.
+        wait(&mut s, |s| {
+            s.media
+                .video
+                .as_ref()
+                .is_some_and(|v| v.frame.is_some() && v.player_is_idle())
+        });
         s.dispatch("media.video.fit", &json!({"width": 100_000}))
             .expect("fit");
         assert_eq!(

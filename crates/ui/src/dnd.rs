@@ -6,7 +6,7 @@ use egui::{Context, CursorIcon, DragAndDrop, Id, Key, LayerId, Order, Pos2, Rect
 use fm_engine::{DropAction, DropModifiers, DropOrigin, DropResolution, Session};
 use fm_layout::PaneId;
 use fm_vfs::VfsUri;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::theme::Tokens;
 
@@ -235,8 +235,23 @@ pub fn finish_terminal(ctx: &Context, s: &mut Session, pane: PaneId, rect: Rect,
     }
 }
 
+/// Like `Response::dnd_release_payload`, but leaves a payload of another type alone (egui's
+/// `take_payload` discards it even when the type does not match).
+pub fn release_payload<P: std::any::Any + Send + Sync>(
+    response: &egui::Response,
+) -> Option<std::sync::Arc<P>> {
+    if DragAndDrop::has_payload_of_type::<P>(&response.ctx) {
+        response.dnd_release_payload::<P>()
+    } else {
+        None
+    }
+}
+
 /// Media drops enqueue paths; copy/move modifiers never change files.
 pub fn finish_media(ctx: &Context, s: &mut Session, rect: Rect, tokens: &Tokens) {
+    // Set by a playlist folder header under the pointer this frame.
+    let group: Option<u32> = ctx.data_mut(|d| d.remove_temp(crate::media::drop_group_id()));
+    let slot: Option<Value> = ctx.data_mut(|d| d.remove_temp(crate::media::drop_slot_id()));
     let Some(payload) = DragAndDrop::payload::<DragPayload>(ctx) else {
         return;
     };
@@ -251,12 +266,25 @@ pub fn finish_media(ctx: &Context, s: &mut Session, rect: Rect, tokens: &Tokens)
         ctx.set_cursor_icon(CursorIcon::NoDrop);
         return;
     }
-    paint_feedback(ctx, rect, pos, "Add to media queue", tokens);
+    let refused = slot == Some(Value::Null);
+    if refused {
+        ctx.set_cursor_icon(CursorIcon::NoDrop);
+    } else {
+        paint_feedback(ctx, rect, pos, "Add to media queue", tokens);
+    }
     if ctx.input(|i| i.pointer.any_released())
         && DragAndDrop::take_payload::<DragPayload>(ctx).is_some()
+        && !refused
     {
         let paths: Vec<String> = payload.sources.iter().map(VfsUri::to_string).collect();
-        s.dispatch_or_notice("media.drop", &json!({"uris": paths}));
+        let mut params = match group {
+            Some(group) => json!({"uris": paths, "group": group}),
+            None => json!({"uris": paths}),
+        };
+        if let (Some(Value::Object(place)), Some(map)) = (slot, params.as_object_mut()) {
+            map.extend(place);
+        }
+        s.dispatch_or_notice("media.drop", &params);
     }
 }
 

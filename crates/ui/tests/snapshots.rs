@@ -95,6 +95,17 @@ fn media_audio_queue_dark_light() {
         })).expect("enqueue");
         let pane = session.media_pane().expect("media");
         session.media.queue.select(0).expect("current");
+        session
+            .media
+            .queue
+            .group_range(0, 2, "Album", None)
+            .expect("folder");
+        let album = session.media.queue.groups()[0].id;
+        session
+            .media
+            .queue
+            .set_group_locked(album, true)
+            .expect("lock");
         let mut harness = Harness::builder()
             .with_size(egui::vec2(640.0, 480.0))
             .renderer(renderer)

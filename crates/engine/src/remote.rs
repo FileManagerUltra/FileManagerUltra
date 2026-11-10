@@ -1130,7 +1130,7 @@ impl Session {
         }
     }
 
-    fn poll_location(&mut self, uri: VfsUri) {
+    pub(crate) fn poll_location(&mut self, uri: VfsUri) {
         use crate::dircache::DirState;
         match self.dirs.state(&uri) {
             DirState::Loading { .. } => {}

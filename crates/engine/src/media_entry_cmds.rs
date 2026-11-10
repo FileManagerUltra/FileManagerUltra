@@ -102,8 +102,21 @@ pub(crate) fn has_sources(s: &Session) -> bool {
 
 impl Session {
     pub(crate) fn media_insert_next(&mut self, items: Vec<VfsUri>) -> Result<usize, FmError> {
+        self.media_insert_next_with(items, false)
+    }
+
+    /// `standalone` keeps the items out of an existing queue folder so they can form their own.
+    pub(crate) fn media_insert_next_with(
+        &mut self,
+        items: Vec<VfsUri>,
+        standalone: bool,
+    ) -> Result<usize, FmError> {
         let count = items.len();
-        let first = self.media.queue.insert_next(items)?;
+        let first = if standalone {
+            self.media.queue.insert_next_outside_groups(items)?
+        } else {
+            self.media.queue.insert_next(items)?
+        };
         for state in self
             .layout
             .states

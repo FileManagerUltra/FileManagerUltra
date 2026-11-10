@@ -18,6 +18,15 @@ pub fn lane_for(scheme: Scheme) -> JobLane {
     }
 }
 
+/// The lane for long file operations on `scheme`, apart from the lane that serves listings.
+pub fn bulk_lane_for(scheme: Scheme) -> JobLane {
+    match lane_for(scheme) {
+        JobLane::Smb => JobLane::BulkSmb,
+        JobLane::Sftp => JobLane::BulkSftp,
+        _ => JobLane::BulkLocal,
+    }
+}
+
 /// Registered backends, keyed by `(scheme, authority)`; the authority is `""` for
 /// scheme-wide backends (local disk, in-memory test filesystems).
 #[derive(Clone, Default)]

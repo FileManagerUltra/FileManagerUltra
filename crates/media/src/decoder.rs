@@ -186,6 +186,7 @@ impl AudioDecoder {
         let declared_padding = params.padding.unwrap_or(0);
         // Symphonia trims MP3 and Vorbis itself; AAC and ALAC rely on the iTunSMPB tag.
         let trim = smpb.filter(|_| matches!(params.codec, CODEC_TYPE_AAC | CODEC_TYPE_ALAC));
+        let params = &repair_aac_config(params.clone());
         let mut decoder = symphonia::default::get_codecs()
             .make(params, &DecoderOptions { verify: true })
             .map_err(|e| crate::error(format!("Cannot initialize audio decoder: {e}")))?;
@@ -393,6 +394,20 @@ fn seconds(time: Time) -> f64 {
     time.seconds as f64 + time.frac
 }
 
+/// Some audiobook encoders write a 2-byte AAC config with the "depends on core coder" flag
+/// set but no delay field. ffmpeg ignores it; Symphonia would fail with "end of bitstream".
+fn repair_aac_config(
+    mut params: symphonia::core::codecs::CodecParameters,
+) -> symphonia::core::codecs::CodecParameters {
+    if params.codec == CODEC_TYPE_AAC
+        && let Some(config) = params.extra_data.as_mut()
+        && config.len() == 2
+    {
+        config[1] &= !0x02;
+    }
+    params
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -430,5 +445,21 @@ mod tests {
         assert_eq!(p.samples.len(), 6);
         assert_eq!(p.samples.last().copied(), Some(29.0));
         assert!(matches!(packet(30, 8), Trimmed::After));
+    }
+
+    #[test]
+    fn aac_config_with_a_dangling_core_coder_flag_is_repaired() {
+        let mut params = symphonia::core::codecs::CodecParameters::new();
+        params.for_codec(CODEC_TYPE_AAC);
+        params.with_extra_data(vec![0x12, 0x12].into_boxed_slice());
+        let fixed = repair_aac_config(params);
+        assert_eq!(fixed.extra_data.as_deref(), Some(&[0x12, 0x10][..]));
+        let mut long = symphonia::core::codecs::CodecParameters::new();
+        long.for_codec(CODEC_TYPE_AAC);
+        long.with_extra_data(vec![0x12, 0x12, 0x00].into_boxed_slice());
+        assert_eq!(
+            repair_aac_config(long).extra_data.as_deref(),
+            Some(&[0x12, 0x12, 0x00][..])
+        );
     }
 }

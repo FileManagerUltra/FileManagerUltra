@@ -989,6 +989,7 @@ fn entry_row_ui(
 ) -> Option<VfsUri> {
     let state = s.layout.state(pane)?;
     let selected = state.listing.is_selected(&entry.name);
+    let state_selected_count = state.listing.selected_count();
     let focused =
         state.listing.focused_row == row && !state.listing.on_parent && !state.listing.on_current;
 
@@ -1063,7 +1064,10 @@ fn entry_row_ui(
         crate::context_menu::attach(&response, s, &entry.uri, &mut open);
     }
 
-    let bg = if selected || (focused && pane_focused) {
+    // With a selection, an unselected cursor row (after a Ctrl-click deselect) only gets an
+    // outline, so it does not look selected.
+    let cursor_only = !selected && focused && pane_focused && state_selected_count > 0;
+    let bg = if selected || (focused && pane_focused && !cursor_only) {
         Some(tokens.selection_bg)
     } else if response.hovered() {
         Some(tokens.hover_bg)
@@ -1072,6 +1076,14 @@ fn entry_row_ui(
     };
     if let Some(bg) = bg {
         ui.painter().rect_filled(rect, 0.0, bg);
+    }
+    if cursor_only {
+        ui.painter().rect_stroke(
+            rect.shrink(0.5),
+            0.0,
+            egui::Stroke::new(1.0, tokens.selection_bg),
+            egui::StrokeKind::Inside,
+        );
     }
     // Norton-style cues: directories get the accent colour and a trailing slash, links the
     // muted colour and an `@`; plain files keep the primary text colour.

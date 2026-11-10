@@ -6,7 +6,7 @@
 use egui::{Key, Ui};
 use fm_engine::{DirState, Session};
 use fm_layout::PaneId;
-use fm_vfs::{EntryKind, VfsUri};
+use fm_vfs::VfsUri;
 
 use crate::theme::Tokens;
 
@@ -92,7 +92,7 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
         };
         let mut dirs: Vec<&fm_vfs::Entry> = entries
             .iter()
-            .filter(|e| e.kind == EntryKind::Dir)
+            .filter(|e| e.is_dir_like())
             .filter(|e| s.show_hidden || !fm_engine::is_hidden(e))
             .collect();
         dirs.sort_by_key(|e| e.name.to_lowercase());

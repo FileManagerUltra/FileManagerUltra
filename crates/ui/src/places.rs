@@ -390,7 +390,7 @@ fn row(
                 ],
                 Stroke::new(2.0, tokens.accent),
             );
-            if let Some(dragged) = response.dnd_release_payload::<BookmarkDrag>() {
+            if let Some(dragged) = crate::dnd::release_payload::<BookmarkDrag>(&response) {
                 let mut to = index + usize::from(below);
                 if dragged.0 < to {
                     to -= 1;

@@ -10,6 +10,7 @@ use fm_vfs::{FmError, Scheme, VfsUri};
 use serde::{Deserialize, Serialize};
 
 use crate::media_audio_cmds::{MAX_PRESET_NAME, MAX_USER_PRESETS, UserPreset};
+use crate::media_resume::{MAX_RESUME, ResumePoint};
 use crate::{Session, jobs::JobLane};
 
 const FILE: &str = "media-queue.json";
@@ -26,6 +27,46 @@ struct Snapshot {
     repeat: Repeat,
     #[serde(default)]
     eq: Option<EqSnapshot>,
+    #[serde(default)]
+    resume: Vec<ResumePoint>,
+    #[serde(default)]
+    groups: Vec<SavedGroup>,
+}
+
+/// A playlist folder: a run of `len` items starting at `start`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SavedGroup {
+    start: usize,
+    len: usize,
+    name: String,
+    dir: Option<String>,
+    /// Absent in older files: the folder keeps its default (automatic folders start locked).
+    #[serde(default)]
+    locked: Option<bool>,
+}
+
+/// Re-aim folder ranges after dropping the items whose `kept` flag is false.
+fn remap_groups(groups: &[SavedGroup], kept: &[bool]) -> Vec<SavedGroup> {
+    let before = |at: usize| kept.iter().take(at).filter(|k| **k).count();
+    groups
+        .iter()
+        .filter_map(|group| {
+            let end = group.start.checked_add(group.len)?;
+            if end > kept.len() {
+                return None;
+            }
+            let start = before(group.start);
+            let len = before(end) - start;
+            (len > 0 || group.len == 0).then(|| SavedGroup {
+                start,
+                len,
+                name: group.name.clone(),
+                dir: group.dir.clone(),
+                locked: group.locked,
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -299,6 +340,18 @@ impl Session {
         if let Some(index) = saved.index {
             queue.select(index)?;
         }
+        for group in &saved.groups {
+            // A damaged folder entry only loses the folder, never the queue.
+            let made = if group.len == 0 {
+                queue.create_group(&group.name, group.dir.clone())
+            } else {
+                queue.group_range(group.start, group.len, &group.name, group.dir.clone())
+            };
+            if let (Ok(id), Some(locked)) = (made, group.locked) {
+                let _ = queue.set_group_locked(id, locked);
+            }
+        }
+        self.media.resume = saved.resume.clone();
         queue.set_repeat(saved.repeat.into());
         queue.set_shuffle(saved.shuffle, 0x9e37_79b9);
         self.media_set_restored(queue, saved.volume)?;
@@ -314,7 +367,9 @@ fn snapshot(session: &Session) -> Snapshot {
     let current = session.media.queue.current_index();
     let mut index = None;
     let mut paths = Vec::new();
+    let mut kept = Vec::new();
     for (at, uri) in session.media.queue.items().iter().enumerate() {
+        kept.push(uri.local_path().is_some());
         if uri.local_path().is_none() {
             continue;
         }
@@ -329,12 +384,27 @@ fn snapshot(session: &Session) -> Snapshot {
             },
         );
     }
+    let groups: Vec<SavedGroup> = session
+        .media
+        .queue
+        .groups()
+        .into_iter()
+        .map(|g| SavedGroup {
+            start: g.start,
+            len: g.len,
+            name: g.name,
+            dir: g.dir,
+            locked: Some(g.locked),
+        })
+        .collect();
     Snapshot {
+        groups: remap_groups(&groups, &kept),
         paths,
         index,
         volume: session.media.volume,
         shuffle: session.media.queue.shuffle(),
         repeat: session.media.queue.repeat().into(),
+        resume: session.media.resume_snapshot(),
         eq: Some({
             let eq = session.media.gain.eq();
             EqSnapshot {
@@ -385,12 +455,15 @@ fn read_snapshot(path: &Path) -> Result<Option<Restored>, FmError> {
     let mut paths = Vec::with_capacity(saved.paths.len());
     let mut missing = Vec::new();
     let mut selected = None;
+    let mut kept = Vec::with_capacity(saved.paths.len());
     for (index, path) in saved.paths.iter().enumerate() {
         let uri = local_uri(path)?;
         let Some(local) = uri.local_path() else {
             return Err(FmError::InvalidParams("invalid saved local path".into()));
         };
-        match std::fs::metadata(local) {
+        let result = std::fs::metadata(local);
+        kept.push(matches!(&result, Ok(metadata) if metadata.is_file()));
+        match result {
             Ok(metadata) if metadata.is_file() => {
                 if saved.index == Some(index) {
                     selected = Some(paths.len());
@@ -404,8 +477,12 @@ fn read_snapshot(path: &Path) -> Result<Option<Restored>, FmError> {
             Err(error) => return Err(error.into()),
         }
     }
+    saved.groups = remap_groups(&saved.groups, &kept);
+    saved.groups.truncate(fm_media::MAX_GROUPS);
     saved.paths = paths;
     saved.index = selected;
+    saved.resume.retain(ResumePoint::is_valid);
+    saved.resume.truncate(MAX_RESUME);
     Ok(Some(Restored {
         snapshot: saved,
         missing,
@@ -442,6 +519,30 @@ fn local_uri(path: &str) -> Result<VfsUri, FmError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn folder_ranges_follow_the_items_that_are_kept() {
+        let group = |start, len| SavedGroup {
+            start,
+            len,
+            name: "g".into(),
+            dir: None,
+            locked: None,
+        };
+        let kept = [true, false, true, true, false, true];
+        let out = remap_groups(
+            &[
+                group(1, 3),
+                group(2, 1),
+                group(4, 1),
+                group(6, 0),
+                group(5, 9),
+            ],
+            &kept,
+        );
+        let shape: Vec<_> = out.iter().map(|g| (g.start, g.len)).collect();
+        assert_eq!(shape, [(1, 2), (1, 1), (4, 0)]);
+    }
+
     use super::*;
 
     fn wait(session: &mut Session) {
@@ -552,6 +653,8 @@ mod tests {
             shuffle: false,
             repeat: Repeat::Off,
             eq: None,
+            resume: Vec::new(),
+            groups: Vec::new(),
         };
         write_snapshot(dir.path(), &saved).expect("save");
         let mut session = Session::new().expect("session");
@@ -584,6 +687,8 @@ mod tests {
             shuffle: false,
             repeat: Repeat::Off,
             eq: None,
+            resume: Vec::new(),
+            groups: Vec::new(),
         };
         assert!(write_snapshot(dir.path(), &saved).is_err());
         assert!(!dir.path().join(FILE).exists());
@@ -628,6 +733,8 @@ mod tests {
             shuffle: false,
             repeat: Repeat::Off,
             eq: None,
+            resume: Vec::new(),
+            groups: Vec::new(),
         };
         write_snapshot(&dir, &saved).expect("save");
         assert_eq!(

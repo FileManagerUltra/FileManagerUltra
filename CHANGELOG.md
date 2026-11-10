@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Make your own folders in the Media playlist ("New folder" button or right-click menu): drag playlist rows or files from the Files pane onto a folder header or any row inside it to add them there (dropping Files-pane files on playlist rows used to be ignored), drag a row out to ungroup, and rename or delete folders. A folder is a playlist inside the playlist: playback stops at its end and is ready at its first item. Folders are remembered between sessions.
+- The Media playlist has icon buttons (New folder, Clear playlist) on the right.
+- Audiobooks whose AAC header has a quirk (such as some `.m4b` files that failed with "unexpected end of bitstream") now play.
+- Dropping or adding a folder tree to Media (such as a series of audiobooks) scans its subfolders: each book folder (two or more audio files, or a single .m4b in its own folder) becomes its own playlist folder named after its path ("Series / Book 1"), and each one remembers where you left off.
+- Files inside a Media playlist folder are indented under the folder header with a guide line and numbered from 1 within the folder.
+- Files dragged from the Files pane into the Media playlist land where the line shows (after a row, before or after a folder) instead of at the end.
+- Lock a Media playlist folder (right-click its header) so nothing can be dropped in or taken out by accident; a padlock marks it. Folders from added directories, such as audiobooks, start locked. Locked folders can still be moved, renamed, played and deleted.
+- In the Media playlist, drag a row or a whole folder onto a row to place it right after that row (the top of the first row puts it at the very top, the bottom of a folder's last row puts it after the folder), onto the top of a folder name to place it before the folder, or onto the folder name to make it the folder's first item (a collapsed folder's lower part places it after the folder), and select several rows (Ctrl/Shift-click) to remove them with the menu or the Delete key.
+- Folders added to Media (such as an audiobook) are grouped under a collapsible folder header, and adding that folder again, or double-clicking its header (or choosing "Resume play"), continues at the file and position where you left off.
 - Play local audio in a dedicated Media pane with a queue, seeking, volume, mute, shuffle and repeat. Audio can keep playing after the pane closes, with a Stop control in the status bar; starting Preview playback pauses it.
 - The Media queue and playback settings now return paused after restarting; missing files are skipped with a notice.
 - Import local M3U, M3U8 and PLS playlists, or save the queue as a new M3U8 file. Unsafe links, missing files and unsupported entries are skipped with notices.
@@ -25,6 +34,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A-B loop to repeat part of a track, and a sleep timer (minutes or end of the current item) that fades out before pausing.
 - Play individual audio files in Preview, with Play/Pause, seeking, volume, mute, tags and embedded cover art. Audio autoplay is optional and off by default.
 - Preview videos now play with sound, volume and mute controls, and synchronized picture and audio. Video autoplay can be disabled in Preferences; a missing audio device leaves the video playing silently with a hint.
+
+### Changed
+
+- A video selected in the Media playlist now shows its first frame before you press play, instead of a black view.
+- The video area in Media can be resized by dragging the handle below it; the picture refits to the new size.
+- Redesigned the Media pane in a Winamp style: a now-playing display with artwork, title and clock, an icon-based control row with tooltips, a numbered playlist, and an Options menu holding the equalizer, sleep timer, A-B loop, speed, tracks, gapless and other settings.
+
+### Fixed
+
+- Symbolic links that point to directories (such as `bin` -> `usr/bin`) now show in the folder tree.
+- Folders no longer get stuck on "Loading…" while a large copy or move is running.
+- Folders now show new items while a copy or move is still running, instead of only after it finishes.
+- Ctrl-clicking an item to deselect it no longer leaves it looking selected.
 
 ## [0.1.3] - 2026-11-09
 

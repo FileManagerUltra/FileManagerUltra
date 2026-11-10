@@ -998,6 +998,12 @@ pub fn consume_shortcuts(
             } else {
                 id
             };
+            if id == FILE_DELETE && !typing && session.focused_kind() == Some(PaneKind::Media) {
+                // The playlist owns the selection; it removes the selected rows next frame.
+                ctx.data_mut(|d| d.insert_temp(fm_ui::media::delete_request_id(), true));
+                fired.push(id);
+                continue;
+            }
             dispatch(session, dialogs, id);
             fired.push(id);
             if id == PANE_SWAP {

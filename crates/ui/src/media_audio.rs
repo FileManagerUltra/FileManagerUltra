@@ -8,12 +8,11 @@ use serde_json::{Value, json};
 
 type Actions = Vec<(&'static str, Value)>;
 
-pub(crate) fn controls(ui: &mut Ui, s: &Session, actions: &mut Actions) {
-    ui.horizontal_wrapped(|ui| {
-        equalizer(ui, s, actions);
-        sleep_menu(ui, s, actions);
-        loop_controls(ui, s, actions);
-    });
+/// The submenus for the audio extras, inside the Options menu.
+pub(crate) fn menus(ui: &mut Ui, s: &Session, actions: &mut Actions) {
+    equalizer(ui, s, actions);
+    sleep_menu(ui, s, actions);
+    loop_menu(ui, s, actions);
 }
 
 fn band_label(hz: f32) -> String {
@@ -26,12 +25,7 @@ fn band_label(hz: f32) -> String {
 
 fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
     let eq = s.media.gain_eq();
-    let label = if eq.enabled {
-        "Equalizer: on"
-    } else {
-        "Equalizer"
-    };
-    ui.menu_button(label, |ui| {
+    ui.menu_button("Equalizer", |ui| {
         let mut enabled = eq.enabled;
         if ui.checkbox(&mut enabled, "Enabled").changed() {
             actions.push(("media.eq", json!({"enabled": enabled})));
@@ -103,37 +97,44 @@ fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
     });
 }
 
-fn loop_controls(ui: &mut Ui, s: &Session, actions: &mut Actions) {
+fn loop_menu(ui: &mut Ui, s: &Session, actions: &mut Actions) {
     let extras = &s.media.extras;
-    if ui.button("A").on_hover_text("Loop start").clicked() {
-        actions.push(("media.loop", json!({"point": "a"})));
-    }
-    if ui
-        .add_enabled(extras.loop_a.is_some(), egui::Button::new("B"))
-        .on_hover_text("Loop end")
-        .clicked()
-    {
-        actions.push(("media.loop", json!({"point": "b"})));
-    }
-    if ui
-        .add_enabled(extras.loop_a.is_some(), egui::Button::new("Clear loop"))
-        .clicked()
-    {
-        actions.push(("media.loop", json!({"point": "clear"})));
-    }
-    if let Some(a) = extras.loop_a {
-        let b = extras.loop_b.map_or("…".to_string(), super::media::clock);
-        ui.label(format!("Loop {} – {b}", super::media::clock(a)));
-    }
+    let label = match (extras.loop_a, extras.loop_b) {
+        (Some(a), Some(b)) => format!(
+            "A-B loop: {} – {}",
+            super::media::clock(a),
+            super::media::clock(b)
+        ),
+        (Some(a), None) => format!("A-B loop: from {}", super::media::clock(a)),
+        _ => "A-B loop".to_string(),
+    };
+    ui.menu_button(label, |ui| {
+        if ui.button("Set start (A) here").clicked() {
+            actions.push(("media.loop", json!({"point": "a"})));
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                extras.loop_a.is_some(),
+                egui::Button::new("Set end (B) here"),
+            )
+            .clicked()
+        {
+            actions.push(("media.loop", json!({"point": "b"})));
+            ui.close();
+        }
+        if ui
+            .add_enabled(extras.loop_a.is_some(), egui::Button::new("Clear loop"))
+            .clicked()
+        {
+            actions.push(("media.loop", json!({"point": "clear"})));
+            ui.close();
+        }
+    });
 }
 
 fn sleep_menu(ui: &mut Ui, s: &Session, actions: &mut Actions) {
-    let label = match (s.media.extras.sleep_remaining(), s.media.extras.sleep) {
-        (Some(left), _) => format!("Sleep: {} min", left.as_secs().div_ceil(60)),
-        (None, Some(_)) => "Sleep: end of item".to_string(),
-        _ => "Sleep".to_string(),
-    };
-    ui.menu_button(label, |ui| {
+    ui.menu_button("Sleep timer", |ui| {
         for minutes in [15, 30, 45, 60, 90] {
             if ui.button(format!("{minutes} minutes")).clicked() {
                 actions.push(("media.sleep", json!({"minutes": minutes})));

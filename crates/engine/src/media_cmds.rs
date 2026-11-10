@@ -51,6 +51,8 @@ pub struct MediaSession {
     pub(crate) video_width: u32,
     pub(crate) gain: Gain,
     pub(crate) failed_items: usize,
+    /// Last position per folder (audiobook), newest last.
+    pub resume: Vec<crate::media_resume::ResumePoint>,
     pub(crate) cover_job: Option<(
         Receiver<Result<fm_preview::ImageDoc, String>>,
         crate::jobs::JobId,
@@ -79,6 +81,7 @@ impl Default for MediaSession {
             video_width: 640,
             gain: Gain::default(),
             failed_items: 0,
+            resume: Vec::new(),
             cover_job: None,
         }
     }
@@ -288,28 +291,7 @@ impl Session {
                 }
                 video.restart();
             } else if self.media.video_probe.is_none() {
-                let uri = self
-                    .media
-                    .queue
-                    .current()
-                    .and_then(|uri| self.media.playable(uri))
-                    .ok_or_else(|| bad("the media queue has no current item"))?;
-                let (tx, rx) = sync_channel(1);
-                let cancelled = Arc::new(AtomicBool::new(false));
-                let work_cancelled = cancelled.clone();
-                self.jobs.submit(crate::jobs::JobLane::Local, move |ctx| {
-                    if ctx.is_cancelled() || work_cancelled.load(Ordering::Acquire) {
-                        return Ok(());
-                    }
-                    let result = fm_preview::video::playback_info(&uri, &work_cancelled)
-                        .map_err(|error| fm_vfs::redact::redact(&error.to_string()));
-                    let _ = tx.send(result);
-                    Ok(())
-                });
-                self.media.video_probe = Some(VideoProbe {
-                    receiver: rx,
-                    cancelled,
-                });
+                self.media_video_probe()?;
             }
             Ok(())
         } else if let Some(player) = &self.media.player {
@@ -326,6 +308,33 @@ impl Session {
         result
     }
 
+    /// Probe the current video on the local lane; the result becomes `media.video`.
+    fn media_video_probe(&mut self) -> Result<(), FmError> {
+        let uri = self
+            .media
+            .queue
+            .current()
+            .and_then(|uri| self.media.playable(uri))
+            .ok_or_else(|| bad("the media queue has no current item"))?;
+        let (tx, rx) = sync_channel(1);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let work_cancelled = cancelled.clone();
+        self.jobs.submit(crate::jobs::JobLane::Local, move |ctx| {
+            if ctx.is_cancelled() || work_cancelled.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            let result = fm_preview::video::playback_info(&uri, &work_cancelled)
+                .map_err(|error| fm_vfs::redact::redact(&error.to_string()));
+            let _ = tx.send(result);
+            Ok(())
+        });
+        self.media.video_probe = Some(VideoProbe {
+            receiver: rx,
+            cancelled,
+        });
+        Ok(())
+    }
+
     /// Called after pane commands and on each poll, including workspace switches.
     pub(crate) fn media_visibility_changed(&mut self) {
         self.media_fullscreen_check();
@@ -340,6 +349,21 @@ impl Session {
         self.media_visibility_changed();
         let mut changed = self.media_spool_poll();
         changed |= self.media_audio_tick();
+        // A selected but idle video shows its first frame instead of a black view.
+        if self.media.is_video()
+            && !self.media.playing
+            && self.media.video.is_none()
+            && self.media.video_probe.is_none()
+            && self.media.error.is_none()
+            && self.media_pane().is_some()
+            && self
+                .media
+                .queue
+                .current()
+                .is_some_and(|uri| self.media.playable(uri).is_some())
+        {
+            let _ = self.media_video_probe();
+        }
         if let Some(probe) = &self.media.video_probe {
             let result = match probe.receiver.try_recv() {
                 Ok(result) => Some(result),
@@ -360,6 +384,10 @@ impl Session {
                         video.width = Some(self.media.video_width);
                         video.pos = self.media.position;
                         video.speed = self.media.speed;
+                        if !self.media.playing {
+                            // Decode one still frame without playing.
+                            video.restart();
+                        }
                         self.media.video = Some(video);
                     }
                     Err(error) => {
@@ -434,6 +462,9 @@ impl Session {
         let changed = (self.media.position - status.position).abs() > 0.02
             || (self.media.info.is_none() && status.info.is_some());
         self.media.position = status.position;
+        if status.state == PlaybackState::Playing {
+            self.media.note_resume();
+        }
         if self.media.info.is_none()
             && let Some(info) = &status.info
         {
@@ -489,6 +520,9 @@ impl Session {
         self.media.playing = false;
         self.release_audio(AudioOwner::Media);
         let failed = status.state == PlaybackState::Failed;
+        if !failed {
+            self.media.forget_finished_book();
+        }
         if !failed
             && was_playing
             && self.media.extras.sleep == Some(crate::media_audio_cmds::Sleep::EndOfItem)
@@ -517,6 +551,18 @@ impl Session {
             self.media.failed_items += 1;
         } else {
             self.media.failed_items = 0;
+        }
+        if !failed
+            && was_playing
+            && self.media.queue.ends_group()
+            && let Some(start) = self.media.queue.current_group_start()
+        {
+            // A folder is a playlist in the playlist: stop at its end, ready at its first item.
+            if self.media.queue.select(start).is_ok() {
+                self.media.reset_item();
+            }
+            self.media_fullscreen_leave(true);
+            return true;
         }
         if !was_playing || self.media.failed_items >= self.media.queue.items().len() {
             if was_playing {
@@ -867,33 +913,7 @@ pub fn specs() -> Vec<CommandSpec> {
             enabled: |s| !s.media.queue.items().is_empty(),
             run: |s, p| {
                 let index = index(map(p)?, "index")?;
-                let current = s.media.queue.current_index() == Some(index);
-                let playing = s.media.playing;
-                s.media.queue.remove(index)?;
-                for state in s.layout.states.values_mut() {
-                    if state.kind == PaneKind::Media {
-                        state.media.selected = state
-                            .media
-                            .selected
-                            .filter(|selected| *selected != index)
-                            .map(|selected| {
-                                if selected > index {
-                                    selected - 1
-                                } else {
-                                    selected
-                                }
-                            });
-                    }
-                }
-                if current {
-                    s.media.reset_item();
-                    if playing && s.media.queue.current().is_some() {
-                        s.media_resume()?;
-                    } else {
-                        s.media_stop();
-                    }
-                }
-                Ok(())
+                s.media_remove_item(index)
             },
         },
         CommandSpec {
@@ -1013,6 +1033,26 @@ mod tests {
             position: 1.0,
             error: (state == PlaybackState::Failed).then(|| "decoder failed".into()),
         }
+    }
+
+    #[test]
+    fn a_folder_stops_at_its_end_rewound_and_manual_next_still_leaves_it() {
+        let mut s = queued(4);
+        s.media.queue.group_range(1, 2, "f", None).expect("group");
+        s.media.queue.select(1).expect("select");
+        s.media_apply_status(status(PlaybackState::Finished));
+        assert_eq!(s.media.queue.current_index(), Some(2), "inside: advances");
+        assert!(s.media.playing);
+        s.media_apply_status(status(PlaybackState::Finished));
+        assert_eq!(
+            s.media.queue.current_index(),
+            Some(1),
+            "rewound to folder start"
+        );
+        assert!(!s.media.playing);
+        s.media.queue.select(2).expect("select");
+        assert!(s.media.queue.next_item().is_some());
+        assert_eq!(s.media.queue.current_index(), Some(3));
     }
 
     #[test]
