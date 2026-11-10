@@ -199,6 +199,8 @@ pub struct BookRef {
 pub enum RowMark {
     /// Playing the row resumes at this many seconds.
     Resume(f64),
+    /// Earlier than the resume point of its folder.
+    Played,
     Finished,
 }
 
@@ -414,7 +416,7 @@ impl MediaSession {
     pub fn remembered_position(&self, index: usize) -> Option<f64> {
         match self.row_mark(index)? {
             RowMark::Resume(position) => Some((position - REWIND_SECS).max(0.0)),
-            RowMark::Finished => None,
+            RowMark::Played | RowMark::Finished => None,
         }
     }
 
@@ -431,11 +433,24 @@ impl MediaSession {
                 return Some(RowMark::Finished);
             }
             let name = uri.file_name()?;
-            let point = self
-                .resume
+            let point = self.resume.iter().find(|p| p.dir == dir)?;
+            if point.file == name {
+                return Some(RowMark::Resume(point.position));
+            }
+            // Files before the resume point have been listened to.
+            let group = self
+                .queue
+                .groups()
+                .into_iter()
+                .find(|g| index >= g.start && index - g.start < g.len)?;
+            let members = self
+                .queue
+                .items()
+                .get(group.start..group.start + group.len)?;
+            let resume_at = members
                 .iter()
-                .find(|p| p.dir == dir && p.file == name)?;
-            return Some(RowMark::Resume(point.position));
+                .position(|m| m.file_name() == Some(point.file.as_str()))?;
+            return (index - group.start < resume_at).then_some(RowMark::Played);
         }
         let state = self.state_of(uri.path_str())?;
         if let Some((size, mtime)) = stamp_of(uri.path_str())

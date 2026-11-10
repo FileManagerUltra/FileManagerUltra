@@ -594,7 +594,8 @@ mod tests {
         s.media.position = 20.0;
         s.media.note_book();
         assert_eq!(s.media.row_mark(1), Some(RowMark::Resume(20.0)));
-        assert_eq!(s.media.row_mark(0), None);
+        assert_eq!(s.media.row_mark(0), Some(RowMark::Played));
+        assert_eq!(s.media.row_mark(2), None);
         s.dispatch("media.finished", &json!({"on": true}))
             .expect("finished");
         assert_eq!(s.media.row_mark(0), Some(RowMark::Finished));

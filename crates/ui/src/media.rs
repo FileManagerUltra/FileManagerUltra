@@ -606,6 +606,7 @@ fn playlist(
                         fm_engine::media_book::RowMark::Resume(at) => {
                             format!("Resumes at {}", clock(at))
                         }
+                        fm_engine::media_book::RowMark::Played => "Played".to_string(),
                         fm_engine::media_book::RowMark::Finished => "Finished".to_string(),
                     };
                     crate::media_icons::paint_row_mark(

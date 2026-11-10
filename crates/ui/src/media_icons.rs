@@ -399,7 +399,7 @@ pub(crate) fn paint_row_mark(
                 .collect();
             painter.add(Shape::convex_polygon(half, color, Stroke::NONE));
         }
-        RowMark::Finished => {
+        RowMark::Played | RowMark::Finished => {
             let stroke = Stroke::new(1.6, color);
             let knee = c + vec2(-1.0, 3.0);
             painter.line_segment([c + vec2(-4.0, 0.0), knee], stroke);
