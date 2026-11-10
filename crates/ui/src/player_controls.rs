@@ -106,7 +106,7 @@ pub(crate) struct Player {
     pub mute: &'static str,
 }
 
-/// One row: play/pause, elapsed, seek bar, total, mute and volume.
+/// A framed player card: play/pause, the clock and volume on top, a full-width seek bar below.
 pub(crate) fn player_row(
     ui: &mut Ui,
     tokens: &Tokens,
@@ -114,34 +114,64 @@ pub(crate) fn player_row(
     player: &Player,
     actions: &mut Actions,
 ) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let (icon, label) = if player.playing {
-            (Icon::Pause, "Pause")
-        } else {
-            (Icon::Play, "Play")
-        };
-        if button(ui, tokens, icon, label, true, false).clicked() {
-            actions.push((player.play, json!({})));
-        }
-        ui.label(format!(
-            "{} / {}",
-            clock(player.position),
-            clock(player.duration)
-        ));
-        let reserved = 72.0 + 90.0;
-        let width = (ui.available_width() - reserved).max(60.0);
-        if let Some(to) = seek(ui, tokens, key, width, player.position, player.duration) {
-            actions.push((player.seek, json!({"to": to})));
-        }
-        volume(
-            ui,
-            tokens,
-            player.volume,
-            player.muted,
-            player.mute,
-            player.volume_command,
-            actions,
-        );
-    });
+    egui::Frame::new()
+        .fill(tokens.panel)
+        .stroke(egui::Stroke::new(1.0, tokens.border))
+        .corner_radius(tokens.corner_radius)
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let (icon, label) = if player.playing {
+                    (Icon::Pause, "Pause")
+                } else {
+                    (Icon::Play, "Play")
+                };
+                if button(ui, tokens, icon, label, true, player.playing).clicked() {
+                    actions.push((player.play, json!({})));
+                }
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} / {}",
+                        clock(player.position),
+                        clock(player.duration)
+                    ))
+                    .size(16.0)
+                    .monospace(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Laid out right to left: the bar first, then the speaker.
+                    let shown = if player.muted { 0.0 } else { player.volume };
+                    if let Some(change) = bar(
+                        ui,
+                        tokens,
+                        96.0,
+                        shown / 100.0,
+                        true,
+                        "Volume",
+                        &format!("{:.0}%", player.volume),
+                    ) {
+                        actions.push((
+                            player.volume_command,
+                            json!({"value": change.fraction * 100.0}),
+                        ));
+                    }
+                    let (icon, label) = if player.muted {
+                        (Icon::Muted, "Unmute")
+                    } else {
+                        (Icon::Volume, "Mute")
+                    };
+                    if button(ui, tokens, icon, label, true, player.muted).clicked() {
+                        actions.push((player.mute, json!({"on": !player.muted})));
+                    }
+                });
+            });
+            ui.add_space(4.0);
+            let width = ui.available_width();
+            if let Some(to) = seek(ui, tokens, key, width, player.position, player.duration) {
+                actions.push((player.seek, json!({"to": to})));
+            }
+        });
+    ui.add_space(4.0);
 }
