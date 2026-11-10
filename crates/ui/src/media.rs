@@ -1468,13 +1468,6 @@ pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
     if !started {
         return;
     }
-    let title = s
-        .media
-        .info
-        .as_ref()
-        .and_then(|info| info.tags.title.as_deref())
-        .or_else(|| s.media.queue.current().and_then(|uri| uri.file_name()))
-        .unwrap_or("Audio");
     let mut actions: Vec<(&'static str, Value)> = Vec::new();
     let on = |command| s.command_enabled(command);
     if button(ui, tokens, Icon::Prev, "Previous", on("media.prev"), false).clicked() {
@@ -1526,22 +1519,6 @@ pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
                 }
             });
         });
-    ui.add_sized(
-        [180.0, ui.spacing().interact_size.y],
-        egui::Label::new(tokens.muted(format!(
-            "{}: {title}",
-            if s.media.playing { "Playing" } else { "Paused" }
-        )))
-        .truncate(),
-    );
-    let stop = if s.media.is_video() {
-        "Stop video"
-    } else {
-        "Stop audio"
-    };
-    if ui.small_button(stop).clicked() {
-        actions.push(("media.stop", Value::Null));
-    }
     for (command, params) in actions {
         s.dispatch_or_notice(command, &params);
     }
@@ -2032,7 +2009,7 @@ mod tests {
     }
 
     #[test]
-    fn background_indicator_can_stop_playback() {
+    fn status_bar_pause_stops_playback() {
         let mut s = Session::new().expect("session");
         s.media
             .queue
@@ -2047,7 +2024,7 @@ mod tests {
             },
             s,
         );
-        h.get_by_label("Stop audio").click();
+        h.get_by_label("Pause").click();
         h.run();
         assert!(!h.state().media.playing);
         assert_eq!(

@@ -481,7 +481,6 @@ impl eframe::App for App {
                     }
                 }
                 fm_ui::jobs::indicator(ui, &self.session, &tokens);
-                fm_ui::media::indicator(ui, &mut self.session, &tokens);
                 ui.label(tokens.muted(format!("{count} items")));
                 if let Some(space) = space {
                     ui.label(tokens.muted(space));
@@ -507,6 +506,7 @@ impl eframe::App for App {
                         self.session
                             .dispatch_or_notice("view.hidden.toggle", &fm_engine::Params::Null);
                     }
+                    ui.horizontal(|ui| fm_ui::media::indicator(ui, &mut self.session, &tokens));
                 });
             });
         });
