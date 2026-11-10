@@ -1463,7 +1463,9 @@ fn video(
 }
 
 pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
-    if !s.media.playing {
+    use crate::media_icons::{Icon, button};
+    let started = s.media.playing || (s.media.position > 0.0 && s.media.queue.current().is_some());
+    if !started {
         return;
     }
     let title = s
@@ -1473,9 +1475,59 @@ pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
         .and_then(|info| info.tags.title.as_deref())
         .or_else(|| s.media.queue.current().and_then(|uri| uri.file_name()))
         .unwrap_or("Audio");
+    let mut actions: Vec<(&'static str, Value)> = Vec::new();
+    let on = |command| s.command_enabled(command);
+    if button(ui, tokens, Icon::Prev, "Previous", on("media.prev"), false).clicked() {
+        actions.push(("media.prev", Value::Null));
+    }
+    let (icon, label) = if s.media.playing {
+        (Icon::Pause, "Pause")
+    } else {
+        (Icon::Play, "Play")
+    };
+    if button(ui, tokens, icon, label, on("media.toggle"), false).clicked() {
+        actions.push(("media.toggle", Value::Null));
+    }
+    if button(ui, tokens, Icon::Next, "Next", on("media.next"), false).clicked() {
+        actions.push(("media.next", Value::Null));
+    }
+    let muted = s.media.muted;
+    let (icon, label) = if muted {
+        (Icon::Muted, "Volume (muted)")
+    } else {
+        (Icon::Volume, "Volume")
+    };
+    let speaker = button(ui, tokens, icon, label, true, muted);
+    egui::Popup::from_toggle_button_response(&speaker)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            let mut volume = if muted { 0.0 } else { s.media.volume };
+            ui.set_width(28.0);
+            let name = ui.label(format!("{:.0}%", s.media.volume));
+            let slider = ui
+                .add(
+                    egui::Slider::new(&mut volume, 0.0..=100.0)
+                        .vertical()
+                        .show_value(false),
+                )
+                .labelled_by(name.id);
+            if slider.changed() {
+                actions.push(("media.volume", json!({"value": volume})));
+            }
+            if ui
+                .small_button(if muted { "Unmute" } else { "Mute" })
+                .clicked()
+            {
+                actions.push(("media.mute", json!({"on": !muted})));
+            }
+        });
     ui.add_sized(
         [180.0, ui.spacing().interact_size.y],
-        egui::Label::new(tokens.muted(format!("Playing: {title}"))).truncate(),
+        egui::Label::new(tokens.muted(format!(
+            "{}: {title}",
+            if s.media.playing { "Playing" } else { "Paused" }
+        )))
+        .truncate(),
     );
     let stop = if s.media.is_video() {
         "Stop video"
@@ -1483,7 +1535,10 @@ pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
         "Stop audio"
     };
     if ui.small_button(stop).clicked() {
-        s.dispatch_or_notice("media.stop", &Value::Null);
+        actions.push(("media.stop", Value::Null));
+    }
+    for (command, params) in actions {
+        s.dispatch_or_notice(command, &params);
     }
 }
 

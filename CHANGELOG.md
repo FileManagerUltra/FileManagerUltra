@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- While Media is playing (or paused mid-item), the status bar shows Previous, Play/Pause and Next buttons and a speaker that pops out a vertical volume slider.
 - Media playlist rows with a remembered position show a small half-filled dot in the gutter ("Resumes at 12:34" on hover), and finished books show a check mark.
 - Media remembers where the current item stopped when you close the app: after reopening, the player shows that position and length, and Play continues from there.
 - Audiobooks in Media: `.m4b` files, files tagged "Audiobook", and folders or files you mark ("Treat as audiobook" in the right-click menu) get Back/Forward skip buttons (15 s / 30 s, adjustable in Preferences), previous/next chapter, a chapter list, bookmarks, and a seek bar and progress percentage that span the whole book, even across many files. Playing a book or video again continues where you stopped (rewound a few seconds); a book counts as finished near its end and then starts over. Mark books finished or unfinished from the menu, and clear everything remembered from Preferences.
