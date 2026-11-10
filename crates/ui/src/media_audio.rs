@@ -44,6 +44,8 @@ pub(crate) fn equalizer_window(ui: &Ui, s: &Session, actions: &mut Actions) {
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ui.ctx().content_rect().center())
         .show(ui.ctx(), |ui| equalizer(ui, s, actions));
     ui.data_mut(|d| d.insert_temp(id, open));
 }
@@ -51,41 +53,61 @@ pub(crate) fn equalizer_window(ui: &Ui, s: &Session, actions: &mut Actions) {
 fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
     let eq = s.media.gain_eq();
     {
-        let mut enabled = eq.enabled;
-        if ui.checkbox(&mut enabled, "Enabled").changed() {
-            actions.push(("media.eq", json!({"enabled": enabled})));
-        }
+        ui.add_space(4.0);
         let label = s
             .media
             .extras
             .eq_preset
             .clone()
             .unwrap_or_else(|| "Custom".into());
-        egui::ComboBox::from_id_salt("eq_preset")
-            .selected_text(label)
-            .show_ui(ui, |ui| {
-                for (name, _) in PRESETS {
-                    let selected = s.media.extras.eq_preset.as_deref() == Some(*name);
-                    if ui.selectable_label(selected, *name).clicked() {
-                        actions.push(("media.eq", json!({"preset": name})));
-                    }
-                }
-                for preset in &s.media.extras.user_presets {
-                    ui.horizontal(|ui| {
-                        let selected = s.media.extras.eq_preset.as_deref() == Some(&preset.name);
-                        if ui.selectable_label(selected, &preset.name).clicked() {
-                            actions.push(("media.eq", json!({"preset": preset.name})));
-                        }
-                        if ui.small_button("Delete").clicked() {
-                            actions.push(("media.eq", json!({"delete": preset.name})));
-                        }
-                    });
-                }
-            });
         ui.horizontal(|ui| {
+            let mut enabled = eq.enabled;
+            if ui.toggle_value(&mut enabled, "Enabled").changed() {
+                actions.push(("media.eq", json!({"enabled": enabled})));
+            }
+            ui.add_space(8.0);
+            ui.weak("Preset");
+            egui::ComboBox::from_id_salt("eq_preset")
+                .selected_text(label)
+                .show_ui(ui, |ui| {
+                    for (name, _) in PRESETS {
+                        let selected = s.media.extras.eq_preset.as_deref() == Some(*name);
+                        if ui.selectable_label(selected, *name).clicked() {
+                            actions.push(("media.eq", json!({"preset": name})));
+                        }
+                    }
+                    for preset in &s.media.extras.user_presets {
+                        ui.horizontal(|ui| {
+                            let selected =
+                                s.media.extras.eq_preset.as_deref() == Some(&preset.name);
+                            if ui.selectable_label(selected, &preset.name).clicked() {
+                                actions.push(("media.eq", json!({"preset": preset.name})));
+                            }
+                            if ui.small_button("Delete").clicked() {
+                                actions.push(("media.eq", json!({"delete": preset.name})));
+                            }
+                        });
+                    }
+                });
+        });
+        ui.add_space(6.0);
+        ui.separator();
+        ui.add_space(6.0);
+        let accent = ui.visuals().selection.bg_fill;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            ui.vertical(|ui| {
+                ui.set_height(150.0);
+                ui.label(format!("+{MAX_BAND_DB:.0} dB"));
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    ui.label(format!("-{MAX_BAND_DB:.0} dB"));
+                });
+            });
             for (band, hz) in BAND_HZ.iter().enumerate() {
-                ui.vertical(|ui| {
+                ui.vertical_centered(|ui| {
                     let mut gain = eq.bands[band];
+                    ui.spacing_mut().slider_width = 150.0;
+                    ui.visuals_mut().selection.bg_fill = accent;
                     let response = ui.add(
                         egui::Slider::new(&mut gain, -MAX_BAND_DB..=MAX_BAND_DB)
                             .vertical()
@@ -98,9 +120,12 @@ fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
                         actions.push(("media.eq", json!({"bands": bands})));
                     }
                     ui.label(band_label(*hz));
+                    ui.small(format!("{gain:+.1}"));
                 });
             }
         });
+        ui.add_space(6.0);
+        ui.separator();
         let name_id = ui.make_persistent_id(egui::IdSalt::new("media-eq-save-name"));
         let mut name: String = ui.data_mut(|d| d.get_temp(name_id).unwrap_or_default());
         ui.horizontal(|ui| {
