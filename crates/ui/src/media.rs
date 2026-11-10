@@ -1501,25 +1501,30 @@ pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
     egui::Popup::from_toggle_button_response(&speaker)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            let mut volume = if muted { 0.0 } else { s.media.volume };
-            ui.set_width(28.0);
-            let name = ui.label(format!("{:.0}%", s.media.volume));
-            let slider = ui
-                .add(
-                    egui::Slider::new(&mut volume, 0.0..=100.0)
-                        .vertical()
-                        .show_value(false),
-                )
-                .labelled_by(name.id);
-            if slider.changed() {
-                actions.push(("media.volume", json!({"value": volume})));
-            }
-            if ui
-                .small_button(if muted { "Unmute" } else { "Mute" })
-                .clicked()
-            {
-                actions.push(("media.mute", json!({"on": !muted})));
-            }
+            let shown = if muted { 0.0 } else { s.media.volume };
+            ui.vertical_centered(|ui| {
+                ui.small(format!("{:.0}%", s.media.volume));
+                const VOLUME: crate::media_audio::Scale = crate::media_audio::Scale {
+                    min: 0.0,
+                    max: 100.0,
+                    origin: 0.0,
+                    step: 1.0,
+                    name: "Volume",
+                    unit: "%",
+                };
+                if let Some(value) = crate::media_audio::vertical_slider(ui, shown, &VOLUME, 110.0)
+                {
+                    actions.push(("media.volume", json!({"value": value})));
+                }
+                let (icon, label) = if muted {
+                    (Icon::Muted, "Unmute")
+                } else {
+                    (Icon::Volume, "Mute")
+                };
+                if button(ui, tokens, icon, label, true, muted).clicked() {
+                    actions.push(("media.mute", json!({"on": !muted})));
+                }
+            });
         });
     ui.add_sized(
         [180.0, ui.spacing().interact_size.y],

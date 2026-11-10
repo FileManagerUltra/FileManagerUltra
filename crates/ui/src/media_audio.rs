@@ -110,9 +110,7 @@ fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
                     |ui| {
                         let band_name = ui.label(band_label(*hz));
                         let gain = eq.bands[band];
-                        if let Some(new) =
-                            band_slider(ui, gain).map(|g| g.clamp(-MAX_BAND_DB, MAX_BAND_DB))
-                        {
+                        if let Some(new) = vertical_slider(ui, gain, &BAND, BAND_HEIGHT) {
                             let mut bands = eq.bands;
                             bands[band] = new;
                             actions.push(("media.eq", json!({"bands": bands})));
@@ -205,14 +203,34 @@ fn sleep_menu(ui: &mut Ui, s: &Session, actions: &mut Actions) {
 
 const BAND_HEIGHT: f32 = 130.0;
 
-/// A vertical band slider: a track with a zero line, filled from zero to the knob.
-fn band_slider(ui: &mut Ui, gain: f32) -> Option<f32> {
+/// Range, rest point (where the fill starts), step and names of a vertical slider.
+pub(crate) struct Scale {
+    pub min: f32,
+    pub max: f32,
+    pub origin: f32,
+    pub step: f32,
+    pub name: &'static str,
+    pub unit: &'static str,
+}
+
+const BAND: Scale = Scale {
+    min: -MAX_BAND_DB,
+    max: MAX_BAND_DB,
+    origin: 0.0,
+    step: 0.5,
+    name: "Equalizer band",
+    unit: " dB",
+};
+
+/// A vertical slider: a track with a rest line, filled from the rest point to the knob.
+pub(crate) fn vertical_slider(ui: &mut Ui, value: f32, scale: &Scale, height: f32) -> Option<f32> {
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(24.0, BAND_HEIGHT), egui::Sense::click_and_drag());
+        ui.allocate_exact_size(egui::vec2(24.0, height), egui::Sense::click_and_drag());
     let visuals = ui.visuals().clone();
     let track = egui::Rect::from_center_size(rect.center(), egui::vec2(4.0, rect.height()));
-    let span = track.height() - 8.0;
-    let y_of = |g: f32| track.center().y - g / MAX_BAND_DB * span / 2.0;
+    let span = track.height() - 12.0;
+    let range = scale.max - scale.min;
+    let y_of = |v: f32| track.max.y - 6.0 - (v - scale.min) / range * span;
     let painter = ui.painter();
     painter.rect_filled(
         track,
@@ -226,13 +244,13 @@ fn band_slider(ui: &mut Ui, gain: f32) -> Option<f32> {
     );
     painter.hline(
         rect.x_range(),
-        y_of(0.0),
+        y_of(scale.origin),
         egui::Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color),
     );
-    let knob = egui::pos2(track.center().x, y_of(gain));
+    let knob = egui::pos2(track.center().x, y_of(value));
     painter.rect_filled(
         egui::Rect::from_two_pos(
-            egui::pos2(track.min.x, y_of(0.0)),
+            egui::pos2(track.min.x, y_of(scale.origin)),
             egui::pos2(track.max.x, knob.y),
         ),
         2.0,
@@ -244,15 +262,18 @@ fn band_slider(ui: &mut Ui, gain: f32) -> Option<f32> {
         if big { 7.0 } else { 6.0 },
         visuals.selection.stroke.color,
     );
-    response.widget_info(|| egui::WidgetInfo::slider(true, f64::from(gain), "Equalizer band"));
+    response.widget_info(|| egui::WidgetInfo::slider(true, f64::from(value), scale.name));
     let changed = if response.dragged() || response.clicked() {
         response.interact_pointer_pos().map(|pos| {
-            let g = (track.center().y - pos.y) / (span / 2.0) * MAX_BAND_DB;
-            (g / 0.5).round() * 0.5
+            let v = scale.min + (track.max.y - 6.0 - pos.y) / span * range;
+            ((v / scale.step).round() * scale.step).clamp(scale.min, scale.max)
         })
     } else {
         None
     };
-    response.on_hover_text(format!("{gain:+.1} dB"));
+    response.on_hover_text(match scale.unit {
+        " dB" => format!("{value:+.1} dB"),
+        unit => format!("{value:.0}{unit}"),
+    });
     changed
 }
