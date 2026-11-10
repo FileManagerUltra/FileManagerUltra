@@ -144,35 +144,51 @@ pub(crate) fn controls(ui: &mut Ui, s: &Session, tokens: &Tokens, actions: &mut 
     });
 }
 
-/// Context-menu entries that mark a row's book finished or as an audiobook.
-pub(crate) fn menu_items(ui: &mut Ui, index: usize, actions: &mut Actions) {
-    ui.separator();
-    for (label, tip, command, on) in [
-        (
-            "Mark as finished",
-            "Next play starts from the top",
-            "media.finished",
-            true,
-        ),
-        (
-            "Mark as unfinished",
-            "Keep the saved position",
-            "media.finished",
-            false,
-        ),
-        (
-            "Treat as audiobook",
-            "Adds chapters, skip, bookmarks and resume",
-            "media.book",
-            true,
-        ),
-        (
+/// Context-menu entries for the row's book; only what applies is shown.
+pub(crate) fn menu_items(
+    ui: &mut Ui,
+    menu: fm_engine::media_book::BookMenu,
+    index: usize,
+    actions: &mut Actions,
+) {
+    let mut entries: Vec<(&str, &str, &'static str, bool)> = Vec::new();
+    if menu.is_book {
+        if menu.finished {
+            entries.push((
+                "Mark as unfinished",
+                "Keep the saved position",
+                "media.finished",
+                false,
+            ));
+        } else {
+            entries.push((
+                "Mark as finished",
+                "Next play starts from the top",
+                "media.finished",
+                true,
+            ));
+        }
+    }
+    if menu.marked {
+        entries.push((
             "Treat as music",
             "Plays without remembering a position",
             "media.book",
             false,
-        ),
-    ] {
+        ));
+    } else if !menu.is_book {
+        entries.push((
+            "Treat as audiobook",
+            "Adds chapters, skip, bookmarks and resume",
+            "media.book",
+            true,
+        ));
+    }
+    if entries.is_empty() {
+        return;
+    }
+    ui.separator();
+    for (label, tip, command, on) in entries {
         if ui.button(label).on_hover_text(tip).clicked() {
             actions.push((command, json!({"index": index, "on": on})));
             ui.close();

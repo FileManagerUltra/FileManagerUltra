@@ -194,6 +194,15 @@ pub struct BookRef {
     pub video: bool,
 }
 
+/// Which audiobook entries a row's context menu shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BookMenu {
+    pub is_book: bool,
+    /// The user marked it as an audiobook (so it can be unmarked).
+    pub marked: bool,
+    pub finished: bool,
+}
+
 /// A playlist row's remembered state.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RowMark {
@@ -281,6 +290,30 @@ impl MediaSession {
             folder: None,
             video,
         })
+    }
+
+    /// What the right-click menu of a row can offer.
+    pub fn book_menu(&self, index: usize) -> BookMenu {
+        let book = self.book_ref(index);
+        let key = book.as_ref().map(|b| b.key.clone()).or_else(|| {
+            let grouped = self
+                .queue
+                .group_of(index)
+                .and_then(|g| g.dir.map(str::to_string));
+            grouped.or_else(|| {
+                self.queue
+                    .items()
+                    .get(index)
+                    .map(|u| u.path_str().to_string())
+            })
+        });
+        BookMenu {
+            is_book: book.is_some(),
+            marked: key.as_deref().is_some_and(|k| self.is_marked(k)),
+            finished: book
+                .as_ref()
+                .is_some_and(|b| self.state_of(&b.key).is_some_and(|s| s.finished)),
+        }
     }
 
     pub fn state_of(&self, key: &str) -> Option<&ItemState> {

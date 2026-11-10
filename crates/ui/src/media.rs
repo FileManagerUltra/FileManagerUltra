@@ -494,6 +494,7 @@ fn playlist(
                                 digits,
                                 can_continue,
                                 current,
+                                book: media.book_menu(group.start),
                             };
                             group_header(
                                 ui,
@@ -697,11 +698,17 @@ fn playlist(
                         actions.push(("media.play", json!({"index": index})));
                         ui.close();
                     }
-                    if ui.button("Play from start").clicked() {
+                    let book = media.book_menu(index);
+                    if book.is_book
+                        && ui
+                            .button("Play from start")
+                            .on_hover_text("Ignore the remembered position")
+                            .clicked()
+                    {
                         actions.push(("media.play", json!({"index": index, "from_start": true})));
                         ui.close();
                     }
-                    crate::media_book::menu_items(ui, index, actions);
+                    crate::media_book::menu_items(ui, book, index, actions);
                     let many = multi.len() > 1 && multi.contains(&index);
                     let label = if many {
                         format!("Remove {} items", multi.len())
@@ -906,6 +913,7 @@ struct HeaderView {
     collapsed: bool,
     can_continue: bool,
     current: Option<usize>,
+    book: fm_engine::media_book::BookMenu,
 }
 
 /// Where a Files-pane drag lands in the queue: `media.drop` placement params, or null when
@@ -932,6 +940,7 @@ fn group_header(
         collapsed,
         can_continue,
         current,
+        book,
     } = view;
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), tokens.row_height),
@@ -1177,7 +1186,7 @@ fn group_header(
             ));
             ui.close();
         }
-        crate::media_book::menu_items(ui, group.start, actions);
+        crate::media_book::menu_items(ui, book, group.start, actions);
         if ui.button("Rename…").clicked() {
             *renaming = Some((group.id, group.name.clone(), false));
             ui.close();

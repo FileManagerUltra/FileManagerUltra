@@ -587,6 +587,27 @@ mod tests {
     }
 
     #[test]
+    fn the_context_menu_offers_only_what_applies() {
+        let mut s = Session::new().expect("session");
+        s.media.queue.enqueue(uri("/m/song.mp3")).expect("enqueue");
+        let menu = s.media.book_menu(0);
+        assert!(!menu.is_book && !menu.marked && !menu.finished);
+        s.dispatch("media.book", &json!({"index": 0, "on": true}))
+            .expect("mark");
+        let menu = s.media.book_menu(0);
+        assert!(menu.is_book && menu.marked && !menu.finished);
+        s.dispatch("media.finished", &json!({"index": 0, "on": true}))
+            .expect("finish");
+        assert!(s.media.book_menu(0).finished);
+        s.media.queue.enqueue(uri("/m/story.m4b")).expect("enqueue");
+        let menu = s.media.book_menu(1);
+        assert!(
+            menu.is_book && !menu.marked,
+            "nothing to unmark on a real audiobook"
+        );
+    }
+
+    #[test]
     fn rows_show_resume_and_finished_marks() {
         use crate::media_book::RowMark;
         let mut s = folder_book(1);
