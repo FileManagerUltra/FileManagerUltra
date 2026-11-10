@@ -553,6 +553,40 @@ mod tests {
     }
 
     #[test]
+    fn mp3_folders_are_books_under_an_audiobook_shelf_or_with_chapter_names() {
+        let mut s = Session::new().expect("session");
+        for name in [
+            "/Audio Books/Ghost/01 Intro.mp3",
+            "/Audio Books/Ghost/02 Next.mp3",
+        ] {
+            s.media.queue.enqueue(uri(name)).expect("enqueue");
+        }
+        s.media
+            .queue
+            .group_range(0, 2, "Ghost", Some("/Audio Books/Ghost".into()))
+            .expect("group");
+        assert!(s.media.book_ref(0).is_some());
+        for name in [
+            "/Music/Album/Chapter 1.mp3",
+            "/Music/Album/Chapter 2.mp3",
+            "/Music/Mix/a.mp3",
+            "/Music/Mix/b.mp3",
+        ] {
+            s.media.queue.enqueue(uri(name)).expect("enqueue");
+        }
+        s.media
+            .queue
+            .group_range(2, 2, "Album", Some("/Music/Album".into()))
+            .expect("group");
+        s.media
+            .queue
+            .group_range(4, 2, "Mix", Some("/Music/Mix".into()))
+            .expect("group");
+        assert!(s.media.book_ref(2).is_some(), "chapter names");
+        assert!(s.media.book_ref(4).is_none(), "plain music");
+    }
+
+    #[test]
     fn rows_show_resume_and_finished_marks() {
         use crate::media_book::RowMark;
         let mut s = folder_book(1);

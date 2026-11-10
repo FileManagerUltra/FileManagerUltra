@@ -108,6 +108,45 @@ fn is_m4b(uri: &VfsUri) -> bool {
         .is_some_and(|name| name.to_ascii_lowercase().ends_with(".m4b"))
 }
 
+/// Letters only, lowercase: "Audio Books" and "audio_books" both become "audiobooks".
+fn squash(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphabetic())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// A folder of several files is treated as a book when it sits under a folder named for
+/// audiobooks, or when most of its files are named like chapters ("Chapter 03", "Part 2").
+fn looks_like_book(dir: &str, members: &[VfsUri]) -> bool {
+    const SHELF: [&str; 3] = ["audiobook", "hoerbuch", "hörbuch"];
+    if dir
+        .split('/')
+        .any(|part| SHELF.iter().any(|word| squash(part).contains(word)))
+    {
+        return true;
+    }
+    const CHAPTER: [&str; 7] = [
+        "chapter",
+        "part",
+        "disc",
+        "disk",
+        "hoofdstuk",
+        "kapitel",
+        "chapitre",
+    ];
+    let named = members
+        .iter()
+        .filter(|uri| {
+            uri.file_name().is_some_and(|name| {
+                let lower = name.to_lowercase();
+                CHAPTER.iter().any(|word| lower.contains(word))
+            })
+        })
+        .count();
+    members.len() >= 2 && named * 2 >= members.len()
+}
+
 fn genre_is_audiobook(info: &AudioInfo) -> bool {
     info.tags
         .genre
@@ -220,7 +259,10 @@ impl MediaSession {
             let range = group.start..group.start + group.len;
             let members = self.queue.items().get(range.clone())?;
             if !video
-                && (genre || self.is_marked(&dir) || members.iter().any(is_m4b))
+                && (genre
+                    || self.is_marked(&dir)
+                    || members.iter().any(is_m4b)
+                    || looks_like_book(&dir, members))
                 && range.len() <= MAX_BOOK_FILES
             {
                 return Some(BookRef {
