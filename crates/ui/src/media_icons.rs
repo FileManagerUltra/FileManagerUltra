@@ -377,3 +377,33 @@ pub(crate) fn bar(
     response.on_hover_text(format!("{label} {value_text}"));
     change
 }
+
+/// Gutter marker of a row with a remembered state: a half-filled dot where playback would
+/// resume, a check mark once the book is finished.
+pub(crate) fn paint_row_mark(
+    painter: &egui::Painter,
+    c: Pos2,
+    mark: fm_engine::media_book::RowMark,
+    color: Color32,
+) {
+    use fm_engine::media_book::RowMark;
+    match mark {
+        RowMark::Resume(_) => {
+            painter.circle_stroke(c, 4.0, Stroke::new(1.3, color));
+            let half: Vec<Pos2> = (0..=10)
+                .map(|step| {
+                    let angle =
+                        std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * step as f32 / 10.0;
+                    c + vec2(angle.cos(), angle.sin()) * 4.0
+                })
+                .collect();
+            painter.add(Shape::convex_polygon(half, color, Stroke::NONE));
+        }
+        RowMark::Finished => {
+            let stroke = Stroke::new(1.6, color);
+            let knee = c + vec2(-1.0, 3.0);
+            painter.line_segment([c + vec2(-4.0, 0.0), knee], stroke);
+            painter.line_segment([knee, c + vec2(4.0, -3.5)], stroke);
+        }
+    }
+}

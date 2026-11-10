@@ -594,6 +594,30 @@ fn playlist(
                         egui::Stroke::NONE,
                     ));
                 }
+                if !is_current && let Some(mark) = s.media.row_mark(index) {
+                    let x = rect.left() + 8.0 + if grouped { 18.0 } else { 0.0 } + 11.0;
+                    let tip = match mark {
+                        fm_engine::media_book::RowMark::Resume(at) => {
+                            format!("Resumes at {}", clock(at))
+                        }
+                        fm_engine::media_book::RowMark::Finished => "Finished".to_string(),
+                    };
+                    crate::media_icons::paint_row_mark(
+                        painter,
+                        egui::pos2(x, mid),
+                        mark,
+                        tokens.accent_text,
+                    );
+                    ui.interact(
+                        egui::Rect::from_center_size(
+                            egui::pos2(x, mid),
+                            egui::vec2(12.0, rect.height()),
+                        ),
+                        Id::NULL.with(("media-row-mark", index)),
+                        egui::Sense::hover(),
+                    )
+                    .on_hover_text(tip);
+                }
                 // Folder rows are indented under their header and numbered within the folder.
                 let (indent, number) = match found
                     .iter()

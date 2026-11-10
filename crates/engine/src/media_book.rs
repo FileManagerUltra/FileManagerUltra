@@ -155,6 +155,14 @@ pub struct BookRef {
     pub video: bool,
 }
 
+/// A playlist row's remembered state.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RowMark {
+    /// Playing the row resumes at this many seconds.
+    Resume(f64),
+    Finished,
+}
+
 /// Everything the pane shows about the current book, in book seconds.
 #[derive(Clone, Debug)]
 pub struct BookView {
@@ -362,35 +370,42 @@ impl MediaSession {
 
     /// Position to continue a book or video queue row from, rewound a little.
     pub fn remembered_position(&self, index: usize) -> Option<f64> {
+        match self.row_mark(index)? {
+            RowMark::Resume(position) => Some((position - REWIND_SECS).max(0.0)),
+            RowMark::Finished => None,
+        }
+    }
+
+    /// What the playlist shows for a row: where it would resume, or that its book is finished.
+    pub fn row_mark(&self, index: usize) -> Option<RowMark> {
         let uri = self.queue.items().get(index)?;
         self.book_ref(index)?;
         let grouped = self
             .queue
             .group_of(index)
             .and_then(|g| g.dir.map(str::to_string));
-        let position = if let Some(dir) = grouped {
+        if let Some(dir) = grouped {
             if self.state_of(&dir).is_some_and(|s| s.finished) {
-                return None;
+                return Some(RowMark::Finished);
             }
             let name = uri.file_name()?;
-            self.resume
+            let point = self
+                .resume
                 .iter()
-                .find(|p| p.dir == dir && p.file == name)?
-                .position
-        } else {
-            let state = self.state_of(uri.path_str())?;
-            if state.finished {
-                return None;
-            }
-            if let Some((size, mtime)) = stamp_of(uri.path_str())
-                && (state.size, state.mtime) != (0, 0)
-                && (state.size, state.mtime) != (size, mtime)
-            {
-                return None;
-            }
-            state.position?
-        };
-        Some((position - REWIND_SECS).max(0.0))
+                .find(|p| p.dir == dir && p.file == name)?;
+            return Some(RowMark::Resume(point.position));
+        }
+        let state = self.state_of(uri.path_str())?;
+        if let Some((size, mtime)) = stamp_of(uri.path_str())
+            && (state.size, state.mtime) != (0, 0)
+            && (state.size, state.mtime) != (size, mtime)
+        {
+            return None;
+        }
+        if state.finished {
+            return Some(RowMark::Finished);
+        }
+        state.position.map(RowMark::Resume)
     }
 
     /// Remember the playing book or video, and notice when it has been played to its end.

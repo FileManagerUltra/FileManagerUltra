@@ -553,6 +553,21 @@ mod tests {
     }
 
     #[test]
+    fn rows_show_resume_and_finished_marks() {
+        use crate::media_book::RowMark;
+        let mut s = folder_book(1);
+        assert_eq!(s.media.row_mark(1), None);
+        s.media.position = 20.0;
+        s.media.note_book();
+        assert_eq!(s.media.row_mark(1), Some(RowMark::Resume(20.0)));
+        assert_eq!(s.media.row_mark(0), None);
+        s.dispatch("media.finished", &json!({"on": true}))
+            .expect("finished");
+        assert_eq!(s.media.row_mark(0), Some(RowMark::Finished));
+        assert_eq!(s.media.row_mark(2), Some(RowMark::Finished));
+    }
+
+    #[test]
     fn the_least_recently_played_item_is_dropped_past_the_cap() {
         let mut s = Session::new().expect("session");
         for n in 0..=MAX_ITEMS {
