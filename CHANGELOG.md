@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resuming an audiobook or track no longer flashes back to 0:00 (and no longer overwrites the remembered position), and an audiobook's clock now shows the time in the whole book, matching the seek bar.
 - Symbolic links that point to directories (such as `bin` -> `usr/bin`) now show in the folder tree.
 - Folders no longer get stuck on "Loading…" while a large copy or move is running.
 - Folders now show new items while a copy or move is still running, instead of only after it finishes.

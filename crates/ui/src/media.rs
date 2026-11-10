@@ -176,16 +176,22 @@ fn display(
                             ui.add(egui::Label::new(tokens.muted(line)).truncate());
                         }
                     }
+                    // A book shows its whole-book time so the clock agrees with the seek bar.
+                    let book = media
+                        .book_view()
+                        .and_then(|v| v.total.map(|t| (v.position, t)));
                     ui.horizontal(|ui| {
                         ui.label(
-                            egui::RichText::new(clock(media.position))
+                            egui::RichText::new(clock(book.map_or(media.position, |b| b.0)))
                                 .monospace()
                                 .size(22.0)
                                 .color(tokens.accent_text),
                         );
                         ui.label(tokens.muted(format!(
                             "/ {}",
-                            media.duration().map_or("--:--".into(), clock)
+                            book.map(|b| b.1)
+                                .or_else(|| media.duration())
+                                .map_or("--:--".into(), clock)
                         )));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             for (text, tip) in chips(s).into_iter().rev() {

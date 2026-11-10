@@ -153,10 +153,7 @@ impl MediaSession {
             .playable(uri)
             .and_then(|uri| uri.local_path())
             .ok_or_else(|| bad("media needs a local file"))?;
-        let player = AudioPlayer::start(path, self.gain.clone())?;
-        if self.position > 0.0 {
-            player.seek(self.position)?;
-        }
+        let player = AudioPlayer::start_at(path, self.gain.clone(), self.position)?;
         self.extras.item_changed();
         self.player = Some(player);
         self.playing = true;

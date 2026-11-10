@@ -52,11 +52,22 @@ enum Next {
 
 impl AudioPlayer {
     pub fn start(path: PathBuf, gain: Gain) -> Result<Self, FmError> {
+        Self::start_at(path, gain, 0.0)
+    }
+
+    /// Start playing at `position` seconds; the status reports it from the first poll, so
+    /// callers never see a jump back to zero while the first seek is processed.
+    pub fn start_at(path: PathBuf, gain: Gain, position: f64) -> Result<Self, FmError> {
+        if !position.is_finite() || position < 0.0 {
+            return Err(FmError::InvalidParams(
+                "start position must be finite and non-negative".into(),
+            ));
+        }
         let shared = Arc::new(Shared {
             status: Mutex::new(PlaybackStatus {
                 state: PlaybackState::Loading,
                 info: None,
-                position: 0.0,
+                position,
                 error: None,
                 token: 0,
             }),
@@ -64,6 +75,11 @@ impl AudioPlayer {
             paused: AtomicBool::new(false),
         });
         let (seeks, rx) = sync_channel(8);
+        if position > 0.0 {
+            seeks
+                .try_send(position)
+                .map_err(|e| crate::error(format!("Cannot request audio seek: {e}")))?;
+        }
         let (nexts, next_rx) = sync_channel(4);
         let sh = shared.clone();
         let worker_gain = gain.clone();
