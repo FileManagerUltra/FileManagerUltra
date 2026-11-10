@@ -1462,6 +1462,7 @@ fn video(
     }
 }
 
+/// Laid out for a right-to-left parent: the first widget added is the rightmost.
 pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
     use crate::media_icons::{Icon, button};
     let started = s.media.playing || (s.media.position > 0.0 && s.media.queue.current().is_some());
@@ -1470,20 +1471,6 @@ pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
     }
     let mut actions: Vec<(&'static str, Value)> = Vec::new();
     let on = |command| s.command_enabled(command);
-    if button(ui, tokens, Icon::Next, "Next", on("media.next"), false).clicked() {
-        actions.push(("media.next", Value::Null));
-    }
-    let (icon, label) = if s.media.playing {
-        (Icon::Pause, "Pause")
-    } else {
-        (Icon::Play, "Play")
-    };
-    if button(ui, tokens, icon, label, on("media.toggle"), false).clicked() {
-        actions.push(("media.toggle", Value::Null));
-    }
-    if button(ui, tokens, Icon::Prev, "Previous", on("media.prev"), false).clicked() {
-        actions.push(("media.prev", Value::Null));
-    }
     let muted = s.media.muted;
     let (icon, label) = if muted {
         (Icon::Muted, "Volume (muted)")
@@ -1519,6 +1506,20 @@ pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
                 }
             });
         });
+    if button(ui, tokens, Icon::Next, "Next", on("media.next"), false).clicked() {
+        actions.push(("media.next", Value::Null));
+    }
+    let (icon, label) = if s.media.playing {
+        (Icon::Pause, "Pause")
+    } else {
+        (Icon::Play, "Play")
+    };
+    if button(ui, tokens, icon, label, on("media.toggle"), false).clicked() {
+        actions.push(("media.toggle", Value::Null));
+    }
+    if button(ui, tokens, Icon::Prev, "Previous", on("media.prev"), false).clicked() {
+        actions.push(("media.prev", Value::Null));
+    }
     for (command, params) in actions {
         s.dispatch_or_notice(command, &params);
     }

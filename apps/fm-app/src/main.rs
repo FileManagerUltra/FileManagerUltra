@@ -506,7 +506,9 @@ impl eframe::App for App {
                         self.session
                             .dispatch_or_notice("view.hidden.toggle", &fm_engine::Params::Null);
                     }
-                    ui.horizontal(|ui| fm_ui::media::indicator(ui, &mut self.session, &tokens));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        fm_ui::media::indicator(ui, &mut self.session, &tokens)
+                    });
                 });
             });
         });
