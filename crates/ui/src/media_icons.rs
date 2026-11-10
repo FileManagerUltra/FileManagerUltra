@@ -41,12 +41,25 @@ pub(crate) fn button(
     enabled: bool,
     active: bool,
 ) -> Response {
+    sized_button(ui, tokens, icon, label, enabled, active, BUTTON)
+}
+
+/// `button` with a custom hit area, e.g. to fit inside a single text row.
+pub(crate) fn sized_button(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    icon: Icon,
+    label: &str,
+    enabled: bool,
+    active: bool,
+    size: egui::Vec2,
+) -> Response {
     let sense = if enabled {
         Sense::click()
     } else {
         Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(BUTTON, sense);
+    let (rect, response) = ui.allocate_exact_size(size, sense);
     response.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, label));
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();

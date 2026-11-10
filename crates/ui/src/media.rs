@@ -1464,7 +1464,11 @@ fn video(
 
 /// Laid out for a right-to-left parent: the first widget added is the rightmost.
 pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
-    use crate::media_icons::{Icon, button};
+    use crate::media_icons::{Icon, sized_button};
+    let size = egui::vec2(24.0, ui.spacing().interact_size.y);
+    let button = |ui: &mut Ui, tokens: &Tokens, icon, label: &str, enabled, active| {
+        sized_button(ui, tokens, icon, label, enabled, active, size)
+    };
     let started = s.media.playing || (s.media.position > 0.0 && s.media.queue.current().is_some());
     if !started {
         return;
