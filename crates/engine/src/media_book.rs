@@ -430,21 +430,6 @@ impl MediaSession {
         })
     }
 
-    /// Fraction read of the book made of queue rows `range` in folder `dir`, if known.
-    pub fn book_progress(&self, dir: &str, range: &Range<usize>) -> Option<f64> {
-        if self.state_of(dir).is_some_and(|s| s.finished) {
-            return Some(1.0);
-        }
-        let point = self.resume.iter().find(|p| p.dir == dir)?;
-        let members = self.queue.items().get(range.clone())?;
-        let file = members
-            .iter()
-            .position(|uri| uri.file_name() == Some(point.file.as_str()))?;
-        let timeline = self.book_timeline(range)?;
-        let position = timeline.position(file, point.position)?;
-        Some(fm_media::progress(position, timeline.total()))
-    }
-
     /// Position to continue a book or video queue row from, rewound a little.
     pub fn remembered_position(&self, index: usize) -> Option<f64> {
         match self.row_mark(index)? {

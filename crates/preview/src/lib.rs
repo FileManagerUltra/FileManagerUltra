@@ -230,15 +230,6 @@ impl VideoInfo {
         let track = self.tracks.audio.get(self.tracks.selected_audio)?;
         Some((track.format?, track.delay))
     }
-
-    /// First decodable audio stream, the one chosen when a video starts.
-    pub fn default_audio_track(&self) -> usize {
-        self.tracks
-            .audio
-            .iter()
-            .position(|track| track.format.is_some())
-            .unwrap_or(0)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
