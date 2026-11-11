@@ -57,7 +57,7 @@ jobs:
           cargo xtask layers
           cargo xtask brand-check
       - name: Tests
-        run: cargo test --workspace --locked --exclude fm-ui
+        run: cargo test --workspace --locked --no-fail-fast --exclude fm-ui
       - name: UI tests (without pixel snapshots)
         run: cargo test -p fm-ui --locked --lib --test hostile --test dialog_interaction
       # Baselines are rendered on Linux; a different GPU/font rasterizer may differ by a
