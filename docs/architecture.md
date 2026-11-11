@@ -599,7 +599,7 @@ Winit/egui have no Wayland-native **window-wide** file drop in some setups; exte
 
 `fm-engine::ffmpeg_install` can download ffmpeg/ffprobe on Windows (command
 `tools.ffmpeg.install`, Preferences > Media). Lookup order in `fm-preview` is
-`$PATH`/known locations first, then `<data dir>/tools` (`set_managed_tools_dir`),
+`$PATH`/known locations first, then `<local data dir>/tools (`%LOCALAPPDATA%` on Windows)` (`set_managed_tools_dir`),
 so a system install always wins. Rules: a compiled-in `Pin` (https URL, exact
 size, SHA-256 cross-checked against the publisher); https-only with a redirect
 policy and size cap; the hash is verified before anything is unpacked; only the

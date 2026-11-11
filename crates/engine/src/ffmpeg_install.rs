@@ -53,10 +53,10 @@ pub fn pin() -> Option<&'static Pin> {
     cfg!(windows).then_some(&WINDOWS)
 }
 
-/// Where downloaded tools live: `<data dir>/tools`.
+/// Where downloaded tools live: `<local data dir>/tools` (never the roaming profile; the files are large).
 pub fn tools_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", fm_brand::APP_SLUG)
-        .map(|dirs| dirs.data_dir().join("tools"))
+        .map(|dirs| dirs.data_local_dir().join("tools"))
 }
 
 #[derive(Serialize, Deserialize)]
