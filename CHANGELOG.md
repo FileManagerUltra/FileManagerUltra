@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Adding items to the Media playlist no longer starts playback on its own. Preferences > Media has "Start playing when items are added" (off by default) to bring it back; it never interrupts what is already playing. Opening a folder in Media still plays it.
+- When a video can't play because ffmpeg is missing, a dialog offers to download it, or explains how to install it yourself with a link to the download site.
 - The Windows installer no longer includes ffmpeg (about 90 MB smaller); download it from Preferences > Media when you want video.
 - Removed the Media menu from the menu bar; its commands remain in the Media pane, its context menus and keyboard shortcuts. Media settings (gapless, background playback, audiobook skips) now have their own topic in Preferences.
 

@@ -556,6 +556,12 @@ impl Session {
                 "{name}: {}",
                 status.error.as_deref().unwrap_or("media playback failed")
             );
+            if self.media.is_video()
+                && (fm_preview::video::find_tool("ffmpeg").is_none()
+                    || fm_preview::video::find_tool("ffprobe").is_none())
+            {
+                self.ffmpeg.prompt = true;
+            }
             self.messages.push(&error);
             self.media.error = Some(error);
             self.media.failed_items += 1;

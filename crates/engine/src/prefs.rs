@@ -136,6 +136,9 @@ pub struct Prefs {
     pub media_background_audio: bool,
     #[serde(default = "default_true")]
     pub media_gapless: bool,
+    /// Start playing the first added item when nothing is playing (never interrupts playback).
+    #[serde(default)]
+    pub media_autoplay_on_add: bool,
     /// Seconds the audiobook skip-back and skip-forward buttons jump.
     #[serde(default = "default_skip_back")]
     pub media_skip_back_secs: u64,
@@ -478,6 +481,7 @@ impl Default for Prefs {
             preview_video_autoplay: true,
             media_background_audio: true,
             media_gapless: true,
+            media_autoplay_on_add: false,
             media_skip_back_secs: default_skip_back(),
             media_skip_forward_secs: default_skip_forward(),
             log_poll_ms: default_log_poll_ms(),
@@ -808,6 +812,7 @@ mod tests {
                 "last_dir",
                 "log_poll_ms",
                 "log_tail_mib",
+                "media_autoplay_on_add",
                 "media_background_audio",
                 "media_gapless",
                 "media_skip_back_secs",

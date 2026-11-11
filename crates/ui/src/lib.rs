@@ -9,6 +9,7 @@ pub mod dialog_style;
 pub mod dialogs;
 pub mod diff;
 pub mod dnd;
+pub mod ffmpeg_prompt;
 pub mod git_marks;
 pub mod jobs;
 pub mod listing;

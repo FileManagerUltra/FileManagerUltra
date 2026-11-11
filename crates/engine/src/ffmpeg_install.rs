@@ -324,6 +324,8 @@ pub struct Ffmpeg {
     pending: Option<Receiver<InstallResult>>,
     progress: Arc<AtomicU64>,
     pub error: Option<String>,
+    /// A video could not play because ffmpeg is missing; the app shows the install dialog.
+    pub prompt: bool,
 }
 
 impl Default for Ffmpeg {
@@ -341,6 +343,7 @@ impl Default for Ffmpeg {
             pending: None,
             progress: Arc::new(AtomicU64::new(0)),
             error: None,
+            prompt: false,
         }
     }
 }
@@ -421,6 +424,7 @@ impl Ffmpeg {
                 self.installed = pin()
                     .zip(self.dir.as_deref())
                     .and_then(|(pin, dir)| installed_version(dir, pin));
+                self.prompt = false;
             }
             Err(message) => self.error = Some(message),
         }

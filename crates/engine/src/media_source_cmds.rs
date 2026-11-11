@@ -215,7 +215,9 @@ impl Session {
                     loaded.notices.len()
                 ));
             }
-            if has_items && (pending.play_now || !self.media.playing) {
+            if has_items
+                && (pending.play_now || (self.prefs.media_autoplay_on_add && !self.media.playing))
+            {
                 let started = match resume {
                     Some((offset, position)) => {
                         self.media_start_at(first.saturating_add(offset), position)
@@ -665,12 +667,12 @@ mod tests {
         assert!(s.fileops.jobs().is_empty());
     }
 
-    #[test]
-    fn idle_drop_selects_the_first_new_item_and_starts_playback() {
+    fn drop_one_item(autoplay: bool) -> Session {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("missing.mp3");
         let item = VfsUri::parse(path.to_str().expect("utf8")).expect("uri");
         let mut s = Session::new().expect("session");
+        s.prefs.media_autoplay_on_add = autoplay;
         s.media
             .queue
             .enqueue(item.clone())
@@ -690,10 +692,24 @@ mod tests {
             slot: None,
         });
         assert!(s.media_source_tick());
+        s
+    }
+
+    #[test]
+    fn idle_drop_starts_playback_only_when_autoplay_on_add_is_enabled() {
+        let mut s = drop_one_item(true);
         assert_eq!(s.media.queue.current_index(), Some(1));
         assert!(s.media.playing);
         assert!(s.media_pane().is_some());
         s.media_stop();
+    }
+
+    #[test]
+    fn adding_items_does_not_autoplay_by_default() {
+        let s = drop_one_item(false);
+        assert_eq!(s.media.queue.items().len(), 2);
+        assert_eq!(s.media.queue.current_index(), None);
+        assert!(!s.media.playing);
     }
 
     #[test]

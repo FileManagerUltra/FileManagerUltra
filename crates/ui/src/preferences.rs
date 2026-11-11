@@ -394,6 +394,16 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                     {
                         set(s, "media_background_audio", json!(background));
                     }
+                    let mut autoplay = s.prefs.media_autoplay_on_add;
+                    if ui
+                        .checkbox(&mut autoplay, "Start playing when items are added")
+                        .on_hover_text(
+                            "Adding to the playlist plays the first new item if nothing is playing. Never interrupts playback",
+                        )
+                        .changed()
+                    {
+                        set(s, "media_autoplay_on_add", json!(autoplay));
+                    }
                 },
             );
             section(
