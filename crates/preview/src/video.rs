@@ -51,6 +51,29 @@ pub fn find_tool(tool: &str) -> Option<PathBuf> {
     .find(|p| p.is_file())
 }
 
+/// ffmpeg input for `path`, or for bytes `start..end` of it via `subfile` (DVD images).
+/// `None` for an unsafe path or an empty range.
+pub(crate) fn input_for(path: &str, range: Option<(u64, u64)>) -> Option<(&'static str, String)> {
+    if !safe_path(path) {
+        return None;
+    }
+    match range {
+        None => Some(("file", path.to_string())),
+        // `,,` would end the subfile option list early.
+        Some((start, end)) if start < end && !path.contains(",,") => Some((
+            "subfile,file",
+            format!("subfile,,start,{start},end,{end},,:{path}"),
+        )),
+        Some(_) => None,
+    }
+}
+
+/// Whether `path` names a disc image the Media player reads as DVD-Video.
+pub fn is_disc_image(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("iso"))
+}
+
 /// A path that can never be read as an option or smuggle a protocol.
 pub(crate) fn safe_path(path: &str) -> bool {
     let absolute =
@@ -72,7 +95,7 @@ pub(crate) fn command(tool: &Path) -> Command {
 }
 
 /// Run `cmd`, keep at most `max` bytes of stdout, and kill it after `timeout`.
-fn run(
+pub(crate) fn run(
     mut cmd: Command,
     timeout: Duration,
     max: u64,
@@ -120,7 +143,7 @@ struct Probe {
 }
 
 impl Probe {
-    fn playback_info(&self, path: &str) -> Option<crate::VideoInfo> {
+    fn playback_info(&self, path: &str, range: Option<(u64, u64)>) -> Option<crate::VideoInfo> {
         let (width, height, fps) = self.video?;
         Some(crate::VideoInfo {
             path: path.to_string(),
@@ -139,6 +162,7 @@ impl Probe {
                     .unwrap_or(0),
                 ..self.tracks.clone()
             },
+            range,
         })
     }
 }
@@ -157,8 +181,15 @@ pub fn playback_info(
     if find_tool("ffmpeg").is_none() {
         return Err(fail(missing_hint()));
     }
-    probe(&ffprobe, &path, Some(cancelled))
-        .and_then(|probe| probe.playback_info(&path))
+    // A DVD image plays its main title: one contiguous range of title parts.
+    let range = if is_disc_image(&path) {
+        let title = crate::dvd_iso::main_title_of(Path::new(&path))?;
+        Some((title.start, title.end))
+    } else {
+        None
+    };
+    probe(&ffprobe, &path, range, Some(cancelled))
+        .and_then(|probe| probe.playback_info(&path, range))
         .ok_or_else(|| fail("ffprobe could not read a supported video stream."))
 }
 
@@ -222,20 +253,23 @@ fn parse_chapters(raw: &[u8]) -> Vec<fm_media::Chapter> {
     chapters
 }
 
-fn probe(ffprobe: &Path, path: &str, cancelled: Option<&AtomicBool>) -> Option<Probe> {
+fn probe(
+    ffprobe: &Path,
+    path: &str,
+    range: Option<(u64, u64)>,
+    cancelled: Option<&AtomicBool>,
+) -> Option<Probe> {
+    let (protocols, input) = input_for(path, range)?;
     let mut c = command(ffprobe);
-    c.args([
-        "-v",
-        "error",
-        "-protocol_whitelist",
-        "file",
-        "-print_format",
-        "json",
-        "-show_format",
-        "-show_streams",
-        "-i",
-    ])
-    .arg(path);
+    c.args(["-v", "error", "-protocol_whitelist", protocols])
+        .args([
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+            "-i",
+        ])
+        .arg(input);
     let raw = run(c, PROBE_TIMEOUT, PROBE_BYTES, cancelled)?;
     parse_probe(&raw)
 }
@@ -343,8 +377,16 @@ fn parse_probe(raw: &[u8]) -> Option<Probe> {
             }
             Some("subtitle") => {
                 if tracks.subtitles.len() < crate::MAX_TRACKS {
+                    let language = s
+                        .get("tags")
+                        .and_then(|tags| tags.get("language"))
+                        .and_then(|value| value.as_str())
+                        .map(clean_tag)
+                        .filter(|value| !value.is_empty() && value != "und");
                     tracks.subtitles.push(crate::SubtitleTrack {
                         label: track_label(s, &codec, None),
+                        text: crate::subtitles::is_text_codec(&codec),
+                        language,
                     });
                 }
                 rows.push(("Subtitles".to_string(), codec));
@@ -456,7 +498,7 @@ pub fn thumbnail(entry: &Entry, edge: u32) -> Option<ImageDoc> {
     let ffmpeg = find_tool("ffmpeg")?;
     let duration = find_tool("ffprobe")
         .as_ref()
-        .and_then(|p| probe(p, path, None))
+        .and_then(|p| probe(p, path, None, None))
         .and_then(|p| p.duration);
     let at = duration.map_or(0.0, |d| (d * 0.1).min(10.0));
     let limits = Limits {
@@ -496,7 +538,7 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
             audio: None,
         });
     }
-    let info = probe(&ffprobe, path, None);
+    let info = probe(&ffprobe, path, None, None);
     let at = info
         .as_ref()
         .and_then(|p| p.duration)
@@ -508,7 +550,7 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
         }
         None => Some("ffprobe could not read this file.".to_string()),
     };
-    let video = info.as_ref().and_then(|p| p.playback_info(path));
+    let video = info.as_ref().and_then(|p| p.playback_info(path, None));
     Preview::Meta(MetaDoc {
         rows,
         hint,
@@ -635,6 +677,34 @@ mod tests {
         assert!(run(command, Duration::from_secs(30), 10, Some(&cancelled)).is_none());
         cancel.join().expect("cancel thread");
         assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn real_dvd_vob_probes_for_playback() {
+        let (Some(ffmpeg), Some(_)) = (find_tool("ffmpeg"), find_tool("ffprobe")) else {
+            return;
+        };
+        let dir = tempfile::tempdir().expect("tmp");
+        let file = dir.path().join("VTS_01_1.VOB");
+        let made = Command::new(ffmpeg)
+            .args(["-v", "error", "-f", "lavfi", "-i"])
+            .arg("testsrc=size=720x576:rate=25:duration=2")
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=2"])
+            .args(["-c:v", "mpeg2video", "-c:a", "mp2", "-f", "vob"])
+            .arg(&file)
+            .status();
+        if !made.is_ok_and(|s| s.success()) {
+            return; // ffmpeg without the MPEG-2 encoder
+        }
+        assert_eq!(
+            crate::thumbs::classify("VTS_01_1.VOB"),
+            crate::thumbs::ThumbKind::Video
+        );
+        let uri = fm_vfs::VfsUri::parse(&file.to_string_lossy()).expect("uri");
+        let info = playback_info(&uri, &AtomicBool::new(false)).expect("probe");
+        assert_eq!((info.width, info.height), (720, 576));
+        assert!(info.audio.is_some(), "the soundtrack is found");
+        assert!(info.duration > 1.0);
     }
 
     #[test]

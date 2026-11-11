@@ -480,7 +480,6 @@ impl eframe::App for App {
                         self.session.info = None;
                     }
                 }
-                fm_ui::jobs::indicator(ui, &self.session, &tokens);
                 ui.label(tokens.muted(format!("{count} items")));
                 if let Some(space) = space {
                     ui.label(tokens.muted(space));
@@ -492,7 +491,9 @@ impl eframe::App for App {
                     ui.label(tokens.muted(branch));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Right to left: the jobs button, its progress text, then media controls.
                     fm_ui::jobs::icon_button(ui, &self.session, &tokens);
+                    fm_ui::jobs::indicator(ui, &self.session, &tokens);
                     fm_ui::media::indicator(ui, &mut self.session, &tokens);
                     let label = if self.session.show_hidden {
                         "Hidden: shown (Ctrl+H)"

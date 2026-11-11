@@ -38,6 +38,7 @@ fn quitting_waits_for_active_and_replaced_video_workers() {
     let spec = PlaySpec {
         info: VideoInfo {
             path: path.to_string_lossy().into_owned(),
+            range: None,
             width: 320,
             height: 240,
             fps: 25.0,

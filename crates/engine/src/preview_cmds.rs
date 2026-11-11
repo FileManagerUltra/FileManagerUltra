@@ -240,7 +240,8 @@ enum Msg {
     Rendered {
         pane: PaneId,
         token: u64,
-        preview: Preview,
+        /// Boxed: a preview is much larger than the other messages.
+        preview: Box<Preview>,
     },
     LogDone {
         pane: PaneId,
@@ -631,7 +632,7 @@ impl Session {
                                 Msg::Rendered {
                                     pane,
                                     token,
-                                    preview: Preview::Dir(doc),
+                                    preview: Box::new(Preview::Dir(doc)),
                                 },
                             );
                         }
@@ -658,7 +659,7 @@ impl Session {
                             Msg::Rendered {
                                 pane,
                                 token,
-                                preview,
+                                preview: Box::new(preview),
                             },
                         );
                     }
@@ -686,7 +687,7 @@ impl Session {
                 Msg::Rendered {
                     pane,
                     token,
-                    preview,
+                    preview: Box::new(preview),
                 },
             );
             Ok(())
@@ -902,7 +903,7 @@ impl Session {
                     if slot.token != token {
                         continue;
                     }
-                    slot.body = match preview {
+                    slot.body = match *preview {
                         Preview::Log(doc) => {
                             let mut view = LogView::new(doc);
                             if let Some((filter, _, expand, columns)) = &slot.saved_log {
@@ -1582,6 +1583,7 @@ mod tests {
                 poster: None,
                 video: video.then(|| fm_preview::VideoInfo {
                     path: "/a.mp4".into(),
+                    range: None,
                     width: 640,
                     height: 360,
                     fps: 25.0,
@@ -1649,7 +1651,7 @@ mod tests {
             Msg::Rendered {
                 pane: 1,
                 token: 7,
-                preview: Preview::Error("stale".into()),
+                preview: Box::new(Preview::Error("stale".into())),
             },
         );
         s.drain_previews();

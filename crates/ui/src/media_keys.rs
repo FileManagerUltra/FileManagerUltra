@@ -32,6 +32,7 @@ pub const HELP: &[(&str, &str)] = &[
     (", / .", "Previous / next frame (paused video)"),
     ("< / >", "Slower / faster (0.5x-3x)"),
     ("C", "Toggle subtitles"),
+    ("G / H", "Subtitles 0.1 s earlier / later"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -51,6 +52,8 @@ pub enum KeyAction {
     Step(i32),
     SpeedBy(f64),
     Subtitles,
+    /// Steps of 100 ms; positive shows subtitles later.
+    SubtitleDelay(i64),
 }
 
 /// Which playback the keys drive.
@@ -132,6 +135,8 @@ pub fn action_for(key: Key, mods: Modifiers) -> Option<KeyAction> {
         Key::Comma => Step(-1),
         Key::Period => Step(1),
         Key::C => Subtitles,
+        Key::G => SubtitleDelay(-1),
+        Key::H => SubtitleDelay(1),
         _ => return None,
     })
 }
@@ -185,6 +190,9 @@ pub fn plan(action: KeyAction, view: &View) -> Option<(&'static str, Value)> {
             Some(("media.speed", json!({"value": value})))
         }
         KeyAction::Subtitles if media => Some(("media.track.subtitle", json!({"toggle": true}))),
+        KeyAction::SubtitleDelay(step) if media => {
+            Some(("media.subtitle.delay", json!({"step": step})))
+        }
         _ => None,
     }
 }

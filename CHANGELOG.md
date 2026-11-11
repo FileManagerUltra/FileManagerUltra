@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Copy and move progress ("Copy 1 item to Videos · 44%") now sits at the right of the status bar, next to the jobs button.
 - Adding items to the Media playlist no longer starts playback on its own. Preferences > Media has "Start playing when items are added" (off by default) to bring it back; it never interrupts what is already playing. Opening a folder in Media still plays it.
 - When a video can't play because ffmpeg is missing, a dialog offers to download it, or explains how to install it yourself with a link to the download site.
 - The Windows installer no longer includes ffmpeg (about 90 MB smaller); download it from Preferences > Media when you want video.
@@ -17,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Media plays DVD disc images (`.iso`): the main film plays as one continuous video straight from the image, with no mounting or copying. Images that aren't DVD-Video (installers, data discs) are refused, and are skipped when you drop a folder.
+- Media plays DVD video (`.VOB`) as well as Blu-ray and camcorder `.m2ts`/`.mts` files. Dropping a DVD folder (or its `VIDEO_TS` folder) on the Media pane adds the film's parts in order as one playlist folder named after the disc, skipping the menu files. Copy-protected discs can't play.
+- The Media playlist selects rows like the Files panel: Shift+Up/Down (and Shift+Home/End/PageUp/PageDown) extend the selection, and Shift-click and Ctrl-click behave the same way. Delete and "Remove" act on all selected rows.
+- Subtitles in the Media pane and fullscreen: subtitle files next to the video (such as `movie.en.srt`) are found automatically, and embedded subtitle tracks, SRT, WebVTT and ASS/SSA files can be shown. Load another file from the Subtitles menu, and move subtitles earlier or later in 0.1 s steps with the menu or the G and H keys. After you pick a language, the next video uses it too.
+- Preferences > Subtitles sets how subtitles look, the same for every subtitle format: size, position, font, bold, text colour and opacity, a background box, outline or shadow, and letter and line spacing. Presets such as High contrast and Yellow on black are one click away, and a live preview shows the contrast ratio with a warning when text would be hard to read. Picture-based subtitles (Blu-ray, DVD) are not shown yet.
 - On Windows, Preferences > Media can download ffmpeg (needed for video) for you. The download is a pinned version that is checked against a built-in SHA-256 checksum before it is installed, and a copy already on your computer is always used first. Elsewhere the same place tells you how to install it.
 - While Media is playing (or paused mid-item), the bottom right of the status bar, next to the jobs button, shows Previous, Play/Pause and Next buttons and a speaker that pops out a vertical volume slider.
 - Media playlist rows with a remembered position show a small half-filled dot in the gutter ("Resumes at 12:34" on hover), and finished books show a check mark.

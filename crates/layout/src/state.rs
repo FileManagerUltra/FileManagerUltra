@@ -264,74 +264,49 @@ impl ListingState {
         self.selection.len()
     }
 
-    /// Clear the selection and select `name` (if any), focusing its row.
-    pub fn select_only(&mut self, name: Option<&str>, row: usize) {
-        self.selection.clear();
+    /// The shared Files-style selection logic over this listing's names.
+    fn rows(&mut self) -> crate::selection::RangeSelection<'_, String> {
+        crate::selection::RangeSelection {
+            selection: &mut self.selection,
+            focused_row: &mut self.focused_row,
+        }
+    }
+
+    fn leave_special_rows(&mut self) {
         self.on_current = false;
         self.on_parent = false;
-        if let Some(name) = name {
-            self.selection.insert(name.to_string());
-        }
-        self.focused_row = row;
+    }
+
+    /// Clear the selection and select `name` (if any), focusing its row.
+    pub fn select_only(&mut self, name: Option<&str>, row: usize) {
+        self.leave_special_rows();
+        let name = name.map(str::to_string);
+        self.rows().select_only(name.as_ref(), row);
     }
 
     /// Ctrl-style: toggle `name`, move focus to its row.
     pub fn toggle(&mut self, name: &str, row: usize) {
-        self.on_current = false;
-        self.on_parent = false;
-        if !self.selection.remove(name) {
-            self.selection.insert(name.to_string());
-        }
-        self.focused_row = row;
+        self.leave_special_rows();
+        self.rows().toggle(&name.to_string(), row);
     }
 
     /// Shift-style: select the range between the anchor row and `row`
     /// (inclusive) in the given display order, replacing the selection.
     pub fn extend_to(&mut self, order: &[String], row: usize) {
-        self.selection.clear();
-        self.on_current = false;
-        self.on_parent = false;
-        if order.is_empty() {
-            self.focused_row = 0;
-            return;
-        }
-        let row = row.min(order.len() - 1);
-        let anchor = self.focused_row.min(order.len() - 1);
-        let (lo, hi) = (anchor.min(row), anchor.max(row));
-        for name in &order[lo..=hi] {
-            self.selection.insert(name.clone());
-        }
-        self.focused_row = row;
+        self.leave_special_rows();
+        self.rows().extend_to(order, row);
     }
 
-    /// Shift-click: grow the selection to `row`. Below the selection the range starts at its
-    /// first row, above it at its last row, so earlier picks are kept; inside it shrinks to
-    /// the range from its first row. With nothing selected it behaves like [`Self::extend_to`].
+    /// Shift-click: grow the selection to `row` (see [`crate::selection::RangeSelection::extend_click`]).
     pub fn extend_click(&mut self, order: &[String], row: usize) {
-        let selected: Vec<usize> = order
-            .iter()
-            .enumerate()
-            .filter(|(_, name)| self.selection.contains(*name))
-            .map(|(i, _)| i)
-            .collect();
-        let (Some(&lo), Some(&hi)) = (selected.first(), selected.last()) else {
-            self.extend_to(order, row);
-            return;
-        };
-        let row = row.min(order.len() - 1);
-        let (from, to) = if row < lo { (row, hi) } else { (lo, row) };
-        self.selection.clear();
-        self.on_current = false;
-        self.on_parent = false;
-        self.selection.extend(order[from..=to].iter().cloned());
-        self.focused_row = row;
+        self.leave_special_rows();
+        self.rows().extend_click(order, row);
     }
 
     /// Select every name in `order` (Ctrl+A).
     pub fn select_all(&mut self, order: &[String]) {
-        self.on_current = false;
-        self.on_parent = false;
-        self.selection = order.iter().cloned().collect();
+        self.leave_special_rows();
+        self.rows().select_all(order);
     }
 
     /// Select exactly the names in `order` that are not selected now (Invert Selection).
@@ -444,64 +419,21 @@ impl ListingState {
         self.move_focus(order, delta, extend);
     }
 
-    /// The fixed end of a keyboard range selection: the selected end opposite the focused row
-    /// (the focused row itself when the selection is empty or the focus is inside it).
-    fn anchor_row(&self, order: &[String]) -> usize {
-        let last = order.len().saturating_sub(1);
-        let focus = self.focused_row.min(last);
-        let mut picked = order
-            .iter()
-            .enumerate()
-            .filter(|(_, n)| self.selection.contains(*n))
-            .map(|(i, _)| i);
-        let (Some(lo), hi) = (picked.next(), picked.next_back()) else {
-            return focus;
-        };
-        let hi = hi.unwrap_or(lo);
-        if focus == hi {
-            lo
-        } else if focus == lo {
-            hi
-        } else {
-            focus
-        }
-    }
-
     /// Move the focused row; with `extend` keep growing the range selection,
     /// otherwise collapse the selection to the focused name.
     pub fn move_focus(&mut self, order: &[String], delta: isize, extend: bool) {
-        if order.is_empty() {
-            self.focused_row = 0;
-            self.selection.clear();
-            return;
+        if !order.is_empty() {
+            self.leave_special_rows();
         }
-        let last = order.len() - 1;
-        let cur = self.focused_row.min(last) as isize;
-        let next = (cur + delta).clamp(0, last as isize) as usize;
-        if extend {
-            self.focused_row = self.anchor_row(order);
-            self.extend_to(order, next);
-        } else {
-            let name = order.get(next).cloned();
-            self.select_only(name.as_deref(), next);
-        }
+        self.rows().move_focus(order, delta, extend);
     }
 
     /// Jump to an absolute row (Home/End), same semantics as `move_focus`.
     pub fn focus_absolute(&mut self, order: &[String], row: usize, extend: bool) {
-        if order.is_empty() {
-            self.focused_row = 0;
-            self.selection.clear();
-            return;
+        if !order.is_empty() {
+            self.leave_special_rows();
         }
-        let row = row.min(order.len() - 1);
-        if extend {
-            self.focused_row = self.anchor_row(order);
-            self.extend_to(order, row);
-        } else {
-            let name = order.get(row).cloned();
-            self.select_only(name.as_deref(), row);
-        }
+        self.rows().focus_absolute(order, row, extend);
     }
 }
 
@@ -680,8 +612,28 @@ pub struct PaneState {
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct MediaPaneState {
+    /// The playlist cursor (queue index); the engine remaps it when rows move.
     pub selected: Option<usize>,
     pub queue_scroll: f32,
+    /// Rows picked for multi-row actions, as queue indices. Not persisted.
+    #[serde(skip)]
+    pub picked: BTreeSet<usize>,
+    /// The cursor's position among the visible playlist rows.
+    #[serde(skip)]
+    pub focused_row: usize,
+    /// Queue length `picked` was made for; another length means the indices moved.
+    #[serde(skip)]
+    pub picked_len: usize,
+}
+
+impl MediaPaneState {
+    /// The same selection logic as the Files listing, over queue indices.
+    pub fn rows(&mut self) -> crate::selection::RangeSelection<'_, usize> {
+        crate::selection::RangeSelection {
+            selection: &mut self.picked,
+            focused_row: &mut self.focused_row,
+        }
+    }
 }
 
 /// One side of a comparison.

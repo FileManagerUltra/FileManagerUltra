@@ -331,6 +331,31 @@ fn transport(ui: &mut Ui, s: &Session, tokens: &Tokens, actions: &mut Vec<(&'sta
 }
 
 /// Everything that is not needed during normal listening.
+/// Active subtitle cues, drawn with the user's subtitle style.
+fn subtitle_overlay(ui: &Ui, s: &Session, picture: egui::Rect, tokens: &Tokens) {
+    let position = s
+        .media
+        .video
+        .as_ref()
+        .map_or(s.media.position, |video| video.pos);
+    let cues = s.media.subtitles.active(position);
+    if cues.is_empty() {
+        return;
+    }
+    let text = cues
+        .iter()
+        .map(|cue| cue.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    crate::subtitles::paint(
+        ui.painter(),
+        picture,
+        &text,
+        &s.prefs.subtitle_style,
+        tokens,
+    );
+}
+
 fn options_menu(ui: &mut Ui, s: &Session, actions: &mut Vec<(&'static str, Value)>) {
     crate::media_audio::menus(ui, s, actions);
     if s.media.video.is_some() {
@@ -442,24 +467,61 @@ fn playlist(
             "Select audio or video files in Files and choose Media > Play or Add to queue.",
         ));
     }
-    let selected = s.layout.state(pane).and_then(|state| state.media.selected);
-    let scroll = s
+    let mut scroll = s
         .layout
         .state(pane)
         .map_or(0.0, |state| state.media.queue_scroll);
-    let mut selection = selected;
-    let multi_id = Id::NULL.with(("media-multi", pane));
-    let (mut multi, multi_len): (Vec<usize>, usize) =
-        ui.data(|d| d.get_temp(multi_id)).unwrap_or_default();
-    if multi_len != count {
-        multi.clear();
-    }
+    // Selection follows the Files listing (`fm_layout::selection`), over queue indices.
+    let mut pick = s
+        .layout
+        .state(pane)
+        .map(|state| state.media.clone())
+        .unwrap_or_default();
     let digits = count.to_string().len().max(2);
     let row_height = tokens.row_height;
     let found = media.queue.groups();
     let collapsed_id = Id::NULL.with(("media-collapsed", pane));
     let mut collapsed: Vec<u32> = ui.data(|d| d.get_temp(collapsed_id)).unwrap_or_default();
     let rows = playlist_rows(&found, &collapsed, count);
+    // Visible item rows in display order: what the keyboard walks and Shift ranges span.
+    let order: Vec<usize> = rows
+        .iter()
+        .filter_map(|row| match row {
+            PlaylistRow::Item { index, .. } => Some(*index),
+            PlaylistRow::Header(_) => None,
+        })
+        .collect();
+    if pick.picked_len != count {
+        // The queue changed under the picked indices: keep only the (remapped) cursor.
+        pick.picked = pick.selected.filter(|i| *i < count).into_iter().collect();
+        pick.picked_len = count;
+    }
+    if let Some(at) = pick
+        .selected
+        .and_then(|selected| order.iter().position(|i| *i == selected))
+    {
+        pick.focused_row = at;
+    }
+    let pitch = row_height + ui.spacing().item_spacing.y;
+    if s.layout.focused() == pane && renaming.is_none() && !ui.ctx().text_edit_focused() {
+        let page = ((ui.available_height() / pitch).floor() as isize - 1).max(1);
+        let moved = playlist_keys(ui, &mut pick, &order, page);
+        // Keep the cursor's row in view.
+        if moved
+            && let Some(&index) = order.get(pick.focused_row)
+            && let Some(row_at) = rows
+                .iter()
+                .position(|row| matches!(row, PlaylistRow::Item { index: i, .. } if *i == index))
+        {
+            let top = row_at as f32 * pitch;
+            let view = ui.available_height().max(pitch);
+            if top < scroll {
+                scroll = top;
+            } else if top + pitch > scroll + view {
+                scroll = top + pitch - view;
+            }
+        }
+    }
     // A folder counts as one entry in the playlist numbering; its files are numbered inside it.
     let mut entry = 0;
     let numbers: Vec<usize> = rows
@@ -578,7 +640,7 @@ fn playlist(
                         );
                 }
                 let painter = ui.painter();
-                if selection == Some(index) || multi.contains(&index) {
+                if pick.picked.contains(&index) {
                     painter.rect_filled(rect, 2.0, tokens.selection_bg);
                 } else if row.hovered() {
                     painter.rect_filled(rect, 2.0, tokens.hover_bg);
@@ -670,25 +732,13 @@ fn playlist(
                 );
                 if row.clicked() {
                     let mods = ui.input(|i| i.modifiers);
-                    if mods.shift
-                        && let Some(anchor) = selection
-                    {
-                        let (lo, hi) = (anchor.min(index), anchor.max(index));
-                        multi = (lo..=hi).collect();
+                    let at = order.iter().position(|i| *i == index).unwrap_or(0);
+                    if mods.shift {
+                        pick.rows().extend_click(&order, at);
                     } else if mods.command {
-                        if multi.is_empty() {
-                            multi.extend(selection);
-                        }
-                        match multi.iter().position(|m| *m == index) {
-                            Some(at) => {
-                                multi.remove(at);
-                            }
-                            None => multi.push(index),
-                        }
-                        selection = Some(index);
+                        pick.rows().toggle(&index, at);
                     } else {
-                        multi.clear();
-                        selection = Some(index);
+                        pick.rows().select_only(Some(&index), at);
                     }
                 }
                 if row.double_clicked() {
@@ -710,16 +760,20 @@ fn playlist(
                         ui.close();
                     }
                     crate::media_book::menu_items(ui, book, index, actions);
-                    let many = multi.len() > 1 && multi.contains(&index);
+                    let many = pick.picked.len() > 1 && pick.picked.contains(&index);
                     let label = if many {
-                        format!("Remove {} items", multi.len())
+                        format!("Remove {} items", pick.picked.len())
                     } else {
                         "Remove".to_string()
                     };
                     if ui.button(label).clicked() {
-                        let rows = if many { multi.clone() } else { vec![index] };
+                        let rows: Vec<usize> = if many {
+                            pick.picked.iter().copied().collect()
+                        } else {
+                            vec![index]
+                        };
                         remove_rows(&rows, actions);
-                        multi.clear();
+                        pick.picked.clear();
                         ui.close();
                     }
                     ui.separator();
@@ -783,20 +837,66 @@ fn playlist(
     let delete = s.layout.focused() == pane
         && ui.data_mut(|d| d.remove_temp::<bool>(delete_request_id()).unwrap_or(false));
     if delete {
-        let rows: Vec<usize> = if multi.is_empty() {
-            selection.into_iter().collect()
-        } else {
-            multi.clone()
-        };
+        let rows: Vec<usize> = pick.picked.iter().copied().collect();
         remove_rows(&rows, actions);
-        multi.clear();
-        selection = None;
+        pick.picked.clear();
     }
-    ui.data_mut(|d| d.insert_temp(multi_id, (multi, count)));
+    // Reordering keeps the length, so the picked indices would be stale afterwards.
+    if actions
+        .iter()
+        .any(|(id, _)| matches!(*id, "media.move" | "media.place" | "media.group_place"))
+    {
+        pick.picked_len = usize::MAX;
+    }
+    pick.selected = if pick.picked.is_empty() {
+        None
+    } else {
+        order.get(pick.focused_row).copied()
+    };
+    pick.queue_scroll = output.state.clamped_offset().y;
     if let Some(state) = s.layout.state_mut(pane) {
-        state.media.selected = selection;
-        state.media.queue_scroll = output.state.clamped_offset().y;
+        state.media = pick;
     }
+}
+
+/// Shift+Up/Down/Home/End/PageUp/PageDown extend the playlist selection like the Files
+/// listing. Plain arrows stay playback keys (volume and seek). Returns whether the cursor moved.
+fn playlist_keys(
+    ui: &Ui,
+    pick: &mut fm_layout::MediaPaneState,
+    order: &[usize],
+    page: isize,
+) -> bool {
+    let mut moved = false;
+    ui.input_mut(|input| {
+        input.events.retain(|event| {
+            let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+            else {
+                return true;
+            };
+            if !modifiers.shift || modifiers.ctrl || modifiers.alt || modifiers.command {
+                return true;
+            }
+            let mut rows = pick.rows();
+            match key {
+                egui::Key::ArrowDown => rows.move_focus(order, 1, true),
+                egui::Key::ArrowUp => rows.move_focus(order, -1, true),
+                egui::Key::PageDown => rows.move_focus(order, page, true),
+                egui::Key::PageUp => rows.move_focus(order, -page, true),
+                egui::Key::Home => rows.focus_absolute(order, 0, true),
+                egui::Key::End => rows.focus_absolute(order, usize::MAX, true),
+                _ => return true,
+            }
+            moved = true;
+            false
+        });
+    });
+    moved
 }
 
 /// Set by the Delete shortcut while a Media pane is focused.
@@ -1287,25 +1387,81 @@ fn track_menus(ui: &mut Ui, s: &Session, actions: &mut Vec<(&'static str, Value)
             }
         });
     }
-    if !tracks.subtitles.is_empty() {
-        ui.menu_button("Subtitles", |ui| {
-            let current = s.media.subtitle_track;
+    ui.menu_button("Subtitles", |ui| subtitle_menu(ui, s, tracks, actions));
+}
+
+/// Off, external files, embedded tracks, then loading a file and the delay.
+fn subtitle_menu(
+    ui: &mut Ui,
+    s: &Session,
+    tracks: &fm_preview::Tracks,
+    actions: &mut Vec<(&'static str, Value)>,
+) {
+    use fm_engine::media_subtitle_cmds::SubtitleSource;
+    let subs = &s.media.subtitles;
+    let current = subs.selected;
+    if ui
+        .add(egui::Button::new("Off").selected(current.is_none()))
+        .clicked()
+    {
+        actions.push(("media.track.subtitle", json!({"index": null})));
+        ui.close();
+    }
+    for (index, sub) in subs.external.iter().enumerate() {
+        let selected = current == Some(SubtitleSource::External(index));
+        if ui
+            .add(egui::Button::new(&sub.label).selected(selected))
+            .clicked()
+        {
+            actions.push(("media.track.subtitle", json!({"external": index})));
+            ui.close();
+        }
+    }
+    for (index, track) in tracks.subtitles.iter().enumerate() {
+        let selected = current == Some(SubtitleSource::Embedded(index));
+        let label = if track.text {
+            track.label.clone()
+        } else {
+            format!("{} (picture-based, not supported yet)", track.label)
+        };
+        if ui
+            .add_enabled(track.text, egui::Button::new(label).selected(selected))
+            .clicked()
+        {
+            actions.push(("media.track.subtitle", json!({"index": index})));
+            ui.close();
+        }
+    }
+    if subs.is_loading() {
+        ui.label("Loading subtitles…");
+    }
+    ui.separator();
+    if ui.button("Load subtitle file…").clicked() {
+        crate::dialogs::queue(ui.ctx(), crate::dialogs::subtitle_dialog(s));
+        ui.close();
+    }
+    ui.add_enabled_ui(current.is_some(), |ui| {
+        ui.horizontal(|ui| {
+            ui.label(format!("Delay {:+.1} s", subs.delay_ms as f64 / 1000.0));
             if ui
-                .add(egui::Button::new("Off").selected(current.is_none()))
+                .small_button("−")
+                .on_hover_text("Show subtitles 0.1 s earlier (G)")
                 .clicked()
             {
-                actions.push(("media.track.subtitle", json!({"index": null})));
-                ui.close();
+                actions.push(("media.subtitle.delay", json!({"step": -1})));
             }
-            for (index, track) in tracks.subtitles.iter().enumerate() {
-                let button = egui::Button::new(&track.label).selected(current == Some(index));
-                if ui.add(button).clicked() {
-                    actions.push(("media.track.subtitle", json!({"index": index})));
-                    ui.close();
-                }
+            if ui
+                .small_button("+")
+                .on_hover_text("Show subtitles 0.1 s later (H)")
+                .clicked()
+            {
+                actions.push(("media.subtitle.delay", json!({"step": 1})));
+            }
+            if ui.small_button("Reset").clicked() {
+                actions.push(("media.subtitle.delay", json!({"ms": 0})));
             }
         });
-    }
+    });
 }
 
 fn keys_help(ui: &mut Ui) {
@@ -1434,8 +1590,9 @@ fn video(
             crate::preview::video_texture(ui.ctx(), Id::NULL.with(("media-video", pane)), frame);
         let scale = (width / frame.width.max(1) as f32).min(height / frame.height.max(1) as f32);
         let size = egui::vec2(frame.width as f32, frame.height as f32) * scale;
-        egui::Image::from_texture(&texture)
-            .paint_at(ui, egui::Rect::from_center_size(rect.center(), size));
+        let picture = egui::Rect::from_center_size(rect.center(), size);
+        egui::Image::from_texture(&texture).paint_at(ui, picture);
+        subtitle_overlay(ui, s, picture, tokens);
     } else if s.media.playing {
         ui.put(rect, egui::Label::new("Preparing video..."));
     }
@@ -1908,6 +2065,71 @@ mod tests {
             .filter_map(|u| u.file_name().map(str::to_string))
             .collect();
         assert_eq!(left, ["b.mp3"]);
+    }
+
+    #[test]
+    fn shift_arrows_extend_the_playlist_selection_like_the_files_listing() {
+        let mut s = Session::new().expect("session");
+        s.dispatch(
+            "media.enqueue",
+            &json!({"uris": ["/m/a.mp3", "/m/b.mp3", "/m/c.mp3", "/m/d.mp3", "/m/e.mp3"]}),
+        )
+        .expect("enqueue");
+        let pane = s.media_pane().expect("media");
+        s.layout.focus_pane(pane).expect("focus");
+        let tokens = Tokens::dark();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(640.0, 480.0))
+            .build_ui_state(
+                move |ui, s| {
+                    egui::CentralPanel::default().show(ui, |ui| show(ui, s, pane, &tokens));
+                },
+                s,
+            );
+        let picked = |h: &Harness<'_, Session>| -> Vec<usize> {
+            h.state()
+                .layout
+                .state(pane)
+                .map(|state| state.media.picked.iter().copied().collect())
+                .unwrap_or_default()
+        };
+        h.get_by_label("b").click();
+        h.run();
+        for _ in 0..2 {
+            h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowDown);
+            h.run();
+        }
+        assert_eq!(picked(&h), [1, 2, 3]);
+        // Back up past the anchor (b): the range flips to a..=b.
+        for _ in 0..3 {
+            h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowUp);
+            h.run();
+        }
+        assert_eq!(picked(&h), [0, 1]);
+        h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::End);
+        h.run();
+        assert_eq!(picked(&h), [1, 2, 3, 4]);
+        assert_eq!(
+            h.state().layout.state(pane).and_then(|s| s.media.selected),
+            Some(4),
+            "the cursor follows the keyboard"
+        );
+        // Plain arrows stay playback keys and leave the selection alone.
+        h.key_press(egui::Key::ArrowDown);
+        h.run();
+        assert_eq!(picked(&h), [1, 2, 3, 4]);
+        // The app's Delete shortcut removes every picked row.
+        h.ctx.data_mut(|d| d.insert_temp(delete_request_id(), true));
+        h.run();
+        let left: Vec<_> = h
+            .state()
+            .media
+            .queue
+            .items()
+            .iter()
+            .filter_map(|u| u.file_name().map(str::to_string))
+            .collect();
+        assert_eq!(left, ["a.mp3"]);
     }
 
     #[test]

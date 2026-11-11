@@ -33,7 +33,7 @@ pub fn classify(name: &str) -> ThumbKind {
     match ext.as_str() {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" => ThumbKind::Image,
         "mp4" | "m4v" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "flv" | "mpg" | "mpeg" | "3gp"
-        | "ogv" => ThumbKind::Video,
+        | "ogv" | "vob" | "m2ts" | "mts" => ThumbKind::Video,
         _ => ThumbKind::Other,
     }
 }

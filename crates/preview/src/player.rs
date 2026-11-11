@@ -12,7 +12,7 @@ use fm_media::{AudioFormat, AudioProducer, AudioSink, Clock, DeviceSink, Gain, P
 use fm_vfs::FmError;
 
 use crate::VideoInfo;
-use crate::video::{command, find_tool, safe_path};
+use crate::video::{command, find_tool};
 use pipe::Pipe;
 
 pub const MAX_WIDTH: u32 = 1280;
@@ -144,7 +144,7 @@ impl Player {
         gain: Gain,
         open: impl FnOnce(Gain) -> Result<Output, FmError> + Send + 'static,
     ) -> Result<Self, FmError> {
-        if !safe_path(&spec.info.path)
+        if spec.info.ffmpeg_input().is_none()
             || !spec.from.is_finite()
             || spec.from < 0.0
             || !spec.info.fps.is_finite()
@@ -249,18 +249,22 @@ fn tracks_valid(info: &VideoInfo) -> bool {
 fn video_pipe(tool: &std::path::Path, spec: &PlaySpec) -> Result<Pipe, FmError> {
     let (w, h) = decode_size(&spec.info, spec.width).ok_or_else(|| error("Invalid video size"))?;
     let fps = spec.info.fps.max(1.0);
+    let (protocols, input) = spec
+        .info
+        .ffmpeg_input()
+        .ok_or_else(|| error("Invalid video path"))?;
     let mut c = command(tool);
     c.args([
         "-v",
         "error",
         "-nostdin",
         "-protocol_whitelist",
-        "file",
+        protocols,
         "-ss",
     ])
     .arg(format!("{:.6}", spec.from))
     .arg("-i")
-    .arg(&spec.info.path)
+    .arg(input)
     .args(["-map", "0:v:0", "-an", "-sn", "-dn", "-vf"])
     // Raw frames have no PTS: normalize VFR to the probed, bounded cadence.
     .arg(format!("fps=fps={fps:.9}:start_time=0,scale={w}:{h}"))
@@ -277,18 +281,22 @@ fn audio_pipe(
     spec: &PlaySpec,
     format: AudioFormat,
 ) -> Result<Pipe, FmError> {
+    let (protocols, input) = spec
+        .info
+        .ffmpeg_input()
+        .ok_or_else(|| error("Invalid video path"))?;
     let mut c = command(tool);
     c.args([
         "-v",
         "error",
         "-nostdin",
         "-protocol_whitelist",
-        "file",
+        protocols,
         "-ss",
     ])
     .arg(format!("{:.6}", spec.from))
     .arg("-i")
-    .arg(&spec.info.path)
+    .arg(input)
     .args(["-map"])
     .arg(format!("0:a:{}", spec.info.tracks.selected_audio))
     .args(["-vn", "-sn", "-dn"]);

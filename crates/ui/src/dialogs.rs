@@ -12,6 +12,10 @@ use crate::theme::Tokens;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Dialog {
+    /// Path of a subtitle file to show with the current Media video.
+    Subtitle {
+        path: String,
+    },
     Mkdir {
         dir: VfsUri,
         name: String,
@@ -90,9 +94,31 @@ pub fn window_owns_keyboard(s: &Session) -> bool {
         || s.remote.login_prompt.is_some()
 }
 
+/// Ask for a subtitle file, starting in the current video's folder.
+pub fn subtitle_dialog(s: &Session) -> Dialog {
+    let path = s
+        .media
+        .queue
+        .current()
+        .and_then(VfsUri::parent)
+        .filter(|dir| dir.local_path().is_some())
+        .map(|dir| {
+            let mut text = dir.to_string();
+            if !text.ends_with(['/', '\\']) {
+                text.push(std::path::MAIN_SEPARATOR);
+            }
+            text
+        })
+        .unwrap_or_default();
+    Dialog::Subtitle { path }
+}
+
 /// The dialog a command needs before it can run, if any. The app calls this for shortcuts and
 /// menu items; `None` means dispatch the command directly.
 pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
+    if id == "media.subtitle.load" {
+        return Some(subtitle_dialog(s));
+    }
     if matches!(id, "media.playlist.load" | "media.playlist.save") {
         let save = id == "media.playlist.save";
         let dir = file_cmds::focused_dir(s)
@@ -199,6 +225,25 @@ impl Dialogs {
         let enter = ctx.input(|i| i.key_pressed(Key::Enter));
         let focus = std::mem::take(&mut self.focus_next);
         let keep = match &mut dialog {
+            Dialog::Subtitle { path } => {
+                let verdict = fm_engine::media_subtitle_cmds::validate_path(path)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string());
+                let (go, cancel) = name_dialog(
+                    ctx,
+                    tokens,
+                    "Load subtitles (SRT, WebVTT, ASS or SSA)",
+                    path,
+                    &verdict,
+                    focus,
+                );
+                if !cancel && !esc && (go || enter) && verdict.is_ok() {
+                    s.dispatch_or_notice("media.subtitle.load", &json!({"uri": path.as_str()}));
+                    false
+                } else {
+                    !(cancel || esc)
+                }
+            }
             Dialog::Playlist { save, path } => {
                 let verdict = fm_engine::media_playlist_cmds::validate_path(path, *save)
                     .map(|_| ())

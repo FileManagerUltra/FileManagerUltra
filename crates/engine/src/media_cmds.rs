@@ -39,10 +39,8 @@ pub struct MediaSession {
     pub cover: Option<Arc<fm_preview::ImageDoc>>,
     pub error: Option<String>,
     pub video: Option<crate::video_cmds::VideoState>,
-    /// Embedded subtitle track shown for the current video (`None` = off).
-    pub subtitle_track: Option<usize>,
-    /// Track a toggle turns back on; survives switching subtitles off.
-    pub last_subtitle: Option<usize>,
+    /// Subtitle sources, selection, cues and delay of the current video.
+    pub subtitles: crate::media_subtitle_cmds::Subtitles,
     /// Downloads of remote items, played from their local copy.
     pub spool: crate::media_spool::Spool,
     pub extras: crate::media_audio_cmds::AudioExtras,
@@ -74,8 +72,7 @@ impl Default for MediaSession {
             cover: None,
             error: None,
             video: None,
-            subtitle_track: None,
-            last_subtitle: None,
+            subtitles: Default::default(),
             spool: Default::default(),
             extras: Default::default(),
             player: None,
@@ -182,8 +179,7 @@ impl MediaSession {
         self.position = 0.0;
         self.info = None;
         self.video = None;
-        self.subtitle_track = None;
-        self.last_subtitle = None;
+        self.subtitles.item_changed();
         self.video_probe = None;
         self.cover = None;
         self.cover_job = None;
@@ -359,6 +355,7 @@ impl Session {
         let mut changed = self.media_spool_poll();
         changed |= self.media_audio_tick();
         changed |= self.media_book_tick();
+        changed |= self.media_subtitle_tick();
         // A selected but idle video shows its first frame instead of a black view.
         if self.media.is_video()
             && !self.media.playing
@@ -612,6 +609,7 @@ fn bad(message: &str) -> FmError {
 pub(crate) fn is_video(uri: &VfsUri) -> bool {
     uri.file_name().is_some_and(|name| {
         fm_preview::thumbs::classify(name) == fm_preview::thumbs::ThumbKind::Video
+            || fm_preview::video::is_disc_image(name)
     })
 }
 
@@ -636,6 +634,14 @@ pub(crate) fn validate_media_source(uri: &VfsUri) -> Result<(), FmError> {
         )
     {
         return Err(bad("Choose a supported audio or video file."));
+    }
+    // A multi-gigabyte image is read in place, never downloaded to the spool.
+    if uri
+        .file_name()
+        .is_some_and(fm_preview::video::is_disc_image)
+        && uri.local_path().is_none()
+    {
+        return Err(bad("DVD images (.iso) must be on this computer to play."));
     }
     Ok(())
 }

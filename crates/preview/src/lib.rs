@@ -6,6 +6,7 @@
 pub mod arrange;
 pub mod audio;
 pub mod dir;
+pub mod dvd_iso;
 pub mod hex;
 pub mod highlight;
 pub mod image_prev;
@@ -15,6 +16,7 @@ pub mod platform;
 pub mod player;
 pub mod sniff;
 pub mod structured;
+pub mod subtitles;
 pub mod svg;
 pub mod text;
 pub mod thumbs;
@@ -194,6 +196,9 @@ pub struct VideoInfo {
     pub audio_delay: f64,
     /// Embedded audio and subtitle streams; empty when only `audio` is known.
     pub tracks: Tracks,
+    /// Byte range of `path` that holds the video (a DVD image's main title), read through
+    /// ffmpeg's `subfile` protocol; `None` plays the whole file.
+    pub range: Option<(u64, u64)>,
 }
 
 /// Embedded streams of a video, in container order and capped at [`MAX_TRACKS`] each.
@@ -217,11 +222,21 @@ pub struct AudioTrack {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SubtitleTrack {
     pub label: String,
+    /// Text codecs (SubRip, ASS, WebVTT, mov_text…) can be extracted and drawn;
+    /// bitmap tracks (PGS, VobSub) cannot yet.
+    pub text: bool,
+    /// Container language tag, sanitized; `None` when missing or "und".
+    pub language: Option<String>,
 }
 
 pub const MAX_TRACKS: usize = 16;
 
 impl VideoInfo {
+    /// The `-protocol_whitelist` and `-i` values that make ffmpeg read this video.
+    pub fn ffmpeg_input(&self) -> Option<(&'static str, String)> {
+        video::input_for(&self.path, self.range)
+    }
+
     /// Format and start delay of the selected audio stream.
     pub fn audio_source(&self) -> Option<(fm_media::AudioFormat, f64)> {
         if self.tracks.audio.is_empty() {

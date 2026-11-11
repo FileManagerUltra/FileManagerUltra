@@ -2802,6 +2802,7 @@ mod tests {
                     poster: None,
                     video: video.then(|| fm_preview::VideoInfo {
                         path: "/music/preview.mkv".into(),
+                        range: None,
                         width: 320,
                         height: 180,
                         fps: 25.0,

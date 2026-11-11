@@ -414,6 +414,7 @@ mod tests {
         VideoState::new(
             VideoInfo {
                 path: "/v.mp4".into(),
+                range: None,
                 width: 640,
                 height: 360,
                 fps: 25.0,

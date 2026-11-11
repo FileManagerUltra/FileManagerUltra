@@ -347,3 +347,64 @@ mod tests {
         assert!(parse_playlist(&too_many, PlaylistFormat::M3u8, &base()).is_err());
     }
 }
+
+/// DVD-Video file roles, from the name alone (`VIDEO_TS` folders).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DvdFile {
+    /// `VTS_nn_m.VOB` with m ≥ 1: a part of title set `nn` (parts play in name order).
+    TitlePart { title: u8, part: u8 },
+    /// `VIDEO_TS.VOB` or `VTS_nn_0.VOB`: menus, not the film.
+    Menu,
+}
+
+/// Classify a DVD-Video `.VOB` name (case-insensitive); `None` for anything else.
+pub fn dvd_file(name: &str) -> Option<DvdFile> {
+    let upper = name.to_ascii_uppercase();
+    if upper == "VIDEO_TS.VOB" {
+        return Some(DvdFile::Menu);
+    }
+    let rest = upper.strip_prefix("VTS_")?.strip_suffix(".VOB")?;
+    let (title, part) = rest.split_once('_')?;
+    if title.len() != 2 || part.len() != 1 {
+        return None;
+    }
+    let title: u8 = title.parse().ok().filter(|t| (1..=99).contains(t))?;
+    let part: u8 = part.parse().ok()?;
+    Some(if part == 0 {
+        DvdFile::Menu
+    } else {
+        DvdFile::TitlePart { title, part }
+    })
+}
+
+/// Whether `name` is a DVD-Video folder (`VIDEO_TS`) or its empty companion (`AUDIO_TS`).
+pub fn is_dvd_folder(name: &str) -> bool {
+    name.eq_ignore_ascii_case("VIDEO_TS") || name.eq_ignore_ascii_case("AUDIO_TS")
+}
+
+#[cfg(test)]
+mod dvd_tests {
+    use super::*;
+
+    #[test]
+    fn dvd_names_are_classified() {
+        assert_eq!(dvd_file("VIDEO_TS.VOB"), Some(DvdFile::Menu));
+        assert_eq!(dvd_file("VTS_01_0.VOB"), Some(DvdFile::Menu));
+        assert_eq!(
+            dvd_file("vts_02_3.vob"),
+            Some(DvdFile::TitlePart { title: 2, part: 3 })
+        );
+        for other in [
+            "VTS_00_1.VOB",
+            "VTS_1_1.VOB",
+            "VTS_01_10.VOB",
+            "VTS_01_1.IFO",
+            "movie.vob",
+            "VTS_01_x.VOB",
+            "",
+        ] {
+            assert_eq!(dvd_file(other), None, "{other}");
+        }
+        assert!(is_dvd_folder("video_ts") && is_dvd_folder("AUDIO_TS") && !is_dvd_folder("Movies"));
+    }
+}

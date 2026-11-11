@@ -71,6 +71,28 @@ Selecting an existing queue row SHALL play that row without inserting a duplicat
 - **WHEN** the queue is saved as M3U8 and loaded again
 - **THEN** the same items appear in the same order
 
+Playlist rows SHALL be selected with the same rules as the Files listing: click selects one row, Ctrl/Cmd-click toggles a row, Shift-click grows the selection from its existing ends, and Shift+Up/Down/Home/End/PageUp/PageDown extend a range from a fixed anchor (flipping when the cursor crosses it). Plain arrow keys remain playback keys. Removing (context menu or Delete) acts on every selected row.
+
+#### Scenario: Shift+Down in the playlist
+- **WHEN** row B is selected and the user presses Shift+Down twice, then Shift+Up three times
+- **THEN** B–D are selected, then A–B
+
+DVD-Video folders (a disc folder containing `VIDEO_TS`, or `VIDEO_TS` itself) SHALL be added as one playlist folder named after the disc, holding only the title parts (`VTS_nn_m.VOB`, m ≥ 1) in name order; menu files (`VIDEO_TS.VOB`, `VTS_nn_0.VOB`) SHALL be skipped there but remain playable when chosen on their own. Play Folder on the disc folder SHALL look inside its `VIDEO_TS`. Only unencrypted (already copied) discs can play; `.vob`, `.m2ts` and `.mts` files are video.
+
+DVD-Video disc images (`.iso`) on a local disk SHALL play their main title (the largest title set) as one continuous video, read in place from the image without mounting, extracting or temporary files; the title's parts SHALL play without a gap. Images that are not DVD-Video (installers, data discs, Blu-ray) SHALL be refused with an error naming the reason, and SHALL be skipped when a folder is dropped or played. Remote images SHALL be refused rather than downloaded.
+
+#### Scenario: DVD image
+- **WHEN** the user plays `Movie.iso`, a DVD-Video image whose film is split into VTS_01_1.VOB and VTS_01_2.VOB
+- **THEN** the film plays from start to end as one item, with seeking over its whole length
+
+#### Scenario: Data image in a folder
+- **WHEN** a folder holding `linux.iso` and `song.mp3` is dropped on the Media pane
+- **THEN** only `song.mp3` is added
+
+#### Scenario: DVD folder
+- **WHEN** a folder `Movie` with `VIDEO_TS/VIDEO_TS.VOB`, `VTS_01_0.VOB`, `VTS_01_1.VOB` and `VTS_01_2.VOB` is dropped on the Media pane
+- **THEN** a playlist folder "Movie" holds VTS_01_1 and VTS_01_2 in that order, without the menus
+
 ### Requirement: Entry points
 Files and Preview panes SHALL offer Play, Play next, Add to queue and Play folder for supported media (context menu and menu bar); dropping supported files or a folder on a Media pane SHALL enqueue them; a Preview video card SHALL offer "Play in Media pane". If no Media pane exists, Play SHALL switch a suitable pane to `Media` (or open one beside the focused pane) rather than fail.
 

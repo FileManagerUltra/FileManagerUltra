@@ -303,6 +303,7 @@ mod tests {
                 audio: None,
                 video: Some(fm_preview::VideoInfo {
                     path: path.to_string_lossy().into_owned(),
+                    range: None,
                     width: 320,
                     height: 180,
                     fps: 25.0,

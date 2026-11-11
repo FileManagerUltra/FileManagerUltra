@@ -135,6 +135,7 @@ mod tests {
         s.media.video = Some(VideoState::new(
             fm_preview::VideoInfo {
                 path: "/video/movie.mkv".into(),
+                range: None,
                 width: 320,
                 height: 180,
                 fps: 25.0,

@@ -144,6 +144,9 @@ pub struct Prefs {
     pub media_skip_back_secs: u64,
     #[serde(default = "default_skip_forward")]
     pub media_skip_forward_secs: u64,
+    /// Subtitle appearance, shared by every text subtitle type.
+    #[serde(default)]
+    pub subtitle_style: crate::subtitle_style::SubtitleStyle,
     #[serde(default = "default_log_poll_ms")]
     pub log_poll_ms: u64,
     /// Zero removes the initial-window limit, not the preview safety caps.
@@ -484,6 +487,7 @@ impl Default for Prefs {
             media_autoplay_on_add: false,
             media_skip_back_secs: default_skip_back(),
             media_skip_forward_secs: default_skip_forward(),
+            subtitle_style: Default::default(),
             log_poll_ms: default_log_poll_ms(),
             log_tail_mib: default_log_tail_mib(),
             preview_filters: crate::preview_types::PreviewFilters::default(),
@@ -832,6 +836,7 @@ mod tests {
                 "single_click_open",
                 "size_units",
                 "smb_require_encryption",
+                "subtitle_style",
                 "terminal_font_size",
                 "terminal_scrollback_rows",
                 "terminal_shell",

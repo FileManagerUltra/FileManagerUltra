@@ -148,6 +148,7 @@ mod tests {
         s.media.video = Some(VideoState::new(
             fm_preview::VideoInfo {
                 path: "/video/movie.mkv".into(),
+                range: None,
                 width: 320,
                 height: 180,
                 fps: 25.0,
@@ -423,6 +424,7 @@ mod tests {
                     .expect("item")
                     .local_path_string()
                     .expect("path"),
+                range: None,
                 width: 160,
                 height: 90,
                 fps: 10.0,

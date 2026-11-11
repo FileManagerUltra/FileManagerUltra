@@ -54,6 +54,9 @@ pub struct Tokens {
     pub diff_del_bg: Color32,
     pub diff_add_word: Color32,
     pub diff_del_word: Color32,
+    /// Subtitle text drawn over video, and the outline that keeps it readable on any picture.
+    pub subtitle_text: Color32,
+    pub subtitle_outline: Color32,
     /// Virtualized listing row height (px).
     pub row_height: f32,
     /// Generic inner padding (px).
@@ -103,6 +106,8 @@ impl Tokens {
             diff_del_bg: Color32::from_rgb(0x44, 0x22, 0x26),
             diff_add_word: Color32::from_rgb(0x2b, 0x62, 0x3c),
             diff_del_word: Color32::from_rgb(0x7a, 0x30, 0x38),
+            subtitle_text: Color32::from_rgb(0xff, 0xff, 0xff),
+            subtitle_outline: Color32::from_rgba_unmultiplied(0x00, 0x00, 0x00, 0xe0),
             row_height: 24.0,
             padding: 6.0,
             corner_radius: 6.0,
@@ -163,6 +168,9 @@ impl Tokens {
             diff_del_bg: Color32::from_rgb(0xfd, 0xe3, 0xe3),
             diff_add_word: Color32::from_rgb(0xa6, 0xe3, 0xb2),
             diff_del_word: Color32::from_rgb(0xf6, 0xb5, 0xb5),
+            // Drawn on the video, not on the light UI, so it stays light-on-dark.
+            subtitle_text: Color32::from_rgb(0xff, 0xff, 0xfa),
+            subtitle_outline: Color32::from_rgba_unmultiplied(0x10, 0x10, 0x10, 0xe0),
             row_height: 24.0,
             padding: 6.0,
             corner_radius: 6.0,
@@ -448,6 +456,48 @@ pub fn swatch(hex: &str) -> Option<Color32> {
     fm_engine::prefs::parse_hex_color(hex).map(|[r, g, b]| Color32::from_rgb(r, g, b))
 }
 
+/// Resolved colours of a subtitle style. `background` is transparent when the box is off.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SubtitleColors {
+    pub text: Color32,
+    pub background: Color32,
+    pub edge: Color32,
+}
+
+/// Colours for `style`; `"default"` entries take the theme's subtitle tokens.
+pub fn subtitle_colors(
+    style: &fm_engine::subtitle_style::SubtitleStyle,
+    tokens: &Tokens,
+) -> SubtitleColors {
+    let rgb = |c: Option<[u8; 3]>, fallback: Color32| {
+        c.map_or(fallback, |[r, g, b]| Color32::from_rgb(r, g, b))
+    };
+    let text = rgb(style.text_rgb(), tokens.subtitle_text).gamma_multiply(style.text_alpha());
+    let background =
+        rgb(style.background_rgb(), Color32::BLACK).gamma_multiply(style.background_alpha());
+    let edge = rgb(style.edge_rgb(), tokens.subtitle_outline);
+    SubtitleColors {
+        text,
+        background,
+        edge,
+    }
+}
+
+/// Opaque RGB of a colour, for contrast checks.
+pub fn rgb_of(color: Color32) -> [u8; 3] {
+    let [r, g, b, _] = color.to_srgba_unmultiplied();
+    [r, g, b]
+}
+
+/// A dark and a bright sample "scene" behind the subtitle preview, so readability can
+/// be judged on both.
+pub fn subtitle_sample_backdrop() -> [Color32; 2] {
+    [
+        Color32::from_rgb(0x1a, 0x22, 0x30),
+        Color32::from_rgb(0xd8, 0xdc, 0xc8),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -608,6 +658,8 @@ mod tests {
                 diff_del_bg,
                 diff_add_word,
                 diff_del_word,
+                subtitle_text,
+                subtitle_outline,
                 row_height,
                 padding,
                 corner_radius,
@@ -648,6 +700,8 @@ mod tests {
                 ("term_fg", term_fg),
                 ("term_cursor", term_cursor),
                 ("term_selection", term_selection),
+                ("subtitle_text", subtitle_text),
+                ("subtitle_outline", subtitle_outline),
             ] {
                 assert_ne!(color.a(), 0, "{name} must be opaque");
             }

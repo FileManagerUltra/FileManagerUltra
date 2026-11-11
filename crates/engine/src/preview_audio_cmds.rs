@@ -338,6 +338,7 @@ mod tests {
             audio: None,
             video: Some(fm_preview::VideoInfo {
                 path: "/missing/video.mp4".into(),
+                range: None,
                 width: 640,
                 height: 360,
                 fps: 25.0,

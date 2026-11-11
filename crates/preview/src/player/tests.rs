@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicU64;
 fn info(w: u32, h: u32) -> VideoInfo {
     VideoInfo {
         path: "/v.mp4".into(),
+        range: None,
         width: w,
         height: h,
         fps: 25.0,

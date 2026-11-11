@@ -202,6 +202,7 @@ fn media_preview_controls(video: bool, in_media: bool, fullscreen: bool) {
                     poster: None,
                     video: video.then(|| fm_preview::VideoInfo {
                         path: "/sample/movie.mkv".into(),
+                        range: None,
                         width: 640,
                         height: 360,
                         fps: 25.0,
@@ -267,6 +268,8 @@ fn media_preview_controls(video: bool, in_media: bool, fullscreen: bool) {
                     audio: vec![track("English"), track("Commentary")],
                     subtitles: vec![fm_preview::SubtitleTrack {
                         label: "English".into(),
+                        text: true,
+                        language: Some("eng".into()),
                     }],
                     selected_audio: 0,
                 };
@@ -274,6 +277,14 @@ fn media_preview_controls(video: bool, in_media: bool, fullscreen: bool) {
             session.media.video = Some(state);
             pane = session.media_pane().expect("media");
             if fullscreen {
+                // A cue on screen at 42 s, drawn with the default subtitle style.
+                let cues = fm_media::parse_subtitles(
+                    b"00:00:41,000 --> 00:00:44,000\nSubtitles look the same\nfor every format.\n",
+                )
+                .expect("cues");
+                session.media.subtitles.cues = Some(Arc::new(cues));
+                session.media.subtitles.selected =
+                    Some(fm_engine::media_subtitle_cmds::SubtitleSource::Embedded(0));
                 session
                     .dispatch("media.fullscreen", &serde_json::Value::Null)
                     .expect("fullscreen");
@@ -651,6 +662,7 @@ fn preferences_dialog_dark_light() {
             "Files",
             "Copy and move",
             "Preview",
+            "Subtitles",
             "Terminal",
             "Connections",
             "Workspaces",
@@ -681,6 +693,18 @@ fn preferences_dialog_dark_light() {
                 harness.run_steps(3);
                 harness.snapshot(format!("dialog_preferences_shortcuts_narrow_{theme}"));
                 harness.set_size(egui::vec2(900.0, 650.0));
+                harness.run_steps(3);
+            }
+            if topic == "Subtitles" {
+                harness.get_by_label("Yellow on black").click();
+                harness.run_steps(3);
+                harness.snapshot(format!("dialog_preferences_subtitles_preset_{theme}"));
+                harness
+                    .get_by_label("Reset subtitle appearance")
+                    .scroll_to_me();
+                harness.run_steps(3);
+                harness.snapshot(format!("dialog_preferences_subtitles_controls_{theme}"));
+                harness.get_by_label("Reset subtitle appearance").click();
                 harness.run_steps(3);
             }
             if topic == "Preview" {
@@ -1542,6 +1566,7 @@ fn preview_zoom_shortcuts_scale_each_renderer_without_changing_ui() {
         if matches!(name, "all.meta" | "all.video") {
             let video = (name == "all.video").then(|| fm_preview::VideoInfo {
                 path: "/nonexistent-preview-test.mp4".into(),
+                range: None,
                 width: 640,
                 height: 360,
                 fps: 24.0,

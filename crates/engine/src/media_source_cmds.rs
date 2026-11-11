@@ -298,8 +298,29 @@ impl Scan {
         }
         fm_layout::SortSpec::default().sort(&mut children);
         let before = self.items.len();
+        // A DVD-Video folder plays its title parts in name order; its menus are skipped.
+        let dvd = children.iter().any(|child| {
+            child.is_file()
+                && child
+                    .uri
+                    .file_name()
+                    .and_then(fm_media::dvd_file)
+                    .is_some_and(|file| matches!(file, fm_media::DvdFile::TitlePart { .. }))
+        });
         for child in &children {
-            if child.is_file() && validate_media(&child.uri).is_ok() {
+            let menu = dvd
+                && child.uri.file_name().and_then(fm_media::dvd_file)
+                    == Some(fm_media::DvdFile::Menu);
+            // Folders also hold installer and data images: only DVD-Video ones are media.
+            let foreign_image = child
+                .uri
+                .file_name()
+                .is_some_and(fm_preview::video::is_disc_image)
+                && !child
+                    .uri
+                    .local_path()
+                    .is_some_and(|path| fm_preview::dvd_iso::is_dvd_image(&path));
+            if child.is_file() && !menu && !foreign_image && validate_media(&child.uri).is_ok() {
                 if self.items.len() == MAX_QUEUE_ITEMS {
                     return Err(bad("Too many media files; the queue limit is 10,000."));
                 }
@@ -326,23 +347,33 @@ impl Scan {
                 dir: dir.path_str().to_string(),
             });
         }
-        if depth >= self.max_depth {
-            return Ok(());
-        }
         let subdirs: Vec<_> = children
             .into_iter()
             .filter(|child| {
                 child.is_dir() && child.uri.file_name().is_some_and(|n| !n.starts_with('.'))
             })
+            .filter(|child| {
+                // A disc folder's VIDEO_TS is part of the disc even for Play Folder (one
+                // extra level only, so nested VIDEO_TS folders cannot recurse further).
+                depth < self.max_depth
+                    || depth == self.max_depth
+                        && child
+                            .uri
+                            .file_name()
+                            .is_some_and(|name| name.eq_ignore_ascii_case("VIDEO_TS"))
+            })
             .collect();
         // A lone subfolder of a folder without media is a wrapper around the same book.
         let wrapper = count == 0 && subdirs.len() == 1;
         for child in subdirs {
-            if !wrapper {
-                rel.push(child.uri.file_name().unwrap_or("").to_string());
+            let name = child.uri.file_name().unwrap_or("");
+            // VIDEO_TS/AUDIO_TS belong to the disc: the folder keeps the disc's name.
+            let named = !wrapper && !fm_media::is_dvd_folder(name);
+            if named {
+                rel.push(name.to_string());
             }
             self.dir(backend, &child.uri, rel, depth + 1)?;
-            if !wrapper {
+            if named {
                 rel.pop();
             }
         }
@@ -384,7 +415,16 @@ fn load(
                 inspected,
                 max_depth: if folder_only { 0 } else { MAX_SCAN_DEPTH },
             };
-            let root = source.file_name().unwrap_or("Folder").to_string();
+            let root = source.file_name().unwrap_or("Folder");
+            // Dropping a disc's VIDEO_TS names the playlist folder after the disc.
+            let root = if fm_media::is_dvd_folder(root) {
+                source
+                    .parent()
+                    .and_then(|parent| parent.file_name().map(str::to_string))
+                    .unwrap_or_else(|| root.to_string())
+            } else {
+                root.to_string()
+            };
             scan.dir(backend, source, &mut vec![root], 0)?;
             (items, folders, inspected) = (scan.items, scan.folders, scan.inspected);
             if items.len() == before {
@@ -641,6 +681,66 @@ mod tests {
         );
         assert_eq!(loaded.items.len(), 6, "hidden folders are skipped");
         assert_eq!(loaded.folders[1].dir, "/s/Series/Book 2");
+    }
+
+    #[test]
+    fn a_dvd_folder_queues_its_title_parts_in_order_without_menus() {
+        let fs = MemFs::new();
+        for path in [
+            "/d/Movie/VIDEO_TS/VIDEO_TS.VOB",
+            "/d/Movie/VIDEO_TS/VIDEO_TS.IFO",
+            "/d/Movie/VIDEO_TS/VTS_01_0.VOB",
+            "/d/Movie/VIDEO_TS/VTS_01_2.VOB",
+            "/d/Movie/VIDEO_TS/VTS_01_1.VOB",
+            "/d/Movie/VIDEO_TS/vts_02_1.vob",
+            "/d/Movie/VIDEO_TS/VIDEO_TS/deeper.vob",
+        ] {
+            fs.put_str(path, b"x").expect("file");
+        }
+        fs.mkdirs_str("/d/Movie/AUDIO_TS").expect("audio_ts");
+        let names = |loaded: &Loaded| -> Vec<String> {
+            loaded
+                .items
+                .iter()
+                .filter_map(|u| u.file_name().map(str::to_string))
+                .collect()
+        };
+        // Dropping the disc folder, its VIDEO_TS, or Play Folder on the disc all agree.
+        for (source, folder_only) in [
+            ("/d/Movie", false),
+            ("/d/Movie/VIDEO_TS", false),
+            ("/d/Movie", true),
+        ] {
+            let loaded = load(&[uri(source)], &fs, Vec::new(), folder_only).expect("load");
+            let mut expected = vec!["VTS_01_1.VOB", "VTS_01_2.VOB", "vts_02_1.vob"];
+            if !folder_only {
+                // A drop scans deeper; the nested folder is a separate playlist folder.
+                expected.push("deeper.vob");
+            }
+            assert_eq!(names(&loaded), expected, "{source} {folder_only}");
+            assert_eq!(loaded.folders[0].name, "Movie", "{source}");
+            assert_eq!(loaded.folders[0].len, 3, "{source}");
+        }
+        // A menu file chosen on its own still plays.
+        let menu = load(
+            &[uri("/d/Movie/VIDEO_TS/VTS_01_0.VOB")],
+            &fs,
+            Vec::new(),
+            false,
+        )
+        .expect("menu");
+        assert_eq!(names(&menu), ["VTS_01_0.VOB"]);
+        // Installer and data images in a dropped folder are not media.
+        fs.put_str("/d/Downloads/linux.iso", b"not a dvd")
+            .expect("iso");
+        fs.put_str("/d/Downloads/song.mp3", b"x").expect("mp3");
+        let loaded = load(&[uri("/d/Downloads")], &fs, Vec::new(), false).expect("load");
+        assert_eq!(names(&loaded), ["song.mp3"]);
+        // Disc images play in place, so a remote one is refused up front.
+        let remote = VfsUri::parse("sftp://host/films/Movie.iso").expect("uri");
+        let error = crate::media_cmds::validate_media_source(&remote).expect_err("remote iso");
+        assert!(error.to_string().contains("on this computer"));
+        assert!(crate::media_cmds::validate_media_source(&uri("/d/Movie.iso")).is_ok());
     }
 
     #[test]

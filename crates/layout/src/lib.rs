@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use fm_vfs::{FmError, VfsUri};
 
 mod node;
+pub mod selection;
 mod state;
 
 pub use node::{Axis, Edge, MAX_RATIO, MIN_RATIO, PaneNode};
