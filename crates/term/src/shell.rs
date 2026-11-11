@@ -100,7 +100,7 @@ impl Program {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn exe(&self) -> Option<&std::path::Path> {
         match self {
             Program::Native => None,
