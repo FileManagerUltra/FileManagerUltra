@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The Windows installer no longer includes ffmpeg (about 90 MB smaller); download it from Preferences > Media when you want video.
 - Removed the Media menu from the menu bar; its commands remain in the Media pane, its context menus and keyboard shortcuts. Media settings (gapless, background playback, audiobook skips) now have their own topic in Preferences.
 
 - Preview's audio and video players now use the same icon controls, seek bar and volume as the Media pane. The player in Preview is a larger card shown above the cover art. The Media equalizer is redesigned and opens in its own window that stays open while you pick presets, and the right-click menu only shows audiobook entries where they apply.

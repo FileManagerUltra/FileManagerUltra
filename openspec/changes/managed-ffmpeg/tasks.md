@@ -5,5 +5,5 @@
 - [x] `find_tool` searches the app-managed folder last; negative lookups are no longer cached
 - [x] Preferences > Media ffmpeg section; missing-tool hints name it on Windows
 - [x] Docs, changelog, `security` and `preview-pane` deltas
-- [ ] Decide whether to stop bundling ffmpeg in the Windows installer (`release.yml`)
+- [x] Stop bundling ffmpeg in the Windows installer (`release.yml`, `packager-config`)
 - [ ] Real-app check on Windows (download, play, Update, Reinstall)
