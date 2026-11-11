@@ -1,0 +1,91 @@
+name: windows
+
+# Manual Windows check of a branch: lint, tests (with ffmpeg, so the real video, subtitle
+# and DVD tests run) and an installer to try by hand. Start it from the Actions tab or
+# with `gh workflow run windows.yml --ref <branch>`.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (windows-x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-test
+      - name: Install ffmpeg (real video, subtitle and DVD tests skip without it)
+        run: choco install ffmpeg -y --no-progress
+      - name: Tool versions
+        shell: bash
+        run: |
+          rustc --version
+          ffmpeg -hide_banner -version | head -1
+          ffprobe -hide_banner -version | head -1
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy (Windows-only code paths included)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Layers and branding
+        run: |
+          cargo xtask layers
+          cargo xtask brand-check
+      - name: Tests
+        run: cargo test --workspace --locked --exclude fm-ui
+      - name: UI tests (without pixel snapshots)
+        run: cargo test -p fm-ui --locked --lib --test hostile --test dialog_interaction
+      # Baselines are rendered on Linux; a different GPU/font rasterizer may differ by a
+      # few pixels, so this step reports without failing the run.
+      - name: UI pixel snapshots (informational)
+        continue-on-error: true
+        run: cargo test -p fm-ui --locked --test snapshots
+      - name: Upload snapshot diffs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: snapshot-diffs-windows
+          path: crates/ui/tests/snapshots/*.diff.png
+          if-no-files-found: ignore
+
+  installer:
+    name: installer (windows-x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-pc-windows-msvc
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+      - name: Build
+        run: cargo build --release --locked -p fm-app --target x86_64-pc-windows-msvc
+      - name: Stage binary where the packager expects it
+        shell: bash
+        run: |
+          mkdir -p target/release
+          cp target/x86_64-pc-windows-msvc/release/filemanagerultra* target/release/ || true
+          rm -f target/release/*.d target/release/*.pdb
+      - name: Package
+        run: |
+          cargo xtask packager-config
+          cargo packager --config target/Packager.toml --release --formats nsis
+      - uses: actions/upload-artifact@v7
+        with:
+          name: filemanagerultra-windows-x64-${{ github.ref_name }}
+          path: target/packager/*-setup.exe
+          if-no-files-found: error
