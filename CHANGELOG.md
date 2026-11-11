@@ -55,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redesigned the Media pane in a Winamp style: a now-playing display with artwork, title and clock, an icon-based control row with tooltips, a numbered playlist, and an Options menu holding the equalizer, sleep timer, A-B loop, speed, tracks, gapless and other settings.
 
 ### Fixed
+- Shift+Arrow keyboard selection keeps its starting row instead of sliding after two files.
 - Audio no longer stops with "buffer underrun or overrun" errors; brief glitches are tolerated.
 - Media keyboard controls keep working after clicking a button in the pane.
 - Videos keep playing when you switch workspace or close the Media pane (when background playback is on), like audio.

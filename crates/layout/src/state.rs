@@ -444,6 +444,29 @@ impl ListingState {
         self.move_focus(order, delta, extend);
     }
 
+    /// The fixed end of a keyboard range selection: the selected end opposite the focused row
+    /// (the focused row itself when the selection is empty or the focus is inside it).
+    fn anchor_row(&self, order: &[String]) -> usize {
+        let last = order.len().saturating_sub(1);
+        let focus = self.focused_row.min(last);
+        let mut picked = order
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| self.selection.contains(*n))
+            .map(|(i, _)| i);
+        let (Some(lo), hi) = (picked.next(), picked.next_back()) else {
+            return focus;
+        };
+        let hi = hi.unwrap_or(lo);
+        if focus == hi {
+            lo
+        } else if focus == lo {
+            hi
+        } else {
+            focus
+        }
+    }
+
     /// Move the focused row; with `extend` keep growing the range selection,
     /// otherwise collapse the selection to the focused name.
     pub fn move_focus(&mut self, order: &[String], delta: isize, extend: bool) {
@@ -456,8 +479,7 @@ impl ListingState {
         let cur = self.focused_row.min(last) as isize;
         let next = (cur + delta).clamp(0, last as isize) as usize;
         if extend {
-            let anchor = self.focused_row.min(last);
-            self.focused_row = anchor;
+            self.focused_row = self.anchor_row(order);
             self.extend_to(order, next);
         } else {
             let name = order.get(next).cloned();
@@ -474,6 +496,7 @@ impl ListingState {
         }
         let row = row.min(order.len() - 1);
         if extend {
+            self.focused_row = self.anchor_row(order);
             self.extend_to(order, row);
         } else {
             let name = order.get(row).cloned();
@@ -1285,6 +1308,27 @@ mod tests {
         e.select_all(&[]);
         e.extend_to(&[], 3);
         assert_eq!(e.focused_row, 0);
+    }
+
+    #[test]
+    fn repeated_shift_down_keeps_the_anchor() {
+        let order: Vec<String> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut l = ListingState::default();
+        l.select_only(Some("b"), 1);
+        for _ in 0..3 {
+            l.move_focus(&order, 1, true);
+        }
+        assert_eq!(l.selected_count(), 4); // b..=e
+        l.move_focus(&order, -1, true); // shrinks from the bottom
+        assert_eq!(l.selected_count(), 3);
+        for _ in 0..3 {
+            l.move_focus(&order, -1, true);
+        }
+        assert_eq!(l.focused_row, 0);
+        assert_eq!(l.selected_count(), 2); // a..=b, flipped over the anchor
     }
 
     #[test]
