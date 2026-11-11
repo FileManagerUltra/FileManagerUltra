@@ -383,8 +383,7 @@ fn run(
     shared: &Shared,
     open: impl FnOnce(Gain) -> Result<Output, FmError>,
 ) -> Result<(), FmError> {
-    let tool: PathBuf =
-        find_tool("ffmpeg").ok_or_else(|| error("Install ffmpeg to play this video"))?;
+    let tool: PathBuf = find_tool("ffmpeg").ok_or_else(|| error(crate::video::missing_hint()))?;
     if shared.cancelled.load(Ordering::Acquire) {
         return Ok(());
     }

@@ -399,6 +399,15 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
             section(
                 ui,
                 tokens,
+                "ffmpeg",
+                Some(
+                    "Needed for video playback, chapters and poster frames. Audio does not need it.",
+                ),
+                |ui| ffmpeg_section(ui, s, tokens),
+            );
+            section(
+                ui,
+                tokens,
                 "Audiobooks",
                 Some("Skip buttons and remembered positions in the Media pane."),
                 |ui| {
@@ -888,6 +897,78 @@ fn section(
     }
     contents(ui);
     ui.add_space(12.0);
+}
+
+/// Where ffmpeg was found and, where a verified build is pinned, how to download it.
+fn ffmpeg_section(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
+    let found = fm_preview::video::find_tool("ffmpeg").zip(fm_preview::video::find_tool("ffprobe"));
+    let managed = found
+        .as_ref()
+        .zip(s.ffmpeg.dir())
+        .is_some_and(|((tool, _), dir)| tool.starts_with(dir));
+    match &found {
+        Some((tool, _)) if managed => {
+            let version = s.ffmpeg.installed_version().unwrap_or("?");
+            ui.label(format!("Downloaded by the app (version {version})"));
+            hint(ui, tokens, tool.display().to_string());
+        }
+        Some((tool, _)) => {
+            ui.label("Found on this computer");
+            hint(ui, tokens, tool.display().to_string());
+        }
+        None => {
+            ui.label(RichText::new("Not found").color(tokens.warning));
+        }
+    }
+    if s.ffmpeg.installing() {
+        let (done, total) = s.ffmpeg.progress();
+        let fraction = if total == 0 {
+            0.0
+        } else {
+            (done as f64 / total as f64) as f32
+        };
+        ui.add(
+            egui::ProgressBar::new(fraction)
+                .desired_width(260.0)
+                .text(format!(
+                    "{:.0} of {:.0} MB",
+                    done as f64 / 1_048_576.0,
+                    total as f64 / 1_048_576.0
+                )),
+        );
+    } else if s.ffmpeg.downloadable() {
+        let label = if s.ffmpeg.update_available() {
+            format!(
+                "Update to {}",
+                s.ffmpeg.pinned_version().unwrap_or_default()
+            )
+        } else if managed {
+            "Reinstall".to_string()
+        } else if found.is_none() {
+            "Download ffmpeg".to_string()
+        } else {
+            "Download a separate copy".to_string()
+        };
+        let enabled = s.command_enabled("tools.ffmpeg.install");
+        if ui
+            .add_enabled(enabled, egui::Button::new(label))
+            .on_hover_text(
+                "Downloads a pinned build over https and verifies its checksum before installing",
+            )
+            .clicked()
+        {
+            s.dispatch_or_notice("tools.ffmpeg.install", &serde_json::Value::Null);
+        }
+    } else if found.is_none() {
+        hint(
+            ui,
+            tokens,
+            "Install ffmpeg with your package manager (for example `brew install ffmpeg` or `apt install ffmpeg`).",
+        );
+    }
+    if let Some(error) = s.ffmpeg.error.clone() {
+        ui.label(RichText::new(error).color(tokens.error));
+    }
 }
 
 #[cfg(test)]

@@ -18,15 +18,37 @@ const POSTER_TIMEOUT: Duration = Duration::from_secs(8);
 const PROBE_BYTES: u64 = 1 << 20;
 const POSTER_BYTES: u64 = 32 << 20;
 
-/// First existing `tool` from the sidecar / `PATH` / package-manager candidates.
+static MANAGED_TOOLS: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Register the folder holding app-downloaded tools; it is searched after every system location.
+pub fn set_managed_tools_dir(dir: PathBuf) {
+    let _ = MANAGED_TOOLS.set(dir);
+}
+
+/// What to tell the user when ffmpeg or ffprobe is missing.
+pub fn missing_hint() -> &'static str {
+    if cfg!(windows) {
+        "Install ffmpeg from Preferences > Media to play this video."
+    } else {
+        "Install ffmpeg and ffprobe (for example with your package manager) to play this video."
+    }
+}
+
+/// First existing `tool` from the sidecar / `PATH` / package-manager / managed-folder candidates.
 pub fn find_tool(tool: &str) -> Option<PathBuf> {
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf));
     let path_env = std::env::var("PATH").unwrap_or_default();
-    tool_candidates(Os::current(), tool, exe_dir.as_deref(), &path_env)
-        .into_iter()
-        .find(|p| p.is_file())
+    tool_candidates(
+        Os::current(),
+        tool,
+        exe_dir.as_deref(),
+        &path_env,
+        MANAGED_TOOLS.get().map(PathBuf::as_path),
+    )
+    .into_iter()
+    .find(|p| p.is_file())
 }
 
 /// A path that can never be read as an option or smuggle a protocol.
@@ -131,10 +153,9 @@ pub fn playback_info(
         .local_path_string()
         .filter(|path| safe_path(path))
         .ok_or_else(|| fail("Choose a safe local video path."))?;
-    let ffprobe = find_tool("ffprobe")
-        .ok_or_else(|| fail("Install ffmpeg and ffprobe to play this video."))?;
+    let ffprobe = find_tool("ffprobe").ok_or_else(|| fail(missing_hint()))?;
     if find_tool("ffmpeg").is_none() {
-        return Err(fail("Install ffmpeg and ffprobe to play this video."));
+        return Err(fail(missing_hint()));
     }
     probe(&ffprobe, &path, Some(cancelled))
         .and_then(|probe| probe.playback_info(&path))
@@ -431,11 +452,9 @@ pub fn thumbnail(entry: &Entry, edge: u32) -> Option<ImageDoc> {
     if !safe_path(path) {
         return None;
     }
-    static TOOLS: std::sync::OnceLock<(Option<PathBuf>, Option<PathBuf>)> =
-        std::sync::OnceLock::new();
-    let (ffmpeg, ffprobe) = TOOLS.get_or_init(|| (find_tool("ffmpeg"), find_tool("ffprobe")));
-    let ffmpeg = ffmpeg.as_ref()?;
-    let duration = ffprobe
+    // Looked up each time (not cached) so a tool installed later is picked up.
+    let ffmpeg = find_tool("ffmpeg")?;
+    let duration = find_tool("ffprobe")
         .as_ref()
         .and_then(|p| probe(p, path, None))
         .and_then(|p| p.duration);
@@ -444,7 +463,7 @@ pub fn thumbnail(entry: &Entry, edge: u32) -> Option<ImageDoc> {
         image_edge: edge,
         ..Limits::default()
     };
-    poster(ffmpeg, path, at, edge, entry, &limits)
+    poster(&ffmpeg, path, at, edge, entry, &limits)
 }
 
 pub fn render(entry: &Entry, limits: &Limits) -> Preview {
@@ -462,7 +481,7 @@ pub fn render(entry: &Entry, limits: &Limits) -> Preview {
     let (Some(ffprobe), Some(ffmpeg)) = (find_tool("ffprobe"), find_tool("ffmpeg")) else {
         return Preview::Meta(MetaDoc {
             rows,
-            hint: Some("Install ffmpeg (ffprobe + ffmpeg on PATH) to see video details and a poster frame.".into()),
+            hint: Some(missing_hint().into()),
             poster: None,
             video: None,
             audio: None,

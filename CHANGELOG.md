@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- On Windows, Preferences > Media can download ffmpeg (needed for video) for you. The download is a pinned version that is checked against a built-in SHA-256 checksum before it is installed, and a copy already on your computer is always used first. Elsewhere the same place tells you how to install it.
 - While Media is playing (or paused mid-item), the bottom right of the status bar, next to the jobs button, shows Previous, Play/Pause and Next buttons and a speaker that pops out a vertical volume slider.
 - Media playlist rows with a remembered position show a small half-filled dot in the gutter ("Resumes at 12:34" on hover), and finished books show a check mark.
 - Media remembers where the current item stopped when you close the app: after reopening, the player shows that position and length, and Play continues from there.

@@ -106,6 +106,7 @@ pub struct Session {
     pub about_open: bool,
     /// Non-blocking release check and its dismissible notification.
     pub updates: crate::updates::Updates,
+    pub ffmpeg: crate::ffmpeg_install::Ffmpeg,
     /// Set by `app.preferences`; the UI renders the dialog and clears it.
     pub preferences_open: bool,
     /// Shared directory listings (capability `directory-cache`).
@@ -202,6 +203,7 @@ impl Default for Session {
             pending_kind: None,
             about_open: false,
             updates: Default::default(),
+            ffmpeg: Default::default(),
             preferences_open: false,
             dirs: DirCache::new(),
             watch: Default::default(),
@@ -376,6 +378,7 @@ impl Session {
     pub fn is_busy(&self) -> bool {
         self.volumes.removing()
             || self.updates.checking()
+            || self.ffmpeg.installing()
             || self.updates.browser_job.is_some()
             || !self.inflight.is_empty()
             || self.watch.has_pending()
@@ -401,6 +404,7 @@ impl Session {
         let term_changed = self.close_exited_terminals() || term_changed;
         let mut changed = !events.is_empty() || term_changed;
         changed |= self.pump_updates();
+        changed |= self.ffmpeg.poll();
         changed |= self.pump_devices();
         changed |= self.pump_remote_lost();
         changed |= self.pump_trash();
@@ -694,7 +698,7 @@ mod tests {
             let needs_params = session
                 .registry
                 .get(id)
-                .is_some_and(|spec| spec.params != "none" && !all_optional(spec.params));
+                .is_some_and(|spec| !spec.params.starts_with("none") && !all_optional(spec.params));
             let enabled = session
                 .registry
                 .get(id)

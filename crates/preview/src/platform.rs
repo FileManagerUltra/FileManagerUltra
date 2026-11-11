@@ -35,8 +35,14 @@ impl Os {
 
 /// Where to look for `tool`, best first: a sidecar next to the executable, then every
 /// `PATH` entry, then the usual package-manager locations (GUI apps on macOS get a
-/// minimal `PATH`).
-pub fn tool_candidates(os: Os, tool: &str, exe_dir: Option<&Path>, path_env: &str) -> Vec<PathBuf> {
+/// minimal `PATH`), and last the app-managed download folder, so a system install always wins.
+pub fn tool_candidates(
+    os: Os,
+    tool: &str,
+    exe_dir: Option<&Path>,
+    path_env: &str,
+    managed: Option<&Path>,
+) -> Vec<PathBuf> {
     let name = os.exe_name(tool);
     let mut out = Vec::new();
     if let Some(d) = exe_dir {
@@ -53,6 +59,9 @@ pub fn tool_candidates(os: Os, tool: &str, exe_dir: Option<&Path>, path_env: &st
         for d in ["/opt/homebrew/bin", "/usr/local/bin"] {
             out.push(Path::new(d).join(&name));
         }
+    }
+    if let Some(dir) = managed {
+        out.push(dir.join(&name));
     }
     let mut seen = Vec::new();
     out.retain(|p| {
@@ -74,6 +83,7 @@ mod tests {
             "ffmpeg",
             Some(Path::new("/opt/app")),
             "/usr/bin:/bin",
+            None,
         );
         assert_eq!(l[0], Path::new("/opt/app/ffmpeg"));
         assert!(l.contains(&PathBuf::from("/usr/bin/ffmpeg")));
@@ -82,19 +92,32 @@ mod tests {
             "ffmpeg",
             Some(Path::new("C:\\app")),
             "C:\\a;C:\\b",
+            None,
         );
         assert!(
             w.iter()
                 .any(|p| p.to_string_lossy().ends_with("ffmpeg.exe"))
         );
         assert!(w.iter().any(|p| p.to_string_lossy().contains("C:\\a")));
-        let m = tool_candidates(Os::MacOs, "ffmpeg", None, "");
+        let m = tool_candidates(Os::MacOs, "ffmpeg", None, "", None);
         assert_eq!(m[0], Path::new("/opt/homebrew/bin/ffmpeg"));
     }
 
     #[test]
+    fn managed_folder_is_searched_last() {
+        let l = tool_candidates(
+            Os::Linux,
+            "ffmpeg",
+            Some(Path::new("/opt/app")),
+            "/usr/bin",
+            Some(Path::new("/data/tools")),
+        );
+        assert_eq!(l.last(), Some(&PathBuf::from("/data/tools/ffmpeg")));
+    }
+
+    #[test]
     fn duplicates_collapse() {
-        let l = tool_candidates(Os::Linux, "x", None, "/a:/a:");
+        let l = tool_candidates(Os::Linux, "x", None, "/a:/a:", None);
         assert_eq!(l.len(), 1);
     }
 }

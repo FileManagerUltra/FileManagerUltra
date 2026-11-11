@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-11-11
+goal: Install ffmpeg and ffprobe on demand from a pinned, hash-verified download instead of bundling them in installers

@@ -36,6 +36,8 @@ sysinfo.workspace = true
 jiff.workspace = true
 regex.workspace = true
 tempfile.workspace = true
+sha2.workspace = true
+zip.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 plist = "1"

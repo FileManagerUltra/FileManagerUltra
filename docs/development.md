@@ -15,8 +15,12 @@ cover art when present. Preferences > Preview > Audio can enable autoplay (off b
 default). Playback stops when the preview selection changes or its pane closes.
 Video previews play with sound and offer volume/mute controls. Video autoplay is
 on by default and can be disabled in Preferences > Preview > Playback. Without an
-audio device, video plays silently with a hint. the Windows installer bundles ffmpeg and ffprobe; elsewhere they must currently
-be installed separately; bundled installers and the dedicated Media pane are
+audio device, video plays silently with a hint. the Windows installer bundles ffmpeg and ffprobe, and Windows builds can also
+download a pinned, hash-verified copy from Preferences > Media (see "Managed
+tools" in `docs/architecture.md`; to bump the pin edit `Pin::WINDOWS` in
+`crates/engine/src/ffmpeg_install.rs`: URL, size and the SHA-256 published by the
+build's author, then run the ignored `real_pin_archive_installs` test with
+`FM_FFMPEG_ARCHIVE=<zip>`); elsewhere they must be installed separately; bundled installers and the dedicated Media pane are
 still in progress under `openspec/changes/add-media-pane/`.
 
 Playback smoke checks (Linux, Windows and macOS): preview a video with speech,

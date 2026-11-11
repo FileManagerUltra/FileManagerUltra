@@ -595,6 +595,19 @@ Winit/egui have no Wayland-native **window-wide** file drop in some setups; exte
 
 ---
 
+### Managed tools (`managed-ffmpeg`)
+
+`fm-engine::ffmpeg_install` can download ffmpeg/ffprobe on Windows (command
+`tools.ffmpeg.install`, Preferences > Media). Lookup order in `fm-preview` is
+`$PATH`/known locations first, then `<data dir>/tools` (`set_managed_tools_dir`),
+so a system install always wins. Rules: a compiled-in `Pin` (https URL, exact
+size, SHA-256 cross-checked against the publisher); https-only with a redirect
+policy and size cap; the hash is verified before anything is unpacked; only the
+two named `bin/` members are extracted, to fixed names (no paths, symlinks or
+duplicates); temp files are persisted atomically and `manifest.json` is written
+last; the folder is owner-only on Unix. Updates arrive only with a new app
+release carrying a new pin. Linux and macOS have no pin (package manager hints).
+
 ## 12. Security and threat model
 
 Security is scaffold work (OpenSpec capability `security`), not a later pass. Three attacker classes, each with named defences:
