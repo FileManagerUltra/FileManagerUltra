@@ -246,7 +246,8 @@ fn tracks_valid(info: &VideoInfo) -> bool {
             .all(|track| track.delay.is_finite() && track.delay >= 0.0)
 }
 
-fn video_pipe(tool: &std::path::Path, spec: &PlaySpec) -> Result<Pipe, FmError> {
+/// `exact` seeks after the input: slower, but works on files whose only keyframe is at the start.
+fn video_pipe(tool: &std::path::Path, spec: &PlaySpec, exact: bool) -> Result<Pipe, FmError> {
     let (w, h) = decode_size(&spec.info, spec.width).ok_or_else(|| error("Invalid video size"))?;
     let fps = spec.info.fps.max(1.0);
     let (protocols, input) = spec
@@ -254,21 +255,18 @@ fn video_pipe(tool: &std::path::Path, spec: &PlaySpec) -> Result<Pipe, FmError> 
         .ffmpeg_input()
         .ok_or_else(|| error("Invalid video path"))?;
     let mut c = command(tool);
-    c.args([
-        "-v",
-        "error",
-        "-nostdin",
-        "-protocol_whitelist",
-        protocols,
-        "-ss",
-    ])
-    .arg(format!("{:.6}", spec.from))
-    .arg("-i")
-    .arg(input)
-    .args(["-map", "0:v:0", "-an", "-sn", "-dn", "-vf"])
-    // Raw frames have no PTS: normalize VFR to the probed, bounded cadence.
-    .arg(format!("fps=fps={fps:.9}:start_time=0,scale={w}:{h}"))
-    .args(["-pix_fmt", "rgba", "-f", "rawvideo", "-threads", "1"]);
+    c.args(["-v", "error", "-nostdin", "-protocol_whitelist", protocols]);
+    if !exact {
+        c.args(["-ss"]).arg(format!("{:.6}", spec.from));
+    }
+    c.arg("-i").arg(input);
+    if exact {
+        c.args(["-ss"]).arg(format!("{:.6}", spec.from));
+    }
+    c.args(["-map", "0:v:0", "-an", "-sn", "-dn", "-vf"])
+        // Raw frames have no PTS: normalize VFR to the probed, bounded cadence.
+        .arg(format!("fps=fps={fps:.9}:start_time=0,scale={w}:{h}"))
+        .args(["-pix_fmt", "rgba", "-f", "rawvideo", "-threads", "1"]);
     if spec.still {
         c.args(["-frames:v", "1"]);
     }
@@ -439,7 +437,8 @@ fn run(
     if shared.cancelled.load(Ordering::Acquire) {
         return Ok(());
     }
-    let mut video = video_pipe(&tool, spec)?;
+    let mut video = video_pipe(&tool, spec, false)?;
+    let mut exact = false;
     let (width, height) =
         decode_size(&spec.info, spec.width).ok_or_else(|| error("Invalid video size"))?;
     let fps = spec.info.fps.max(1.0);
@@ -461,7 +460,16 @@ fn run(
             audio = None;
         }
         if next.is_none()
-            && let Some(rgba) = video.poll()?
+            && let Some(rgba) = match video.poll() {
+                Ok(frame) => frame,
+                // Fast seek can land on a non-keyframe and decode nothing; retry exactly.
+                Err(_) if !exact && sequence == 0 && spec.from > 0.0 => {
+                    exact = true;
+                    video = video_pipe(&tool, spec, true)?;
+                    continue;
+                }
+                Err(err) => return Err(err),
+            }
         {
             if rgba.len() != width as usize * height as usize * 4 {
                 return Err(error("Truncated video frame"));

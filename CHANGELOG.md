@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Resuming playback of some screen recordings (WebM files with a single keyframe) no longer fails with "Decoder failed"; the video now resumes at the paused position.
+
 ### Changed
 - Copy and move progress ("Copy 1 item to Videos · 44%") now sits at the right of the status bar, next to the jobs button.
 - Adding items to the Media playlist no longer starts playback on its own. Preferences > Media has "Start playing when items are added" (off by default) to bring it back; it never interrupts what is already playing. Opening a folder in Media still plays it.
