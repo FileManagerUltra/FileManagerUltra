@@ -23,7 +23,6 @@ enum Topic {
     FileOperations,
     Preview,
     Media,
-    Subtitles,
     Terminal,
     Connections,
     Workspaces,
@@ -32,14 +31,13 @@ enum Topic {
 }
 
 impl Topic {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 11] = [
         Self::General,
         Self::Appearance,
         Self::Files,
         Self::FileOperations,
         Self::Preview,
         Self::Media,
-        Self::Subtitles,
         Self::Terminal,
         Self::Connections,
         Self::Workspaces,
@@ -55,7 +53,6 @@ impl Topic {
             Self::FileOperations => "Copy and move",
             Self::Preview => "Preview",
             Self::Media => "Media",
-            Self::Subtitles => "Subtitles",
             Self::Terminal => "Terminal",
             Self::Connections => "Connections",
             Self::Workspaces => "Workspaces",
@@ -170,7 +167,6 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
 fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
     match topic {
         Topic::Shortcuts => shortcuts::show(ui, s, tokens),
-        Topic::Subtitles => subtitles::show(ui, s, tokens),
         Topic::General => {
             section_heading(ui, tokens, "Updates");
             let mut check_updates = s.prefs.check_updates;
@@ -466,6 +462,7 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                     }
                 },
             );
+            subtitles::show(ui, s, tokens);
         }
         Topic::FileOperations => {
             section_heading(ui, tokens, "Symbolic links");

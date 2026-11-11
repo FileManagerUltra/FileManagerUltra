@@ -28,6 +28,11 @@ impl Kind {
     }
 }
 
+/// Header object GUID that starts every ASF (WMA/WMV) file.
+const ASF_GUID: [u8; 16] = [
+    0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+];
+
 fn magic(head: &[u8]) -> Option<Kind> {
     let h = head;
     if h.starts_with(&[0x89, b'P', b'N', b'G']) {
@@ -54,6 +59,13 @@ fn magic(head: &[u8]) -> Option<Kind> {
         return Some(Kind::Video);
     }
     if h.starts_with(b"ID3") || h.starts_with(b"fLaC") || h.starts_with(b"OggS") {
+        return Some(Kind::Audio);
+    }
+    // Monkey's Audio, WavPack, AIFF/AIFF-C.
+    if h.starts_with(b"MAC ")
+        || h.starts_with(b"wvpk")
+        || (h.len() >= 12 && &h[0..4] == b"FORM" && matches!(&h[8..12], b"AIFF" | b"AIFC"))
+    {
         return Some(Kind::Audio);
     }
     if h.starts_with(b"%PDF") {
@@ -136,6 +148,14 @@ pub fn sniff(path: &str, head: &[u8]) -> Kind {
         return k;
     }
     let ext = ext_of(name);
+    // ASF holds both WMA (audio) and WMV (video); the extension tells them apart.
+    if head.starts_with(&ASF_GUID) {
+        return if ext == "wma" {
+            Kind::Audio
+        } else {
+            Kind::Video
+        };
+    }
     if ext == "ico" && head.starts_with(&[0, 0, 1, 0]) {
         return Kind::Image("ico");
     }
@@ -311,6 +331,15 @@ mod tests {
         mp4.extend_from_slice(b"ftypisom");
         assert_eq!(sniff("a.mp4", &mp4), Kind::Video);
         assert_eq!(sniff("a.mp3", b"ID3\x03"), Kind::Audio);
+        let asf = [
+            0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62,
+            0xCE, 0x6C, 0, 0,
+        ];
+        assert_eq!(sniff("song.WMA", &asf), Kind::Audio);
+        assert_eq!(sniff("clip.wmv", &asf), Kind::Video);
+        assert_eq!(sniff("a.ape", b"MAC \x96\x0f"), Kind::Audio);
+        assert_eq!(sniff("a.wv", b"wvpk...."), Kind::Audio);
+        assert_eq!(sniff("a.aiff", b"FORM\0\0\0\x10AIFFCOMM"), Kind::Audio);
     }
 
     #[test]

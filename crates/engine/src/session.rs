@@ -226,6 +226,8 @@ impl Default for Session {
 impl Session {
     /// Register the command catalogue and load the OS timezone before the UI starts.
     pub fn new() -> Result<Self, FmError> {
+        // Audio formats Symphonia cannot read fall back to ffmpeg, found like video tools.
+        fm_media::set_tool_locator(fm_preview::video::find_tool);
         let (file_time_zone, notice) = match jiff::tz::TimeZone::try_system() {
             Ok(zone) => (zone, None),
             Err(err) => {

@@ -1,4 +1,4 @@
-//! Preferences > Subtitles: appearance for readability, with a live preview and a
+//! Preferences > Media, subtitle sections: appearance for readability, with a live preview and a
 //! contrast check. Every change dispatches `media.subtitle.style`.
 
 use egui::{Id, Ui, vec2};
@@ -33,6 +33,7 @@ fn style(s: &mut Session, fields: Value) {
 
 pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
     let current = s.prefs.subtitle_style.clone();
+    crate::dialog_style::section_heading(ui, tokens, "Subtitles");
     hint(
         ui,
         tokens,
@@ -44,7 +45,7 @@ pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
     preview(ui, &current, tokens);
     ui.add_space(8.0);
 
-    super::section(ui, tokens, "Presets", None, |ui| {
+    super::section(ui, tokens, "Subtitle presets", None, |ui| {
         ui.horizontal_wrapped(|ui| {
             for (name, label) in PRESETS {
                 if ui.button(label).clicked() {
@@ -54,7 +55,7 @@ pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
         });
     });
 
-    super::section(ui, tokens, "Text", None, |ui| {
+    super::section(ui, tokens, "Subtitle text", None, |ui| {
         slider(ui, s, tokens, "Size", "size", current.size, SIZE_RANGE, "%");
         ui.horizontal(|ui| {
             let caption = caption(ui, "Font");
@@ -119,7 +120,7 @@ pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
     super::section(
         ui,
         tokens,
-        "Background",
+        "Subtitle background",
         Some("A solid box behind the text gives the most contrast. 0% turns it off."),
         |ui| {
             color_row(
@@ -143,7 +144,7 @@ pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
         },
     );
 
-    super::section(ui, tokens, "Edge", None, |ui| {
+    super::section(ui, tokens, "Subtitle edge", None, |ui| {
         ui.horizontal(|ui| {
             let caption = caption(ui, "Style");
             let mut edge = current.edge;
@@ -195,7 +196,7 @@ pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
         });
     });
 
-    super::section(ui, tokens, "Position", None, |ui| {
+    super::section(ui, tokens, "Subtitle position", None, |ui| {
         slider(
             ui,
             s,

@@ -6,6 +6,7 @@ mod buffer;
 mod decoder;
 mod device;
 mod eq;
+mod ffmpeg_decoder;
 mod pipeline;
 mod player;
 mod playlist;
@@ -20,6 +21,7 @@ pub use buffer::{AudioConsumer, AudioProducer, Clock, audio_buffer};
 pub use decoder::{AudioDecoder, AudioInfo, AudioTags, CoverArt, DecodedAudio};
 pub use device::{AudioSink, DeviceSink};
 pub use eq::{BAND_HZ, BANDS, EqSettings, MAX_BAND_DB, PRESETS};
+pub use ffmpeg_decoder::set_tool_locator;
 pub use pipeline::{AudioFormat, Gain, Pipeline};
 pub use player::{AudioPlayer, PlaybackState, PlaybackStatus};
 pub use playlist::{

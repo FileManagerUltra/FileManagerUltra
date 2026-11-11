@@ -27,7 +27,7 @@ SRT and WebVTT files, ASS/SSA files and embedded text tracks (SubRip, ASS/SSA, W
 - **THEN** all three use the same font, size, colours, background, edge and position
 
 ### Requirement: Subtitle appearance for readability
-Preferences SHALL offer a Subtitles page whose settings apply to every text subtitle type: size (50-400 %), distance from the bottom of the picture, font (sans-serif or monospace), bold, text colour and opacity (at least 25 %), a background box with colour and opacity, an edge style (none, outline, drop shadow, raised, depressed) with colour and thickness, letter spacing and line spacing. It SHALL offer presets for common low-vision needs (high contrast white on black, yellow on black, black on white, large text with a heavy outline), a reset, a live preview over a dark and a bright sample scene drawn exactly as on the video, and the resulting WCAG contrast ratio with a warning below 4.5:1. Settings SHALL be changed through `media.subtitle.style` (all-or-nothing validation), persist in the preferences file, and out-of-range hand edits SHALL be clamped. Default colours SHALL come from theme tokens, and the page SHALL render in dark and light themes.
+The Media page of Preferences SHALL have a Subtitles section whose settings apply to every text subtitle type: size (50-400 %), distance from the bottom of the picture, font (sans-serif or monospace), bold, text colour and opacity (at least 25 %), a background box with colour and opacity, an edge style (none, outline, drop shadow, raised, depressed) with colour and thickness, letter spacing and line spacing. It SHALL offer presets for common low-vision needs (high contrast white on black, yellow on black, black on white, large text with a heavy outline), a reset, a live preview over a dark and a bright sample scene drawn exactly as on the video, and the resulting WCAG contrast ratio with a warning below 4.5:1. Settings SHALL be changed through `media.subtitle.style` (all-or-nothing validation), persist in the preferences file, and out-of-range hand edits SHALL be clamped. Default colours SHALL come from theme tokens, and the section SHALL render in dark and light themes.
 
 #### Scenario: High-contrast preset
 - **WHEN** the user picks "Yellow on black"
@@ -42,7 +42,7 @@ Preferences SHALL offer a Subtitles page whose settings apply to every text subt
 - **THEN** it returns an error and no setting changes
 
 ### Requirement: Bitmap subtitles
-Bitmap subtitle tracks (PGS and VobSub/DVD) SHALL be shown over the video. They SHALL honour the subtitle position and size settings where the decoder allows, and the background box when enabled; their colours cannot be changed, and the Subtitles page SHALL say so. Until they are supported, such tracks SHALL be listed as not supported and SHALL NOT be selectable. Switching a bitmap track SHALL restart the video decoder at the current position without interrupting audio.
+Bitmap subtitle tracks (PGS and VobSub/DVD) SHALL be shown over the video. They SHALL honour the subtitle position and size settings where the decoder allows, and the background box when enabled; their colours cannot be changed, and the Subtitles section SHALL say so. Until they are supported, such tracks SHALL be listed as not supported and SHALL NOT be selectable. Switching a bitmap track SHALL restart the video decoder at the current position without interrupting audio.
 
 #### Scenario: PGS track
 - **WHEN** a Blu-ray rip with a PGS track is played with that track selected

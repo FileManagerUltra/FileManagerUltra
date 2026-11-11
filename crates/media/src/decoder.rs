@@ -123,7 +123,61 @@ pub struct DecodedAudio {
     pub position: f64,
 }
 
+/// Decodes one local audio file: in-process with Symphonia when it can read the format,
+/// otherwise through an `ffmpeg` child (WMA, Opus, APE, AC-3…).
 pub struct AudioDecoder {
+    inner: Backend,
+}
+
+enum Backend {
+    Symphonia(Box<SymphoniaDecoder>),
+    Ffmpeg(Box<crate::ffmpeg_decoder::FfmpegDecoder>),
+}
+
+impl AudioDecoder {
+    /// Probe a local file on a worker; no device is needed to decode it.
+    pub fn open(path: &Path) -> Result<Self, FmError> {
+        let inner = match SymphoniaDecoder::open(path) {
+            Ok(decoder) => Backend::Symphonia(Box::new(decoder)),
+            Err(error) => {
+                // Regular files only; a missing file keeps its own (clearer) error.
+                if !path.is_file() {
+                    return Err(error);
+                }
+                Backend::Ffmpeg(Box::new(crate::ffmpeg_decoder::FfmpegDecoder::open(path)?))
+            }
+        };
+        Ok(Self { inner })
+    }
+
+    pub fn info(&self) -> &AudioInfo {
+        match &self.inner {
+            Backend::Symphonia(decoder) => decoder.info(),
+            Backend::Ffmpeg(decoder) => decoder.info(),
+        }
+    }
+
+    pub fn seek(&mut self, position: f64) -> Result<(), FmError> {
+        match &mut self.inner {
+            Backend::Symphonia(decoder) => decoder.seek(position),
+            Backend::Ffmpeg(decoder) => decoder.seek(position),
+        }
+    }
+
+    pub fn next_packet(&mut self) -> Result<Option<DecodedAudio>, FmError> {
+        match &mut self.inner {
+            Backend::Symphonia(decoder) => decoder.next_packet(),
+            Backend::Ffmpeg(decoder) => decoder.next_packet(),
+        }
+    }
+
+    /// Whether ffmpeg decodes this file (it then has no embedded cover art).
+    pub fn uses_ffmpeg(&self) -> bool {
+        matches!(self.inner, Backend::Ffmpeg(_))
+    }
+}
+
+struct SymphoniaDecoder {
     reader: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
     track: u32,
@@ -136,9 +190,8 @@ pub struct AudioDecoder {
     trim: Option<Trim>,
 }
 
-impl AudioDecoder {
-    /// Probe a local file on a worker; no device is needed to decode it.
-    pub fn open(path: &Path) -> Result<Self, FmError> {
+impl SymphoniaDecoder {
+    fn open(path: &Path) -> Result<Self, FmError> {
         let file = File::open(path)?;
         if !file.metadata()?.is_file() {
             return Err(crate::error("Audio source must be a regular file"));

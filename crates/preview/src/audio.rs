@@ -25,6 +25,7 @@ pub fn render(entry: &Entry, limits: &Limits) -> Result<Preview, FmError> {
         meta.hint = Some("Audio playback needs a local file; copy it locally to play.".into());
         return Ok(Preview::Meta(meta));
     };
+    fm_media::set_tool_locator(crate::video::find_tool);
     let decoder = AudioDecoder::open(&path)?;
     let info = decoder.info();
     for (name, value) in [

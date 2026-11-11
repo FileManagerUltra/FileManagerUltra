@@ -662,7 +662,7 @@ fn preferences_dialog_dark_light() {
             "Files",
             "Copy and move",
             "Preview",
-            "Subtitles",
+            "Media",
             "Terminal",
             "Connections",
             "Workspaces",
@@ -672,10 +672,14 @@ fn preferences_dialog_dark_light() {
             harness.get_by_label(topic).click();
             harness.run();
             harness.run_steps(3);
-            harness.snapshot(format!(
-                "dialog_preferences_{}_{theme}",
-                topic.to_lowercase().replace(' ', "_")
-            ));
+            // The Media page's ffmpeg section names this machine's ffmpeg: only its
+            // subtitle sections are snapshotted below.
+            if topic != "Media" {
+                harness.snapshot(format!(
+                    "dialog_preferences_{}_{theme}",
+                    topic.to_lowercase().replace(' ', "_")
+                ));
+            }
             if topic == "Keyboard shortcuts" {
                 harness.get_by_label("Search shortcuts").click();
                 harness
@@ -695,7 +699,10 @@ fn preferences_dialog_dark_light() {
                 harness.set_size(egui::vec2(900.0, 650.0));
                 harness.run_steps(3);
             }
-            if topic == "Subtitles" {
+            if topic == "Media" {
+                harness.get_by_label("Subtitle preview").scroll_to_me();
+                harness.run_steps(3);
+                harness.snapshot(format!("dialog_preferences_subtitles_{theme}"));
                 harness.get_by_label("Yellow on black").click();
                 harness.run_steps(3);
                 harness.snapshot(format!("dialog_preferences_subtitles_preset_{theme}"));

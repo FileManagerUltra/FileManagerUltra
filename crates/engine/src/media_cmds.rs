@@ -630,7 +630,12 @@ pub(crate) fn validate_media_source(uri: &VfsUri) -> Result<(), FmError> {
     if !is_video(uri)
         && !matches!(
             extension.as_deref(),
-            Some("mp3" | "flac" | "ogg" | "oga" | "wav" | "aac" | "m4a" | "alac" | "m4b")
+            Some(
+                "mp3" | "flac" | "ogg" | "oga" | "wav" | "aac" | "m4a" | "alac" | "m4b"
+                    // Decoded by ffmpeg when Symphonia cannot read them.
+                    | "wma" | "opus" | "ape" | "wv" | "aif" | "aiff" | "ac3" | "dts" | "mka"
+                    | "amr" | "mpc" | "tta"
+            )
         )
     {
         return Err(bad("Choose a supported audio or video file."));

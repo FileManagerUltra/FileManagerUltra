@@ -3,6 +3,12 @@
 ### Requirement: Audio pipeline
 All audio, whichever decoder produced it, SHALL pass through one pipeline in `fm-media`: decode to 32-bit float PCM, a single high-quality resample to the output device's native rate and channel layout (never more than one resample), preamp, equalizer, volume (with a soft limiter against clipping) and the output sink. Output SHALL use the platform's native API (WASAPI, CoreAudio, ALSA directly or through PipeWire/PulseAudio compatibility) and SHALL follow default-device changes. A missing or failing device SHALL produce an actionable error and not crash.
 
+Audio files that the in-process decoder (Symphonia) cannot read, such as WMA, Opus, APE, WavPack, AIFF, AC-3 and DTS, SHALL be decoded by an `ffmpeg` subprocess into the same pipeline, in the Media pane and in Preview alike, with tags and duration from `ffprobe`, seeking by restarting the decoder, a bounded read-ahead buffer, and a timeout that reports a stalled decoder as an error. Without ffmpeg such files SHALL report that the format needs ffmpeg.
+
+#### Scenario: WMA file
+- **WHEN** the user plays a `.wma` file
+- **THEN** it plays, seeks and shows its duration like an MP3
+
 #### Scenario: Different sample rates
 - **WHEN** a 44.1 kHz and a 96 kHz file play on a 48 kHz device
 - **THEN** each is resampled once to 48 kHz and neither stutters or changes pitch

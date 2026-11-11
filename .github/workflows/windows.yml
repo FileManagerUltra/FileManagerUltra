@@ -4,7 +4,11 @@ name: windows
 # and DVD tests run) and an installer to try by hand. Start it from the Actions tab or
 # with `gh workflow run windows.yml --ref <branch>`.
 on:
+  # Manual starts need this file on the default branch; until then a push to the
+  # branch under test starts it.
   workflow_dispatch:
+  push:
+    branches: [media-pane-audio]
 
 permissions:
   contents: read
