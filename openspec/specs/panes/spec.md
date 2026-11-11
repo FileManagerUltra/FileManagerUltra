@@ -46,25 +46,16 @@ All pane topology changes SHALL be engine commands; the UI never mutates the lay
 #### Scenario: Closing a pane keeps the tree valid
 - **WHEN** `pane.close` runs with two or more panes
 - **THEN** the focused leaf is removed and its sibling inherits the parent slot
-- **AND** the remaining pane becomes focused
+- **AND** if the closed pane was focused and its previous-focus pane still exists, that pane becomes focused
+- **AND** otherwise a surviving pane becomes focused
+
+#### Scenario: Closing a non-focused pane keeps focus
+- **WHEN** `pane.close {pane}` closes a pane other than the focused pane
+- **THEN** the currently focused pane remains focused unless it is no longer available
 
 #### Scenario: The last pane cannot be closed
 - **WHEN** `pane.close` runs with exactly one pane
 - **THEN** the command's `enabled` predicate is false (menu greyed) and dispatch is a no-op that returns `Ok` without changing the layout
-
-#### Scenario: Tab swaps the two most recent panes
-- **WHEN** the user presses Tab (`pane.swap`) after focusing pane B following pane A
-- **THEN** the subtrees rooted at A and B exchange places and focus moves to the swap partner
-- **AND** per-pane state (location, selection, history, tree expansion) travels with its pane
-
-#### Scenario: Focus cycles
-- **WHEN** `pane.focus.next` runs
-- **THEN** focus advances to the next leaf in tree order, wrapping at the end
-
-#### Scenario: Focus does not resize pane content
-- **WHEN** focus moves between panes
-- **THEN** accent outlines change without changing pane, header or content geometry
-- **AND** the same invariant holds in both themes and for every pane kind
 
 ### Requirement: Pane state survives splits and closes
 Tree expansion, listing sort, selection, scroll and history SHALL live in `fm-layout`'s per-pane state, keyed by `PaneId`, so topology changes never reset a pane's view.
@@ -92,3 +83,4 @@ Every pane header SHALL show a close button while more than one pane exists, dis
 #### Scenario: Close by id
 - **WHEN** `pane.close {"pane": <id>}` is dispatched with three panes open
 - **THEN** exactly that pane is closed and the other two remain
+

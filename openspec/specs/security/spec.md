@@ -109,18 +109,28 @@ The terminal child SHALL inherit the user's environment minus app-internal varia
 - **THEN** the name is quoted so it is a single literal argument
 
 ### Requirement: Previews are untrusted-input safe
-File content shown in a Preview SHALL be treated as hostile: bounded reads, header checks before allocation, no network access, no execution of embedded content, decoder panics contained, and decoder child processes (video) started without a shell and with fixed arguments, the file passed as a single argument after `--`/via `file:` protocol guard.
+File content shown in a Preview SHALL be treated as hostile: bounded reads, header checks before allocation, no network access except opt-in remote Markdown images as defined below, no execution of embedded content, decoder panics contained, and decoder child processes (video) started without a shell and with fixed arguments, the file passed as a single argument after `--`/via `file:` protocol guard.
+
+Markdown images SHALL be limited to 8 MiB of source and 100 megapixels, at most 200 per document. Local images SHALL resolve only inside the previewed file's root. Remote images SHALL load only with the explicit, default-off preference, over `http`/`https` with URLs of at most 2048 characters and no embedded credentials, no cookies, at most 3 redirects, a 10 second timeout and the byte cap enforced on both `Content-Length` and streamed data. Every resolved address, including after each redirect, SHALL be public; loopback, private, link-local, unique-local, CGNAT, multicast, unspecified and IPv4-mapped equivalents SHALL be refused, and the connection SHALL use the validated address. The preference SHALL hold no secret and a malformed value SHALL mean off.
 
 #### Scenario: Rich Markdown remains inert and bounded
 - **WHEN** Markdown contains remote images/links, HTML/script tags, deeply nested
   lists/quotes or excessive table cells and inline nodes
-- **THEN** resources are not fetched, markup is not executed, document depth and
+- **THEN** links are not fetched, markup is not executed, remote images are not fetched unless enabled, document depth and
   allocation counts remain bounded, and exceeded caps produce a truncation notice
 - **AND** magnifying a preview cannot increase source-read or decoder limits
 
 #### Scenario: Hostile filename to the decoder
 - **WHEN** a video file is named `-i evil.mp4` or contains shell metacharacters
 - **THEN** the decoder receives it as one argument and no other file or command is touched
+
+#### Scenario: Remote image targets an internal host
+- **WHEN** remote images are enabled and an image URL (or a redirect) resolves to `127.0.0.1`, `192.168.x.x`, `169.254.169.254` or `::1`
+- **THEN** no request is sent to that address, the placeholder is shown and an error is recorded without any URL credentials
+
+#### Scenario: Oversized or slow remote image
+- **WHEN** a remote image declares or streams more than 8 MiB, or stalls beyond 10 seconds
+- **THEN** the transfer is aborted and the placeholder is shown without growing memory past the cap
 
 ### Requirement: Starting programs is explicit and shell-free
 Activating a program SHALL require an explicit user choice and explicit `confirm: true` on `file.open`; the spawn SHALL use the OS process API with the file as one absolute path argument (no shell, no argument string interpolation), inherit no pipes, run in its own process group and be detached from the file manager's lifetime. Activation of a remote uri SHALL be refused rather than downloaded and executed. The UI SHALL never classify an entry as a document and then silently run it.
@@ -208,4 +218,30 @@ Dismount SHALL never power off the underlying disk or sibling volumes.
 #### Scenario: VeraCrypt container on a USB disk
 - **WHEN** no verified volume-manager adapter exists
 - **THEN** the app directs the user to VeraCrypt instead of attempting hardware eject
+
+### Requirement: Hostile repositories are inert
+Opening a repository for status or diff SHALL never execute hooks, filter drivers, fsmonitor,
+credential helpers, textconv or any external program, and SHALL ignore configuration that would
+reference them. Repository paths, ref names, file names and blob contents are untrusted:
+discovery depth, entry counts, blob sizes, ref lookups and diff input sizes are capped, and
+symlinks are never followed out of the working tree.
+
+#### Scenario: Malicious config
+- **WHEN** a repo's config sets `core.fsmonitor` or a filter driver to a command
+- **THEN** status and diff complete without running it
+
+#### Scenario: Filter driver
+- **WHEN** a repo's config defines `filter.<name>.clean`/`process` and `.gitattributes` applies it
+- **THEN** repository-local `filter.*` sections are removed from the in-memory config and nothing runs
+
+#### Scenario: Oversized or corrupt data
+- **WHEN** a repo has a corrupt object, a 10 GiB blob or 1 000 000 untracked files
+- **THEN** the feature degrades with a visible notice, bounded memory and no panic
+
+### Requirement: Markdown HTML is inert and bounded
+HTML in Markdown SHALL never execute, load styles, scripts, frames or any resource other than images under the Markdown image rules. HTML blocks SHALL be limited to 256 KiB each and nesting depth to 32; attribute values SHALL be length-bounded; exceeded limits SHALL truncate with the existing notice rather than fail.
+
+#### Scenario: Hostile HTML
+- **WHEN** Markdown contains deeply nested tags, huge attributes, unterminated tags or entity bombs
+- **THEN** the preview stays responsive, memory stays within the caps and nothing is fetched except permitted images
 

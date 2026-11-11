@@ -215,8 +215,8 @@ continuous column boundaries and top-aligned cell text. Text SHALL NOT be
 justified or letter-spaced to fill cells. Narrow panes SHALL scroll tables
 horizontally rather than squeeze columns below a readable minimum.
 
-HTML SHALL remain literal inert text and images SHALL remain labelled alt-text
-placeholders. No link/image resource SHALL be fetched or opened.
+HTML SHALL remain literal inert text. Images SHALL be rendered as specified in
+"Markdown images"; links SHALL NOT be fetched or opened except by an explicit click.
 Markdown SHALL enforce a 1 MiB source cap, the configured text-line cap,
 5 000 block/list-item nodes, nesting depth below 32, 30 000 inline spans,
 4 096 table cells and 64 columns. Exceeding any cap SHALL show truncation.
@@ -449,3 +449,76 @@ A Markdown preview SHALL offer a toggleable Preview toolbar button (`preview.tog
 #### Scenario: Toggle the source
 - **WHEN** the user clicks the active Preview button on a Markdown preview and clicks it again
 - **THEN** the Markdown text is shown, then the rendered document, with Find matching the visible view
+
+### Requirement: Preview and Diff views
+When the previewed file has a diff (see `git-diff`), the Preview toolbar SHALL show
+**Preview** / **Diff** buttons that switch the view through `preview.diff.toggle {show}`. The
+Diff view has a second bar with the revision button, "vs Working copy" and the diff options.
+
+#### Scenario: Toggle
+- **WHEN** the user clicks Preview while the diff is shown
+- **THEN** the pane shows the normal preview and stays there for following files until Diff is chosen again
+
+### Requirement: Markdown HTML subset
+The Markdown viewer SHALL interpret a closed subset of HTML in HTML blocks and inline HTML: `p`, `div`, `center`, `h1`–`h6`, `br`, `a`, `img`, `picture`, `source`, `code`, `strong`, `b`, `em`, `i`, `table`, `tr`, `th`, `td`, plus `hr`, `ul`, `ol`, `li`, `pre` and `blockquote` as plain paragraph breaks. Elements with `align="center"` SHALL render centered. `img` MAY carry `width` in pixels. A `picture` SHALL show its `source` whose `media` is `(prefers-color-scheme: dark)` when the theme is dark and its `img` otherwise. Tables SHALL render with images and text in cells. Any other tag SHALL be ignored while keeping its text, and `script` and `style` content SHALL never be shown or acted on.
+
+#### Scenario: Theme-aware picture
+- **WHEN** Markdown contains `<picture><source media="(prefers-color-scheme: dark)" srcset="d.webp"><img src="l.webp"></picture>`
+- **THEN** the dark theme shows `d.webp` and the light theme shows `l.webp`, never both
+
+#### Scenario: Centered header and links
+- **WHEN** Markdown contains `<h1 align="center">Name</h1>` and a centered `<p>` of links
+- **THEN** they render centered and the links are clickable like Markdown links
+
+#### Scenario: Image grid
+- **WHEN** Markdown contains a `<table>` whose cells hold pictures
+- **THEN** the cells render as a grid without a header row and images load as in Markdown
+
+#### Scenario: Unknown markup
+- **WHEN** Markdown contains `<script>alert(1)</script>` or `<blink>hi</blink>`
+- **THEN** the script is not shown and `hi` is shown as plain text
+
+### Requirement: Markdown images
+Rendered Markdown SHALL show images written as `![alt](url "title")`. Images in paragraphs
+SHALL be placed as block-level rows directly after the paragraph text, consecutive images
+forming one wrapping row; an image inside a link SHALL keep that link. Images in headings
+and table cells SHALL remain `[Image: alt]` placeholders. At most 200 images per document
+SHALL be rendered; further ones stay placeholders.
+
+A relative URL SHALL be resolved against the previewed file with the same rules as
+Markdown links (percent-decoded, `?query` and `#fragment` ignored, `.` and `..` resolved,
+refused above the root) and read through the file's own backend. Absolute paths, `file:`,
+`data:`, `//` URLs and other schemes SHALL NOT be loaded. Supported formats are those
+of image previews. SVG images are rasterized without text or embedded/external resources.
+
+`http` and `https` images SHALL be loaded only when Preferences > Preview > "Load remote
+images in Markdown" is enabled; it SHALL default to off. While off, remote images SHALL
+show their alt text with a "Remote image blocked" hover hint and SHALL cause no network
+access.
+
+Images SHALL load off the UI thread; until ready, and when blocked, missing, oversized,
+undecodable or failed, the alt-text placeholder SHALL be shown and the document SHALL
+remain usable. Images SHALL scale down to the document width, never up past natural size,
+follow preview magnification, show alt text/title on hover, and render correctly in
+dark and light themes. Copy SHALL treat an image as its alt text; Find does not search alt text.
+
+#### Scenario: Local relative image
+- **WHEN** `README.md` contains `![logo](img/logo.png)` and `img/logo.png` exists
+- **THEN** the rendered view shows the image below its paragraph without blocking a frame
+
+#### Scenario: Missing or escaping path
+- **WHEN** an image points at a missing file or at `../../../etc/x.png`
+- **THEN** the alt-text placeholder is shown, nothing outside the root is read, and the preview stays usable
+
+#### Scenario: Remote images off by default
+- **WHEN** Markdown contains `![badge](https://example.com/b.svg)` and the preference is off
+- **THEN** no connection is made and the placeholder shows "Remote image blocked" on hover
+
+#### Scenario: Remote images enabled
+- **WHEN** the preference is enabled and the URL serves a valid image within limits
+- **THEN** the image appears; toggling the preference re-renders open Markdown previews
+
+#### Scenario: Linked badge
+- **WHEN** an image is wrapped in a link and clicked
+- **THEN** the link is followed by the normal Markdown link rules
+
