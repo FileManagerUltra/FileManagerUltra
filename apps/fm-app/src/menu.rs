@@ -1115,7 +1115,10 @@ mod tests {
                 folder: folder.clone(),
             },
         );
-        assert_eq!(s.clipboard_out.as_deref(), Some("/clicked/subfolder"));
+        assert_eq!(
+            s.clipboard_out.as_deref(),
+            Some(fm_engine::item_cmds::display_path(&folder).as_str())
+        );
         dispatch_folder(
             &mut s,
             &mut dialogs,
