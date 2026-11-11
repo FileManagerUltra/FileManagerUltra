@@ -493,6 +493,7 @@ impl eframe::App for App {
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     fm_ui::jobs::icon_button(ui, &self.session, &tokens);
+                    fm_ui::media::indicator(ui, &mut self.session, &tokens);
                     let label = if self.session.show_hidden {
                         "Hidden: shown (Ctrl+H)"
                     } else {
@@ -506,9 +507,6 @@ impl eframe::App for App {
                         self.session
                             .dispatch_or_notice("view.hidden.toggle", &fm_engine::Params::Null);
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        fm_ui::media::indicator(ui, &mut self.session, &tokens)
-                    });
                 });
             });
         });

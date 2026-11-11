@@ -270,9 +270,7 @@ impl Session {
         if let Some(uri) = self.media.queue.current() {
             validate_media_source(uri)?;
         }
-        if self.media_pane().is_none()
-            && (self.media.is_video() || !self.prefs.media_background_audio)
-        {
+        if self.media_pane().is_none() && !self.prefs.media_background_audio {
             self.show_media_pane()?;
         }
         self.claim_audio(AudioOwner::Media);
@@ -351,9 +349,7 @@ impl Session {
     /// Called after pane commands and on each poll, including workspace switches.
     pub(crate) fn media_visibility_changed(&mut self) {
         self.media_fullscreen_check();
-        if self.media_pane().is_none()
-            && (self.media.is_video() || !self.prefs.media_background_audio)
-        {
+        if self.media_pane().is_none() && !self.prefs.media_background_audio {
             self.media_stop();
         }
     }

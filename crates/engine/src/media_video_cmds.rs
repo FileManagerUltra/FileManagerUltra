@@ -302,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn video_stops_on_close_kind_switch_and_workspace_change_even_with_background_audio() {
+    fn video_follows_the_background_preference_on_close_kind_switch_and_workspace_change() {
         for action in ["pane.close", "pane.kind.set", "workspace.new"] {
             for background in [false, true] {
                 let mut s = prepared();
@@ -319,9 +319,15 @@ mod tests {
                     Params::Null
                 };
                 s.dispatch(action, &params).expect("leave video");
-                assert!(!s.media.playing, "{action}");
-                assert!(s.media.video.as_ref().expect("video").player_is_idle());
-                assert_eq!(s.audio_owner, AudioOwner::None);
+                if background {
+                    assert!(s.media.playing, "{action}");
+                    assert_eq!(s.audio_owner, AudioOwner::Media);
+                    s.media_stop();
+                } else {
+                    assert!(!s.media.playing, "{action}");
+                    assert!(s.media.video.as_ref().expect("video").player_is_idle());
+                    assert_eq!(s.audio_owner, AudioOwner::None);
+                }
                 assert_eq!(s.media.queue.items().len(), 1);
             }
         }
