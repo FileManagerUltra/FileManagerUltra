@@ -29,22 +29,18 @@ remain future work (the command registry is already in place).
 
 ## Current focus
 
-`add-media-pane` is in progress: shared native audio decoding/output and simple
-audio playback in Preview are implemented, including video sound, audio-clock
-synchronization, volume/mute and separate audio/video autoplay preferences.
-The dedicated Media pane now plays local audio with a session-owned queue,
-transport controls, auto-advance, shuffle/repeat and background playback. Shared
-`AudioOwner` arbitration pauses Preview or Media when the other starts.
-The local queue and playback settings now persist and restore paused.
-Local M3U/M3U8/PLS import, M3U8 export, Play folder and drag-and-drop enqueue are
-implemented. Files/Preview local-audio actions now append, play next or play
-immediately without discarding the playlist; Preview Play transfers its position.
-Local video now uses the shared decoder/clock, fitted frames, transport and paused
-frame stepping. Files/folders/playlists accept video, and Preview video hands off
-its position. Video stops when its Media pane is closed or hidden by a workspace
-switch; audio retains its background preference. Video speed control is
-implemented; audio-only speed, track selection, fullscreen, YouTube-style keyboard
-controls and advanced playback remain pending.
+`add-media-pane` is in progress (36/47 tasks). Done: shared native audio
+pipeline with Preview sound, the Media pane (persisted queue with folders and lock,
+playlists, drag and drop, Files/Preview entry points with position hand-off),
+local and remote (spooled) video with speed control, audio/subtitle track
+selection, fullscreen, YouTube-style keyboard controls, status-bar transport,
+gapless playback, equalizer, A-B loop, sleep timer, and audiobooks (chapters,
+resume, bookmarks, skip). ffmpeg is no longer bundled: Windows offers a pinned,
+verified download (`managed-ffmpeg`). Remaining: subtitle rendering and hardware
+decoding (6.x), pitch-preserving audio-only speed (5.3), system media controls
+(MPRIS/SMTC/Now Playing, 8.1), packaging checks (8.3), security/docs hardening
+(9.x) and Windows/macOS smoke tests. Most recent Media features are covered by
+automated tests but have not been tried in the real app.
 
 Recent interaction improvements include rich native Markdown previews (nested lists,
 tasks, highlighted code and aligned tables), full-loaded-document selection/copy,

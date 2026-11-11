@@ -17,7 +17,7 @@ Preview can only play one video, silently, and stops as soon as the selection ch
 - Audiobooks: m4b and marked folders, chapters, multi-file books as one timeline, ±15/30 s skip, per-book speed, bookmarks, progress and finished state; resume position for audiobooks and video (500 entries).
 - System integration: media keys and now-playing via MPRIS, Windows SMTC and macOS Now Playing; hardware video decoding (VA-API, D3D11/DXVA, VideoToolbox) with automatic software fallback.
 - Exactly one Media pane exists at a time; a second request focuses it.
-- `ffmpeg`/`ffprobe` (LGPL build) are bundled in the installers; `cpal` is used for audio output, with ALSA headers as a documented Linux build-time exception.
+- `ffmpeg`/`ffprobe` are not bundled: they are discovered on the system, and Windows offers a pinned, verified download (see the `managed-ffmpeg` change); `cpal` is used for audio output, with ALSA headers as a documented Linux build-time exception.
 - Remote files (SMB/SFTP) play through a bounded local spool.
 - Preview keeps simple single-file playback and gains sound: video with audio, and audio files with cover art and tags (play/pause, seek, volume, mute, no queue; audio never autoplays by default). Preview and the Media pane share one audio output (starting one pauses the other); explicit Play handoff stops Preview's decoder and transfers its position. Preview also offers "Play next" / "Add to queue" without interrupting playback.
 - **No breaking changes.** The "audio output is out of scope" statement is removed.
@@ -36,12 +36,12 @@ Preview can only play one video, silently, and stops as soon as the selection ch
 - `preview-pane`: simple single-file video playback gains sound, audio files get simple playback, and both hand off to the Media pane; Preview and Media share one player.
 - `app-shell`: window fullscreen toggle and its interaction with saved window geometry.
 - `security`: media files, playlists and decoder subprocesses are untrusted and bounded.
-- `build-guardrails`: bundled ffmpeg with checksum-verified pinned builds and the documented ALSA build exception.
+- `build-guardrails`: ffmpeg discovered rather than bundled, and the documented ALSA build exception.
 
 ## Impact
 
 - New crate `crates/media` (L1, no egui): queue model, playlist parsing, audio sink abstraction, decoder subprocess control, A/V clock. Registered in `xtask/src/layers.rs`.
 - `fm-layout`: `PaneKind::Media` and per-pane view state. `fm-engine`: `media_cmds.rs` (new module), session queue, job lane use for spooling. `fm-ui`: media pane widgets in dark and light themes (new theme tokens only, no `Color32::` literals). `fm-app`: menus, shortcuts, fullscreen handling.
 - Dependencies: `symphonia`, `cpal` (audio output), `rubato` (resampling), possibly `lofty` (tags) and `souvlaki` (media controls, zbus feature on Linux). `cpal` needs ALSA development headers on Linux: a third user-approved exception to "no system libraries", to be recorded in AGENTS.md and `docs/development.md`.
-- Packaging: bundled LGPL `ffmpeg`/`ffprobe` in `.deb`/AppImage, NSIS and `.dmg` with licence text, pinned checksummed downloads in the release workflow, larger installers.
+- Packaging: no ffmpeg in the installers (originally planned as bundled LGPL sidecars; replaced by the `managed-ffmpeg` download); Linux packages need `libasound2`.
 - Docs: `docs/architecture.md`, `docs/roadmap.md`, specs above, `CHANGELOG.md`.

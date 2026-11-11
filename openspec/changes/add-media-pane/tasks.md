@@ -20,7 +20,7 @@
 - [x] 3.1 Add `PaneKind::Media` in `fm-layout` with serde fallback, view state and `pane.kind.set` support; update the kind selector; enforce exactly one Media pane (focus the existing one; extra panes in saved workspaces become Files)
 - [x] 3.2 Implement `Queue` in `fm-media` (enqueue, remove, move, clear, shuffle order, repeat off/all/one, previous/next) with invariant tests
 - [x] 3.3 Implement M3U/M3U8/PLS parse and M3U8 write with size, entry, line-length caps, URL-scheme refusal and relative-path resolution; tests incl. hostile input
-- [ ] 3.4 Add `engine/src/media_cmds.rs` with all `media.*` commands, register in `commands.rs`, menu paths and shortcuts; bad-params tests and command-fuzzer coverage
+- [x] 3.4 Add `engine/src/media_cmds.rs` with all `media.*` commands, register in `commands.rs`, menu paths and shortcuts; bad-params tests and command-fuzzer coverage (commands are split across `media_*_cmds.rs`; the Media menu was later replaced by pane controls, Preferences > Media and `fm-ui::media_keys`)
 - [x] 3.5 Session `MediaSession`: current item, position, volume, auto-advance, skip-with-notice on errors, background-audio preference and status-bar indicator with stop
 - [x] 3.6 Persist queue (paths only), index, volume, shuffle and repeat owner-only; skip vanished items with a notice
 - [x] 3.7 UI: Media pane widgets (cover/tags, transport bar, queue list with reorder/remove, drag-and-drop enqueue) using theme tokens only; dark and light snapshots
@@ -79,8 +79,8 @@ controls remain pending.
 ## 8. System integration and packaging (slice G)
 
 - [ ] 8.1 `souvlaki` (or equivalent) behind a trait in `fm-app`: MPRIS (zbus), SMTC, macOS Now Playing; dispatch only `media.*`; re-add `raw-window-handle` if needed
-- [ ] 8.2 Bundle pinned LGPL `ffmpeg`/`ffprobe` per platform in the release workflow with SHA-256 verification, licence text and source offer; update `cargo xtask packager-config`; check `find_tool` prefers the sidecar
-- [ ] 8.3 Verify the `.deb`/AppImage depend on or bundle `libasound2`, the NSIS installer and `.dmg` include the sidecars, and installed size
+- [x] 8.2 ~~Bundle pinned LGPL `ffmpeg`/`ffprobe` in the installers~~ Superseded by `managed-ffmpeg`: installers do not bundle ffmpeg; Windows offers a pinned, SHA-256-verified download from Preferences > Media, elsewhere ffmpeg is discovered on the system (`build-guardrails` delta updated)
+- [ ] 8.3 Verify the `.deb`/AppImage depend on or bundle `libasound2`, and that no installer contains `ffmpeg`/`ffprobe`
 
 ## 9. Hardening, docs and release
 
