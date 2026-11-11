@@ -651,6 +651,7 @@ fn preferences_dialog_dark_light() {
             "Files",
             "Copy and move",
             "Preview",
+            "Media",
             "Terminal",
             "Connections",
             "Workspaces",

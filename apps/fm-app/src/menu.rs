@@ -881,31 +881,6 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             ui.separator();
             item(ui, session, dialogs, WINDOW_FULLSCREEN);
         });
-        ui.menu_button("Media", |ui| {
-            for id in [
-                "media.play",
-                "media.play_next",
-                "media.enqueue",
-                "media.play_folder",
-                "media.toggle",
-                "media.stop",
-                "media.next",
-                "media.prev",
-                "media.step",
-                "media.speed",
-                "media.eq",
-                "media.loop",
-                "media.sleep",
-                "media.fullscreen",
-                "media.mute",
-                "media.shuffle",
-                "media.clear",
-                "media.playlist.load",
-                "media.playlist.save",
-            ] {
-                item(ui, session, dialogs, id);
-            }
-        });
         ui.menu_button("Help", |ui| {
             item(ui, session, dialogs, CHECK_UPDATES);
             item(ui, session, dialogs, ABOUT);

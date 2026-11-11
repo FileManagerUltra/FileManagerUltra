@@ -20,6 +20,7 @@ enum Topic {
     Files,
     FileOperations,
     Preview,
+    Media,
     Terminal,
     Connections,
     Workspaces,
@@ -28,12 +29,13 @@ enum Topic {
 }
 
 impl Topic {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::General,
         Self::Appearance,
         Self::Files,
         Self::FileOperations,
         Self::Preview,
+        Self::Media,
         Self::Terminal,
         Self::Connections,
         Self::Workspaces,
@@ -48,6 +50,7 @@ impl Topic {
             Self::Files => "Files",
             Self::FileOperations => "Copy and move",
             Self::Preview => "Preview",
+            Self::Media => "Media",
             Self::Terminal => "Terminal",
             Self::Connections => "Connections",
             Self::Workspaces => "Workspaces",
@@ -363,6 +366,34 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                             set(s, "preview_time_secs", json!(secs));
                         }
                     });
+                },
+            );
+        }
+        Topic::Media => {
+            section(
+                ui,
+                tokens,
+                "Playback",
+                Some("Applies to the Media pane and its status bar controls."),
+                |ui| {
+                    let mut gapless = s.prefs.media_gapless;
+                    if ui
+                        .checkbox(&mut gapless, "Gapless playback")
+                        .on_hover_text("Join consecutive local tracks without a pause")
+                        .changed()
+                    {
+                        set(s, "media_gapless", json!(gapless));
+                    }
+                    let mut background = s.prefs.media_background_audio;
+                    if ui
+                        .checkbox(&mut background, "Keep playing in the background")
+                        .on_hover_text(
+                            "Audio and video continue when the Media pane is closed or you switch workspace",
+                        )
+                        .changed()
+                    {
+                        set(s, "media_background_audio", json!(background));
+                    }
                 },
             );
             section(
