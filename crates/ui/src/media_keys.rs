@@ -257,7 +257,9 @@ pub fn handle(ctx: &Context, s: &mut Session, typing: bool) -> Vec<&'static str>
     if slider {
         return ran;
     }
-    let widget_focused = ctx.memory(|m| m.focused()).is_some();
+    // The Media pane's controls are painted and take no keyboard navigation, so a stale focused
+    // widget (a clicked button or playlist row) must not swallow Space and the arrows there.
+    let widget_focused = view.target != Target::Media && ctx.memory(|m| m.focused()).is_some();
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         input.events.retain(|event| {
@@ -448,5 +450,37 @@ mod tests {
         let ran = run_frame(&mut s, press(Key::M), false);
         assert_eq!(ran, vec!["media.mute"]);
         assert!(s.media.muted);
+    }
+
+    #[test]
+    fn media_keys_work_while_a_widget_holds_focus() {
+        let mut s = Session::new().expect("session");
+        s.dispatch("media.enqueue", &json!({"uris": ["/music/one.mp3"]}))
+            .expect("enqueue");
+        let pane = s.media_pane().expect("media");
+        s.layout.focus_pane(pane).expect("focus");
+        let ctx = Context::default();
+        let focus = Id::NULL.with("stale-focus");
+        let mut ran = Vec::new();
+        for frame in 0..2 {
+            let mut input = egui::RawInput::default();
+            if frame == 1 {
+                input.events.push(Event::Key {
+                    key: Key::ArrowUp,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+            let mut out = ctx.run_ui(input, |ui| {
+                ui.ctx().memory_mut(|m| m.request_focus(focus));
+                if frame == 1 {
+                    ran = handle(ui.ctx(), &mut s, false);
+                }
+            });
+            out.textures_delta.clear();
+        }
+        assert_eq!(ran, vec!["media.volume"]);
     }
 }

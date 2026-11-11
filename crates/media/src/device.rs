@@ -100,10 +100,21 @@ where
             consumer.render(output);
         },
         move |err| {
-            // The first outstanding device failure is enough to stop playback.
-            let _ = errors.try_send(err);
+            // The first outstanding device failure is enough to stop playback; glitches are not.
+            if is_fatal(&err) {
+                let _ = errors.try_send(err);
+            }
         },
         None,
+    )
+}
+
+/// Underruns, refused real-time scheduling and automatic re-routing leave the stream playing
+/// (at worst with a click), so they must not end playback.
+fn is_fatal(err: &cpal::Error) -> bool {
+    !matches!(
+        err.kind(),
+        cpal::ErrorKind::Xrun | cpal::ErrorKind::RealtimeDenied | cpal::ErrorKind::DeviceChanged
     )
 }
 
@@ -131,6 +142,26 @@ impl AudioSink for DeviceSink {
             ))),
             Err(TryRecvError::Empty) => Ok(()),
             Err(TryRecvError::Disconnected) => Err(crate::error("Audio output disconnected")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod fatal_tests {
+    use super::is_fatal;
+    use cpal::{Error, ErrorKind};
+
+    #[test]
+    fn glitches_do_not_stop_playback_but_lost_devices_do() {
+        for kind in [
+            ErrorKind::Xrun,
+            ErrorKind::RealtimeDenied,
+            ErrorKind::DeviceChanged,
+        ] {
+            assert!(!is_fatal(&Error::new(kind)), "{kind:?}");
+        }
+        for kind in [ErrorKind::DeviceNotAvailable, ErrorKind::BackendError] {
+            assert!(is_fatal(&Error::new(kind)), "{kind:?}");
         }
     }
 }
