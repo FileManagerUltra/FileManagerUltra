@@ -33,6 +33,9 @@ pub fn panel_visible(ctx: &Context, s: &Session) -> bool {
         .unwrap_or_else(|| {
             message_deadline(ctx).is_some_and(|t| std::time::Instant::now() < t)
                 || crate::updates::available(s)
+                || s.search
+                    .as_ref()
+                    .is_some_and(|x| x.minimized && x.status().running)
                 || s.fileops.jobs().iter().any(|j| {
                     j.state.is_running()
                         || matches!(j.state, OpState::Failed(_))
@@ -63,6 +66,17 @@ pub fn indicator_text(s: &Session) -> String {
         .iter()
         .filter(|j| j.state.is_running())
         .collect();
+    if let Some(status) = s
+        .search
+        .as_ref()
+        .map(fm_engine::search_cmds::Search::status)
+        .filter(|status| status.running)
+    {
+        return match running.len() {
+            0 => format!("Finding files · {} found", status.found),
+            n => format!("{} jobs", n + 1),
+        };
+    }
     match running.as_slice() {
         [] if crate::updates::available(s) => "Update available".into(),
         [] => {
@@ -147,6 +161,7 @@ pub fn icon_button(ui: &mut Ui, s: &Session, tokens: &Tokens) {
         };
         painter.circle_filled(rect.right_top() + egui::vec2(-3.0, 4.0), 3.0, dot);
     }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Jobs"));
     if response.on_hover_text("Jobs and recent messages").clicked() {
         ctx.data_mut(|d| d.insert_temp(open_id(), !open));
     }
@@ -225,6 +240,30 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             }
         })
         .collect();
+    // A minimised Find Files search is listed like a job.
+    let search_row = s.search.as_ref().filter(|x| x.minimized).map(|x| {
+        let status = x.status();
+        let saved = fm_engine::search_cmds::SavedSearch {
+            root: x
+                .query
+                .root
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_default(),
+            name: x.query.name.clone(),
+            content: x.query.content.clone(),
+            hidden: x.query.hidden,
+        };
+        (
+            format!("Find {}", saved.label()),
+            crate::search::status_line(&status),
+            status.running,
+        )
+    });
+    if search_row.as_ref().is_some_and(|row| row.2) {
+        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+    }
+    let mut search_action: Option<&'static str> = None;
     let mut cancel = Vec::new();
     let mut dismiss = Vec::new();
     let messages: Vec<(String, u64)> = s
@@ -247,8 +286,46 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     ui.separator();
                 }
             }
-            if rows.is_empty() && messages.is_empty() && !crate::updates::available(s) {
+            if rows.is_empty()
+                && search_row.is_none()
+                && messages.is_empty()
+                && !crate::updates::available(s)
+            {
                 crate::dialog_style::hint(ui, tokens, "No jobs");
+            }
+            if let Some((label, status, running)) = &search_row {
+                ui.add(egui::Label::new(RichText::new(label).color(tokens.text)).truncate());
+                ui.horizontal(|ui| {
+                    if *running {
+                        ui.spinner();
+                    }
+                    // The status carries the current path: never let it widen the panel.
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(status)
+                                .font(egui::FontId::proportional(tokens.font_size - 1.0))
+                                .color(tokens.text_muted),
+                        )
+                        .truncate(),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("Show")
+                        .on_hover_text("Open the Find Files window")
+                        .clicked()
+                    {
+                        search_action = Some("search.restore");
+                    }
+                    if *running {
+                        if ui.button("Stop").clicked() {
+                            search_action = Some("search.stop");
+                        }
+                    } else if ui.button("Dismiss").clicked() {
+                        search_action = Some("search.close");
+                    }
+                });
+                ui.separator();
             }
             if !messages.is_empty() {
                 ui.horizontal(|ui| {
@@ -311,6 +388,9 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     }
     for id in dismiss {
         s.dispatch_or_notice("job.dismiss", &json!({"job": id}));
+    }
+    if let Some(id) = search_action {
+        s.dispatch_or_notice(id, &serde_json::Value::Null);
     }
 }
 

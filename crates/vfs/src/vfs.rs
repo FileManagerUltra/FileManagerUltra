@@ -43,6 +43,12 @@ pub trait Vfs: Send + Sync {
     /// Which scheme this backend serves (exactly one).
     fn scheme(&self) -> crate::uri::Scheme;
 
+    /// True only for the real local-disk backend, whose `file://` paths may also be read
+    /// with `std::fs` directly (fast walks). Test and remote backends keep the default.
+    fn is_native_local(&self) -> bool {
+        false
+    }
+
     /// Children of a directory, unsorted; backends may report them in any order.
     fn read_dir(&self, uri: &VfsUri) -> Result<Vec<Entry>, FmError>;
 

@@ -109,6 +109,7 @@ pub const OPEN_WITH: &str = "file.open_with.dialog";
 pub const COMPARE_WITH: &str = "file.compare_with";
 pub const PROPERTIES: &str = "file.properties";
 pub const FIND_FILES: &str = "search.open";
+pub const FIND_EVERYWHERE: &str = "search.open_everywhere";
 pub const BOOKMARK_ADD: &str = "bookmark.add";
 
 /// Every command id referenced by the menus or the shortcut table.
@@ -231,6 +232,7 @@ pub fn all_ids() -> &'static [&'static str] {
         COMPARE_WITH,
         PROPERTIES,
         FIND_FILES,
+        FIND_EVERYWHERE,
         BOOKMARK_ADD,
     ]
 }
@@ -277,7 +279,7 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
             egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::P),
         ),
         (
-            LOG_FOLLOW,
+            FIND_EVERYWHERE,
             egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::F),
         ),
         (
@@ -424,10 +426,6 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
             egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::S),
         ),
         (
-            VIEW_FILTER,
-            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::F),
-        ),
-        (
             BOOKMARK_ADD,
             egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::D),
         ),
@@ -441,7 +439,7 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
         ),
         (
             FIND_FILES,
-            egui::KeyboardShortcut::new(Modifiers::ALT, Key::F7),
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::F),
         ),
         // Real windows deliver these as clipboard events instead; see `clipboard_event_ids`.
         (
@@ -723,6 +721,7 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, COMPARE_WITH);
             item(ui, session, dialogs, PROPERTIES);
             item(ui, session, dialogs, FIND_FILES);
+            item(ui, session, dialogs, FIND_EVERYWHERE);
             ui.separator();
             item(ui, session, dialogs, REMOTE_CONNECT);
             item(ui, session, dialogs, NETWORK_CONNECT);
@@ -935,7 +934,7 @@ pub fn consume_shortcuts(
         if !files_focused && id.starts_with("file.clip_") {
             continue;
         }
-        if id == VIEW_FILTER
+        if id == FIND_FILES
             && session.focused_kind() == Some(PaneKind::Preview)
             && (dialogs.is_open() || on_form)
         {
@@ -951,7 +950,8 @@ pub fn consume_shortcuts(
         }
         let consumed = ctx.input_mut(|input| input.consume_shortcut(&shortcut));
         if consumed {
-            let id = if id == VIEW_FILTER
+            // In a Preview pane Ctrl+F searches the document, not the folder.
+            let id = if id == FIND_FILES
                 && session.focused_kind() == Some(PaneKind::Preview)
                 && !dialogs.is_open()
                 && !on_form
@@ -1349,7 +1349,16 @@ mod tests {
         s.layout.focus_pane(1).expect("focus files");
         assert_eq!(
             chord(&ctx, &mut s, egui::Key::F, egui::Modifiers::COMMAND),
-            [VIEW_FILTER]
+            [FIND_FILES]
+        );
+        assert_eq!(
+            chord(
+                &ctx,
+                &mut s,
+                egui::Key::F,
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+            ),
+            [FIND_EVERYWHERE]
         );
     }
 

@@ -29,8 +29,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-test
-      - name: Install ffmpeg (real video, subtitle and DVD tests skip without it)
-        run: choco install ffmpeg -y --no-progress
+      # The same pinned, SHA-256-verified build the app downloads for Windows users
+      # (read from Pin::WINDOWS, so a pin bump is tested automatically).
+      - name: Install the app's pinned ffmpeg (real video, subtitle and DVD tests need it)
+        shell: bash
+        run: |
+          pin=crates/engine/src/ffmpeg_install.rs
+          url=$(grep -m1 'url: "' "$pin" | sed -E 's/.*"([^"]+)".*/\1/')
+          sha=$(grep -m1 'sha256: "' "$pin" | sed -E 's/.*"([^"]+)".*/\1/')
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/ffmpeg.zip" "$url"
+          echo "$sha  $RUNNER_TEMP/ffmpeg.zip" | sha256sum -c -
+          7z x -y -o"$RUNNER_TEMP/ffmpeg" "$RUNNER_TEMP/ffmpeg.zip" > /dev/null
+          bin=$(dirname "$(find "$RUNNER_TEMP/ffmpeg" -name ffmpeg.exe | head -1)")
+          cygpath -w "$bin" >> "$GITHUB_PATH"
       - name: Tool versions
         shell: bash
         run: |

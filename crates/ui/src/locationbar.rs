@@ -19,31 +19,6 @@ pub fn is_editing(s: &Session, pane: PaneId) -> bool {
     s.path_edit.as_ref().is_some_and(|e| e.pane == pane)
 }
 
-/// Typing in a focused pane (no editor, no text field focused) opens the location bar
-/// seeded with what was typed.
-pub fn type_to_go(ctx: &egui::Context, s: &mut Session, pane: PaneId) {
-    if is_editing(s, pane) || ctx.text_edit_focused() {
-        return;
-    }
-    let typed: String = ctx.input(|i| {
-        if i.modifiers.ctrl || i.modifiers.alt || i.modifiers.command {
-            return String::new();
-        }
-        i.events
-            .iter()
-            .filter_map(|e| match e {
-                egui::Event::Text(t) => Some(t.as_str()),
-                _ => None,
-            })
-            .flat_map(str::chars)
-            .filter(|c| !c.is_control() && !c.is_whitespace())
-            .collect()
-    });
-    if !typed.is_empty() {
-        s.dispatch_or_notice("nav.goto", &serde_json::json!({ "text": typed }));
-    }
-}
-
 /// The path as a header label. Clicking it starts editing.
 pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused: bool) {
     let Some(path) = s.layout.state(pane).map(|p| {

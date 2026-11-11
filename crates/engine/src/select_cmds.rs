@@ -139,8 +139,9 @@ pub fn filter() -> CommandSpec {
         id: "view.filter",
         label: "Filter Listing",
         menu: &["View", "Filter Listing"],
-        shortcut: Some("Ctrl+F"),
-        params: "text?: string (a substring or a pattern with * ? [..])",
+        // Typing in a Files listing opens it (see fm-ui listing); Ctrl+F is Find Files.
+        shortcut: None,
+        params: "text?: string (a substring or a pattern with * ? [..]), focus?: bool (put the cursor in the filter field)",
         enabled: files_focused,
         run: |s, params| {
             let map = object(params)?;
@@ -156,6 +157,12 @@ pub fn filter() -> CommandSpec {
                     Some(t.to_string())
                 }
             };
+            let focus = match map.and_then(|m| m.get("focus")) {
+                None => false,
+                Some(v) => v
+                    .as_bool()
+                    .ok_or_else(|| FmError::InvalidParams("focus must be a boolean".into()))?,
+            };
             let pane = s.layout.focused();
             if !s.focused_is_files() {
                 return Err(FmError::InvalidParams(
@@ -164,7 +171,10 @@ pub fn filter() -> CommandSpec {
             }
             if let Some(state) = s.layout.state_mut(pane) {
                 match text {
-                    Some(t) => state.listing.filter = Some(t),
+                    Some(t) => {
+                        state.listing.filter = Some(t);
+                        state.listing.filter_focus |= focus;
+                    }
                     None => {
                         state.listing.filter.get_or_insert_with(String::new);
                         state.listing.filter_focus = true;

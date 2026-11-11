@@ -326,6 +326,13 @@ fn preferences_connections_alerts_and_search_close_from_title_bar() {
             .expect("search");
         let mut h = harness(tokens, s, fm_ui::search::show);
         drag(&mut h, Id::NULL.with("fm-search"));
+        h.get_by_label("Minimize window").click();
+        h.run();
+        assert!(h.state().search.as_ref().expect("search").minimized);
+        h.state_mut()
+            .dispatch("search.restore", &json!(null))
+            .expect("restore");
+        h.run();
         h.get_by_label("Close window").click();
         h.run();
         assert!(h.state().search.is_none());
@@ -498,5 +505,99 @@ fn compare_with_lists_the_folder_picks_a_file_and_cancels() {
         h.get_by_label("Cancel").click();
         h.run();
         assert!(h.state().compare.is_none());
+    }
+}
+
+#[test]
+fn a_minimised_search_shows_in_the_jobs_panel_and_comes_back() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    std::fs::write(tmp.path().join("report.pdf"), b"x").expect("file");
+    let root = tmp.path().to_str().expect("utf8").to_string();
+    for tokens in [Tokens::dark(), Tokens::light()] {
+        let mut s = Session::new().expect("session");
+        s.dispatch("search.start", &json!({"root": root, "name": "*.pdf"}))
+            .expect("start");
+        s.dispatch("search.minimize", &json!(null))
+            .expect("minimize");
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .build_ui_state(
+                move |ui, s| {
+                    fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                    fm_ui::jobs::icon_button(ui, s, &tokens);
+                    fm_ui::jobs::show(ui.ctx(), s, &tokens);
+                    fm_ui::search::show(ui.ctx(), s, &tokens);
+                },
+                s,
+            );
+        // Wait for the walk to finish, then open the panel as the user would.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while h
+            .state()
+            .search
+            .as_ref()
+            .is_some_and(|x| x.status().running)
+        {
+            assert!(std::time::Instant::now() < deadline);
+            h.run_steps(2);
+        }
+        h.run();
+        if !fm_ui::jobs::panel_visible(&h.ctx, h.state()) {
+            h.get_by_label("Jobs").click();
+            h.run();
+        }
+        h.get_by_label_contains("Find \"*.pdf\"");
+        h.get_by_label_contains("1 match");
+        assert!(
+            h.query_by_label("Find Files").is_none(),
+            "window hidden while minimised"
+        );
+        h.get_by_label("Show").click();
+        h.run();
+        assert!(!h.state().search.as_ref().expect("search").minimized);
+        h.get_by_label("Find Files");
+    }
+}
+
+#[test]
+fn right_clicking_a_found_file_opens_its_menu() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    std::fs::write(tmp.path().join("report.pdf"), b"x").expect("file");
+    let root = tmp.path().to_str().expect("utf8").to_string();
+    for tokens in [Tokens::dark(), Tokens::light()] {
+        let mut s = Session::new().expect("session");
+        s.dispatch("search.start", &json!({"root": root, "name": "*.pdf"}))
+            .expect("start");
+        let mut h = harness(tokens, s, fm_ui::search::show);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while h
+            .state()
+            .search
+            .as_ref()
+            .is_some_and(|x| x.status().running)
+        {
+            assert!(std::time::Instant::now() < deadline);
+            h.run_steps(2);
+        }
+        h.run();
+        let pos = h.get_by_label("report.pdf").rect().center();
+        for pressed in [true, false] {
+            h.input_mut().events.extend([
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+            h.step();
+        }
+        h.run();
+        h.get_by_label("Open With…");
+        h.get_by_label("Properties");
+        h.get_by_label("Copy Name").click();
+        h.run();
+        assert!(h.query_by_label("Open With…").is_none(), "menu closes");
     }
 }

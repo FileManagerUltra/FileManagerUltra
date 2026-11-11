@@ -34,12 +34,8 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let location = state.location.clone();
     let tree_width = state.tree_width;
     let kind = state.kind;
-    let tree_active = state.tree.active;
 
     let mut open = None;
-    if kind.is_files() && focused && !tree_active {
-        crate::locationbar::type_to_go(ui.ctx(), s, pane);
-    }
     crate::dnd::note_pane(ui.ctx(), pane, area);
     if kind.is_files() {
         crate::dnd::register_zone(

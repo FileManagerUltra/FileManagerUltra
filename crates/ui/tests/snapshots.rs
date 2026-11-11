@@ -3511,6 +3511,36 @@ fn the_filter_bar_takes_typing_and_esc_clears_it() {
 }
 
 #[test]
+fn typing_in_the_listing_opens_the_filter_and_keeps_typing_there() {
+    let tokens = Tokens::dark();
+    let fixture = commanded_fixture();
+    let session = std::rc::Rc::new(std::cell::RefCell::new(fixture));
+    let shared = session.clone();
+    let mut harness = Harness::builder().build_ui(move |ui| {
+        let _ = pane::show(ui, &mut shared.borrow_mut(), 1, &tokens);
+    });
+    harness.set_size(egui::vec2(640.0, 400.0));
+    harness.run();
+    let filter = |s: &Session| s.layout.state(1).and_then(|p| p.listing.filter.clone());
+    // A lone space keeps its listing meaning and opens nothing.
+    harness.event(egui::Event::Text(" ".to_string()));
+    harness.run();
+    assert_eq!(filter(&session.borrow()), None);
+    harness.event(egui::Event::Text("n".to_string()));
+    harness.run();
+    assert_eq!(filter(&session.borrow()).as_deref(), Some("n"));
+    // The next letters go into the now-focused field, after the first one.
+    harness.event(egui::Event::Text("o".to_string()));
+    harness.run();
+    assert_eq!(filter(&session.borrow()).as_deref(), Some("no"));
+    let (_, ix) = session.borrow_mut().pane_view(1).expect("view");
+    assert_eq!(ix.order.len(), 1, "only notes.txt matches");
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert_eq!(filter(&session.borrow()), None);
+}
+
+#[test]
 fn properties_window_counts_a_folder_dark_light() {
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();

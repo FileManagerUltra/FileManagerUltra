@@ -615,12 +615,14 @@ fn ready_rows(
     let tree_active = s.layout.state(pane).is_some_and(|p| p.tree.active);
     // Show in Folder: select the revealed item once its folder is listed.
     let mut moved = false;
+    let mut revealed = false;
     if let Some(state) = s.layout.state_mut(pane)
         && let Some(name) = state.listing.reveal.take()
         && let Some(row) = names.iter().position(|n| *n == name)
     {
         state.listing.select_only(Some(&name), row);
         moved = true;
+        revealed = true;
     }
     if pane_focused
         && !tree_active
@@ -628,6 +630,7 @@ fn ready_rows(
         && !crate::preview::grid_has_keyboard(ui.ctx())
     {
         esc_clears_filter(ui, s, pane);
+        type_to_filter(ui, s, pane);
         let outcomes: Vec<KeyOutcome> = ui.input(|i| {
             i.events
                 .iter()
@@ -707,7 +710,10 @@ fn ready_rows(
         let top = row as f32 * pitch;
         let bottom = top + tokens.row_height;
         let view = ui.available_height();
-        if top < saved_scroll {
+        if revealed {
+            // A revealed item sits mid-list, where it stands out, not on an edge.
+            scroll_to = Some((top + tokens.row_height / 2.0 - view / 2.0).max(0.0));
+        } else if top < saved_scroll {
             scroll_to = Some(top);
         } else if bottom > saved_scroll + view {
             scroll_to = Some(bottom - view);
@@ -813,6 +819,40 @@ fn ready_rows(
 /// The quick-filter bar above the listing, shown while the pane has a filter. Typing narrows
 /// the listing (`view.filter`); Esc or the clear button removes it; Enter or Down hands the
 /// keyboard back to the rows.
+/// Typing in a focused listing opens the filter with the typed text (appending to an
+/// open, unfocused filter) and moves the cursor into it. A leading space does not start a
+/// filter, so Space keeps its listing meaning.
+fn type_to_filter(ui: &Ui, s: &mut Session, pane: PaneId) {
+    let typed: String = ui.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|event| match event {
+                egui::Event::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>()
+            .chars()
+            .filter(|c| !c.is_control())
+            .collect()
+    });
+    let Some(existing) = s
+        .layout
+        .state(pane)
+        .map(|state| state.listing.filter.clone())
+    else {
+        return;
+    };
+    if typed.is_empty() || (existing.is_none() && typed.trim().is_empty()) {
+        return;
+    }
+    let mut text = existing.unwrap_or_default();
+    text.push_str(&typed);
+    s.dispatch_or_notice(
+        "view.filter",
+        &serde_json::json!({"text": text, "focus": true}),
+    );
+}
+
 fn filter_bar(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
     let Some(state) = s.layout.state(pane) else {
         return;
@@ -835,6 +875,14 @@ fn filter_bar(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
         );
         if focus {
             response.request_focus();
+            // Typing into the listing opened the filter: keep typing after that text.
+            let id = response.id;
+            let mut state = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+            let end = egui::text::CCursor::new(text.chars().count());
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(end)));
+            state.store(ui.ctx(), id);
         }
         changed = response.changed();
         let (esc, enter, down) = ui.input(|i| {

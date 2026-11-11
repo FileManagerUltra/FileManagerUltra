@@ -220,7 +220,7 @@ fn entry_for(parent_uri: &VfsUri, path: &Path, name: String) -> Option<Entry> {
 }
 
 /// The platform's own hidden flag (dot-names are handled by the engine).
-fn os_hidden(meta: &fs::Metadata) -> bool {
+pub fn os_hidden(meta: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -243,6 +243,10 @@ fn os_hidden(meta: &fs::Metadata) -> bool {
 impl Vfs for LocalFs {
     fn scheme(&self) -> Scheme {
         Scheme::File
+    }
+
+    fn is_native_local(&self) -> bool {
+        true
     }
 
     fn read_dir(&self, uri: &VfsUri) -> Result<Vec<Entry>, FmError> {

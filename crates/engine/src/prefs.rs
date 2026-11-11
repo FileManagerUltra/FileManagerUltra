@@ -184,6 +184,9 @@ pub struct Prefs {
     /// User bookmarks shown under Places (capability `places`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bookmarks: Vec<Bookmark>,
+    /// Recent Find Files searches, newest first (see `search_cmds::MAX_HISTORY`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub search_history: Vec<crate::search_cmds::SavedSearch>,
     /// Shell for new terminal panes.
     #[serde(default)]
     pub terminal_shell: TerminalShell,
@@ -501,6 +504,7 @@ impl Default for Prefs {
             smb_require_encryption: false,
             zoom: default_zoom(),
             bookmarks: Vec::new(),
+            search_history: Vec::new(),
             terminal_shell: TerminalShell::default(),
             terminal_scrollback_rows: default_terminal_scrollback(),
             accent: None,

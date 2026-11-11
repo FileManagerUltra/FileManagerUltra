@@ -1427,7 +1427,7 @@ pub fn log_follow() -> CommandSpec {
         id: "preview.log.follow",
         label: "Log: Follow",
         menu: &["View", "Log Follow"],
-        shortcut: Some("Ctrl+Shift+F"),
+        shortcut: None,
         params: "{on?: bool, pane?: number}",
         enabled: has_log,
         run: |s, p: &Params| {
