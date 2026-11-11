@@ -482,10 +482,7 @@ mod tests {
         let drives = fs_.read_dir(&root).expect("drives");
         assert!(!drives.is_empty());
         assert_eq!(fs_.stat(&root).expect("stat").name, "This PC");
-        assert!(matches!(
-            fs_.create_dir(&root.join("x").expect("uri")),
-            Err(_)
-        ));
+        assert!(fs_.create_dir(&root.join("x").expect("uri")).is_err());
         let first = drives.first().expect("drive");
         fs_.read_dir(&first.uri).expect("a drive root lists");
     }
