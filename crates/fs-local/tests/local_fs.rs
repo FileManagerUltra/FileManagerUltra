@@ -4,7 +4,9 @@ use std::fs;
 use std::io::{Read, Write};
 
 use fm_fs_local::LocalFs;
-use fm_vfs::{EntryKind, FmError, Vfs, VfsUri, WriteOpts};
+#[cfg(unix)]
+use fm_vfs::EntryKind;
+use fm_vfs::{FmError, Vfs, VfsUri, WriteOpts};
 
 #[allow(clippy::expect_used)] // test helpers
 fn uri(path: &std::path::Path) -> VfsUri {
