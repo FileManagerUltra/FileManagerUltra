@@ -62,12 +62,14 @@ pub fn uri_list(paths: &[PathBuf]) -> Result<String, DragError> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn encodes_reserved_bytes_and_unicode() {
         let list = uri_list(&[PathBuf::from("/a b/ü#?%.png")]).expect("list");
         assert_eq!(list, "file:///a%20b/%C3%BC%23%3F%25.png\r\n");
     }
 
+    #[cfg(unix)]
     #[test]
     fn joins_with_crlf() {
         let list = uri_list(&[PathBuf::from("/a"), PathBuf::from("/b")]).expect("list");
