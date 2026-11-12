@@ -1338,7 +1338,8 @@ mod tests {
         }));
 
         // On non-mac platforms egui-winit delivers Ctrl+C as `Event::Copy`, never as a key.
-        if cfg!(target_os = "macos") {
+        // Busy detection reads the pty's foreground process group, which exists on Unix only.
+        if cfg!(target_os = "macos") || !cfg!(unix) {
             return;
         }
         frame(

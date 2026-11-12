@@ -323,6 +323,79 @@ fn media_preview_controls(video: bool, in_media: bool, fullscreen: bool) {
     }
 }
 
+/// A paused video that has not decoded a frame yet (autoplay off, or the file was just opened
+/// in another player): the poster sits centred where the picture will be, controls below it.
+#[test]
+fn video_preview_poster_before_the_first_frame() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (name, tokens) in [("dark", Tokens::dark()), ("light", Tokens::light())] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = Session::new().expect("session");
+        session.prefs.preview_video_autoplay = false;
+        session
+            .dispatch("pane.kind.set", &serde_json::json!({"kind": "preview"}))
+            .expect("preview");
+        let pane = session.layout.focused();
+        session.poll();
+        // A 16:9 poster with a lighter band, so its placement shows in the picture.
+        let (w, h) = (160u32, 90u32);
+        let rgba: Vec<u8> = (0..w * h)
+            .flat_map(|i| {
+                let y = i / w;
+                let v = if (30..60).contains(&y) { 200 } else { 90 };
+                [v, v, v, 255]
+            })
+            .collect();
+        session.previews.slots.get_mut(&pane).expect("slot").body =
+            fm_engine::preview_cmds::Body::Static(Arc::new(fm_preview::Preview::Meta(
+                fm_preview::MetaDoc {
+                    rows: vec![("Duration".into(), "3:35".into())],
+                    hint: None,
+                    poster: Some(Box::new(fm_preview::ImageDoc {
+                        width: w,
+                        height: h,
+                        frames: vec![(rgba, 0)],
+                        original: (w, h),
+                        format: "JPEG",
+                    })),
+                    video: Some(fm_preview::VideoInfo {
+                        path: "/sample/movie.mkv".into(),
+                        range: None,
+                        width: 1280,
+                        height: 720,
+                        fps: 25.0,
+                        duration: 215.0,
+                        audio: None,
+                        audio_delay: 0.0,
+                        tracks: Default::default(),
+                    }),
+                    audio: None,
+                },
+            )));
+        session.poll();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(640.0, 560.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                egui::CentralPanel::default().show(ui, |ui| {
+                    fm_ui::preview::show(ui, &mut session, pane, &tokens);
+                });
+            });
+        harness.run();
+        harness.snapshot(format!("preview_video_poster_{name}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
 fn test_session() -> Session {
     with_fixed_places(Session::default())
 }

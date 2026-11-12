@@ -222,7 +222,22 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
             match &slot.body {
                 Body::Empty => centered(ui, tokens, "Select a file to preview it"),
                 Body::Loading => {
-                    ui.centered_and_justified(|ui| ui.spinner());
+                    // Switching from a video keeps its layout, so the pane does not blink.
+                    // A video gets its box (its size depends only on the pane) with the
+                    // spinner inside, so the player does not blink while the file loads.
+                    if slot.subject.as_ref().is_some_and(is_video_entry) {
+                        let avail = ui.available_size();
+                        let boxed = vec2(avail.x, video_box_height(ui, avail));
+                        let (rect, _) = ui.allocate_exact_size(boxed, Sense::hover());
+                        ui.painter().rect_filled(rect, 0.0, tokens.bg);
+                        ui.put(
+                            egui::Rect::from_center_size(rect.center(), vec2(24.0, 24.0)),
+                            egui::Spinner::new(),
+                        );
+                        reserve_controls(ui, pane, avail.x);
+                    } else {
+                        ui.centered_and_justified(|ui| ui.spinner());
+                    }
                     ui.ctx()
                         .request_repaint_after(std::time::Duration::from_millis(100));
                 }
@@ -271,6 +286,16 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 Body::Static(p) if slot.audio.is_some() => {
                     if let (Preview::Meta(meta), Some(audio)) = (&**p, &slot.audio) {
                         audio_body(ui, pane, tokens, p, meta, audio, &mut actions);
+                    }
+                }
+                Body::Static(p)
+                    if slot.video.is_none()
+                        && matches!(&**p, Preview::Meta(m) if m.video.is_some()) =>
+                {
+                    if let Preview::Meta(m) = &**p
+                        && let Some(info) = &m.video
+                    {
+                        pending_video_body(ui, pane, tokens, m, info);
                     }
                 }
                 Body::Static(p) if slot.video.is_some() => {
@@ -1431,27 +1456,27 @@ fn video_body(
     let output = paged_scroll(ui, ScrollArea::both(), ("pv-video", pane))
         .auto_shrink(false)
         .show(ui, |ui| {
-            let controls_h = 2.0 * ui.spacing().interact_size.y + ui.spacing().item_spacing.y * 3.0;
-            let aspect = v.info.height as f32 / v.info.width.max(1) as f32;
-            let w = avail
-                .x
-                .min(((avail.y - controls_h) / aspect.max(0.01)).max(64.0));
-            let size = vec2(w, w * aspect) * content_scale(ui);
-            if let Some(f) = &v.frame {
-                let id = Id::NULL.with(("pv-video-tex", pane));
-                let tex = video_texture(ui.ctx(), id, f);
-                let (rect, resp) =
-                    ui.allocate_exact_size(vec2(avail.x.max(size.x), size.y), Sense::click());
-                let at = egui::Rect::from_center_size(rect.center(), size);
-                egui::Image::new((tex.id(), size)).paint_at(ui, at);
-                if resp.clicked() {
-                    actions.push(("preview.video.play", json!({})));
-                }
-            } else if let Some(poster) = &m.poster {
-                image(ui, pane, tokens, p, poster, Zoom::Fit, None);
-            } else {
-                ui.allocate_space(vec2(avail.x, size.y.min(120.0)));
+            let (boxed, size) = video_box(ui, avail, &v.info);
+            // The newest frame. A paused video that has not started shows its poster; one
+            // that is starting does not, since the poster is taken ~10 s in and the first
+            // frame (at 0:00) would replace it with a different picture a moment later.
+            let picture = match &v.frame {
+                Some(f) => Some(video_texture(
+                    ui.ctx(),
+                    Id::NULL.with(("pv-video-tex", pane)),
+                    f,
+                )),
+                None if !v.playing => m
+                    .poster
+                    .as_ref()
+                    .and_then(|poster| poster_texture(ui.ctx(), pane, p, poster)),
+                None => None,
+            };
+            let resp = paint_video_box(ui, tokens, boxed, size, picture, Sense::click());
+            if resp.clicked() {
+                actions.push(("preview.video.play", json!({})));
             }
+            let controls_top = ui.cursor().top();
             video_controls(ui, pane, tokens, v, actions);
             ui.horizontal_wrapped(|ui| media_actions(ui, actions))
                 .response
@@ -1460,6 +1485,8 @@ fn video_body(
                         ui.close();
                     }
                 });
+            let used = ui.cursor().top() - controls_top;
+            ui.data_mut(|d| d.insert_temp(controls_height_id(pane), used));
             if let Some(e) = &v.error {
                 ui.colored_label(tokens.error, e);
             }
@@ -1473,6 +1500,121 @@ fn video_body(
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(16));
     }
+}
+
+/// Share of the pane height the video box takes; the controls always start right below it.
+const VIDEO_BOX_SHARE: f32 = 0.75;
+
+/// The video box (full width, three quarters of the pane) and the picture fitted and centred
+/// in it. The box depends only on the pane size, never on the file, so switching videos or a
+/// poster turning into frames never moves the controls. In a very short pane the box gives
+/// up a fixed amount of room so the controls still fit.
+fn video_box(ui: &Ui, avail: egui::Vec2, info: &fm_preview::VideoInfo) -> (egui::Vec2, egui::Vec2) {
+    let height = video_box_height(ui, avail);
+    let natural = vec2(info.width.max(1) as f32, info.height.max(1) as f32);
+    let fit = (avail.x / natural.x).min(height / natural.y);
+    // The Preview zoom (Ctrl+Plus/Minus) scales the picture; zoomed past the box, it grows.
+    let picture = natural * fit * content_scale(ui);
+    (vec2(avail.x.max(picture.x), height.max(picture.y)), picture)
+}
+
+fn video_box_height(ui: &Ui, avail: egui::Vec2) -> f32 {
+    (avail.y * VIDEO_BOX_SHARE)
+        .min(avail.y - controls_estimate(ui))
+        .max(64.0)
+}
+
+/// A fixed allowance for the controls and media actions under the video box.
+fn controls_estimate(ui: &Ui) -> f32 {
+    4.0 * ui.spacing().interact_size.y + ui.spacing().item_spacing.y * 6.0
+}
+
+/// Height of the controls and media actions as last drawn in `pane`, so the frame before a
+/// new video's player exists (and the loading spinner) keeps the information card in place.
+fn controls_height_id(pane: PaneId) -> Id {
+    Id::NULL.with(("pv-video-controls-h", pane))
+}
+
+fn reserve_controls(ui: &mut Ui, pane: PaneId, width: f32) {
+    let height = ui
+        .data(|d| d.get_temp::<f32>(controls_height_id(pane)))
+        .unwrap_or_else(|| controls_estimate(ui));
+    // The measured height already holds the spacing that follows the last row.
+    ui.allocate_space(vec2(width, (height - ui.spacing().item_spacing.y).max(0.0)));
+}
+
+/// Paint `texture` (or an empty box) fitted in the video box; the click response is returned.
+fn paint_video_box(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    boxed: egui::Vec2,
+    picture: egui::Vec2,
+    texture: Option<egui::TextureHandle>,
+    sense: Sense,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(boxed, sense);
+    let at = egui::Rect::from_center_size(rect.center(), picture);
+    match texture {
+        Some(tex) => {
+            egui::Image::new((tex.id(), picture)).paint_at(ui, at);
+        }
+        None => {
+            ui.painter().rect_filled(at, 0.0, tokens.bg);
+        }
+    }
+    response
+}
+
+/// A video whose player is not created yet (the frame between its preview arriving and the
+/// engine's next tick, or a background refresh): the player's layout with the poster and the
+/// controls' space left empty, so nothing moves when the player appears.
+fn pending_video_body(
+    ui: &mut Ui,
+    pane: PaneId,
+    tokens: &Tokens,
+    m: &MetaDoc,
+    info: &fm_preview::VideoInfo,
+) {
+    let avail = ui.available_size();
+    let output = paged_scroll(ui, ScrollArea::both(), ("pv-video", pane))
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            let (boxed, size) = video_box(ui, avail, info);
+            // Empty: the player, a frame later, shows the poster only if it stays paused.
+            paint_video_box(ui, tokens, boxed, size, None, Sense::hover());
+            reserve_controls(ui, pane, avail.x);
+            ui.push_id(("pv-video-meta", pane), |ui| meta_card(ui, tokens, m));
+        });
+    remember_scroll(ui, &output);
+    ui.ctx().request_repaint();
+}
+
+fn is_video_entry(entry: &fm_vfs::Entry) -> bool {
+    fm_preview::thumbs::classify(&entry.name) == fm_preview::thumbs::ThumbKind::Video
+}
+
+/// The poster's first frame as a texture, cached per pane and preview.
+fn poster_texture(
+    ctx: &egui::Context,
+    pane: PaneId,
+    p: &Arc<Preview>,
+    poster: &ImageDoc,
+) -> Option<egui::TextureHandle> {
+    let (rgba, _) = poster.frames.first()?;
+    let id = Id::NULL.with(("pv-video-poster", pane));
+    let ident = Arc::as_ptr(p) as usize;
+    if let Some((cached, texture)) = ctx.data(|d| d.get_temp::<(usize, egui::TextureHandle)>(id))
+        && cached == ident
+    {
+        return Some(texture);
+    }
+    let image = egui::ColorImage::from_rgba_unmultiplied(
+        [poster.width as usize, poster.height as usize],
+        rgba,
+    );
+    let texture = ctx.load_texture("video-poster", image, egui::TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, (ident, texture.clone())));
+    Some(texture)
 }
 
 pub(crate) fn video_texture(

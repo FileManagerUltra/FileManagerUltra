@@ -13,6 +13,8 @@ use crate::session::Session;
 /// Id of the "you can also play media here" hint in `Prefs::hints_seen`.
 pub const MEDIA_OPEN_HINT: &str = "media-open";
 const HINT_TEXT: &str = "You can also play audio and video here.";
+/// How long a file opened elsewhere keeps its (still loading) Preview from autoplaying.
+const HOLD_AUTOPLAY: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaKind {
@@ -50,6 +52,8 @@ impl Session {
     /// pane playing it, so the two players never run at once.
     pub fn pause_previews_of(&mut self, uri: &VfsUri) {
         use crate::audio_owner::AudioOwner;
+        // The first click of the double-click may still be loading the preview.
+        self.opened_elsewhere = Some((uri.clone(), std::time::Instant::now()));
         let panes: Vec<fm_layout::PaneId> = self
             .previews
             .slots
@@ -69,6 +73,15 @@ impl Session {
             self.release_audio(AudioOwner::PreviewVideo(pane));
             self.release_audio(AudioOwner::PreviewAudio(pane));
         }
+    }
+
+    /// Whether a Preview of `uri` may start playing by itself: not right after the file was
+    /// opened in another player.
+    pub(crate) fn preview_may_autoplay(&self, uri: Option<&VfsUri>) -> bool {
+        !self
+            .opened_elsewhere
+            .as_ref()
+            .is_some_and(|(held, at)| uri == Some(held) && at.elapsed() < HOLD_AUTOPLAY)
     }
 
     /// The activation target the preferences choose for `kind`.

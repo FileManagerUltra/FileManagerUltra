@@ -129,6 +129,12 @@ impl Session {
     pub(crate) fn video_tick(&mut self) -> bool {
         let mut changed = false;
         let mut started = None;
+        // The OS path of a file just opened in another player (see `pause_previews_of`).
+        let held = self
+            .opened_elsewhere
+            .as_ref()
+            .filter(|(uri, _)| !self.preview_may_autoplay(Some(uri)))
+            .and_then(|(uri, _)| uri.local_path_string());
         for (pane, slot) in self.previews.slots.iter_mut() {
             // A video in a background workspace stops (the decoder is killed).
             let active = self.layout.states.contains_key(pane);
@@ -142,8 +148,15 @@ impl Session {
                 continue;
             };
             if slot.video.as_ref().is_none_or(|v| v.info != info) {
-                slot.video = Some(VideoState::new(info, self.prefs.preview_video_autoplay));
-                if self.prefs.preview_video_autoplay {
+                // A refreshed probe of the same video keeps it paused if it was paused.
+                let was_paused = slot
+                    .video
+                    .as_ref()
+                    .is_some_and(|v| !v.playing && v.info.path == info.path);
+                let opened = held.as_deref() == Some(info.path.as_str());
+                let autoplay = self.prefs.preview_video_autoplay && !was_paused && !opened;
+                slot.video = Some(VideoState::new(info, autoplay));
+                if autoplay {
                     started = Some(*pane);
                 }
                 changed = true;
@@ -462,6 +475,46 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn a_video_opened_elsewhere_while_its_preview_loads_does_not_autoplay() {
+        let mut s = Session::new().expect("session");
+        s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+            .expect("kind");
+        let pane = s.layout.focused();
+        let uri = fm_vfs::VfsUri::parse("/v.mp4").expect("uri");
+        let mut info = state().info;
+        info.path = uri.local_path_string().expect("local");
+        let show = |s: &mut Session, info: &VideoInfo| {
+            let slot = s
+                .previews
+                .slots
+                .entry(pane)
+                .or_insert_with(PreviewSlot::new);
+            slot.body = Body::Static(Arc::new(Preview::Meta(fm_preview::MetaDoc {
+                rows: vec![],
+                hint: None,
+                poster: None,
+                audio: None,
+                video: Some(info.clone()),
+            })));
+            s.video_tick();
+            s.previews.slots[&pane]
+                .video
+                .as_ref()
+                .expect("video")
+                .playing
+        };
+        // The double-click opens the file before the first click's preview has loaded.
+        s.pause_previews_of(&uri);
+        assert!(!show(&mut s, &info), "loaded after the open: stays paused");
+        info.duration = 11.0;
+        assert!(!show(&mut s, &info), "a refreshed probe keeps it paused");
+        s.opened_elsewhere = None;
+        let mut other = info.clone();
+        other.path.push_str(".other");
+        assert!(show(&mut s, &other), "another video still autoplays");
     }
 
     #[test]

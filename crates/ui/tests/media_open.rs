@@ -183,3 +183,220 @@ fn preferences_offer_the_open_choice_per_kind() {
         MediaOpenTarget::DefaultApp
     );
 }
+
+/// In a short pane the picture shrinks so the controls and media actions stay in view.
+#[test]
+fn a_short_preview_keeps_the_whole_player_in_view() {
+    for poster in [false, true] {
+        let mut s = Session::new().expect("session");
+        s.prefs.preview_video_autoplay = false;
+        s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+            .expect("preview");
+        let pane = s.layout.focused();
+        s.poll();
+        let (w, h) = (160u32, 90u32);
+        s.previews.slots.get_mut(&pane).expect("slot").body = fm_engine::preview_cmds::Body::Static(
+            std::sync::Arc::new(fm_preview::Preview::Meta(fm_preview::MetaDoc {
+                rows: vec![("Duration".into(), "3:35".into())],
+                hint: None,
+                poster: poster.then(|| {
+                    Box::new(fm_preview::ImageDoc {
+                        width: w,
+                        height: h,
+                        frames: vec![(vec![128; (w * h * 4) as usize], 0)],
+                        original: (w, h),
+                        format: "JPEG",
+                    })
+                }),
+                video: Some(fm_preview::VideoInfo {
+                    path: "/sample/movie.mkv".into(),
+                    range: None,
+                    width: 1280,
+                    height: 720,
+                    fps: 25.0,
+                    duration: 215.0,
+                    audio: None,
+                    audio_delay: 0.0,
+                    tracks: Default::default(),
+                }),
+                audio: None,
+            })),
+        );
+        s.poll();
+        let tokens = Tokens::dark();
+        let height = 380.0;
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(900.0, height))
+            .build_ui_state(
+                move |ui, s| {
+                    fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        fm_ui::preview::show(ui, s, pane, &tokens);
+                    });
+                },
+                s,
+            );
+        h.run();
+        let bottom = h.get_by_label("Play folder").rect().bottom();
+        assert!(bottom <= height, "poster {poster}: actions end at {bottom}");
+    }
+}
+
+fn video_meta(path: &str, poster: bool, audio_tracks: usize) -> fm_engine::preview_cmds::Body {
+    let (w, h) = (160u32, 90u32);
+    let track = |n: usize| fm_preview::AudioTrack {
+        label: format!("Track {n}"),
+        format: None,
+        delay: 0.0,
+    };
+    fm_engine::preview_cmds::Body::Static(std::sync::Arc::new(fm_preview::Preview::Meta(
+        fm_preview::MetaDoc {
+            rows: vec![("Duration".into(), "3:35".into())],
+            hint: None,
+            poster: poster.then(|| {
+                Box::new(fm_preview::ImageDoc {
+                    width: w,
+                    height: h,
+                    frames: vec![(vec![128; (w * h * 4) as usize], 0)],
+                    original: (w, h),
+                    format: "JPEG",
+                })
+            }),
+            video: Some(fm_preview::VideoInfo {
+                path: path.into(),
+                range: None,
+                width: 1280,
+                height: 720,
+                fps: 25.0,
+                duration: 215.0,
+                audio: None,
+                audio_delay: 0.0,
+                tracks: fm_preview::Tracks {
+                    audio: (0..audio_tracks).map(track).collect(),
+                    ..Default::default()
+                },
+            }),
+            audio: None,
+        },
+    )))
+}
+
+/// Switching videos keeps the player in place through every step the app goes through:
+/// loading, the new preview drawn before its player exists, then the player.
+#[test]
+fn switching_videos_in_preview_does_not_move_the_player() {
+    let mut s = Session::new().expect("session");
+    s.prefs.preview_video_autoplay = false;
+    s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+        .expect("preview");
+    let pane = s.layout.focused();
+    s.poll();
+    s.previews.slots.get_mut(&pane).expect("slot").body = video_meta("/a.mkv", true, 1);
+    let tokens = Tokens::dark();
+    // The engine ticks only when the test says so, like a new preview arriving mid-frame.
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(900.0, 600.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    fm_ui::preview::show(ui, s, pane, &tokens);
+                });
+            },
+            s,
+        );
+    for _ in 0..10 {
+        h.state_mut().poll();
+        h.step();
+    }
+    let settled = h.get_by_label("Play folder").rect().top();
+    let actions_top = |h: &Harness<'_, Session>| {
+        // While loading or before the player exists there are no buttons: measure the
+        // information card instead, which sits right below them.
+        h.query_by_label("Play folder").map(|n| n.rect().top())
+    };
+    let card_top = |h: &Harness<'_, Session>| h.get_by_label("File information").rect().top();
+    let card = card_top(&h);
+    for (path, poster, tracks) in [
+        ("/b.mkv", false, 1),
+        ("/c.mkv", true, 3),
+        ("/d.mkv", true, 1),
+    ] {
+        {
+            let slot = h.state_mut().previews.slots.get_mut(&pane).expect("slot");
+            let uri = fm_vfs::VfsUri::parse(path).expect("uri");
+            slot.subject = Some(fm_vfs::Entry::new(uri, fm_vfs::EntryKind::File));
+            slot.body = fm_engine::preview_cmds::Body::Loading;
+        }
+        h.state_mut().poll();
+        h.step();
+        // The preview arrives and is drawn once before the engine creates its player.
+        h.state_mut()
+            .previews
+            .slots
+            .get_mut(&pane)
+            .expect("slot")
+            .body = video_meta(path, poster, tracks);
+        h.step();
+        let before = card_top(&h);
+        assert!(
+            (before - card).abs() < 1.0,
+            "{path} before its player: card at {before}, was at {card}"
+        );
+        for frame in 0..6 {
+            h.state_mut().poll();
+            h.step();
+            let top = actions_top(&h).expect("actions");
+            assert!(
+                (top - settled).abs() < 1.0,
+                "{path} frame {frame}: actions at {top}, were at {settled}"
+            );
+        }
+    }
+}
+
+/// The poster is a still from ~10 s in: a video that is starting must not flash it before
+/// its first frame (at 0:00). Only a paused, not yet started video shows it.
+#[test]
+fn the_poster_shows_only_for_a_paused_video() {
+    for autoplay in [true, false] {
+        let mut s = Session::new().expect("session");
+        s.prefs.preview_video_autoplay = autoplay;
+        s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+            .expect("preview");
+        let pane = s.layout.focused();
+        s.poll();
+        s.previews.slots.get_mut(&pane).expect("slot").body = video_meta("/a.mkv", true, 1);
+        let tokens = Tokens::dark();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        fm_ui::preview::show(ui, s, pane, &tokens);
+                    });
+                },
+                s,
+            );
+        // The first frame shows the preview before its player exists, then the player.
+        h.step();
+        h.state_mut().poll();
+        for _ in 0..4 {
+            h.step();
+        }
+        let playing = h
+            .state()
+            .previews
+            .slots
+            .get(&pane)
+            .and_then(|slot| slot.video.as_ref())
+            .is_some_and(|v| v.playing);
+        assert_eq!(playing, autoplay);
+        let poster_loaded = h
+            .ctx
+            .tex_manager()
+            .read()
+            .allocated()
+            .any(|(_, meta)| meta.name == "video-poster");
+        assert_eq!(poster_loaded, !autoplay, "autoplay {autoplay}");
+    }
+}

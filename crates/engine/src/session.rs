@@ -41,6 +41,9 @@ pub struct ViewIndex {
 pub struct Session {
     /// Session-wide lease for the single active audio output.
     pub audio_owner: crate::audio_owner::AudioOwner,
+    /// A file just opened in another player: its Preview must not autoplay while it is
+    /// still loading (see `Session::pause_previews_of`).
+    pub(crate) opened_elsewhere: Option<(VfsUri, std::time::Instant)>,
     pub media: crate::media_cmds::MediaSession,
     /// Set while the Media pane fills the window (Media > Fullscreen).
     pub media_fullscreen: Option<crate::media_fullscreen_cmds::MediaFullscreen>,
@@ -168,6 +171,7 @@ impl Default for Session {
             app_catalog: None,
             registry: Registry::new(),
             audio_owner: crate::audio_owner::AudioOwner::None,
+            opened_elsewhere: None,
             media: Default::default(),
             media_fullscreen: None,
             window_fullscreen: false,

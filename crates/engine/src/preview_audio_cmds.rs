@@ -70,6 +70,13 @@ impl Session {
         let mut changed = false;
         let mut autoplay = None;
         let mut notice = None;
+        // A file just opened in another player does not start here (see `pause_previews_of`).
+        let held = self
+            .opened_elsewhere
+            .as_ref()
+            .filter(|(uri, _)| !self.preview_may_autoplay(Some(uri)))
+            .map(|(uri, _)| uri.clone());
+        let held = held.as_ref();
         for (pane, slot) in &mut self.previews.slots {
             let doc = match &slot.body {
                 Body::Static(model)
@@ -88,7 +95,8 @@ impl Session {
             };
             if slot.audio.as_ref().is_none_or(|audio| audio.doc != *doc) {
                 slot.audio = Some(AudioState::new(doc.clone()));
-                if self.prefs.preview_audio_autoplay {
+                let opened = held.is_some() && slot.subject.as_ref().map(|e| &e.uri) == held;
+                if self.prefs.preview_audio_autoplay && !opened {
                     autoplay = Some(*pane);
                 }
                 changed = true;
