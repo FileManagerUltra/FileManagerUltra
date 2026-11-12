@@ -21,6 +21,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # No debug info in CI test builds: much less to write and link (PDBs on Windows).
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
   test:
@@ -35,6 +37,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-test
+          # Save the build even when a test fails, so the next run is not a cold build.
+          cache-on-failure: true
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       # The same pinned, SHA-256-verified build the app downloads for Windows users
       # (read from Pin::WINDOWS, so a pin bump is tested automatically).
       - name: Install the app's pinned ffmpeg (real video, subtitle and DVD tests need it)
@@ -62,15 +69,15 @@ jobs:
         run: |
           cargo xtask layers
           cargo xtask brand-check
-      - name: Tests
-        run: cargo test --workspace --locked --no-fail-fast --exclude fm-ui
-      - name: UI tests (without pixel snapshots)
-        run: cargo test -p fm-ui --locked --lib --test hostile --test dialog_interaction
+      # One workspace build serves both test steps. Selecting a single package
+      # (`-p fm-ui`) resolves features differently and rebuilt ~350 crates.
+      - name: Tests (UI included, without pixel snapshots)
+        run: cargo nextest run --workspace --locked --no-fail-fast -E "not binary_id(fm-ui::snapshots)"
       # Baselines are rendered on Linux; a different GPU/font rasterizer may differ by a
       # few pixels, so this step reports without failing the run.
       - name: UI pixel snapshots (informational)
         continue-on-error: true
-        run: cargo test -p fm-ui --locked --test snapshots
+        run: cargo test --workspace --locked --test snapshots
       - name: Upload snapshot diffs
         if: always()
         uses: actions/upload-artifact@v7
@@ -91,6 +98,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: x86_64-pc-windows-msvc
+          cache-on-failure: true
       - name: Install cargo-packager
         run: cargo install cargo-packager --locked
       - name: Build

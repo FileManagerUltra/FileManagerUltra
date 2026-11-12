@@ -33,6 +33,8 @@ pub struct Message {
     pub at: Instant,
     /// A one-time hint's id (see `Prefs::hints_seen`); hints stay on screen longer.
     pub hint: Option<String>,
+    /// Informational (e.g. "Opening … in your browser"), not a failure or warning.
+    pub info: bool,
     pub actions: Vec<MessageAction>,
     /// An action was used: the buttons no longer act.
     pub spent: bool,
@@ -46,16 +48,28 @@ pub struct MessageLog {
 }
 
 impl MessageLog {
+    /// A failure or warning.
     pub fn push(&mut self, text: &str) {
-        self.push_with(text, None, Vec::new());
+        self.push_with(text, None, false, Vec::new());
+    }
+
+    /// Something the user should know that did not go wrong.
+    pub fn push_info(&mut self, text: &str) {
+        self.push_with(text, None, true, Vec::new());
     }
 
     /// A one-time hint with buttons (capped at [`MAX_ACTIONS`], labels shortened).
     pub fn push_hint(&mut self, text: &str, hint: &str, actions: Vec<MessageAction>) {
-        self.push_with(text, Some(hint.to_string()), actions);
+        self.push_with(text, Some(hint.to_string()), true, actions);
     }
 
-    fn push_with(&mut self, text: &str, hint: Option<String>, mut actions: Vec<MessageAction>) {
+    fn push_with(
+        &mut self,
+        text: &str,
+        hint: Option<String>,
+        info: bool,
+        mut actions: Vec<MessageAction>,
+    ) {
         let text: String = text.chars().take(MAX_CHARS).collect();
         if text.trim().is_empty() {
             return;
@@ -73,6 +87,7 @@ impl MessageLog {
             text,
             at: Instant::now(),
             hint,
+            info,
             actions,
             spent: false,
         });
@@ -147,6 +162,16 @@ pub fn specs() -> Vec<CommandSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_failures_are_not_info() {
+        let mut log = MessageLog::default();
+        log.push("Cannot read the folder");
+        log.push_info("Opening the link in your browser");
+        log.push_hint("A tip", "media-open", Vec::new());
+        let info: Vec<bool> = log.recent().map(|m| m.info).collect();
+        assert_eq!(info, vec![true, true, false]);
+    }
 
     #[test]
     fn log_is_capped_newest_first_and_ignores_blank() {

@@ -85,6 +85,31 @@ fn the_hint_buttons_in_the_activity_panel_act_once() {
 }
 
 #[test]
+fn informational_messages_are_not_labelled_as_errors() {
+    let tokens = Tokens::dark();
+    let s = Session::new().expect("session");
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(900.0, 600.0))
+        .build_ui_state(
+            move |ui, s| {
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                fm_ui::jobs::show(ui.ctx(), s, &tokens);
+            },
+            s,
+        );
+    h.run();
+    h.state_mut()
+        .messages
+        .push_info("Opening https://example.invalid in your default browser.");
+    h.run();
+    h.get_by_label("Info");
+    assert!(
+        h.query_by_label("Error").is_none(),
+        "opening a link is not a failure"
+    );
+}
+
+#[test]
 fn right_clicking_the_audio_player_opens_its_menu_without_video_entries() {
     for tokens in [Tokens::dark(), Tokens::light()] {
         let s = Session::new().expect("session");

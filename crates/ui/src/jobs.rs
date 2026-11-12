@@ -284,6 +284,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         text: String,
         age: u64,
         hint: bool,
+        info: bool,
         /// Button labels and whether each only dismisses; empty once one was used.
         actions: Vec<(String, bool)>,
     }
@@ -295,6 +296,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             text: m.text.clone(),
             age: m.at.elapsed().as_secs(),
             hint: m.hint.is_some(),
+            info: m.info,
             actions: if m.spent {
                 Vec::new()
             } else {
@@ -390,6 +392,8 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                         for line in &messages {
                             let (tone, heading) = if line.hint {
                                 (Tone::Info, "Tip")
+                            } else if line.info {
+                                (Tone::Info, "Info")
                             } else {
                                 (Tone::Error, "Error")
                             };
