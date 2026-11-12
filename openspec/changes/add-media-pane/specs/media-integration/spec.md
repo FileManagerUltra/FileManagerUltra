@@ -11,6 +11,18 @@ Playback SHALL integrate with the operating system's media controls: MPRIS on Li
 - **WHEN** another program asks the MPRIS interface to open a URI
 - **THEN** the request is ignored
 
+#### Scenario: Play key with files selected
+- **WHEN** Media is paused, files are selected in a Files pane and the Play media key is pressed
+- **THEN** the paused item resumes; the selection is not played
+
+#### Scenario: Cover art for the overlay
+- **WHEN** the current item has embedded cover art
+- **THEN** the controls receive a `file://` URL to the app's own re-encoded PNG (at most 512 px, owner-only file in an owner-only per-process folder), never the embedded bytes; it is replaced on the next item and removed on quit
+
+#### Scenario: No session bus
+- **WHEN** the controls cannot register (no D-Bus session, name taken, OS refusal)
+- **THEN** one log line is written, playback is unaffected, and registration is tried again only after playback has ended and started again
+
 ### Requirement: Hardware video decoding
 Video SHALL be decoded with the platform's hardware acceleration when available (VA-API on Linux, D3D11/DXVA on Windows, VideoToolbox on macOS) and SHALL fall back to software decoding automatically when hardware decoding is unavailable or fails mid-stream. A preference "hardware decoding" SHALL be on by default and the pane SHALL show which mode is active.
 

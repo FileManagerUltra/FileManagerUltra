@@ -326,7 +326,7 @@ pub(crate) fn safe_file_name(name: &str) -> String {
 }
 
 /// A new, uniquely named, owner-only folder in the system temp dir.
-fn private_temp_dir() -> Result<PathBuf, FmError> {
+pub(crate) fn private_temp_dir() -> Result<PathBuf, FmError> {
     use std::sync::atomic::{AtomicU32, Ordering};
     static SEQ: AtomicU32 = AtomicU32::new(0);
 

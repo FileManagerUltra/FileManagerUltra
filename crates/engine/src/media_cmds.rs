@@ -27,6 +27,9 @@ impl Drop for VideoProbe {
     }
 }
 
+/// A decoded cover and its PNG export for the OS media controls, or why decoding failed.
+pub(crate) type CoverResult = Result<(fm_preview::ImageDoc, Option<std::path::PathBuf>), String>;
+
 /// Queue rows just added by one request, for the playlist to select and scroll to once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MediaReveal {
@@ -62,10 +65,9 @@ pub struct MediaSession {
     pub resume: Vec<crate::media_resume::ResumePoint>,
     /// Audiobooks and videos: chapters, timeline, remembered positions, bookmarks.
     pub books: crate::media_book::BookExtras,
-    pub(crate) cover_job: Option<(
-        Receiver<Result<fm_preview::ImageDoc, String>>,
-        crate::jobs::JobId,
-    )>,
+    pub(crate) cover_job: Option<(Receiver<CoverResult>, crate::jobs::JobId)>,
+    /// The decoded cover as an owner-only PNG, for the OS media controls.
+    pub cover_file: Option<std::path::PathBuf>,
     /// The rows the last add request put in the queue (see [`MediaReveal`]).
     pub reveal: Option<MediaReveal>,
 }
@@ -94,6 +96,7 @@ impl Default for MediaSession {
             resume: Vec::new(),
             books: Default::default(),
             cover_job: None,
+            cover_file: None,
             reveal: None,
         }
     }
@@ -203,6 +206,7 @@ impl MediaSession {
         self.subtitles.item_changed();
         self.video_probe = None;
         self.cover = None;
+        self.cover_file = None;
         self.cover_job = None;
         self.error = None;
         self.extras.item_changed();
@@ -456,7 +460,10 @@ impl Session {
                 Ok(result) => {
                     self.media.cover_job = None;
                     match result {
-                        Ok(cover) => self.media.cover = Some(Arc::new(cover)),
+                        Ok((cover, file)) => {
+                            self.media.cover = Some(Arc::new(cover));
+                            self.media.cover_file = file;
+                        }
                         Err(error) => self.messages.push(&error),
                     }
                     changed = true;
@@ -516,7 +523,10 @@ impl Session {
                     };
                     let result = match fm_preview::image_prev::decode_still(&entry, &bytes, &limits)
                     {
-                        fm_preview::Preview::Image(image) => Ok(image),
+                        fm_preview::Preview::Image(image) => {
+                            let file = crate::media_cover_file::export(&image);
+                            Ok((image, file))
+                        }
                         _ => Err("Embedded media cover art could not be decoded safely.".into()),
                     };
                     // Replacing the current item drops the receiver; its artwork is no longer needed.
@@ -1442,6 +1452,10 @@ mod tests {
                 .map(|cover| (cover.width, cover.height)),
             Some((16, 8))
         );
+        // The OS media controls get our own re-encoded PNG, never the embedded bytes.
+        let file = s.media.cover_file.clone().expect("cover file");
+        let png = image::open(&file).expect("png");
+        assert_eq!((png.width(), png.height()), (16, 8));
         s.media.reset_item();
         s.media_apply_status(PlaybackStatus {
             info: Some(info),
@@ -1450,8 +1464,9 @@ mod tests {
         s.media.reset_item();
         s.media_tick();
         assert!(
-            s.media.cover.is_none(),
+            s.media.cover.is_none() && s.media.cover_file.is_none(),
             "old artwork must not appear on a new item"
         );
+        let _ = std::fs::remove_file(file);
     }
 }

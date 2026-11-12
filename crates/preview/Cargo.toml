@@ -17,14 +17,14 @@ regex.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 serde.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }
-serde_yaml_ng = "0.10"
-quick-xml = "0.37"
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
-syntect = { version = "5", default-features = false, features = ["default-fancy"] }
-pulldown-cmark = { version = "0.12", default-features = false }
-fast_image_resize = "6"
-resvg = { version = "0.49", default-features = false }
+serde_yaml_ng.workspace = true
+quick-xml.workspace = true
+flate2 = { workspace = true, features = ["rust_backend"] }
+image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
+syntect = { workspace = true, features = ["default-fancy"] }
+pulldown-cmark.workspace = true
+fast_image_resize.workspace = true
+resvg.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

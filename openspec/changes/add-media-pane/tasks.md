@@ -79,7 +79,7 @@ controls remain pending.
 
 ## 8. System integration and packaging (slice G)
 
-- [ ] 8.1 `souvlaki` (or equivalent) behind a trait in `fm-app`: MPRIS (zbus), SMTC, macOS Now Playing; dispatch only `media.*`; re-add `raw-window-handle` if needed
+- [x] 8.1 `souvlaki` (or equivalent) behind a trait in `fm-app`: MPRIS (zbus), SMTC, macOS Now Playing; dispatch only `media.*`; re-add `raw-window-handle` if needed (`apps/fm-app/src/media_controls.rs`; MPRIS verified over a real session bus; SMTC/Now Playing compile-checked only, to try in 9.4)
 - [x] 8.2 ~~Bundle pinned LGPL `ffmpeg`/`ffprobe` in the installers~~ Superseded by `managed-ffmpeg`: installers do not bundle ffmpeg; Windows offers a pinned, SHA-256-verified download from Preferences > Media, elsewhere ffmpeg is discovered on the system (`build-guardrails` delta updated)
 - [x] 8.3 Verify the `.deb`/AppImage depend on or bundle `libasound2`, and that no installer contains `ffmpeg`/`ffprobe` (0.2.0 checked: no ffmpeg in any installer; the `.deb` had no `Depends` at all, now `libc6 (>= 2.35), libgcc-s1, libasound2t64 | libasound2` plus a Maintainer; the AppImage leaves ALSA to the host per the AppImage excludelist)
 

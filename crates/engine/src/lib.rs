@@ -37,6 +37,7 @@ pub mod media_audio_cmds;
 pub mod media_book;
 mod media_book_cmds;
 pub mod media_cmds;
+mod media_cover_file;
 pub mod media_entry_cmds;
 pub mod media_fullscreen_cmds;
 pub mod media_group_cmds;

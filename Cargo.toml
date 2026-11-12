@@ -79,6 +79,36 @@ symphonia = { version = "0.5.5", features = ["aac", "alac", "mp3", "isomp4"] }
 rubato = { version = "0.16", default-features = false }
 rtrb = "0.3"
 
+# external — OS media controls (fm-app only)
+# System media controls (MPRIS, SMTC, Now Playing; add-media-pane design 17). zbus keeps
+# Linux free of libdbus.
+souvlaki = { version = "0.9.3", default-features = false, features = ["use_zbus"] }
+# Native window handles: Windows SMTC (fm-app) and Wayland drag and drop (fm-wayland);
+# same major as eframe uses.
+raw-window-handle = "0.6"
+
+# external — previews (fm-preview; fm-engine uses image, flate2 and plist too).
+# Members add the features they need.
+image = { version = "0.25", default-features = false }
+flate2 = { version = "1", default-features = false }
+serde_yaml_ng = "0.10"
+quick-xml = "0.37"
+syntect = { version = "5", default-features = false }
+pulldown-cmark = { version = "0.12", default-features = false }
+fast_image_resize = "6"
+resvg = { version = "0.49", default-features = false }
+plist = "1"
+
+# external — platform drag and drop (fm-dragout, fm-wayland, fm-winout) and Windows
+# executable resources (fm-app build script)
+x11rb = { version = "0.13", default-features = false }
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", default-features = false }
+rustix = "1"
+windows-core = "0.62"
+windows = "0.62"
+winresource = "0.1"
+
 # external — SFTP (fm-fs-sftp only; tokio never leaks to other crates)
 russh = "0.64"
 russh-sftp = "3"

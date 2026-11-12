@@ -11,6 +11,7 @@
 )]
 
 mod dragout;
+mod media_controls;
 mod menu;
 mod window;
 
@@ -39,6 +40,8 @@ struct App {
     last_ws_tick: std::time::Instant,
     window: window::Tracker,
     out_drag: dragout::OutDrag,
+    /// MPRIS / SMTC / Now Playing (`media-integration`).
+    media_controls: media_controls::MediaControls,
 }
 
 impl App {
@@ -361,7 +364,7 @@ impl eframe::App for App {
         self.out_drag.raw_input(raw_input);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.window.reposition(&ctx);
         window::capture(&ctx, &mut self.session.prefs);
@@ -386,6 +389,14 @@ impl eframe::App for App {
         }
         self.sync_theme(&ctx);
         let _ = self.session.poll();
+        let events_ctx = ctx.clone();
+        self.media_controls.tick(&mut self.session, &mut |events| {
+            media_controls::Souvlaki::connect(
+                media_controls::window_handle(frame),
+                events_ctx.clone(),
+                events,
+            )
+        });
         let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
         self.session.devices_tick(focused);
         ctx.request_repaint_after(if self.session.volumes.scanning() {
@@ -706,6 +717,7 @@ fn main() -> eframe::Result {
                 last_ws_tick: std::time::Instant::now(),
                 window: tracker,
                 out_drag: dragout::OutDrag::new(cc),
+                media_controls: media_controls::MediaControls::new(),
             }))
         }),
     )

@@ -79,6 +79,22 @@ Use your own target dir when working in parallel with another agent:
 CARGO_TARGET_DIR=target/agent-<name> cargo test -p fm-engine
 ```
 
+## Updating dependencies
+
+Every external crate is declared once, in `[workspace.dependencies]` of the root
+`Cargo.toml`; member crates use `name.workspace = true`. Keep it that way so a bump is
+one line.
+
+- Dependabot (`.github/dependabot.yml`) opens weekly PRs: minor/patch bumps grouped per
+  ecosystem (Cargo, GitHub Actions), majors separately. No workflow runs on PRs, so
+  check out the branch and run `cargo xtask ci` (or start the Windows workflow on it).
+- By hand: `cargo update` moves `Cargo.lock` to the newest semver-compatible versions;
+  `cargo update -p <crate>` updates one. A major bump means editing the version in the
+  root `Cargo.toml`, then `cargo check`.
+- The vendored crates (`sspi`, `smb-transport`, `vt100`, patched in `[patch.crates-io]`)
+  are excluded from Dependabot: re-vendor and re-diff them as `vendor/FM-VENDORED.md`
+  describes.
+
 ## Layout of the tree
 
 See `AGENTS.md` §2. `docs/architecture.md` explains why each crate exists and how data flows.

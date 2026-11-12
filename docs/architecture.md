@@ -182,6 +182,16 @@ select and scroll to the added rows. The player's right-click menu (`fm-ui::medi
 only dispatches existing `media.*` commands. `fm-ui::media_keys` takes only keys it
 acts on and none while a popup is open, so menus keep Esc and the arrows.
 
+`fm-app::media_controls` connects the session to the OS media controls through
+`souvlaki` (MPRIS over zbus, SMTC with the main window handle, Now Playing). A
+backend registers while an item plays or is paused mid-item and is dropped when
+playback ends; a failed registration is logged once per playback. OS events arrive on
+souvlaki's thread, wake the UI and are dispatched from the frame loop as `media.*`
+commands only (Play resumes through `media.toggle`, so it never plays a Files
+selection); open-URI, raise and quit requests are ignored. Metadata is sent on
+change and the position once a second while playing. Cover art goes out as a
+`file://` URL to `media_cover_file`'s re-encoded PNG.
+
 ---
 
 ## 4. Core data model

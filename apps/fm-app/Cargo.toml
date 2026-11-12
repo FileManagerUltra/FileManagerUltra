@@ -27,6 +27,10 @@ eframe.workspace = true
 egui.workspace = true
 # Feature-only dependency: enables winit's Wayland title bar (see root Cargo.toml).
 winit.workspace = true
+souvlaki.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+raw-window-handle.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 fm-wayland.workspace = true
@@ -36,4 +40,4 @@ fm-testkit.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]
 fm-brand.workspace = true
-winresource = "0.1"
+winresource.workspace = true

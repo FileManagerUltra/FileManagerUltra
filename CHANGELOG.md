@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Media keys and the system's media controls work with the Media pane: the play/pause, next, previous and stop keys, the GNOME/KDE media widget, the Windows media overlay and macOS Now Playing, with title, artist, album, cover art and position.
+
 ### Fixed
 - Playing a file while the current item is in a locked playlist folder no longer puts the file inside that folder; it now goes right after it.
 - Esc closes the player's right-click menu again, and the arrow keys move through it instead of seeking or changing the volume.

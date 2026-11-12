@@ -144,6 +144,7 @@ impl Session {
             self.jobs.cancel(job);
         }
         self.media.cover = None;
+        self.media.cover_file = None;
         self.media.error = None;
         self.media.failed_items = 0;
         let current = self.media.queue.current().cloned();

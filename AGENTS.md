@@ -95,6 +95,7 @@ Never publish a pre-release or draft expecting users to be notified: the update 
 ## 7. Dependencies to know about
 
 - **Approved media exception (2026-11-09):** `fm-media` uses the safe `cpal` API for native audio. This permits platform FFI inside that dependency and requires `pkg-config`/`libasound2-dev` to build on Linux (CI installs them). It does not permit `unsafe` or direct audio FFI in workspace code. Windows/macOS use native audio APIs.
+- **Media controls (add-media-pane design 17):** `fm-app` uses `souvlaki` for MPRIS (pure-Rust `zbus`, no libdbus), Windows SMTC and macOS Now Playing; platform FFI stays inside that dependency. Its events may dispatch only `media.*` commands.
 - `smb` (SMB) is used in its blocking mode and needs every opened handle closed explicitly → SMB work stays on the `smb` lane (2 workers); never call it from the UI thread. `sspi` is vendored in `vendor/` (rc crypto pins relaxed to coexist with `russh`).
 - `russh-sftp` is async → the `fs-sftp` crate owns a tokio runtime and blocks on it inside its `Vfs` impl; no other crate depends on tokio directly.
 - `trash` handles XDG/Recycle Bin/macOS trash — deletes must go through `ops::trash`, never `fs::remove_dir_all`.

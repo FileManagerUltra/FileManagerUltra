@@ -1,0 +1,28 @@
+# Weekly dependency update PRs. Semver-compatible (minor/patch) bumps arrive grouped in
+# one PR per ecosystem; major bumps get their own PR because they may need code changes.
+# No workflow runs on pull requests, so check a PR locally (`cargo xtask ci`) or start
+# the Windows workflow on its branch before merging.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-compatible:
+        update-types: [minor, patch]
+    ignore:
+      # Replaced by patched copies in vendor/ (see vendor/FM-VENDORED.md); a version bump
+      # here would no longer match the vendored source. Update these by hand.
+      - dependency-name: sspi
+      - dependency-name: smb-transport
+      - dependency-name: vt100
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
