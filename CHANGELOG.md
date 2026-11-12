@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A server opened by address in the Network pane (such as `\\192.168.0.5` or `smb://192.168.0.5`) now shows in the folder tree, even when it doesn't announce itself on the network.
 - Resuming playback of some screen recordings (WebM files with a single keyframe) no longer fails with "Decoder failed"; the video now resumes at the paused position.
 
 ### Changed

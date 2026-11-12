@@ -5,9 +5,11 @@ use std::time::Duration;
 use fm_vfs::{Entry, EntryKind, FmError, Scheme, SpaceInfo, Vfs, VfsUri, WriteOpts};
 use mdns_sd::ServiceDaemon;
 
-use crate::hosts::{Host, HostList};
+use crate::hosts::{Host, HostList, sanitize_name};
 
 const WSD_INTERVAL: Duration = Duration::from_secs(10);
+/// Hosts reached by address (typed `\\host` or `smb://host`) kept in the folder this run.
+pub const MAX_VISITED: usize = 64;
 
 fn read_only() -> FmError {
     FmError::Unsupported("the Network folder is read-only")
@@ -20,6 +22,8 @@ pub struct NetworkFs {
     hosts: HostList,
     started: OnceLock<()>,
     daemon: Mutex<Option<ServiceDaemon>>,
+    /// Host roots opened by address that discovery may never announce, oldest first.
+    visited: Mutex<Vec<VfsUri>>,
 }
 
 impl std::fmt::Debug for NetworkFs {
@@ -46,6 +50,30 @@ impl NetworkFs {
     /// The live host list (tests and the engine can seed or inspect it).
     pub fn hosts(&self) -> &HostList {
         &self.hosts
+    }
+
+    /// Keep the host of `uri` (an `smb://` or `sftp://` location that just listed) in the
+    /// folder, so a host typed by address shows in the Network tree. `true` when it is new.
+    /// Capped at [`MAX_VISITED`]; the oldest host makes room.
+    pub fn remember_host(&self, uri: &VfsUri) -> bool {
+        if !matches!(uri.scheme(), Scheme::Smb | Scheme::Sftp) {
+            return false;
+        }
+        let mut root = uri.clone();
+        while let Some(parent) = root.parent() {
+            root = parent;
+        }
+        let Ok(mut visited) = self.visited.lock() else {
+            return false;
+        };
+        if visited.contains(&root) {
+            return false;
+        }
+        if visited.len() >= MAX_VISITED {
+            visited.remove(0);
+        }
+        visited.push(root);
+        true
     }
 
     fn start(&self) {
@@ -108,6 +136,20 @@ impl Vfs for NetworkFs {
             .iter()
             .flat_map(host_entries)
             .collect();
+        let visited = self.visited.lock().map(|v| v.clone()).unwrap_or_default();
+        for root in visited {
+            if entries.iter().any(|e| e.uri == root) {
+                continue;
+            }
+            let label = if root.scheme() == Scheme::Smb {
+                "File Sharing"
+            } else {
+                "Remote Login"
+            };
+            let mut e = Entry::new(root.clone(), EntryKind::Dir);
+            e.name = format!("{} ({label})", sanitize_name(&root.authority().host));
+            entries.push(e);
+        }
         entries.sort_by_cached_key(|e| (e.name.to_lowercase(), e.uri.to_string()));
         Ok(entries)
     }
@@ -176,5 +218,41 @@ mod tests {
         assert!(fs.remove(&net).is_err());
         assert!(fs.open_write(&net, WriteOpts::default()).is_err());
         assert!(fs.open_read(&net).is_err());
+    }
+
+    #[test]
+    fn hosts_reached_by_address_join_the_folder_once_and_are_capped() {
+        let fs = NetworkFs::fixed(HostList::new());
+        let ip = "192.168.0.9".parse().unwrap();
+        fs.hosts().upsert("k", "nas", ip, Service::Smb, 445);
+        let net = VfsUri::network();
+        let share = VfsUri::parse("smb://192.168.0.5/media/films").unwrap();
+        assert!(fs.remember_host(&share));
+        assert!(!fs.remember_host(&share), "already known");
+        // A discovered host is not listed twice.
+        assert!(fs.remember_host(&VfsUri::parse("smb://192.168.0.9/x").unwrap()));
+        // Only remote hosts count.
+        assert!(!fs.remember_host(&VfsUri::parse("file:///tmp").unwrap()));
+        assert!(!fs.remember_host(&net));
+        let list = fs.read_dir(&net).unwrap();
+        let shown: Vec<_> = list
+            .iter()
+            .map(|e| (e.name.as_str(), e.uri.to_string()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (
+                    "192.168.0.5 (File Sharing)",
+                    "smb://192.168.0.5/".to_string()
+                ),
+                ("nas (File Sharing)", "smb://192.168.0.9/".to_string()),
+            ]
+        );
+        for n in 0..MAX_VISITED + 10 {
+            let uri = VfsUri::parse(&format!("sftp://10.0.{}.{}/", n / 200, n % 200 + 1)).unwrap();
+            fs.remember_host(&uri);
+        }
+        assert!(fs.read_dir(&net).unwrap().len() <= MAX_VISITED + 1);
     }
 }

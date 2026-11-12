@@ -32,6 +32,8 @@ pub fn bulk_lane_for(scheme: Scheme) -> JobLane {
 #[derive(Clone, Default)]
 pub struct VfsRegistry {
     map: HashMap<(Scheme, String), Arc<dyn Vfs>>,
+    /// The Network folder, kept typed so hosts reached by address can join it.
+    network: Option<Arc<fm_discovery::NetworkFs>>,
 }
 
 impl std::fmt::Debug for VfsRegistry {
@@ -57,12 +59,26 @@ impl VfsRegistry {
     pub fn with_local() -> Self {
         let mut r = Self::new();
         r.register(Arc::new(LocalFs::new()));
-        r.register(Arc::new(fm_discovery::NetworkFs::new()));
+        r.register_network(Arc::new(fm_discovery::NetworkFs::new()));
         r
+    }
+
+    /// Register the Network folder (also reachable as the `network` scheme backend).
+    pub fn register_network(&mut self, network: Arc<fm_discovery::NetworkFs>) {
+        self.register(network.clone());
+        self.network = Some(network);
+    }
+
+    /// The Network folder, when one is registered.
+    pub fn network(&self) -> Option<&Arc<fm_discovery::NetworkFs>> {
+        self.network.as_ref()
     }
 
     /// Register (or replace) the backend for its scheme.
     pub fn register(&mut self, backend: Arc<dyn Vfs>) {
+        if backend.scheme() == Scheme::Network {
+            self.network = None;
+        }
         self.map.insert((backend.scheme(), String::new()), backend);
     }
 

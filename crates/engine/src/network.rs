@@ -570,3 +570,69 @@ pub fn cancel() -> CommandSpec {
 pub fn specs() -> Vec<CommandSpec> {
     vec![open(), connect_dialog(), login(), cancel()]
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+    use super::*;
+    use crate::dircache::DirState;
+    use fm_testkit::MemFs;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    fn wait(s: &mut Session, mut done: impl FnMut(&Session) -> bool) {
+        for _ in 0..400 {
+            s.poll();
+            if done(s) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out");
+    }
+
+    fn listed(s: &Session, uri: &VfsUri) -> Vec<String> {
+        match s.dirs.state(uri) {
+            DirState::Ready { entries, .. } => entries.iter().map(|e| e.uri.to_string()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// `\\192.168.0.5` typed in a Network pane: discovery never announced the host, yet
+    /// it must appear under the Network tree root so the tree can show where you are.
+    #[test]
+    fn a_host_typed_by_address_joins_the_network_tree() {
+        let mut s = Session::new().expect("session");
+        s.backends
+            .register_network(Arc::new(fm_discovery::NetworkFs::fixed(
+                fm_discovery::HostList::new(),
+            )));
+        let share = VfsUri::parse("smb://192.168.0.5/media").expect("uri");
+        let fs = MemFs::new().with_scheme(Scheme::Smb);
+        fs.mkdirs(&share.join("films").expect("uri")).expect("dir");
+        s.backends.register_at(share.authority(), Arc::new(fs));
+        let pane = s.layout.focused();
+        s.open_network(pane).expect("network");
+        let net = VfsUri::network();
+        wait(&mut s, |s| {
+            matches!(s.dirs.state(&net), DirState::Ready { .. })
+        });
+        assert!(listed(&s, &net).is_empty());
+
+        s.dispatch("nav.goto", &json!(null)).expect("edit");
+        s.dispatch(
+            "nav.goto.commit",
+            &json!({"path": "\\\\192.168.0.5\\media"}),
+        )
+        .expect("go");
+        let host = VfsUri::parse("smb://192.168.0.5/").expect("uri");
+        wait(&mut s, |s| listed(s, &net).contains(&host.to_string()));
+        let state = s.layout.state(pane).expect("pane");
+        assert_eq!(state.location, share);
+        assert_eq!(state.tree.root, net);
+        assert!(
+            state.tree.is_expanded(&host),
+            "the host row opens to the share"
+        );
+    }
+}

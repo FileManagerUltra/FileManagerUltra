@@ -467,6 +467,17 @@ impl Session {
     /// Selections prune against fresh entries; indexes for panes on `uri` drop.
     pub(crate) fn after_read(&mut self, uri: &VfsUri) {
         let entries = self.dirs.entries(uri);
+        // A host opened by address (`\\192.168.0.5`) joins the Network folder, so the
+        // Network tree can show it even when discovery never announced it.
+        if entries.is_some()
+            && self
+                .backends
+                .network()
+                .is_some_and(|net| net.remember_host(uri))
+            && self.shows_network()
+        {
+            self.poll_location(VfsUri::network());
+        }
         let panes: Vec<PaneId> = self
             .layout
             .states
