@@ -149,6 +149,16 @@ impl Session {
         self.media.failed_items = 0;
         let current = self.media.queue.current().cloned();
         self.media.spool.cancel_except(current.as_ref());
+        // The next item may be a book with its own speed (or leave one).
+        let speed = self.media.speed_for_current();
+        if (speed - self.media.speed).abs() > 1e-9 {
+            self.media.speed = speed;
+            if let Some(player) = &self.media.player
+                && let Err(error) = player.set_speed(speed)
+            {
+                self.media.error = Some(error.to_string());
+            }
+        }
     }
 
     /// Loop and sleep-timer bookkeeping, once per tick.

@@ -35,6 +35,10 @@ The central area SHALL render the session's `Layout` recursively: each leaf is a
 - **THEN** the focused pane's cell is replaced by a split containing the original pane and a new empty-location pane
 - **AND** the new pane becomes focused
 
+#### Scenario: Splitting a Preview or Media pane
+- **WHEN** a Preview pane (or the Media pane) is split, for example when it is the only pane left
+- **THEN** the new pane is a Files pane, not a second Preview; it keeps the folder the pane last listed when that is local or its server is still connected, and otherwise starts at the home folder, so no login dialog appears for a server that is not open
+
 #### Scenario: Dragging a split handle
 - **WHEN** the user drags the handle between two panes
 - **THEN** the split ratio updates in the layout data (clamped to sane bounds) and both panes re-layout

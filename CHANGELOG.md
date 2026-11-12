@@ -8,11 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Audio plays faster or slower (0.5× to 3×) without changing pitch, from the Speed menu or the < and > keys, with or without ffmpeg. Each audiobook remembers its own speed; other files share one speed per session.
 - Media keys and the system's media controls work with the Media pane: the play/pause, next, previous and stop keys, the GNOME/KDE media widget, the Windows media overlay and macOS Now Playing, with title, artist, album, cover art and position.
 
 ### Fixed
 - Playing a file while the current item is in a locked playlist folder no longer puts the file inside that folder; it now goes right after it.
 - Esc closes the player's right-click menu again, and the arrow keys move through it instead of seeking or changing the volume.
+- Videos in a folder (documentary episodes, DVD parts) are no longer treated as an audiobook: earlier episodes are not marked as played, and each video resumes where you stopped it.
+- Dropping files or rows on the upper half of a playlist row now puts them above it; before, they always landed below.
+- A dropped folder, such as an audiobook or a series, now lands where you drop it in the playlist, as its own playlist folder; before, it was always added at the end.
+- Deleting the folder you are looking at (for example from the folder tree) now shows the next highlighted folder, or the parent folder, instead of a "not found" error.
+- Splitting a Preview pane now opens a file pane next to it instead of a second preview, and no longer shows the SFTP login when no SFTP pane is open.
 - Linux: the `.deb` package now declares what it needs (including the ALSA sound library), so installing it with apt pulls in anything missing instead of failing to start.
 
 ## [0.2.0] - 2026-11-12

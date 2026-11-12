@@ -154,6 +154,10 @@ opt-level = 3
 [profile.dev.package.fm-preview]
 opt-level = 3
 
+# Real-time audio DSP (time stretch, equalizer) must keep up in dev builds too.
+[profile.dev.package.fm-media]
+opt-level = 3
+
 [patch.crates-io]
 sspi = { path = "vendor/sspi" }
 smb-transport = { path = "vendor/smb-transport" }

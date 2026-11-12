@@ -159,10 +159,10 @@ impl Session {
                 }
                 first
             };
-            if let Some(slot) = pending
-                .slot
-                .filter(|_| into_group.is_none() && folders.is_empty() && has_items)
-            {
+            // Dropped folders become playlist folders of their own: they land beside the
+            // target row's folder, never inside it.
+            let new_folders = !folders.is_empty();
+            if let Some(slot) = pending.slot.filter(|_| into_group.is_none() && has_items) {
                 let appended = first;
                 let mut previous = None;
                 for k in 0..count {
@@ -170,7 +170,7 @@ impl Session {
                     let queue = &mut self.media.queue;
                     let to = match previous {
                         Some(prev) => queue.place_after(index, prev),
-                        None if slot.outside => {
+                        None if slot.outside || new_folders => {
                             queue.place_beside_group(index, slot.row, slot.after)
                         }
                         None if slot.after => queue.place_after(index, slot.row),
@@ -701,6 +701,59 @@ mod tests {
         );
         assert_eq!(loaded.items.len(), 6, "hidden folders are skipped");
         assert_eq!(loaded.folders[1].dir, "/s/Series/Book 2");
+    }
+
+    #[test]
+    fn a_dropped_book_folder_lands_where_it_was_dropped_not_at_the_end() {
+        let fs = MemFs::new();
+        for book in ["A", "B", "C"] {
+            for part in ["01", "02"] {
+                fs.put_str(&format!("/Audio Books/{book}/{part}.mp3"), b"x")
+                    .expect("file");
+            }
+        }
+        let mut s = Session::new().expect("session");
+        s.backends.register(Arc::new(fs));
+        let drop = |s: &mut Session, book: &str, slot: serde_json::Value| {
+            let mut params = json!({"uris": [format!("/Audio Books/{book}")]});
+            if let (Some(map), serde_json::Value::Object(slot)) = (params.as_object_mut(), slot) {
+                map.extend(slot);
+            }
+            s.dispatch("media.drop", &params).expect("drop");
+            wait(s);
+        };
+        let order = |s: &Session| -> Vec<(String, usize, usize)> {
+            s.media
+                .queue
+                .groups()
+                .into_iter()
+                .map(|g| (g.dir.unwrap_or_default(), g.start, g.len))
+                .collect()
+        };
+        drop(&mut s, "A", json!({}));
+        // Above folder A: its header's upper part sends this slot.
+        drop(&mut s, "B", json!({"before": 0, "outside": true}));
+        assert_eq!(
+            order(&s),
+            [
+                ("/Audio Books/B".to_string(), 0, 2),
+                ("/Audio Books/A".to_string(), 2, 2)
+            ]
+        );
+        // Between the two books.
+        drop(&mut s, "C", json!({"before": 2, "outside": true}));
+        assert_eq!(
+            order(&s),
+            [
+                ("/Audio Books/B".to_string(), 0, 2),
+                ("/Audio Books/C".to_string(), 2, 2),
+                ("/Audio Books/A".to_string(), 4, 2)
+            ]
+        );
+        assert!(
+            s.media.queue.groups().iter().all(|g| g.locked),
+            "each book stays its own locked folder"
+        );
     }
 
     #[test]

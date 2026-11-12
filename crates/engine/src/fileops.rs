@@ -321,6 +321,8 @@ pub struct OpJob {
     last_refresh: Option<Instant>,
     /// Sources and destinations, including read-only sources, for safe device removal.
     uris: Vec<VfsUri>,
+    /// What a trash or permanent delete removes; panes showing it move away when done.
+    removes: Vec<VfsUri>,
     shared: Arc<Mutex<Shared>>,
     resolver: Sender<Decision>,
 }
@@ -544,6 +546,12 @@ impl Session {
         let label = request.label();
         let kind = request.kind();
         let touched = request.touched_dirs();
+        let removes = match &request {
+            OpRequest::Trash { sources } | OpRequest::DeletePermanent { sources } => {
+                sources.clone()
+            }
+            _ => Vec::new(),
+        };
         let worker_shared = shared.clone();
         let retarget_links = self.prefs.retarget_links;
         let id = self.jobs.submit(lane, move |ctx| {
@@ -568,6 +576,7 @@ impl Session {
             touched,
             last_refresh: None,
             uris,
+            removes,
             shared,
             resolver,
         });
@@ -691,6 +700,12 @@ impl Session {
         job.summary = report.as_ref().map(OpSummary::from);
         let kind = job.kind;
         let touched = std::mem::take(&mut job.touched);
+        // Only a delete that finished whole is known to have removed every source.
+        let removed = if matches!(job.state, OpState::Finished) {
+            std::mem::take(&mut job.removes)
+        } else {
+            Vec::new()
+        };
         if let (Some(kind), Some(report)) = (kind, report.as_ref()) {
             self.undo.push_report(kind, report);
         }
@@ -700,8 +715,43 @@ impl Session {
                 let _ = self.refresh_read(dir);
             }
         }
+        self.leave_removed_folders(&removed);
         self.fileops.trim();
         true
+    }
+
+    /// Files panes showing a folder that was just deleted (or a folder inside it) move to
+    /// the folder their tree now highlights, or else to the nearest surviving parent,
+    /// instead of showing "not found".
+    fn leave_removed_folders(&mut self, removed: &[VfsUri]) {
+        if removed.is_empty() {
+            return;
+        }
+        let gone = |uri: &VfsUri| removed.iter().any(|r| r == uri || r.is_ancestor_of(uri));
+        let mut reads = Vec::new();
+        for state in self.layout.states.values_mut() {
+            if !state.kind.is_files() || !gone(&state.location) {
+                continue;
+            }
+            let highlighted = state
+                .tree
+                .focused
+                .clone()
+                .filter(|f| !gone(f) && f.scheme() == state.location.scheme());
+            let mut parent = state.location.parent();
+            while let Some(p) = parent.as_ref().filter(|p| gone(p)) {
+                parent = p.parent();
+            }
+            if let Some(next) = highlighted.or(parent) {
+                state.navigate(next.clone());
+                reads.push(next);
+            }
+        }
+        for uri in reads {
+            if let Err(err) = self.ensure_read(uri.clone()) {
+                self.dirs.set_failed(&uri, err.to_string());
+            }
+        }
     }
 }
 

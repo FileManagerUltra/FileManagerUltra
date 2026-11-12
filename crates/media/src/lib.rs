@@ -11,6 +11,7 @@ mod pipeline;
 mod player;
 mod playlist;
 mod queue;
+mod stretch;
 mod subtitle;
 
 pub use book::{
@@ -29,6 +30,7 @@ pub use playlist::{
     is_dvd_folder, parse_playlist, write_m3u8,
 };
 pub use queue::{Group, GroupRef, MAX_GROUP_NAME, MAX_GROUPS, MAX_QUEUE_ITEMS, Queue, RepeatMode};
+pub use stretch::{MAX_SPEED, MIN_SPEED, Stretcher};
 pub use subtitle::{
     Cue, Cues, ExternalName, MAX_ACTIVE, MAX_CUE_LINE_CHARS, MAX_CUE_LINES, MAX_CUE_MS, MAX_CUES,
     MAX_DELAY_MS, MAX_SUBTITLE_BYTES, SUBTITLE_EXTENSIONS, decode_subtitle_text, match_external,

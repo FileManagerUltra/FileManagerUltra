@@ -33,16 +33,41 @@ pub fn split_vertical() -> CommandSpec {
 }
 
 fn split(s: &mut Session, axis: Axis) -> Result<(), FmError> {
+    use fm_layout::PaneKind;
     let focused = s.layout.focused();
     let new_id = s.layout.split(focused, axis, 0.5)?;
-    if let Some(state) = s.layout.state_mut(new_id)
-        && state.kind == fm_layout::PaneKind::Media
-    {
-        state.kind = fm_layout::PaneKind::Files;
+    // Splitting the Media or a Preview pane opens a Files pane beside it.
+    let converted = s
+        .layout
+        .state(new_id)
+        .is_some_and(|state| matches!(state.kind, PaneKind::Media | PaneKind::Preview));
+    if converted {
+        // Its stored folder is whatever the pane last listed, possibly a remote one that
+        // is no longer connected: reading that would ask to log in. Keep a local or live
+        // location, else start at home.
+        let keep = s.layout.state(new_id).is_some_and(|state| {
+            let virtual_root = matches!(
+                state.tree.root.scheme(),
+                fm_vfs::Scheme::Network | fm_vfs::Scheme::Servers
+            );
+            !virtual_root
+                && (state.location.scheme() == fm_vfs::Scheme::File
+                    || s.backends.get_for(&state.location).is_some())
+        });
+        if let Some(state) = s.layout.state_mut(new_id) {
+            if keep {
+                state.kind = PaneKind::Files;
+            } else {
+                *state = fm_layout::PaneState::new_rooted(
+                    crate::workspace::home_location(),
+                    fm_vfs::VfsUri::root_file(),
+                );
+            }
+        }
     }
-    // The new pane inherits the location; make sure its listing is loaded
-    // (no-op when the shared cache already has it).
-    if let Some(state) = s.layout.state(new_id) {
+    // A new listing pane inherits the location; make sure it is loaded (no-op when the
+    // shared cache already has it). Other kinds list nothing.
+    if let Some(state) = s.layout.state(new_id).filter(|state| state.kind.is_files()) {
         let loc = state.location.clone();
         s.ensure_read(loc)?;
     }
@@ -175,6 +200,50 @@ mod tests {
         assert_eq!(s.layout.focused(), 1, "wrapped to the first leaf");
         (focus_next().run)(&mut s, &Params::Null).expect("next");
         assert_eq!(s.layout.focused(), second);
+    }
+
+    #[test]
+    fn splitting_a_preview_opens_a_files_pane_without_asking_to_log_in() {
+        let mut s = Session::default();
+        let pane = s.layout.focused();
+        // A pane that once showed an SFTP server, now a Preview; nothing is connected.
+        let remote = fm_vfs::VfsUri::parse("sftp://alice@server.test/home/alice").expect("uri");
+        {
+            let state = s.layout.state_mut(pane).expect("pane");
+            *state = fm_layout::PaneState::new(remote);
+            state.kind = fm_layout::PaneKind::Preview;
+        }
+        (split_horizontal().run)(&mut s, &Params::Null).expect("split");
+        let new = s.layout.focused();
+        let state = s.layout.state(new).expect("new pane");
+        assert_eq!(
+            state.kind,
+            fm_layout::PaneKind::Files,
+            "not a second preview"
+        );
+        assert_eq!(state.location, crate::workspace::home_location());
+        assert!(s.remote.sftp_prompt.is_none(), "no SFTP login dialog");
+        assert_eq!(
+            s.layout.state(pane).expect("preview").kind,
+            fm_layout::PaneKind::Preview,
+            "the preview itself stays"
+        );
+
+        // A Preview that last showed a local folder keeps it.
+        let mut s = Session::default();
+        let pane = s.layout.focused();
+        let docs = fm_vfs::VfsUri::parse("/tmp").expect("uri");
+        s.layout
+            .state_mut(pane)
+            .expect("pane")
+            .navigate(docs.clone());
+        s.layout.state_mut(pane).expect("pane").kind = fm_layout::PaneKind::Preview;
+        (split_vertical().run)(&mut s, &Params::Null).expect("split");
+        let state = s.layout.state(s.layout.focused()).expect("new pane");
+        assert_eq!(
+            (state.kind, &state.location),
+            (fm_layout::PaneKind::Files, &docs)
+        );
     }
 
     #[test]
