@@ -572,7 +572,16 @@ mod tests {
             e.set_text("Docu".to_string());
         }
         settle(&mut s);
-        assert_eq!(texts(&s), vec!["Documents/"]);
+        let expected = if cfg!(windows) {
+            "Documents\\"
+        } else {
+            "Documents/"
+        };
+        assert_eq!(
+            texts(&s),
+            vec![expected],
+            "local Windows folders end in a backslash"
+        );
     }
 
     #[test]

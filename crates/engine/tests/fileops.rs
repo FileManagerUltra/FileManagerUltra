@@ -554,7 +554,8 @@ fn clipboard_copy_cut_and_paste_run_the_pipelines() {
         "the OS clipboard gets the native path"
     );
     select(&mut s, "a.txt", "/dst");
-    dispatch(&mut s, "file.clip_paste", json!({"os_text": "/src/a.txt"})).expect("paste");
+    let os_text = fm_vfs::native_path("/src/a.txt", cfg!(windows)).expect("native");
+    dispatch(&mut s, "file.clip_paste", json!({"os_text": os_text})).expect("paste");
     let id = only_job(&s.fileops);
     assert_eq!(finish(&mut s, id), OpState::Finished);
     assert_eq!(fs.get_str("/dst/a.txt").expect("copied"), b"hello");
