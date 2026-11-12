@@ -758,6 +758,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 }
                 s.show_media_pane()?;
                 if let Some(input) = items {
+                    for uri in &input.items {
+                        s.pause_previews_of(uri);
+                    }
                     let first = s.media_insert_next(input.items)?;
                     s.media_start_at(first, input.position)?;
                     s.stop_handed_off_preview(input.preview);

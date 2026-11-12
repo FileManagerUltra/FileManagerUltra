@@ -221,6 +221,30 @@ mod tests {
     }
 
     #[test]
+    fn opening_a_previewed_file_elsewhere_pauses_its_preview() {
+        let (mut s, pane, uri) = setup();
+        let playing = |s: &Session| {
+            s.previews
+                .slots
+                .get(&pane)
+                .and_then(|slot| slot.audio.as_ref())
+                .is_some_and(|audio| audio.playing)
+        };
+        let other = uri
+            .parent()
+            .expect("parent")
+            .join("other.mp3")
+            .expect("uri");
+        s.pause_previews_of(&other);
+        assert!(playing(&s), "another file's preview keeps playing");
+        // A double-click plays it in the Media pane (or the default app): one player only.
+        s.dispatch("media.play", &json!({"uris": [uri.to_string()]}))
+            .expect("play");
+        assert!(!playing(&s), "the preview pauses");
+        assert_ne!(s.audio_owner, AudioOwner::PreviewAudio(pane));
+    }
+
+    #[test]
     fn every_add_asks_the_playlist_to_reveal_exactly_the_new_rows() {
         let mut s = Session::new().expect("session");
         for n in 0..5 {

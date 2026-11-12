@@ -282,6 +282,7 @@ pub fn open_file() -> CommandSpec {
                     ));
                 }
                 let name = safe_file_name(&entry.name);
+                s.pause_previews_of(&uri);
                 s.submit_op(crate::fileops::OpRequest::OpenRemote {
                     uri,
                     name,
@@ -293,6 +294,7 @@ pub fn open_file() -> CommandSpec {
             s.jobs
                 .submit(lane_for(uri.scheme()), move |_ctx| launch(&path, mode));
             if mode == Mode::Default {
+                s.pause_previews_of(&uri);
                 s.offer_media_open_hint(&uri);
             }
             Ok(())

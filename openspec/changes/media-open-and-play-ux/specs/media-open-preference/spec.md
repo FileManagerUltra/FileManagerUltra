@@ -3,6 +3,12 @@
 ### Requirement: Opening media files follows a per-kind preference
 The app SHALL keep two preferences, one for audio and one for video files, each either *Open in default app* (the default) or *Play in Media pane*, editable in Preferences → Media and with `prefs.media_open {kind: "audio" | "video" | "both", target: "default" | "media"}`. Activating a supported media file (double-click or Enter in a Files pane or the tree) SHALL dispatch `file.open` as before when its kind is set to *Open in default app*, and `media.play {uris: [uri]}` when it is set to *Play in Media pane*. In the second case the file SHALL be inserted after the current item and start at once, with a Media pane opened as `media.play` already does. Remote files, playlists (`.m3u`, `.m3u8`, `.pls`), disc images and anything the Media pane cannot play SHALL keep the `file.open` path. Context-menu Play, Play next and Add to queue SHALL stay available whatever the preference.
 
+Whichever way a file is opened (`file.open` in the default app, or `media.play` with that file), a Preview pane showing it SHALL pause its video or audio and give up the audio output, so two players never run at once.
+
+#### Scenario: Preview stops when the file is opened
+- **WHEN** a video autoplays in a Preview pane after one click, and the user double-clicks it
+- **THEN** the Preview pauses while the default app (or the Media pane) plays it
+
 #### Scenario: Default is unchanged
 - **WHEN** a new user double-clicks `song.mp3`
 - **THEN** `file.open` hands it to the system default application, exactly as before this change

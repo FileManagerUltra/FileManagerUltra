@@ -46,6 +46,31 @@ pub fn media_open_kind(uri: &VfsUri) -> Option<MediaKind> {
 }
 
 impl Session {
+    /// `uri` was just opened elsewhere (default app or Media pane): pause any Preview
+    /// pane playing it, so the two players never run at once.
+    pub fn pause_previews_of(&mut self, uri: &VfsUri) {
+        use crate::audio_owner::AudioOwner;
+        let panes: Vec<fm_layout::PaneId> = self
+            .previews
+            .slots
+            .iter()
+            .filter(|(_, slot)| slot.subject.as_ref().is_some_and(|e| e.uri == *uri))
+            .map(|(pane, _)| *pane)
+            .collect();
+        for pane in panes {
+            if let Some(slot) = self.previews.slots.get_mut(&pane) {
+                if let Some(video) = slot.video.as_mut().filter(|v| v.playing) {
+                    video.pause();
+                }
+                if let Some(audio) = slot.audio.as_mut().filter(|a| a.playing) {
+                    audio.pause();
+                }
+            }
+            self.release_audio(AudioOwner::PreviewVideo(pane));
+            self.release_audio(AudioOwner::PreviewAudio(pane));
+        }
+    }
+
     /// The activation target the preferences choose for `kind`.
     pub fn media_open_target(&self, kind: MediaKind) -> MediaOpenTarget {
         match kind {

@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resuming playback of some screen recordings (WebM files with a single keyframe) no longer fails with "Decoder failed"; the video now resumes at the paused position.
 
 ### Changed
+- Opening a video or audio file that is playing in the Preview pane (double-click, Enter or Play) pauses the preview, so it doesn't keep playing alongside the other player.
 - The Jobs panel is now called Activity: it holds running jobs, messages, tips, update notices and minimised searches.
 - Find Files moved to Ctrl+F (search the current folder) and Ctrl+Shift+F (search all local drives, skipping system folders such as `/proc`); Alt+F7 is gone. In Preview, Ctrl+F still finds text inside the preview.
 - Typing in the file listing now opens the quick filter and keeps typing there. Typing no longer jumps to the location bar; use the location bar or Ctrl+L for paths.
