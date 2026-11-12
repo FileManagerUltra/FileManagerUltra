@@ -21,7 +21,7 @@
 
 - [x] 4.1 `media.drop` gets `play: bool` (Play semantics: insert after current and start); remove auto-play-when-idle; reject `play` with `group`/`after`/`before`/`outside` or non-bool; tests incl. fuzz
 - [x] 4.2 UI: player and playlist drop zones with hover highlight and labels ("Play now" / "Add to playlist") from theme tokens; in-app drags dispatch per zone
-- [ ] 4.2a Pixel snapshot of the two drop zones while dragging (both palettes)
+- [x] 4.2a Pixel snapshot of the two drop zones while dragging (both palettes)
 - [x] 4.3 fm-app: OS file drops pick the zone from the pointer position (player → `play: true`, playlist row → `after`/`before`/`group`, unknown position → playlist end)
 - [x] 4.4 Update the "Drop on the pane" scenario of `Entry points` in `openspec/changes/add-media-pane/specs/media-pane/spec.md` to match
 
@@ -39,4 +39,4 @@
 ## 7. Gate
 
 - [x] 7.1 `cargo test` for engine/ui/app, `cargo clippy --all-targets -D warnings`, `cargo xtask layers`, `cargo xtask brand-check`, `cargo fmt --check`, `openspec validate media-open-and-play-ux --strict`
-- [ ] 7.2 Try it in the real app (double-click with both settings, hint once, drops on both zones, right-click menu on audio and video); append a `log/devlog.md` entry
+- [x] 7.2 Try it in the real app (double-click with both settings, hint once, drops on both zones, right-click menu on audio and video); append a `log/devlog.md` entry

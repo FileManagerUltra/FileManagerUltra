@@ -38,6 +38,13 @@ precedence over shuffle, forward navigation history and repeat-one at the next
 item boundary. Queue entries SHALL NOT be removed automatically when played,
 skipped, finished or interrupted; only explicit remove/clear actions remove them.
 Selecting an existing queue row SHALL play that row without inserting a duplicate.
+When the current item sits inside a locked playlist folder, Play and Play next
+SHALL insert right after that folder instead of joining it; a locked folder never
+gains, loses or reorders items.
+
+#### Scenario: Play next while inside a locked folder
+- **WHEN** the current item is the second of three items in a locked playlist folder and the user plays a video in Media
+- **THEN** the video is inserted directly after the folder, outside it, and starts; the folder still holds its three items
 
 #### Scenario: Three queue actions
 - **WHEN** B is current in queue A, B, C and the user adds D to queue, then requests E as Play next
@@ -134,6 +141,8 @@ The focused Media pane SHALL provide YouTube-style keyboard controls through eng
 | Comma / Period | Step backward/forward one video frame while paused |
 | < / > | Decrease/increase speed by 0.25×, clamped to 0.5×–3× |
 | C | Toggle subtitles off/on, retaining the last selected track |
+
+While a menu or dropdown is open, its keys (Esc, arrows, Enter) SHALL go to that menu. A key that does nothing in the current state (Esc outside fullscreen) SHALL be left for other widgets.
 
 These shortcuts SHALL NOT intercept terminal input, text editing, modal dialogs or keys owned by an interactive widget (including a focused slider or queue navigation). Each key event SHALL trigger at most one action. Unsupported actions SHALL be disabled: percentage/end seeking requires a known duration, frame stepping requires paused video, and subtitle toggling requires an available track. Subtitle toggling with no prior selection SHALL select the first available track. Seeking and volume SHALL use the normal clamping and end-of-item rules. A discoverable shortcut reference SHALL be available from the Media pane, and control tooltips SHALL include their shortcuts.
 

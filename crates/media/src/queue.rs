@@ -121,24 +121,40 @@ impl Queue {
     }
 
     /// Insert a requested batch after the current item, before ordinary playback resumes.
-    /// Inside a folder the items join it.
+    /// Inside an unlocked folder the items join it; a locked folder is skipped, so they go
+    /// right after it.
     pub fn insert_next(&mut self, items: Vec<VfsUri>) -> Result<usize, FmError> {
         let first = self.current.map_or(0, |index| index + 1);
+        let first = match self.enclosing_group(first) {
+            Some(id) if self.group_is_locked(Some(id)) => self.past_group(first, id),
+            _ => first,
+        };
         self.insert_at(first, items)
     }
 
     /// Like `insert_next`, but never inside a folder: the items go after it, so a new folder
     /// can be formed from them.
     pub fn insert_next_outside_groups(&mut self, items: Vec<VfsUri>) -> Result<usize, FmError> {
-        let mut first = self.current.map_or(0, |index| index + 1);
-        if let Some(Some(id)) = self.item_group.get(first.wrapping_sub(1))
-            && self.item_group.get(first) == Some(&Some(*id))
-        {
-            while self.item_group.get(first) == Some(&Some(*id)) {
-                first += 1;
-            }
-        }
+        let first = self.current.map_or(0, |index| index + 1);
+        let first = match self.enclosing_group(first) {
+            Some(id) => self.past_group(first, id),
+            None => first,
+        };
         self.insert_at(first, items)
+    }
+
+    /// The folder an insert at `at` would land inside (items of it on both sides).
+    fn enclosing_group(&self, at: usize) -> Option<u32> {
+        let before = (*self.item_group.get(at.checked_sub(1)?)?)?;
+        (self.item_group.get(at) == Some(&Some(before))).then_some(before)
+    }
+
+    /// The first slot at or after `at` that is no longer in folder `id`.
+    fn past_group(&self, mut at: usize, id: u32) -> usize {
+        while self.item_group.get(at) == Some(&Some(id)) {
+            at += 1;
+        }
+        at
     }
 
     fn insert_at(&mut self, first: usize, items: Vec<VfsUri>) -> Result<usize, FmError> {
@@ -1307,6 +1323,26 @@ mod tests {
         assert_eq!(q.groups()[0].len, 2);
         q.set_group_locked(id, false).expect("unlock");
         assert!(q.add_to_group(0, id).is_ok());
+    }
+
+    #[test]
+    fn play_next_inside_a_locked_folder_goes_after_it() {
+        let mut q = queue(5);
+        let id = q
+            .group_range(1, 3, "book", Some("/b".into()))
+            .expect("group");
+        q.select(2).expect("current inside the folder");
+        let extra = VfsUri::parse("/extra.mkv").expect("uri");
+        let at = q.insert_next(vec![extra.clone()]).expect("insert");
+        assert_eq!(at, 4, "right after the folder");
+        assert_eq!(q.groups()[0].len, 3, "the locked folder keeps its items");
+        assert!(!q.is_locked(at));
+        assert_eq!(q.items().get(at), Some(&extra));
+        // Unlocked, the same insert joins the folder.
+        q.set_group_locked(id, false).expect("unlock");
+        let joined = q.insert_next(items(1)).expect("insert");
+        assert_eq!(joined, 3);
+        assert_eq!(q.groups()[0].len, 4);
     }
 
     #[test]

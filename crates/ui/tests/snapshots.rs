@@ -4114,3 +4114,66 @@ fn markdown_html_readme_dark_light() {
         results.extend_harness(&mut harness);
     }
 }
+
+/// Files dragged over the Media pane: the player says "Play now", the playlist "Add to
+/// playlist" (change `media-open-and-play-ux`, task 4.2a).
+#[test]
+fn media_drop_zones_dark_light() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for zone in ["player", "playlist"] {
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let mut s = Session::new().expect("session");
+            s.dispatch(
+                "media.enqueue",
+                &serde_json::json!({"uris": ["/music/One.mp3", "/music/Two.mp3", "/music/Three.mp3"]}),
+            )
+            .expect("enqueue");
+            s.media.reveal = None;
+            let pane = s.media_pane().expect("media");
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(640.0, 480.0))
+                .renderer(renderer)
+                .build_ui_state(
+                    move |ui, s: &mut Session| {
+                        theme::apply_to(ui.ctx(), &tokens);
+                        ui.ctx().set_theme(if tokens.dark {
+                            egui::Theme::Dark
+                        } else {
+                            egui::Theme::Light
+                        });
+                        egui::CentralPanel::default()
+                            .show(ui, |ui| fm_ui::media::show(ui, s, pane, &tokens));
+                        let rect = ui.max_rect();
+                        fm_ui::dnd::finish_media(ui.ctx(), s, rect, &tokens);
+                    },
+                    s,
+                );
+            harness.run();
+            let away = egui::pos2(320.0, 470.0);
+            harness.hover_at(away);
+            harness.drag_at(away);
+            harness.run();
+            egui::DragAndDrop::set_payload(
+                &harness.ctx,
+                fm_ui::dnd::DragPayload {
+                    sources: vec![VfsUri::parse("/music/New.mp3").expect("uri")],
+                    origin: 1,
+                },
+            );
+            let at = match zone {
+                "player" => egui::pos2(320.0, 40.0),
+                _ => harness.get_by_label("Two").rect().center(),
+            };
+            harness.hover_at(at);
+            harness.run();
+            harness.run();
+            harness.snapshot(format!("media_drop_{zone}_{theme}"));
+            results.extend_harness(&mut harness);
+        }
+    }
+}

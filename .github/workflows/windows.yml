@@ -1,14 +1,12 @@
 name: windows
 
-# Manual Windows check of a branch: lint, tests (with ffmpeg, so the real video, subtitle
-# and DVD tests run) and an installer to try by hand. Start it from the Actions tab or
-# with `gh workflow run windows.yml --ref <branch>`.
+# Manual Windows check of a branch: format, lint, layers and tests (with ffmpeg, so the
+# real video, subtitle and DVD tests run). Start it from the Actions tab or with
+# `gh workflow run windows.yml --ref <branch>`. For an installer to try by hand, run the
+# release workflow on the branch instead (`gh workflow run release.yml --ref <branch>`):
+# it builds all three platforms and publishes only from a tag.
 on:
-  # Manual starts need this file on the default branch; until then a push to the
-  # branch under test starts it.
   workflow_dispatch:
-  push:
-    branches: [media-pane-audio]
 
 permissions:
   contents: read
@@ -86,35 +84,3 @@ jobs:
           path: crates/ui/tests/snapshots/*.diff.png
           if-no-files-found: ignore
 
-  installer:
-    name: installer (windows-x64)
-    runs-on: windows-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: x86_64-pc-windows-msvc
-          cache-on-failure: true
-      - name: Install cargo-packager
-        run: cargo install cargo-packager --locked
-      - name: Build
-        run: cargo build --release --locked -p fm-app --target x86_64-pc-windows-msvc
-      - name: Stage binary where the packager expects it
-        shell: bash
-        run: |
-          mkdir -p target/release
-          cp target/x86_64-pc-windows-msvc/release/filemanagerultra* target/release/ || true
-          rm -f target/release/*.d target/release/*.pdb
-      - name: Package
-        run: |
-          cargo xtask packager-config
-          cargo packager --config target/Packager.toml --release --formats nsis
-      - uses: actions/upload-artifact@v7
-        with:
-          name: filemanagerultra-windows-x64-${{ github.ref_name }}
-          path: target/packager/*-setup.exe
-          if-no-files-found: error

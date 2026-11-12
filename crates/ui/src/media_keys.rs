@@ -262,7 +262,8 @@ pub fn handle(ctx: &Context, s: &mut Session, typing: bool) -> Vec<&'static str>
         return ran;
     };
     let slider: bool = ctx.data(|d| d.get_temp(slider_focus_id())).unwrap_or(false);
-    if slider {
+    // An open menu (the player's right-click menu, a dropdown) owns Esc and the arrows.
+    if slider || egui::Popup::is_any_open(ctx) {
         return ran;
     }
     // The Media pane's controls are painted and take no keyboard navigation, so a stale focused
@@ -280,8 +281,13 @@ pub fn handle(ctx: &Context, s: &mut Session, typing: bool) -> Vec<&'static str>
             else {
                 return true;
             };
+            // Only keys that do something here are taken: Esc outside fullscreen stays with
+            // whatever else wants it.
             match action_for(*key, *modifiers) {
-                Some(action) if !(widget_focused && action.widget_key()) => {
+                Some(action)
+                    if !(widget_focused && action.widget_key())
+                        && plan(action, &view).is_some() =>
+                {
                     actions.push(action);
                     false
                 }

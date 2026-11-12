@@ -136,6 +136,37 @@ fn right_clicking_the_audio_player_opens_its_menu_without_video_entries() {
     }
 }
 
+/// The app runs the media keys before the panes; Esc and the arrows must still reach an
+/// open player menu.
+#[test]
+fn escape_closes_the_player_menu() {
+    let mut s = Session::new().expect("session");
+    s.dispatch("media.enqueue", &json!({ "uris": ["/music/song.mp3"] }))
+        .expect("enqueue");
+    let pane = s.media_pane().expect("media pane");
+    let tokens = Tokens::dark();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(640.0, 480.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                fm_ui::media_keys::handle(ui.ctx(), s, false);
+                egui::CentralPanel::default().show(ui, |ui| {
+                    fm_ui::media::show(ui, s, pane, &tokens);
+                });
+            },
+            s,
+        );
+    h.run();
+    right_click_player(&mut h);
+    h.get_by_label("Equalizer…");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(
+        h.query_by_label("Equalizer…").is_none(),
+        "Esc closes the menu"
+    );
+}
+
 #[test]
 fn added_rows_are_selected_once_and_scrolled_into_view() {
     let s = Session::new().expect("session");
