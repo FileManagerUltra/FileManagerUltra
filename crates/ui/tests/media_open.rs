@@ -400,3 +400,83 @@ fn the_poster_shows_only_for_a_paused_video() {
         assert_eq!(poster_loaded, !autoplay, "autoplay {autoplay}");
     }
 }
+
+fn image_body(width: u32, height: u32, shade: u8) -> fm_engine::preview_cmds::Body {
+    fm_engine::preview_cmds::Body::Static(std::sync::Arc::new(fm_preview::Preview::Image(
+        fm_preview::ImageDoc {
+            width,
+            height,
+            frames: vec![(vec![shade; (width * height * 4) as usize], 0)],
+            original: (width, height),
+            format: "PNG",
+        },
+    )))
+}
+
+fn image_textures(h: &Harness<'_, Session>) -> Vec<egui::TextureId> {
+    fn walk(shape: &egui::Shape, out: &mut Vec<egui::TextureId>) {
+        match shape {
+            egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                out.push(mesh.texture_id);
+            }
+            egui::Shape::Rect(rect) if rect.fill_texture_id() != egui::TextureId::default() => {
+                out.push(rect.fill_texture_id());
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for clipped in &h.output().shapes {
+        walk(&clipped.shape, &mut out);
+    }
+    out
+}
+
+/// Selecting another image shows that image: the texture cache must not mistake the next
+/// preview for the previous one (a freed preview's address can be reused).
+#[test]
+fn selecting_another_image_shows_the_new_image() {
+    let mut s = Session::new().expect("session");
+    s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+        .expect("preview");
+    let pane = s.layout.focused();
+    s.poll();
+    s.previews.slots.get_mut(&pane).expect("slot").body = image_body(40, 30, 50);
+    let tokens = Tokens::dark();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(900.0, 600.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    fm_ui::preview::show(ui, s, pane, &tokens);
+                });
+            },
+            s,
+        );
+    h.run();
+    let first = image_textures(&h);
+    assert!(!first.is_empty(), "the first image is drawn");
+    for (n, (w, height)) in [(30, 40), (40, 30), (64, 64)].into_iter().enumerate() {
+        // Dropping the old body first makes its memory free for the new one.
+        h.state_mut()
+            .previews
+            .slots
+            .get_mut(&pane)
+            .expect("slot")
+            .body = fm_engine::preview_cmds::Body::Empty;
+        h.state_mut()
+            .previews
+            .slots
+            .get_mut(&pane)
+            .expect("slot")
+            .body = image_body(w, height, 60 + n as u8 * 40);
+        h.run();
+        let now = image_textures(&h);
+        assert!(!now.is_empty());
+        assert!(
+            now.iter().all(|id| !first.contains(id)),
+            "image {n} reuses the previous texture"
+        );
+    }
+}

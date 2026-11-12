@@ -1139,10 +1139,11 @@ fn image(
     }
     let ctx = ui.ctx().clone();
     let id = ui.make_persistent_id(("pv-tex", pane));
-    let ident = Arc::as_ptr(p) as usize;
-    let cached: Option<(usize, Vec<egui::TextureHandle>)> = ctx.data_mut(|d| d.get_temp(id));
+    // Keyed by the preview itself, kept alive here: a bare address could be reused by the
+    // next file's preview, which would then show this image at the new image's size.
+    let cached: Option<(Arc<Preview>, Vec<egui::TextureHandle>)> = ctx.data_mut(|d| d.get_temp(id));
     let textures = match cached {
-        Some((k, t)) if k == ident => t,
+        Some((k, t)) if Arc::ptr_eq(&k, p) => t,
         _ => {
             let t: Vec<egui::TextureHandle> = img
                 .frames
@@ -1156,7 +1157,7 @@ fn image(
                     ctx.load_texture(format!("pv-{pane}-{i}"), ci, egui::TextureOptions::LINEAR)
                 })
                 .collect();
-            ctx.data_mut(|d| d.insert_temp(id, (ident, t.clone())));
+            ctx.data_mut(|d| d.insert_temp(id, (p.clone(), t.clone())));
             t
         }
     };
@@ -1602,9 +1603,10 @@ fn poster_texture(
 ) -> Option<egui::TextureHandle> {
     let (rgba, _) = poster.frames.first()?;
     let id = Id::NULL.with(("pv-video-poster", pane));
-    let ident = Arc::as_ptr(p) as usize;
-    if let Some((cached, texture)) = ctx.data(|d| d.get_temp::<(usize, egui::TextureHandle)>(id))
-        && cached == ident
+    // Keyed by the preview itself (see `image`): a bare address can be reused by the next one.
+    if let Some((cached, texture)) =
+        ctx.data(|d| d.get_temp::<(Arc<Preview>, egui::TextureHandle)>(id))
+        && Arc::ptr_eq(&cached, p)
     {
         return Some(texture);
     }
@@ -1613,7 +1615,7 @@ fn poster_texture(
         rgba,
     );
     let texture = ctx.load_texture("video-poster", image, egui::TextureOptions::LINEAR);
-    ctx.data_mut(|d| d.insert_temp(id, (ident, texture.clone())));
+    ctx.data_mut(|d| d.insert_temp(id, (p.clone(), texture.clone())));
     Some(texture)
 }
 
