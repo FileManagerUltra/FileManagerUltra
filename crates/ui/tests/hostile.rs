@@ -75,7 +75,8 @@ fn capped_local_read_surfaces_as_the_error_state() {
     let mut s = Session::default();
     let capped = fm_fs_local::LocalFs::with_max_entries(3);
     s.backends.register(Arc::new(capped));
-    let uri = VfsUri::parse(&format!("file://{}", tmp.path().display())).expect("uri");
+    // The raw OS path form (`/tmp/x`, `C:\Users\x`) parses on every platform.
+    let uri = VfsUri::parse(&tmp.path().to_string_lossy()).expect("uri");
     s.layout.state_mut(1).expect("pane").location = uri.clone();
     s.submit_read(uri.clone()).expect("submit");
     wait_ready(&mut s, &uri);
