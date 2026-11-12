@@ -358,6 +358,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // The local backend only knows device ids on Unix; elsewhere it says "different".
     fn same_device_is_learned_off_thread() {
         let mut s = Session::new().expect("session");
         let src = [u("/tmp/x")];

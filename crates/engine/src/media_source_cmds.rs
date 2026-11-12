@@ -517,7 +517,10 @@ pub fn specs() -> Vec<CommandSpec> {
             params: "{uri?: string, pane?: number}: insert a folder's media after current in natural order and play; Preview uses its file's parent",
             enabled: |s| {
                 !s.media_source.is_busy()
-                    && (focused_dir(s).is_some() || crate::media_entry_cmds::has_sources(s))
+                    // Windows "This PC" lists drives: only a selected drive is playable.
+                    && (focused_dir(s)
+                        .is_some_and(|d| !d.is_drive_list() || !focused_selection(s).is_empty())
+                        || crate::media_entry_cmds::has_sources(s))
             },
             run: |s, params| {
                 let map = object(params)?;

@@ -81,6 +81,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)] // XDG desktop entries are a Linux install step; `/data` is not absolute on Windows.
     fn xdg_paths_follow_the_standard() {
         assert_eq!(
             data_dir(Some("/data".into()), None).expect("xdg"),

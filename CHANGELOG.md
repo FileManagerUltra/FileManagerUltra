@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Windows: Go to Path now completes folders with backslashes (`C:\Users\Documents\`) instead of mixing in forward slashes.
+- Windows: an audiobook or video whose file was replaced no longer resumes at the old file's position.
+- Windows: Play Folder is no longer offered in "This PC" unless a drive is selected.
 - A server opened by address in the Network pane (such as `\\192.168.0.5` or `smb://192.168.0.5`) now shows in the folder tree, even when it doesn't announce itself on the network.
 - Resuming playback of some screen recordings (WebM files with a single keyframe) no longer fails with "Decoder failed"; the video now resumes at the paused position.
 

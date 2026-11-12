@@ -10,7 +10,8 @@ use fm_vfs::{FmError, Vfs, VfsUri, WriteOpts};
 
 #[allow(clippy::expect_used)] // test helpers
 fn uri(path: &std::path::Path) -> VfsUri {
-    VfsUri::parse(&format!("file://{}", path.display())).expect("tempdir uri parses")
+    // The raw OS path form (`/tmp/x`, `C:\Users\x`) parses on every platform.
+    VfsUri::parse(&path.to_string_lossy()).expect("tempdir uri parses")
 }
 
 #[allow(clippy::expect_used)] // test helpers

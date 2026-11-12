@@ -1077,7 +1077,8 @@ mod tests {
             ok.clone(),
         ];
         assert_eq!(s.recent_searches(), vec![ok.clone()]);
-        assert!(ok.label().contains("\"*.txt\" in /home"));
+        let home = crate::item_cmds::display_path(&VfsUri::parse("/home").expect("uri"));
+        assert!(ok.label().contains(&format!("\"*.txt\" in {home}")));
         for params in [
             json!({"index": 1}),
             json!({"index": -1}),

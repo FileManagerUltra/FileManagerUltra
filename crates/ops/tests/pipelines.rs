@@ -101,7 +101,8 @@ fn copy_between_backends_matches_byte_for_byte() {
     let root = dir.path().to_string_lossy().to_string();
     let local: Arc<dyn Vfs> = Arc::new(fm_fs_local::LocalFs::new());
     let memory: Arc<dyn Vfs> = Arc::new(mem);
-    let prefix = root.clone();
+    // Match on the uri path (`/C:/…` on Windows), not the OS path string.
+    let prefix = uri(&root).path_str().to_string();
     let resolver = move |u: &VfsUri| -> Result<Arc<dyn Vfs>, FmError> {
         Ok(if u.path_str().starts_with(&prefix) {
             local.clone()

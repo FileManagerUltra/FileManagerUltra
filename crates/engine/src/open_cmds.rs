@@ -596,8 +596,8 @@ mod tests {
             .state(s.layout.focused())
             .expect("pane")
             .location
-            .path_str()
-            .to_string();
-        assert_eq!(loc, dir.path().to_string_lossy());
+            .local_path()
+            .expect("local");
+        assert_eq!(loc, dir.path());
     }
 }

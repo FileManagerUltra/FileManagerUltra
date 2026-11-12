@@ -548,7 +548,11 @@ fn clipboard_copy_cut_and_paste_run_the_pipelines() {
     assert!(!s.command_enabled("file.clip_paste"), "nothing copied yet");
     dispatch(&mut s, "file.clip_copy", Params::Null).expect("copy");
     assert_eq!(s.info.as_ref().map(|i| i.0.as_str()), Some("Copied 1 item"));
-    assert_eq!(s.clipboard_outbox.as_deref(), Some("/src/a.txt"));
+    assert_eq!(
+        s.clipboard_outbox,
+        fm_vfs::native_path("/src/a.txt", cfg!(windows)),
+        "the OS clipboard gets the native path"
+    );
     select(&mut s, "a.txt", "/dst");
     dispatch(&mut s, "file.clip_paste", json!({"os_text": "/src/a.txt"})).expect("paste");
     let id = only_job(&s.fileops);

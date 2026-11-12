@@ -181,6 +181,16 @@ fn split_typed(text: &str) -> (&str, &str) {
     }
 }
 
+/// The separator the editor puts after a folder: `\` for local Windows paths, so the text
+/// stays one style (`C:\Users\Documents\`), `/` everywhere else.
+fn sep_of(uri: &VfsUri) -> char {
+    if cfg!(windows) && uri.scheme() == Scheme::File && !uri.is_drive_list() {
+        '\\'
+    } else {
+        '/'
+    }
+}
+
 fn display_of(uri: &VfsUri) -> String {
     if uri.scheme() == Scheme::File {
         crate::item_cmds::display_path(uri)
@@ -250,8 +260,9 @@ impl Session {
                             .collect();
                         names.sort_by_key(|n| n.to_lowercase());
                         names.truncate(MAX_DIR_SUGGESTIONS);
+                        let sep = sep_of(&dir);
                         out.extend(names.into_iter().map(|n| Suggestion {
-                            text: format!("{dir_text}{n}/"),
+                            text: format!("{dir_text}{n}{sep}"),
                             kind: SuggestionKind::Dir,
                         }));
                     }
@@ -322,15 +333,16 @@ pub fn goto() -> CommandSpec {
                 s.path_edit = Some(PathEdit::new(pane, text));
                 return Ok(());
             }
-            let loc = s
+            let location = s
                 .layout
                 .state(pane)
-                .map(|p| display_of(&p.location))
+                .map(|p| p.location.clone())
                 .ok_or_else(|| FmError::NotFound("focused pane".to_string()))?;
-            let text = if loc.ends_with('/') {
+            let loc = display_of(&location);
+            let text = if loc.ends_with(is_sep) {
                 loc
             } else {
-                format!("{loc}/")
+                format!("{loc}{}", sep_of(&location))
             };
             s.path_edit = Some(PathEdit::new(pane, text));
             Ok(())
@@ -413,6 +425,16 @@ mod tests {
 
     use super::*;
 
+    /// A test path as the editor shows it on this OS: `/home/alice/` is
+    /// `C:\home\alice\` on Windows (a bare `/home` would be a UNC server there).
+    fn native(path: &str) -> String {
+        if cfg!(windows) {
+            format!("C:{}", path.replace('/', "\\"))
+        } else {
+            path.to_string()
+        }
+    }
+
     fn session() -> (Session, VfsUri) {
         let mem = MemFs::new();
         for d in [
@@ -420,13 +442,16 @@ mod tests {
             "/home/alice/Downloads",
             "/home/alice/.cache",
         ] {
-            mem.mkdirs_str(d).expect("mkdirs");
+            mem.mkdirs_str(&native(d)).expect("mkdirs");
         }
-        mem.put_file(&VfsUri::parse("/home/alice/notes.txt").expect("uri"), b"x")
-            .expect("file");
+        mem.put_file(
+            &VfsUri::parse(&native("/home/alice/notes.txt")).expect("uri"),
+            b"x",
+        )
+        .expect("file");
         let mut s = Session::new().expect("session");
         s.backends.register(Arc::new(mem));
-        let home = VfsUri::parse("/home/alice").expect("uri");
+        let home = VfsUri::parse(&native("/home/alice")).expect("uri");
         if let Some(p) = s.layout.state_mut(s.layout.focused()) {
             p.location = home.clone();
         }
@@ -494,7 +519,7 @@ mod tests {
         let (mut s, _home) = session();
         s.dispatch("nav.goto", &Params::Null).expect("goto");
         let edit = s.path_edit.as_ref().expect("edit");
-        assert_eq!(edit.text, "/home/alice/");
+        assert_eq!(edit.text, native("/home/alice/"));
         s.dispatch("nav.goto.cancel", &Params::Null)
             .expect("cancel");
         assert!(s.path_edit.is_none());
@@ -521,19 +546,22 @@ mod tests {
         settle(&mut s);
         assert_eq!(
             texts(&s),
-            vec!["/home/alice/Documents/", "/home/alice/Downloads/"],
+            vec![
+                native("/home/alice/Documents/"),
+                native("/home/alice/Downloads/")
+            ],
             "no files, no dot dirs"
         );
         if let Some(e) = s.path_edit.as_mut() {
-            e.set_text("/home/alice/do".to_string());
+            e.set_text(native("/home/alice/do"));
         }
         settle(&mut s);
         assert_eq!(texts(&s).len(), 2, "case-insensitive prefix");
         if let Some(e) = s.path_edit.as_mut() {
-            e.set_text("/home/alice/.".to_string());
+            e.set_text(native("/home/alice/."));
         }
         settle(&mut s);
-        assert_eq!(texts(&s), vec!["/home/alice/.cache/"]);
+        assert_eq!(texts(&s), vec![native("/home/alice/.cache/")]);
     }
 
     #[test]
@@ -554,11 +582,11 @@ mod tests {
         s.note_visit(&docs);
         s.note_visit(&home);
         s.note_visit(&docs);
-        assert_eq!(s.path_history, vec!["/home/alice/Documents", "/home/alice"]);
-        s.path_edit = Some(PathEdit::new(
-            s.layout.focused(),
-            "/home/alice/".to_string(),
-        ));
+        assert_eq!(
+            s.path_history,
+            vec![native("/home/alice/Documents"), native("/home/alice")]
+        );
+        s.path_edit = Some(PathEdit::new(s.layout.focused(), native("/home/alice/")));
         settle(&mut s);
         let history: Vec<_> = s
             .path_edit
@@ -580,11 +608,11 @@ mod tests {
         }
         settle(&mut s);
         assert!(
-            s.path_edit
-                .as_ref()
-                .is_some_and(|e| e.suggestions.iter().any(
-                    |x| x.kind == SuggestionKind::History && x.text == "/home/alice/Documents"
-                )),
+            s.path_edit.as_ref().is_some_and(|e| e
+                .suggestions
+                .iter()
+                .any(|x| x.kind == SuggestionKind::History
+                    && x.text == native("/home/alice/Documents"))),
             "history matches anywhere in the path"
         );
         for i in 0..(MAX_HISTORY + 20) {
@@ -623,7 +651,7 @@ mod tests {
         );
         assert_eq!(
             s.path_history.first().map(String::as_str),
-            Some("/home/alice/Documents")
+            Some(native("/home/alice/Documents").as_str())
         );
 
         s.dispatch("nav.goto", &Params::Null).expect("goto");

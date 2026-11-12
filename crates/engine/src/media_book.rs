@@ -92,9 +92,11 @@ impl ItemState {
     }
 }
 
+/// Size and mtime of a local file, by its `file` uri path (`/C:/x` on Windows).
 fn stamp_of(path: &str) -> Option<(u64, i64)> {
     // A local stat of one file the user just played; remote items are never remembered.
-    let meta = std::fs::metadata(path).ok()?;
+    let os_path = fm_vfs::native_path(path, cfg!(windows))?;
+    let meta = std::fs::metadata(os_path).ok()?;
     let mtime = meta
         .modified()
         .ok()

@@ -603,10 +603,12 @@ mod tests {
         original.media.queue.set_repeat(RepeatMode::All);
         original.media.queue.set_shuffle(true, 5);
         original.media.position = 123.7;
-        original
-            .media
-            .books
-            .set_duration_for_tests(b.to_str().expect("utf8"), 600.0);
+        original.media.books.set_duration_for_tests(
+            VfsUri::parse(b.to_str().expect("utf8"))
+                .expect("uri")
+                .path_str(),
+            600.0,
+        );
         original
             .media_set_restored(original.media.queue.clone(), 42.0)
             .expect("volume");
@@ -682,7 +684,12 @@ mod tests {
         let edited = dir.path().join("edited.mp3");
         std::fs::write(&existing, b"").expect("file");
         let saved = Snapshot {
-            paths: vec![existing.to_str().expect("utf8").to_string()],
+            paths: vec![
+                VfsUri::parse(existing.to_str().expect("utf8"))
+                    .expect("uri")
+                    .path_str()
+                    .to_string(),
+            ],
             index: Some(0),
             volume: 100.0,
             shuffle: false,
