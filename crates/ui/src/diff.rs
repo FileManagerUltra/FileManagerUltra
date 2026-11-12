@@ -200,9 +200,19 @@ fn find_bar(ui: &mut Ui, s: &mut Session, pane: PaneId) {
             if ui.button("Close").clicked() {
                 actions.push(("preview.find.close", json!({"pane": pane})));
             }
-            for (label, id) in [("▼", "preview.find.next"), ("▲", "preview.find.previous")] {
+            // Laid out right to left: Previous ends up before Next, as in the Preview's Find
+            // bar. Words, not arrows: the arrow glyphs are not in every UI font.
+            for (label, id, tip) in [
+                ("Next", "preview.find.next", "Next match (Enter, F3)"),
+                (
+                    "Previous",
+                    "preview.find.previous",
+                    "Previous match (Shift+Enter, Shift+F3)",
+                ),
+            ] {
                 if ui
                     .add_enabled(count > 0, egui::Button::new(label))
+                    .on_hover_text(tip)
                     .clicked()
                 {
                     actions.push((id, json!({"pane": pane})));
@@ -655,16 +665,31 @@ fn rows(
     let mut area = ScrollArea::both()
         .id_salt(("diff-scroll", pane))
         .auto_shrink(false);
-    if let Some((index, row)) = target
-        && last != Some((index, jumps))
-    {
-        let visual = if unified {
+    let visual_of = |row: usize| {
+        if unified {
             unified_index(rows, row)
         } else {
             row
+        }
+    };
+    if let Some((index, row)) = target
+        && last != Some((index, jumps))
+    {
+        // The change is centred when the content allows it; a change taller than the view
+        // starts a few lines from the top so its context stays visible.
+        let start = visual_of(row);
+        let end = block
+            .as_ref()
+            .map_or(start + 1, |b| visual_of(b.end).max(start + 1));
+        let view = ui.available_height().max(row_h);
+        let height = (end - start) as f32 * row_h;
+        let top = start as f32 * row_h;
+        let offset = if height <= view {
+            top + height / 2.0 - view / 2.0
+        } else {
+            top - CHANGE_CONTEXT_ROWS * row_h
         };
-        // The change's first line lands at the top of the view.
-        area = area.vertical_scroll_offset(visual as f32 * row_h);
+        area = area.vertical_scroll_offset(offset.max(0.0));
     }
     let find_seen = ui.make_persistent_id(egui::IdSalt::new(("diff-find-seen", pane)));
     if let Some(f) = find {
@@ -679,7 +704,8 @@ fn rows(
                 } else {
                     hit.row
                 };
-                let centre = (ui.available_height() / 2.0 - row_h).max(0.0);
+                // The match's line is centred in the view when the content allows it.
+                let centre = (ui.available_height() - row_h) / 2.0;
                 area = area.vertical_scroll_offset((visual as f32 * row_h - centre).max(0.0));
             }
             ui.ctx().data_mut(|d| d.insert_temp(find_seen, f.reveal));
@@ -712,6 +738,12 @@ fn rows(
             )
         };
         let mut measured = extent.width;
+        // The current change (outlined as one block) and the current Find match's line.
+        let mut change_rect: Option<egui::Rect> = None;
+        let mut grow = |rect: egui::Rect| {
+            change_rect = Some(change_rect.map_or(rect, |r| r.union(rect)));
+        };
+        let hit = find.and_then(|f| f.hits.get(f.current));
         if unified {
             let mut at = 0;
             for (index, row) in rows.iter().enumerate() {
@@ -721,12 +753,18 @@ fn rows(
                     measured = measured.max(unified_row(
                         ui,
                         row,
-                        current,
                         line_rect(at),
                         viewport.left(),
                         (&font, tokens),
                         (find, index),
                     ));
+                    if current {
+                        grow(line_rect(at).union(line_rect(at + n - 1)));
+                    }
+                    if let Some(hit) = hit.filter(|h| h.row == index) {
+                        let line = at + usize::from(hit.right && row.tag == Tag::Replace);
+                        match_marker(ui, line_rect(line), tokens);
+                    }
                 }
                 at += n;
                 if at >= end {
@@ -754,9 +792,16 @@ fn rows(
                     .as_ref()
                     .is_some_and(|b| b.contains(&(first + offset)))
                 {
-                    current_bar(ui, line, tokens);
+                    grow(line);
+                }
+                if let Some(hit) = hit.filter(|h| h.row == first + offset) {
+                    // Identical rows show the match on both sides; mark the side it is on.
+                    match_marker(ui, if hit.right { right } else { left }, tokens);
                 }
             }
+        }
+        if let Some(rect) = change_rect {
+            change_marker(ui, rect, tokens);
         }
         extent.width = measured;
         ui.set_min_size(vec2(
@@ -779,10 +824,33 @@ fn rows(
     let _ = &out;
 }
 
-/// Accent bar at the left edge of the change that Next/Previous landed on.
-fn current_bar(ui: &Ui, rect: egui::Rect, tokens: &Tokens) {
-    let bar = egui::Rect::from_min_size(rect.min, vec2(3.0, rect.height()));
+/// Lines of context kept above a change that is taller than the view.
+const CHANGE_CONTEXT_ROWS: f32 = 3.0;
+
+/// The change that Next/Previous landed on: an accent bar down its left edge and a soft
+/// outline around the whole block.
+fn change_marker(ui: &Ui, rect: egui::Rect, tokens: &Tokens) {
+    let bar = egui::Rect::from_min_size(rect.min, vec2(4.0, rect.height()));
     ui.painter().rect_filled(bar, 0.0, tokens.accent);
+    ui.painter().rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(1.0, tokens.accent.gamma_multiply(0.6)),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// The line holding the current Find match: a solid accent outline and bar, visible over
+/// the diff colours without covering any text, so the search position is easy to follow.
+fn match_marker(ui: &Ui, rect: egui::Rect, tokens: &Tokens) {
+    let bar = egui::Rect::from_min_size(rect.min, vec2(4.0, rect.height()));
+    ui.painter().rect_filled(bar, 0.0, tokens.accent);
+    ui.painter().rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(2.0, tokens.accent),
+        egui::StrokeKind::Inside,
+    );
 }
 
 fn unified_len(row: &Row) -> usize {
@@ -922,7 +990,6 @@ fn side(
 fn unified_row(
     ui: &Ui,
     row: &Row,
-    current: bool,
     rect: egui::Rect,
     x: f32,
     (font, tokens): (&FontId, &Tokens),
@@ -935,9 +1002,6 @@ fn unified_row(
         let (bg, word) = backgrounds(row.tag, right, tokens);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, bg);
-        if current {
-            current_bar(ui, rect, tokens);
-        }
         let sign = match (row.tag, right) {
             (Tag::Equal, _) => ' ',
             (_, false) => '-',
@@ -1069,6 +1133,63 @@ mod tests {
             .expect("dispatch");
         h.run();
         h.run();
+    }
+
+    /// The change Next/Previous lands on is centred in the view when the content allows it.
+    #[test]
+    fn next_change_is_shown_in_the_middle_of_the_view() {
+        let (_dir, s, pane) = rig(&[10, 150, 280]);
+        let mut harness = harness(s, pane);
+        harness.run();
+        // The first change (line 10) is current when the diff opens.
+        step(&mut harness, "preview.diff.next");
+        let (_, view): (egui::Vec2, egui::Rect) = harness
+            .ctx
+            .data(|d| d.get_temp(egui::Id::NULL.with("diff-scroll-test")))
+            .expect("scroll state");
+        let line = positions(&harness, "CHANGED 150");
+        let y = line.first().expect("change on screen").y;
+        assert!(
+            (y - view.center().y).abs() < 30.0,
+            "change at {y}, view centre {}",
+            view.center().y
+        );
+        // Near the top the content does not allow centring: no scrolling above the start.
+        step(&mut harness, "preview.diff.prev");
+        assert!(offset(&harness) >= 0.0);
+        assert!(!positions(&harness, "CHANGED 10").is_empty());
+    }
+
+    /// The line of the current Find match carries a clear marker (a 2 px accent outline).
+    #[test]
+    fn the_current_find_match_is_outlined() {
+        let (_dir, mut s, pane) = rig(&[150]);
+        s.dispatch("preview.find.open", &serde_json::json!({"pane": pane}))
+            .expect("open find");
+        s.dispatch(
+            "preview.find.set",
+            &serde_json::json!({"pane": pane, "query": "line 200"}),
+        )
+        .expect("query");
+        let mut harness = harness(s, pane);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            harness.state_mut().poll();
+            harness.run();
+            let marked = harness.output().shapes.iter().any(|clipped| {
+                matches!(&clipped.shape, egui::Shape::Rect(rect)
+                    if rect.stroke.width == 2.0 && rect.stroke.color == Tokens::dark().accent)
+            });
+            if marked {
+                break;
+            }
+            assert!(Instant::now() < deadline, "no current-match marker drawn");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            !positions(&harness, "line 200").is_empty(),
+            "the match is revealed"
+        );
     }
 
     #[test]

@@ -48,8 +48,13 @@ revisions are rejected, and an unknown revision shows an error in the view.
 
 ### Requirement: Diff navigation and modes
 `preview.diff.next` (F7) and `preview.diff.prev` (Shift+F7) SHALL move to the next or previous
-change and scroll its first line to the top of the view; the current change is marked and the
-bar shows "Change N of M". F7/Shift+F7 keep their file meanings when no diff is shown.
+change and centre it in the view when the content allows it (a change taller than the view
+starts three lines from the top; the view never scrolls past either end). The current change is
+marked with an accent bar down its left edge and an outline around the block, and the bar shows
+"Change N of M". Find in a diff SHALL centre the current match's line the same way and mark that
+line with a solid accent outline and bar (only the side holding the match in split view), so
+the search position stays easy to follow; the Find row's Previous/Next buttons are labelled in
+words, like the Preview's Find bar. F7/Shift+F7 keep their file meanings when no diff is shown.
 `preview.diff.mode` switches side-by-side/unified (unified is the automatic fallback in narrow
 panes), `preview.diff.eol` toggles ignoring line endings and `preview.diff.reload` reloads.
 The options sit in the diff bar and fold into a menu when the pane is narrow. Bad parameters
@@ -57,7 +62,11 @@ return `Err` and change nothing.
 
 #### Scenario: Next change
 - **WHEN** `preview.diff.next` runs, including when there is only one change
-- **THEN** the view scrolls so the change's first line is at the top and the change is marked
+- **THEN** the view scrolls so the change sits in the middle of the view and the change is marked
+
+#### Scenario: Find in a diff
+- **WHEN** Find has matches in a diff and the user moves to the next match
+- **THEN** the match's line is centred and outlined, and the match itself keeps its current-match highlight
 
 #### Scenario: Line endings
 - **WHEN** the platform is Windows

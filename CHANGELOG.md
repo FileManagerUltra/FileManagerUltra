@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Opening a video or audio file that is playing in the Preview pane (double-click, Enter or Play) pauses the preview, so it doesn't keep playing alongside the other player.
 - Video in the Preview pane now sits in a fixed area (three quarters of the pane), so switching between videos no longer makes the player jump or flicker, and the controls always stay in view. A video that starts playing no longer flashes its poster first.
+- In a diff, Previous/Next change and Find now bring the result to the middle of the view, and the current change and the current Find match are clearly outlined so you can keep track of where you are. The diff's Find bar uses Previous/Next buttons like the Preview's.
 - The Jobs panel is now called Activity: it holds running jobs, messages, tips, update notices and minimised searches. Each one is a clearly marked card (blue for tips, updates and jobs, red for errors) with its main action highlighted.
 - Find Files moved to Ctrl+F (search the current folder) and Ctrl+Shift+F (search all local drives, skipping system folders such as `/proc`); Alt+F7 is gone. In Preview, Ctrl+F still finds text inside the preview.
 - Typing in the file listing now opens the quick filter and keeps typing there. Typing no longer jumps to the location bar; use the location bar or Ctrl+L for paths.
