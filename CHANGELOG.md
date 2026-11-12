@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-12
+
 ### Added
 - Audio plays faster or slower (0.5× to 3×) without changing pitch, from the Speed menu or the < and > keys, with or without ffmpeg. Each audiobook remembers its own speed; other files share one speed per session.
 - Media keys and the system's media controls work with the Media pane: the play/pause, next, previous and stop keys, the GNOME/KDE media widget, the Windows media overlay and macOS Now Playing, with title, artist, album, cover art and position.
@@ -154,7 +156,8 @@ First public release (beta).
 
 - macOS install notes: clear the quarantine flag on the downloaded `.dmg` (`xattr -d com.apple.quarantine`), as the app is not yet signed or notarized.
 
-[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.1...v0.1.2
