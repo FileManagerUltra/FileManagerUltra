@@ -118,3 +118,44 @@ fn commands_reject_bad_params() {
             .is_err()
     );
 }
+
+/// A commit run through a pre-commit hook (GrumPHP, husky…) need not rewrite the index;
+/// only the branch ref moves. The marks must still clear.
+#[test]
+fn a_commit_through_a_slow_hook_clears_the_marks() {
+    let (tmp, mut s, uri) = repo();
+    let d = tmp.path().to_path_buf();
+    assert!(wait(&mut s, &uri, |st| st.branch.as_deref() == Some("main")));
+    std::fs::write(d.join("a.txt"), "2\n").unwrap();
+    std::fs::write(d.join("b.txt"), "new\n").unwrap();
+    assert!(wait(&mut s, &uri, |st| st.mark("a.txt") == Some(Mark::Modified)));
+    let hook = d.join(".git/hooks/pre-commit");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nsleep 1\ngit status --porcelain >/dev/null\nsleep 1\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let committer = {
+        let d = d.clone();
+        std::thread::spawn(move || {
+            git(&d, &["add", "a.txt", "b.txt"]);
+            git(&d, &["commit", "-q", "-m", "x"]);
+        })
+    };
+    while !committer.is_finished() {
+        s.poll();
+        let _ = s.git_view(&uri);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    committer.join().unwrap();
+    assert!(
+        wait(&mut s, &uri, |st| st.mark("a.txt").is_none()
+            && st.mark("b.txt").is_none()),
+        "marks still shown after the commit"
+    );
+}

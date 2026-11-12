@@ -107,6 +107,42 @@ fn fingerprint_changes_with_index() {
 }
 
 #[test]
+fn fingerprint_changes_when_only_the_branch_moves() {
+    let t = fixture();
+    let d = t.path();
+    git(d, &["commit", "-q", "--allow-empty", "-m", "second"]);
+    let a = fm_git::fingerprint(d).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    // What a commit that leaves the index alone does: move the branch, nothing else.
+    git(d, &["update-ref", "refs/heads/main", "HEAD~1"]);
+    let b = fm_git::fingerprint(d).unwrap();
+    assert_eq!((a.0, a.1), (b.0, b.1), "index and HEAD untouched");
+    assert_ne!(a, b);
+    // A packed branch is followed through packed-refs.
+    git(d, &["pack-refs", "--all"]);
+    let packed = fm_git::fingerprint(d).unwrap();
+    assert!(packed.2.is_some());
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    git(d, &["commit", "-q", "--allow-empty", "-m", "third"]);
+    assert_ne!(packed, fm_git::fingerprint(d).unwrap());
+}
+
+#[test]
+fn fingerprint_ignores_a_head_pointing_outside_refs() {
+    let t = fixture();
+    let d = t.path();
+    for head in [
+        "ref: ../../../etc/passwd\n",
+        "ref: /etc/passwd\n",
+        "ref: refs/../../x\n",
+    ] {
+        std::fs::write(d.join(".git/HEAD"), head).unwrap();
+        let stamp = fm_git::fingerprint(d).unwrap();
+        assert_eq!(stamp.2, None, "{head}");
+    }
+}
+
+#[test]
 fn locate_splits_repo_and_relative_path() {
     let t = fixture();
     let d = t.path();

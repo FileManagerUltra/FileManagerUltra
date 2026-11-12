@@ -39,7 +39,7 @@ debounced, and cached per repository (not per pane). Only changed entries are st
 - **THEN** the UI stays responsive, the pane lists immediately and markers appear when status completes
 
 #### Scenario: Unchanged repository is not rescanned
-- **WHEN** focus returns and `.git/index` and `.git/HEAD` are unchanged
+- **WHEN** focus returns and `.git/index`, `.git/HEAD` and the branch `HEAD` names (its ref file, or `packed-refs`) are unchanged
 - **THEN** no status scan runs
 
 ### Requirement: Status stays current
@@ -49,6 +49,10 @@ on `git.refresh`, and the branch name SHALL be shown for the focused pane's repo
 #### Scenario: External commit
 - **WHEN** changes are committed in a terminal
 - **THEN** the markers clear within a few seconds and the branch name stays correct
+
+#### Scenario: Commit that leaves the index file alone
+- **WHEN** a commit (e.g. through a pre-commit hook) only moves the branch ref
+- **THEN** the markers still clear within a few seconds
 
 ### Requirement: Git integration is configurable
 `prefs.git.enabled` (default true) SHALL disable discovery and markers entirely; colors and

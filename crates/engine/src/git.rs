@@ -24,7 +24,7 @@ const MAX_LOOKUPS: usize = 16;
 /// A repository nobody shows is dropped after this long.
 const GRACE: Duration = Duration::from_secs(30);
 
-type Stamp = Option<(std::time::SystemTime, std::time::SystemTime)>;
+type Stamp = Option<fm_git::Stamp>;
 type Done = Vec<(PathBuf, Stamp, Result<RepoStatus, String>)>;
 
 /// Result of a background look at the disk: repository roots for folders and the

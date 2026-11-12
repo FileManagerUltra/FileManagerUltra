@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Git markers in the file list now clear after a commit, including commits made through a pre-commit hook; before, staged files could stay marked as changed.
 - The Activity panel no longer labels informational messages, such as "Opening … in your default browser", as errors.
 - Selecting another image in the Preview pane sometimes kept showing the previous image (stretched to the new image's shape); it now always shows the selected one.
 - Windows: Go to Path now completes folders with backslashes (`C:\Users\Documents\`) instead of mixing in forward slashes.

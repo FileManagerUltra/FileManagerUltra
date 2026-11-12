@@ -181,17 +181,65 @@ pub fn locate(file: &Path) -> Option<(PathBuf, String)> {
     (!rel.is_empty()).then_some((root, rel))
 }
 
-type Stamp = (std::time::SystemTime, std::time::SystemTime);
+/// Modification times of `index`, `HEAD` and the branch `HEAD` points at.
+pub type Stamp = (
+    std::time::SystemTime,
+    std::time::SystemTime,
+    Option<std::time::SystemTime>,
+);
 
-/// Cheap fingerprint of repository state (`index` and `HEAD` mtimes).
+/// Cheap fingerprint of repository state. The branch ref is part of it: a commit whose
+/// staged content needs no index rewrite only moves `refs/heads/<branch>` (or
+/// `packed-refs`), and `HEAD` itself just names the branch.
 pub fn fingerprint(root: &Path) -> Option<Stamp> {
     let git = resolve_git_dir(root)?;
-    let m = |n: &str| {
-        std::fs::metadata(git.join(n))
-            .and_then(|m| m.modified())
-            .ok()
+    let m = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let index = m(&git.join("index"))?;
+    let head = m(&git.join("HEAD"))?;
+    Some((index, head, branch_ref_stamp(&git)))
+}
+
+/// Longest `HEAD` / `commondir` file read for the fingerprint.
+const MAX_POINTER_BYTES: u64 = 4096;
+
+/// Modification time of the ref a symbolic `HEAD` names, or of `packed-refs` when that
+/// ref is packed; `None` for a detached `HEAD` (then `HEAD` itself changes) or a name
+/// that is not a plain relative `refs/…` path (the repo is untrusted input).
+fn branch_ref_stamp(git: &Path) -> Option<std::time::SystemTime> {
+    let read_small = |p: &Path| -> Option<String> {
+        use std::io::Read;
+        let mut text = String::new();
+        std::fs::File::open(p)
+            .ok()?
+            .take(MAX_POINTER_BYTES)
+            .read_to_string(&mut text)
+            .ok()?;
+        Some(text)
     };
-    Some((m("index")?, m("HEAD")?))
+    let head = read_small(&git.join("HEAD"))?;
+    let name = head.lines().next()?.strip_prefix("ref:")?.trim();
+    let rel = Path::new(name);
+    let plain = name.starts_with("refs/")
+        && rel
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+    if !plain {
+        return None;
+    }
+    // Linked worktrees keep their branches in the main repository's git dir.
+    let common = match read_small(&git.join("commondir")) {
+        Some(text) => {
+            let dir = Path::new(text.lines().next()?.trim());
+            if dir.is_absolute() {
+                dir.to_path_buf()
+            } else {
+                git.join(dir)
+            }
+        }
+        None => git.to_path_buf(),
+    };
+    let m = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    m(&common.join(rel)).or_else(|| m(&common.join("packed-refs")))
 }
 
 fn resolve_git_dir(root: &Path) -> Option<PathBuf> {
