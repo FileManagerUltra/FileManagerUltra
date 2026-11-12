@@ -498,8 +498,29 @@ pub fn subtitle_sample_backdrop() -> [Color32; 2] {
     ]
 }
 
+/// `base` moved `t` (0..=1) of the way towards `toward`, as an opaque colour: tints derived
+/// from the palette (e.g. an Activity card's background) without new literals elsewhere.
+pub fn blend(base: Color32, toward: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
+    Color32::from_rgb(
+        mix(base.r(), toward.r()),
+        mix(base.g(), toward.g()),
+        mix(base.b(), toward.b()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn blend_moves_part_of_the_way_and_keeps_the_ends() {
+        let (a, b) = (Color32::from_rgb(0, 0, 0), Color32::from_rgb(200, 100, 50));
+        assert_eq!(blend(a, b, 0.0), a);
+        assert_eq!(blend(a, b, 1.0), b);
+        assert_eq!(blend(a, b, 0.5), Color32::from_rgb(100, 50, 25));
+        assert_eq!(blend(a, b, 2.0), b, "clamped");
+    }
+
     #[test]
     fn accent_text_has_readable_contrast_without_changing_the_chosen_accent() {
         for theme in [ThemePreference::Light, ThemePreference::Dark] {

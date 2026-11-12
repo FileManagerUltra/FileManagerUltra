@@ -884,6 +884,46 @@ fn media_open_hint_dark_light() {
     }
 }
 
+/// Every Activity entry shares one card design: a tip and an error side by side.
+#[test]
+fn activity_panel_cards_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut harness = Harness::builder()
+            .renderer(renderer)
+            .with_size(egui::vec2(820.0, 480.0))
+            .build_ui_state(
+                move |ui, session: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        ui.label("Activity cards");
+                    });
+                    fm_ui::jobs::show(ui.ctx(), session, &tokens);
+                },
+                fixture_session(),
+            );
+        harness.run();
+        harness
+            .state_mut()
+            .messages
+            .push("Cannot copy notes.txt: the disk is full (2 MiB free, 14 MiB needed).");
+        let song = fm_vfs::VfsUri::parse("/music/song.mp3").expect("uri");
+        harness.state_mut().offer_media_open_hint(&song);
+        harness.run();
+        harness.snapshot(format!("activity_cards_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
 /// 1×1 RGBA PNG (the same fixture the preview unit tests use).
 const TINY_PNG: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 0,

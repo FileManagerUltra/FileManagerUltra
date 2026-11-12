@@ -15,26 +15,27 @@ pub fn show(ui: &mut egui::Ui, session: &mut Session, tokens: &Tokens) {
     let UpdateStatus::Available { version, .. } = &session.updates.status else {
         return;
     };
-    ui.label(format!("Version {version} is available."));
-    crate::dialog_style::hint(ui, tokens, "Download the installer from GitHub.");
-    crate::dialog_style::hint(
-        ui,
-        tokens,
-        "Installation is manual; the app will not restart.",
-    );
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                session.command_enabled("app.updates.download"),
-                egui::Button::new("Download update…"),
-            )
-            .clicked()
-        {
-            session.dispatch_or_notice("app.updates.download", &Params::Null);
-        }
-        if ui.button("Dismiss update").clicked() {
-            session.dispatch_or_notice("app.updates.dismiss", &Params::Null);
-        }
+    use crate::activity_card::{self as card, Tone};
+    let title = format!("Version {version} is available.");
+    card::card(ui, tokens, Tone::Info, "Update", None, |ui| {
+        card::text(ui, tokens, &title);
+        card::detail(
+            ui,
+            tokens,
+            "Download the installer from GitHub. Installation is manual; the app will not restart.",
+            None,
+        );
+        card::buttons(ui, |ui| {
+            let enabled = session.command_enabled("app.updates.download");
+            if card::primary(ui, tokens, "Download update…", enabled).clicked() {
+                session.dispatch_or_notice("app.updates.download", &Params::Null);
+            }
+            card::end(ui, |ui| {
+                if card::quiet(ui, tokens, "Dismiss update").clicked() {
+                    session.dispatch_or_notice("app.updates.dismiss", &Params::Null);
+                }
+            });
+        });
     });
 }
 

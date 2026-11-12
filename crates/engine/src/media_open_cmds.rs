@@ -12,7 +12,13 @@ use crate::session::Session;
 
 /// Id of the "you can also play media here" hint in `Prefs::hints_seen`.
 pub const MEDIA_OPEN_HINT: &str = "media-open";
-const HINT_TEXT: &str = "You can also play audio and video here.";
+/// The tip, naming the app (from `fm-brand`) so "here" in the buttons is unambiguous.
+fn hint_text() -> String {
+    format!(
+        "You can also play audio and video right here in {}.",
+        fm_brand::APP_NAME
+    )
+}
 /// How long a file opened elsewhere keeps its (still loading) Preview from autoplaying.
 const HOLD_AUTOPLAY: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -106,11 +112,11 @@ impl Session {
         self.prefs.mark_hint_seen(MEDIA_OPEN_HINT);
         let play = ("media.play".to_string(), json!({"uris": [uri.to_string()]}));
         self.messages.push_hint(
-            HINT_TEXT,
+            &hint_text(),
             MEDIA_OPEN_HINT,
             vec![
                 MessageAction {
-                    label: "Play in Media pane".into(),
+                    label: "Play here now".into(),
                     commands: vec![play.clone()],
                 },
                 MessageAction {

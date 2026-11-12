@@ -284,8 +284,8 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         text: String,
         age: u64,
         hint: bool,
-        /// Button labels; empty once one was used.
-        actions: Vec<String>,
+        /// Button labels and whether each only dismisses; empty once one was used.
+        actions: Vec<(String, bool)>,
     }
     let messages: Vec<Line> = s
         .messages
@@ -298,7 +298,13 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             actions: if m.spent {
                 Vec::new()
             } else {
-                m.actions.iter().map(|a| a.label.clone()).collect()
+                m.actions
+                    .iter()
+                    .map(|a| {
+                        let dismiss = a.commands.iter().all(|(id, _)| id == "hint.dismiss");
+                        (a.label.clone(), dismiss)
+                    })
+                    .collect()
             },
         })
         .collect();
@@ -310,13 +316,13 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         .pivot(egui::Align2::RIGHT_BOTTOM)
         .default_pos(ctx.content_rect().right_bottom() + egui::vec2(-8.0, -32.0))
         .show(ctx, |ui| {
+            use crate::activity_card::{self as card, Tone};
             crate::dialog_style::apply(ui, tokens);
-            ui.set_min_width(300.0);
+            ui.set_min_width(340.0);
+            ui.set_max_width(420.0);
+            ui.spacing_mut().item_spacing.y = 8.0;
             if crate::updates::available(s) {
                 crate::updates::show(ui, s, tokens);
-                if !rows.is_empty() {
-                    ui.separator();
-                }
             }
             if rows.is_empty()
                 && search_row.is_none()
@@ -326,92 +332,142 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 crate::dialog_style::hint(ui, tokens, "No jobs or messages");
             }
             if let Some((label, status, running)) = &search_row {
-                ui.add(egui::Label::new(RichText::new(label).color(tokens.text)).truncate());
-                ui.horizontal(|ui| {
-                    if *running {
-                        ui.spinner();
-                    }
-                    // The status carries the current path: never let it widen the panel.
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(status)
-                                .font(egui::FontId::proportional(tokens.font_size - 1.0))
-                                .color(tokens.text_muted),
-                        )
-                        .truncate(),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    if ui
-                        .button("Show")
-                        .on_hover_text("Open the Find Files window")
-                        .clicked()
-                    {
-                        search_action = Some("search.restore");
-                    }
-                    if *running {
-                        if ui.button("Stop").clicked() {
-                            search_action = Some("search.stop");
+                card::card(ui, tokens, Tone::Info, "Search", None, |ui| {
+                    ui.add(egui::Label::new(RichText::new(label).color(tokens.text)).truncate());
+                    ui.horizontal(|ui| {
+                        if *running {
+                            ui.spinner();
                         }
-                    } else if ui.button("Dismiss").clicked() {
-                        search_action = Some("search.close");
-                    }
+                        // The status carries the current path: never let it widen the panel.
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(status)
+                                    .font(egui::FontId::proportional(tokens.font_size - 1.0))
+                                    .color(tokens.text_muted),
+                            )
+                            .truncate(),
+                        );
+                    });
+                    card::buttons(ui, |ui| {
+                        if card::primary(ui, tokens, "Show", true)
+                            .on_hover_text("Open the Find Files window")
+                            .clicked()
+                        {
+                            search_action = Some("search.restore");
+                        }
+                        if *running {
+                            if card::secondary(ui, "Stop").clicked() {
+                                search_action = Some("search.stop");
+                            }
+                        } else {
+                            card::end(ui, |ui| {
+                                if card::quiet(ui, tokens, "Dismiss").clicked() {
+                                    search_action = Some("search.close");
+                                }
+                            });
+                        }
+                    });
                 });
-                ui.separator();
             }
             if !messages.is_empty() {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Recent messages").color(tokens.text));
-                    if ui.small_button("Clear").clicked() {
-                        clear_messages = true;
-                    }
-                });
-                egui::ScrollArea::vertical()
-                    .max_height(200.0)
-                    .id_salt("fm-jobs-messages")
-                    .show(ui, |ui| {
-                        for line in &messages {
-                            let color = if line.hint { tokens.text } else { tokens.error };
-                            ui.label(RichText::new(&line.text).color(color));
-                            if !line.actions.is_empty() {
-                                ui.horizontal_wrapped(|ui| {
-                                    for (index, label) in line.actions.iter().enumerate() {
-                                        if ui.button(label).clicked() {
-                                            message_action = Some((line.id, index));
-                                        }
-                                    }
-                                });
-                            }
-                            crate::dialog_style::hint(ui, tokens, format!("{} s ago", line.age));
+                    ui.label(
+                        RichText::new("Messages")
+                            .font(egui::FontId::proportional(tokens.font_size - 1.0))
+                            .color(tokens.text_muted),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if card::quiet(ui, tokens, "Clear all").clicked() {
+                            clear_messages = true;
                         }
                     });
-                if !rows.is_empty() {
-                    ui.separator();
-                }
+                });
+                egui::ScrollArea::vertical()
+                    .max_height(260.0)
+                    .id_salt("fm-jobs-messages")
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 8.0;
+                        for line in &messages {
+                            let (tone, heading) = if line.hint {
+                                (Tone::Info, "Tip")
+                            } else {
+                                (Tone::Error, "Error")
+                            };
+                            let age = format!("{} s ago", line.age);
+                            card::card(ui, tokens, tone, heading, Some(&age), |ui| {
+                                card::text(ui, tokens, &line.text);
+                                if line.actions.is_empty() {
+                                    return;
+                                }
+                                let main: Vec<_> = line
+                                    .actions
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, (_, dismiss))| !dismiss)
+                                    .collect();
+                                let quiet: Vec<_> = line
+                                    .actions
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, (_, dismiss))| *dismiss)
+                                    .collect();
+                                card::buttons(ui, |ui| {
+                                    for (n, (index, (label, _))) in main.iter().enumerate() {
+                                        let clicked = if n == 0 {
+                                            card::primary(ui, tokens, label, true)
+                                        } else {
+                                            card::secondary(ui, label)
+                                        }
+                                        .clicked();
+                                        if clicked {
+                                            message_action = Some((line.id, *index));
+                                        }
+                                    }
+                                    if !quiet.is_empty() {
+                                        card::end(ui, |ui| {
+                                            for (index, (label, _)) in quiet.iter().rev() {
+                                                if card::quiet(ui, tokens, label).clicked() {
+                                                    message_action = Some((line.id, *index));
+                                                }
+                                            }
+                                        });
+                                    }
+                                });
+                            });
+                        }
+                    });
             }
             for row in &rows {
-                ui.label(RichText::new(&row.label).color(tokens.text));
-                if row.running {
-                    let bar = egui::ProgressBar::new(row.fraction.unwrap_or(0.0) as f32)
-                        .fill(tokens.accent);
-                    ui.add(bar);
-                    if !row.rate.is_empty() {
-                        crate::dialog_style::hint(ui, tokens, &row.rate);
+                let failed = row.status.starts_with("Failed") || !row.failures.is_empty();
+                let tone = if failed { Tone::Error } else { Tone::Info };
+                card::card(ui, tokens, tone, &row.label, None, |ui| {
+                    if row.running {
+                        let bar = egui::ProgressBar::new(row.fraction.unwrap_or(0.0) as f32)
+                            .fill(tokens.accent);
+                        ui.add(bar);
+                        if !row.rate.is_empty() {
+                            card::detail(ui, tokens, &row.rate, None);
+                        }
+                        card::detail(ui, tokens, &row.current, None);
+                        card::buttons(ui, |ui| {
+                            if card::secondary(ui, "Cancel").clicked() {
+                                cancel.push(row.id);
+                            }
+                        });
+                    } else {
+                        card::detail(ui, tokens, &row.status, None);
+                        for (item, err) in &row.failures {
+                            card::detail(ui, tokens, &format!("{item}: {err}"), Some(tokens.error));
+                        }
+                        card::buttons(ui, |ui| {
+                            card::end(ui, |ui| {
+                                if card::quiet(ui, tokens, "Dismiss").clicked() {
+                                    dismiss.push(row.id);
+                                }
+                            });
+                        });
                     }
-                    crate::dialog_style::hint(ui, tokens, &row.current);
-                    if ui.button("Cancel").clicked() {
-                        cancel.push(row.id);
-                    }
-                } else {
-                    crate::dialog_style::hint(ui, tokens, &row.status);
-                    for (item, err) in &row.failures {
-                        ui.label(RichText::new(format!("{item}: {err}")).color(tokens.error));
-                    }
-                    if ui.button("Dismiss").clicked() {
-                        dismiss.push(row.id);
-                    }
-                }
-                ui.separator();
+                });
             }
         });
     if !open {

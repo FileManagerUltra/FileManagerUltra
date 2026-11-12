@@ -2,6 +2,7 @@
 //! ([`tree`]), virtualized listing ([`listing`]) and pane chrome ([`pane`]).
 //! Widgets take tokens; no widget ever hard-codes a colour.
 
+pub mod activity_card;
 pub mod arrange;
 pub mod compare_with;
 pub mod context_menu;
