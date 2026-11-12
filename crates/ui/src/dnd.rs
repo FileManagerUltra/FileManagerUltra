@@ -252,6 +252,10 @@ pub fn finish_media(ctx: &Context, s: &mut Session, rect: Rect, tokens: &Tokens)
     // Set by a playlist folder header under the pointer this frame.
     let group: Option<u32> = ctx.data_mut(|d| d.remove_temp(crate::media::drop_group_id()));
     let slot: Option<Value> = ctx.data_mut(|d| d.remove_temp(crate::media::drop_slot_id()));
+    // Set by the Media pane while the pointer is over the player: a drop there plays.
+    let play = ctx
+        .data_mut(|d| d.remove_temp::<bool>(crate::media::drop_play_id()))
+        .unwrap_or(false);
     let Some(payload) = DragAndDrop::payload::<DragPayload>(ctx) else {
         return;
     };
@@ -266,11 +270,25 @@ pub fn finish_media(ctx: &Context, s: &mut Session, rect: Rect, tokens: &Tokens)
         ctx.set_cursor_icon(CursorIcon::NoDrop);
         return;
     }
-    let refused = slot == Some(Value::Null);
+    let refused = !play && slot == Some(Value::Null);
+    // Outline the zone the drop lands in: the player or the playlist.
+    let zone_of = |id: Id| {
+        ctx.data(|d| d.get_temp::<Rect>(id))
+            .map_or(rect, |zone| zone.intersect(rect))
+    };
     if refused {
         ctx.set_cursor_icon(CursorIcon::NoDrop);
+    } else if play {
+        paint_feedback(
+            ctx,
+            zone_of(crate::media::player_rect_id()),
+            pos,
+            "Play now",
+            tokens,
+        );
     } else {
-        paint_feedback(ctx, rect, pos, "Add to media queue", tokens);
+        let zone = zone_of(crate::media::playlist_rect_id());
+        paint_feedback(ctx, zone, pos, "Add to playlist", tokens);
     }
     if ctx.input(|i| i.pointer.any_released())
         && DragAndDrop::take_payload::<DragPayload>(ctx).is_some()
@@ -278,11 +296,17 @@ pub fn finish_media(ctx: &Context, s: &mut Session, rect: Rect, tokens: &Tokens)
     {
         let paths: Vec<String> = payload.sources.iter().map(VfsUri::to_string).collect();
         let mut params = match group {
+            _ if play => json!({"uris": paths, "play": true}),
             Some(group) => json!({"uris": paths, "group": group}),
             None => json!({"uris": paths}),
         };
-        if let (Some(Value::Object(place)), Some(map)) = (slot, params.as_object_mut()) {
+        if let (false, Some(Value::Object(place)), Some(map)) = (play, slot, params.as_object_mut())
+        {
             map.extend(place);
+        }
+        // The pane the files were dropped on takes the focus, so the new rows can be used.
+        if let Some(pane) = pane_at(ctx, pos) {
+            let _ = s.layout.focus_pane(pane);
         }
         s.dispatch_or_notice("media.drop", &params);
     }

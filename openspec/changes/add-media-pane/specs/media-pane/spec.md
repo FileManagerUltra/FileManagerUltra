@@ -94,15 +94,15 @@ DVD-Video disc images (`.iso`) on a local disk SHALL play their main title (the 
 - **THEN** a playlist folder "Movie" holds VTS_01_1 and VTS_01_2 in that order, without the menus
 
 ### Requirement: Entry points
-Files and Preview panes SHALL offer Play, Play next, Add to queue and Play folder for supported media (context menu and menu bar); dropping supported files or a folder on a Media pane SHALL enqueue them; a Preview video card SHALL offer "Play in Media pane". If no Media pane exists, Play SHALL switch a suitable pane to `Media` (or open one beside the focused pane) rather than fail.
+Files and Preview panes SHALL offer Play, Play next, Add to queue and Play folder for supported media (context menu and menu bar); dropping supported files or a folder on a Media pane SHALL play them when dropped on the player and add them when dropped on the playlist (see `media-open-and-play-ux`); a Preview video card SHALL offer "Play in Media pane". If no Media pane exists, Play SHALL switch a suitable pane to `Media` (or open one beside the focused pane) rather than fail.
 
 #### Scenario: Play from a Files pane
 - **WHEN** a Files pane has an mp3 selected and `media.play` runs for it with no Media pane open
 - **THEN** a Media pane appears and plays it
 
 #### Scenario: Drop on the pane
-- **WHEN** three audio files are dropped on a Media pane
-- **THEN** they are appended to the queue in order and the first plays if nothing was playing
+- **WHEN** three audio files are dropped on the playlist of a Media pane
+- **THEN** they are appended to the queue in order and selected; the first plays only if nothing was playing and "Start playing when items are added" is on
 
 ### Requirement: Transport and tracks
 `media.seek` SHALL move to an absolute or relative position clamped to the item's duration; volume SHALL be 0–100 and persist; speed SHALL follow the playback-speed requirement of `media-audio-pipeline`. For video, the pane SHALL list embedded audio and subtitle tracks and let the user choose one or none (subtitles per `media-subtitles`), and SHALL support frame step while paused.

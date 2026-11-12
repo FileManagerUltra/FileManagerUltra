@@ -44,7 +44,7 @@ pub fn cancel() -> CommandSpec {
     CommandSpec {
         id: "job.cancel",
         label: "Cancel Job",
-        menu: &["Jobs", "Cancel"],
+        menu: &["Activity", "Cancel"],
         shortcut: None,
         params: "job: integer",
         enabled: |s| s.fileops.running() > 0,
@@ -60,7 +60,7 @@ pub fn resolve_conflict() -> CommandSpec {
     CommandSpec {
         id: "job.resolve_conflict",
         label: "Resolve Conflict",
-        menu: &["Jobs", "Resolve Conflict"],
+        menu: &["Activity", "Resolve Conflict"],
         shortcut: None,
         params: "job: integer, choice: overwrite|keep_both|skip|cancel, apply_to_all?: bool",
         enabled: |s| s.fileops.pending_conflict().is_some(),
@@ -77,7 +77,7 @@ pub fn dismiss() -> CommandSpec {
     CommandSpec {
         id: "job.dismiss",
         label: "Dismiss Job",
-        menu: &["Jobs", "Dismiss"],
+        menu: &["Activity", "Dismiss"],
         shortcut: None,
         params: "job: integer",
         enabled: |s| s.fileops.jobs().iter().any(|j| !j.state.is_running()),

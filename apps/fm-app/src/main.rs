@@ -90,6 +90,12 @@ fn open_uri(session: &mut Session, dialogs: &mut fm_ui::dialogs::Dialogs, uri: &
         OpenPlan::Launch => {
             session.dispatch_or_notice("file.open", &serde_json::json!({ "uri": uri.to_string() }));
         }
+        OpenPlan::PlayMedia => {
+            session.dispatch_or_notice(
+                "media.play",
+                &serde_json::json!({ "uris": [uri.to_string()] }),
+            );
+        }
         OpenPlan::ConfirmRun { name } => dialogs.request(fm_ui::dialogs::Dialog::ConfirmRun {
             uri: uri.clone(),
             name,
@@ -282,7 +288,17 @@ fn import_paths(
         return;
     }
     if session.pane_kind(pane) == Some(fm_layout::PaneKind::Media) {
-        session.dispatch_or_notice("media.drop", &serde_json::json!({"uris": paths}));
+        // On the player the files play at once; on the playlist they join it where dropped.
+        let mut params = at
+            .or_else(|| ctx.input(|i| i.pointer.latest_pos()))
+            .map_or_else(
+                || serde_json::json!({}),
+                |pos| fm_ui::media::external_drop_params(ctx, pos),
+            );
+        if let Some(map) = params.as_object_mut() {
+            map.insert("uris".into(), serde_json::json!(paths));
+        }
+        session.dispatch_or_notice("media.drop", &params);
         return;
     }
     let Some(dest) = session.layout.state(pane).map(|p| p.location.to_string()) else {

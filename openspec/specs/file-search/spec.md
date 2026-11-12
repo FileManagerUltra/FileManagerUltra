@@ -30,10 +30,10 @@ Double-clicking a file result SHALL open it with its default application; Show i
 - **THEN** a Files pane navigates to the parent folder and selects the item
 
 ### Requirement: Searches run in the background like jobs
-A running search SHALL be minimisable to the jobs panel (`search.minimize`), where it shows its query, matches found and folders searched, with buttons to show the window again (`search.restore`) and to stop it. The status bar's job text SHALL include a running search. Minimising SHALL NOT stop or slow the search.
+A running search SHALL be minimisable to the Activity panel (`search.minimize`), where it shows its query, matches found and folders searched, with buttons to show the window again (`search.restore`) and to stop it. The status bar's job text SHALL include a running search. Minimising SHALL NOT stop or slow the search.
 
 #### Scenario: Minimise and come back
-- **WHEN** the user minimises a running search, keeps working and then chooses Show in the jobs panel
+- **WHEN** the user minimises a running search, keeps working and then chooses Show in the Activity panel
 - **THEN** the search kept running and the window shows all results found so far
 
 ### Requirement: Recent searches can be re-used

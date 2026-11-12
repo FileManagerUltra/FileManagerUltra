@@ -159,7 +159,7 @@ pub struct Search {
     pub query: SearchQuery,
     /// Files pane results are revealed in.
     pub origin: PaneId,
-    /// Hidden from view while the search goes on; the jobs panel shows it.
+    /// Hidden from view while the search goes on; the Activity panel shows it.
     pub minimized: bool,
     run: Option<Run>,
 }
@@ -698,7 +698,7 @@ pub fn start_cmd() -> CommandSpec {
     }
 }
 
-/// `search.minimize` — keep the search running in the jobs panel, without its window.
+/// `search.minimize` — keep the search running in the Activity panel, without its window.
 pub fn minimize() -> CommandSpec {
     CommandSpec {
         id: "search.minimize",

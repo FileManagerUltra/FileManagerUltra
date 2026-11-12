@@ -68,7 +68,7 @@ For `.deb` installations, use `apt install ./<new-package>.deb`.
 
 Workflow artifacts and unpublished tags do not trigger update notifications:
 there must be a published, non-prerelease GitHub Release with a newer version.
-Checking and no-update results do not open the Jobs panel. An offline or
+Checking and no-update results do not open the Activity panel. An offline or
 rate-limited check reports an error in the status bar; retry through
 **Help → Check for Updates…**. Manual no-update results also use the status bar.
 

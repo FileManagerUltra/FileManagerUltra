@@ -40,6 +40,7 @@ pub mod media_cmds;
 pub mod media_entry_cmds;
 pub mod media_fullscreen_cmds;
 pub mod media_group_cmds;
+pub mod media_open_cmds;
 pub mod media_playlist_cmds;
 pub mod media_resume;
 pub mod media_source_cmds;

@@ -245,7 +245,7 @@ Use a scratch directory with a few files, a subfolder and one name that exists i
 4. `Shift+F7` new empty file (never overwrites); `Ctrl+,` opens Preferences (theme, re-target links on copy); copying a tree with absolute in-tree symlinks (e.g. `node_modules/.bin`) recreates them as links.
 4. `F7` new folder (invalid or duplicate name shows the error and disables OK); `F2` rename.
 5. `F8` moves to the OS trash, `Shift+Delete` asks for confirmation; `Ctrl+Z` undoes the last copy / move / rename / trash (macOS cannot restore from the trash — an error is shown).
-6. A large copy shows progress in the status bar and jobs panel; Cancel stops it and leaves no partial files. Failures list per item and can be dismissed. Command errors and warnings open the jobs panel for 5 seconds, then close it; the icon at the bottom right of the status bar reopens it with the recent messages, and Clear empties the list.
+6. A large copy shows progress in the status bar and Activity panel; Cancel stops it and leaves no partial files. Failures list per item and can be dismissed. Command errors and warnings open the Activity panel for 5 seconds, then close it; the icon at the bottom right of the status bar reopens it with the recent messages, and Clear empties the list.
 7. Drop files from the OS file manager onto a pane: they are copied into that pane's directory.
 
 
@@ -462,7 +462,7 @@ Run on Linux, macOS and Windows (manual smoke; the OS watchers differ per platfo
   Also check a path with a trailing/mixed-case drive letter and a `\\?\` path.
 - macOS: repeat on a folder under `/Volumes` and on an iCloud/Dropbox folder.
 - Linux: lower `fs.inotify.max_user_watches` (for example `sudo sysctl
-  fs.inotify.max_user_watches=8`), open several panes: a message in the jobs panel says some folders
+  fs.inotify.max_user_watches=8`), open several panes: a message in the Activity panel says some folders
   refresh periodically, and listings still update. Restore the value afterwards.
   Also try an NFS/sshfs mount (must poll, not error).
 - Remote (SFTP/SMB) panes are unchanged: refresh on focus regain and every 5 s.
@@ -485,7 +485,7 @@ Manual, on Windows (the OLE drag cannot run in CI; `cargo check --target x86_64-
 2. Drag onto a Chrome/Edge upload field, an Outlook/Teams/Slack message: the files attach.
 3. Press Escape mid-drag, or release over the desktop or an app that takes no files: nothing happens, no error message, and the next click in the window works.
 4. Drag a file with non-ASCII characters, a long path (over 260 characters) and a UNC/mapped-drive path: each is received intact.
-5. Drag items from an SFTP/SMB pane out of the window: a message in the jobs panel says only local files can be dragged out.
+5. Drag items from an SFTP/SMB pane out of the window: a message in the Activity panel says only local files can be dragged out.
 6. The window is unresponsive while the OS drag runs (OLE's modal loop on the UI thread); it must come back to normal as soon as the button is released, and clicks must not stay captured by the app.
 
 ## Dev log

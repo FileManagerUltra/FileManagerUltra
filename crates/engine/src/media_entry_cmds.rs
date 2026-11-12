@@ -117,6 +117,7 @@ impl Session {
         } else {
             self.media.queue.insert_next(items)?
         };
+        self.media.note_added(first, count);
         for state in self
             .layout
             .states
@@ -217,6 +218,28 @@ mod tests {
         }
         s.media.queue.select(1).expect("current B");
         (s, pane, uri)
+    }
+
+    #[test]
+    fn every_add_asks_the_playlist_to_reveal_exactly_the_new_rows() {
+        let mut s = Session::new().expect("session");
+        for n in 0..5 {
+            s.media
+                .queue
+                .enqueue(VfsUri::parse(&format!("/m/{n}.mp3")).expect("uri"))
+                .expect("queue");
+        }
+        s.media.queue.select(1).expect("select");
+        assert!(s.media.reveal.is_none());
+        s.dispatch("media.enqueue", &json!({"uris": ["/m/a.mp3", "/m/b.mp3"]}))
+            .expect("enqueue");
+        let added = s.media.reveal.expect("reveal");
+        assert_eq!((added.start, added.len), (5, 2));
+        s.dispatch("media.play_next", &json!({"uris": ["/m/c.mp3"]}))
+            .expect("play next");
+        let next = s.media.reveal.expect("reveal");
+        assert_eq!((next.start, next.len), (2, 1));
+        assert!(next.seq > added.seq);
     }
 
     #[test]

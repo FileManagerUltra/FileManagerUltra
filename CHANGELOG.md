@@ -15,13 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resuming playback of some screen recordings (WebM files with a single keyframe) no longer fails with "Decoder failed"; the video now resumes at the paused position.
 
 ### Changed
+- The Jobs panel is now called Activity: it holds running jobs, messages, tips, update notices and minimised searches.
 - Find Files moved to Ctrl+F (search the current folder) and Ctrl+Shift+F (search all local drives, skipping system folders such as `/proc`); Alt+F7 is gone. In Preview, Ctrl+F still finds text inside the preview.
 - Typing in the file listing now opens the quick filter and keeps typing there. Typing no longer jumps to the location bar; use the location bar or Ctrl+L for paths.
 - Log Live tail no longer has a keyboard shortcut (Ctrl+Shift+F now finds files); use its button or menu.
 - Find Files has a cleaner layout: the name field comes first, results show the name, size and folder on two lines, and the window has Minimize and Close buttons in its title bar.
 - Show in Folder now scrolls the folder so the item sits in the middle of the list.
 - Find Files is much faster on local drives: about 9× faster for name searches and 8× faster for content searches on a large folder tree.
-- Copy and move progress ("Copy 1 item to Videos · 44%") now sits at the right of the status bar, next to the jobs button.
+- Copy and move progress ("Copy 1 item to Videos · 44%") now sits at the right of the status bar, next to the Activity button.
 - Adding items to the Media playlist no longer starts playback on its own. Preferences > Media has "Start playing when items are added" (off by default) to bring it back; it never interrupts what is already playing. Opening a folder in Media still plays it.
 - When a video can't play because ffmpeg is missing, a dialog offers to download it, or explains how to install it yourself with a link to the download site.
 - The Windows installer no longer includes ffmpeg (about 90 MB smaller); download it from Preferences > Media when you want video.
@@ -30,8 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preview's audio and video players now use the same icon controls, seek bar and volume as the Media pane. The player in Preview is a larger card shown above the cover art. The Media equalizer is redesigned and opens in its own window that stays open while you pick presets, and the right-click menu only shows audiobook entries where they apply.
 
 ### Added
+- Audio and video files can play inside the file manager on double-click: choose "Play in Media pane" under Preferences → Media → Opening files (separately for audio and video). The first time a media file opens in another app, a short tip offers this once.
+- Right-click the player (video, cover or now-playing area) for a menu with play/pause, tracks, subtitles, equalizer, speed, loop, sleep timer, fullscreen and Show in folder.
+- Files added to the playlist are selected and scrolled into view, so you can see where they went.
+- Dropping files on the player plays them right away; dropping them on the playlist adds them where you drop.
 - Every found file has Open, Show in Folder and Copy Path buttons, and a right-click menu with Open With, Copy Name and Properties.
-- Minimise a running Find Files search to the jobs panel: it keeps searching, the status bar shows how many files it found, and Show brings the window back (or Stop ends it).
+- Minimise a running Find Files search to the Activity panel: it keeps searching, the status bar shows how many files it found, and Show brings the window back (or Stop ends it).
 - Find Files remembers your last 20 searches. Pick one from Recent to run it again, or clear the list.
 - Media and Preview play WMA audio, plus Opus, APE, WavPack, AIFF, AC-3, DTS, Matroska audio and other formats, using ffmpeg when the built-in decoder can't read them.
 - Media plays DVD disc images (`.iso`): the main film plays as one continuous video straight from the image, with no mounting or copying. Images that aren't DVD-Video (installers, data discs) are refused, and are skipped when you drop a folder.

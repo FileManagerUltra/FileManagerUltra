@@ -1,4 +1,4 @@
-//! The update CTA inside the Jobs panel; never steals keyboard focus.
+//! The update CTA inside the Activity panel; never steals keyboard focus.
 
 use fm_engine::{Params, Session, updates::UpdateStatus};
 

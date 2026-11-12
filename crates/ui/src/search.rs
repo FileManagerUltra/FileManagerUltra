@@ -34,7 +34,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         ctx.data_mut(|d| d.remove_temp::<Draft>(draft_id()));
         return;
     };
-    // Minimised: the jobs panel shows it; the form and its draft stay as they were.
+    // Minimised: the Activity panel shows it; the form and its draft stay as they were.
     if search.minimized {
         return;
     }
@@ -181,7 +181,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     if ui
                         .button("Minimize")
                         .on_hover_text(
-                            "Hide this window; a running search continues in the jobs panel",
+                            "Hide this window; a running search continues in the Activity panel",
                         )
                         .clicked()
                     {

@@ -227,7 +227,7 @@ impl OpState {
     }
 }
 
-/// What a finished job did, with per-item errors for the jobs panel.
+/// What a finished job did, with per-item errors for the Activity panel.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OpSummary {
     pub done: u64,

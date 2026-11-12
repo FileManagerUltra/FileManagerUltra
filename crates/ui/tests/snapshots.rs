@@ -93,6 +93,8 @@ fn media_audio_queue_dark_light() {
         session.dispatch("media.enqueue", &serde_json::json!({
             "uris": ["/music/First track.mp3", "/music/Second track.flac", "/music/Third track.ogg"]
         })).expect("enqueue");
+        // These snapshots show plain rows, not the just-added selection.
+        session.media.reveal = None;
         let pane = session.media_pane().expect("media");
         session.media.queue.select(0).expect("current");
         session
@@ -256,6 +258,7 @@ fn media_preview_controls(video: bool, in_media: bool, fullscreen: bool) {
                     }),
                 )
                 .expect("queue video");
+            session.media.reveal = None;
             session.media.queue.select(0).expect("current");
             session.media.position = 42.0;
             if fullscreen {
@@ -774,6 +777,37 @@ fn update_notification_dark_light() {
             harness.snapshot(format!("update_{case}_{theme}"));
             results.extend_harness(&mut harness);
         }
+    }
+}
+
+#[test]
+fn media_open_hint_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut harness = Harness::builder()
+            .renderer(renderer)
+            .with_size(egui::vec2(820.0, 360.0))
+            .build_ui_state(
+                move |ui, session: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        ui.label("song.mp3 opened in the default app.");
+                    });
+                    fm_ui::jobs::show(ui.ctx(), session, &tokens);
+                },
+                fixture_session(),
+            );
+        harness.run();
+        // The panel opens for messages that arrive while the app runs.
+        let song = fm_vfs::VfsUri::parse("/music/song.mp3").expect("uri");
+        harness.state_mut().offer_media_open_hint(&song);
+        harness.run();
+        harness.snapshot(format!("media_open_hint_{theme}"));
+        results.extend_harness(&mut harness);
     }
 }
 

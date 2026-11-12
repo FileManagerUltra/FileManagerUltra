@@ -543,7 +543,7 @@ fn a_minimised_search_shows_in_the_jobs_panel_and_comes_back() {
         }
         h.run();
         if !fm_ui::jobs::panel_visible(&h.ctx, h.state()) {
-            h.get_by_label("Jobs").click();
+            h.get_by_label("Activity").click();
             h.run();
         }
         h.get_by_label_contains("Find \"*.pdf\"");

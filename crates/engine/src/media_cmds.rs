@@ -27,6 +27,15 @@ impl Drop for VideoProbe {
     }
 }
 
+/// Queue rows just added by one request, for the playlist to select and scroll to once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MediaReveal {
+    pub start: usize,
+    pub len: usize,
+    /// Bumped for every addition; a pane remembers the last one it showed.
+    pub seq: u64,
+}
+
 #[derive(Debug)]
 pub struct MediaSession {
     pub queue: Queue,
@@ -57,6 +66,8 @@ pub struct MediaSession {
         Receiver<Result<fm_preview::ImageDoc, String>>,
         crate::jobs::JobId,
     )>,
+    /// The rows the last add request put in the queue (see [`MediaReveal`]).
+    pub reveal: Option<MediaReveal>,
 }
 
 impl Default for MediaSession {
@@ -83,11 +94,21 @@ impl Default for MediaSession {
             resume: Vec::new(),
             books: Default::default(),
             cover_job: None,
+            reveal: None,
         }
     }
 }
 
 impl MediaSession {
+    /// Ask the playlist to select and show `len` rows from `start` (nothing when `len` is 0).
+    pub(crate) fn note_added(&mut self, start: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+        let seq = self.reveal.map_or(1, |r| r.seq.wrapping_add(1));
+        self.reveal = Some(MediaReveal { start, len, seq });
+    }
+
     pub(crate) fn is_busy(&self) -> bool {
         self.playing
             || self.cover_job.is_some()
@@ -760,9 +781,12 @@ pub fn specs() -> Vec<CommandSpec> {
                 allowed(map, &["uris", "pane"])?;
                 let items = sources(s, map)?;
                 s.show_media_pane()?;
+                let first = s.media.queue.items().len();
+                let count = items.items.len();
                 for uri in items.items {
                     s.media.queue.enqueue(uri)?;
                 }
+                s.media.note_added(first, count);
                 Ok(())
             },
         },

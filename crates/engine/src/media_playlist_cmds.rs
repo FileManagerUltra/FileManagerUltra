@@ -62,9 +62,11 @@ impl Session {
                     return Err("The playlist does not fit in the media queue.".into());
                 }
                 let count = items.len();
+                let first = self.media.queue.items().len();
                 for uri in items {
                     self.media.queue.enqueue(uri).map_err(|error| error.to_string())?;
                 }
+                self.media.note_added(first, count);
                 for notice in &notices {
                     self.messages.push(notice);
                 }

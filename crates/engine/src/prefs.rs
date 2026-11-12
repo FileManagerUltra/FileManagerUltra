@@ -52,6 +52,30 @@ pub enum Density {
     Comfortable,
 }
 
+/// Where activating (double-click, Enter) an audio or video file sends it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaOpenTarget {
+    /// The system default application (as for any other document).
+    #[default]
+    DefaultApp,
+    /// Play it in the Media pane, right away.
+    MediaPane,
+}
+
+/// Most one-time hints remembered as seen, and the longest id kept.
+pub const MAX_HINTS_SEEN: usize = 64;
+pub const MAX_HINT_ID: usize = 64;
+
+/// A hint id as stored in `hints_seen`: short, lowercase ASCII, digits, `-` and `.`.
+pub fn is_hint_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_HINT_ID
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
+}
+
 /// How file sizes are written.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -144,6 +168,15 @@ pub struct Prefs {
     pub media_skip_back_secs: u64,
     #[serde(default = "default_skip_forward")]
     pub media_skip_forward_secs: u64,
+    /// What activating an audio file does.
+    #[serde(default)]
+    pub media_open_audio: MediaOpenTarget,
+    /// What activating a video file does.
+    #[serde(default)]
+    pub media_open_video: MediaOpenTarget,
+    /// One-time hints already shown (see [`is_hint_id`]), so they never come back.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hints_seen: Vec<String>,
     /// Subtitle appearance, shared by every text subtitle type.
     #[serde(default)]
     pub subtitle_style: crate::subtitle_style::SubtitleStyle,
@@ -490,6 +523,9 @@ impl Default for Prefs {
             media_autoplay_on_add: false,
             media_skip_back_secs: default_skip_back(),
             media_skip_forward_secs: default_skip_forward(),
+            media_open_audio: MediaOpenTarget::default(),
+            media_open_video: MediaOpenTarget::default(),
+            hints_seen: Vec::new(),
             subtitle_style: Default::default(),
             log_poll_ms: default_log_poll_ms(),
             log_tail_mib: default_log_tail_mib(),
@@ -618,7 +654,29 @@ pub fn load(path: &Path) -> Prefs {
     // A hand-edited file may hold junk bookmarks: drop them rather than the whole file.
     prefs.bookmarks.retain(Bookmark::is_valid);
     prefs.bookmarks.truncate(MAX_BOOKMARKS);
+    prefs.hints_seen.retain(|id| is_hint_id(id));
+    let mut seen = std::collections::HashSet::new();
+    prefs.hints_seen.retain(|id| seen.insert(id.clone()));
+    prefs.hints_seen.truncate(MAX_HINTS_SEEN);
     prefs
+}
+
+impl Prefs {
+    /// Whether the one-time hint `id` was already shown.
+    pub fn hint_seen(&self, id: &str) -> bool {
+        self.hints_seen.iter().any(|seen| seen == id)
+    }
+
+    /// Remember that hint `id` was shown (bounded; the oldest makes room).
+    pub fn mark_hint_seen(&mut self, id: &str) {
+        if !is_hint_id(id) || self.hint_seen(id) {
+            return;
+        }
+        if self.hints_seen.len() >= MAX_HINTS_SEEN {
+            self.hints_seen.remove(0);
+        }
+        self.hints_seen.push(id.to_string());
+    }
 }
 
 /// Save preferences into `dir`/`prefs.toml` (creating the directory, owner-only).
@@ -692,6 +750,48 @@ mod tests {
             // Extremely unlikely; fall back to a unique path under the OS temp dir.
             std::env::temp_dir().join(format!("fm-prefs-test-{}", std::process::id()))
         })
+    }
+
+    #[test]
+    fn media_open_targets_and_seen_hints_round_trip_and_junk_is_dropped() {
+        let dir = temp_dir();
+        let mut prefs = Prefs {
+            media_open_audio: MediaOpenTarget::MediaPane,
+            ..Prefs::default()
+        };
+        prefs.mark_hint_seen("media-open");
+        prefs.mark_hint_seen("media-open");
+        prefs.mark_hint_seen("Bad Id!");
+        assert_eq!(prefs.hints_seen, ["media-open"]);
+        save(&dir, &prefs).expect("save");
+        assert_eq!(load(&dir.join(PREFS_FILE)), prefs);
+
+        // Old files have neither field; hand-edited junk ids are dropped, not the file.
+        std::fs::write(dir.join(PREFS_FILE), "check_updates = true\n").expect("write");
+        let old = load(&dir.join(PREFS_FILE));
+        assert_eq!(old.media_open_audio, MediaOpenTarget::DefaultApp);
+        assert_eq!(old.media_open_video, MediaOpenTarget::DefaultApp);
+        assert!(old.hints_seen.is_empty());
+        let long = "x".repeat(MAX_HINT_ID + 1);
+        let many: Vec<String> = (0..MAX_HINTS_SEEN + 10)
+            .map(|n| format!("\"h{n}\""))
+            .collect();
+        std::fs::write(
+            dir.join(PREFS_FILE),
+            format!(
+                "hints_seen = [\"a\", \"a\", \"{long}\", \"UP\", {}]\n",
+                many.join(", ")
+            ),
+        )
+        .expect("write");
+        let junk = load(&dir.join(PREFS_FILE));
+        assert_eq!(junk.hints_seen.len(), MAX_HINTS_SEEN);
+        assert_eq!(junk.hints_seen[0], "a");
+        assert!(junk.hints_seen.iter().all(|id| is_hint_id(id)));
+        for n in 0..MAX_HINTS_SEEN + 5 {
+            prefs.mark_hint_seen(&format!("k{n}"));
+        }
+        assert_eq!(prefs.hints_seen.len(), MAX_HINTS_SEEN);
     }
 
     #[test]
@@ -823,6 +923,8 @@ mod tests {
                 "media_autoplay_on_add",
                 "media_background_audio",
                 "media_gapless",
+                "media_open_audio",
+                "media_open_video",
                 "media_skip_back_secs",
                 "media_skip_forward_secs",
                 "preview_audio_autoplay",

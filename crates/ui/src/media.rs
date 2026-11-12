@@ -26,23 +26,59 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
         return;
     }
     let mut actions: Vec<(&str, Value)> = Vec::new();
+    // Player text is not for selecting: a right-click anywhere on it opens the player menu.
+    let selectable = ui.style().interaction.selectable_labels;
+    ui.style_mut().interaction.selectable_labels = false;
+    let player_top = ui.cursor().top();
+    // Laid out first, so every control drawn over it keeps its own clicks: right-clicking
+    // empty player space (or the cover) opens the player menu. Last frame's area.
+    let background = ui
+        .data(|d| d.get_temp::<egui::Rect>(player_rect_id()))
+        .map(|rect| {
+            ui.interact(
+                rect,
+                Id::NULL.with(("media-player-bg", pane)),
+                egui::Sense::click(),
+            )
+        });
+    let mut picture = None;
     if s.media.is_video() {
         let max = video_max(ui);
         let height = video_height(ui, pane);
-        video(
+        picture = Some(video(
             ui,
             s,
             pane,
             egui::vec2(ui.available_width(), height),
             tokens,
             &mut actions,
-        );
+        ));
         video_splitter(ui, pane, height, max, tokens);
     }
     let top = ui.cursor().top();
     display(ui, s, pane, tokens, &mut actions);
     transport(ui, s, tokens, &mut actions);
     crate::media_book::controls(ui, s, tokens, &mut actions);
+    let player =
+        egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), player_top..=ui.cursor().top());
+    ui.data_mut(|d| d.insert_temp(player_rect_id(), player));
+    let files_dragged = egui::DragAndDrop::has_payload_of_type::<crate::dnd::DragPayload>(ui.ctx());
+    if files_dragged
+        && ui
+            .ctx()
+            .pointer_latest_pos()
+            .is_some_and(|pos| player.contains(pos))
+    {
+        // `dnd::finish_media` reads this: a drop here plays at once.
+        ui.data_mut(|d| d.insert_temp(drop_play_id(), true));
+    }
+    let keyboard = s.layout.focused() == pane
+        && !ui.ctx().text_edit_focused()
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::F10));
+    if let Some(background) = &background {
+        player_menu_popup(s, background, picture.as_ref(), keyboard, &mut actions);
+    }
+    ui.style_mut().interaction.selectable_labels = selectable;
     if s.media.is_video() {
         let used = ui.cursor().top() - top;
         ui.data_mut(|d| d.insert_temp(Id::NULL.with("media-controls-height"), used));
@@ -71,6 +107,12 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
     }
     for (command, params) in actions {
         s.dispatch_or_notice(command, &params);
+    }
+    if ui.data_mut(|d| {
+        d.remove_temp::<bool>(open_media_prefs_id())
+            .unwrap_or(false)
+    }) {
+        crate::preferences::open_media(ui.ctx(), s);
     }
 }
 
@@ -482,6 +524,23 @@ fn playlist(
     let found = media.queue.groups();
     let collapsed_id = Id::NULL.with(("media-collapsed", pane));
     let mut collapsed: Vec<u32> = ui.data(|d| d.get_temp(collapsed_id)).unwrap_or_default();
+    // Rows a request just added (engine `MediaReveal`), shown once per pane.
+    let reveal_id = Id::NULL.with(("media-revealed", pane));
+    let reveal = media
+        .reveal
+        .filter(|r| ui.data(|d| d.get_temp::<u64>(reveal_id)) != Some(r.seq))
+        .filter(|r| r.start < count);
+    if let Some(r) = reveal {
+        ui.data_mut(|d| d.insert_temp(reveal_id, r.seq));
+        // A collapsed folder holding the new rows opens, so they can be seen.
+        if let Some(group) = found
+            .iter()
+            .find(|g| (g.start..g.start + g.len).contains(&r.start))
+        {
+            collapsed.retain(|id| *id != group.id);
+            ui.data_mut(|d| d.insert_temp(collapsed_id, collapsed.clone()));
+        }
+    }
     let rows = playlist_rows(&found, &collapsed, count);
     // Visible item rows in display order: what the keyboard walks and Shift ranges span.
     let order: Vec<usize> = rows
@@ -503,6 +562,42 @@ fn playlist(
         pick.focused_row = at;
     }
     let pitch = row_height + ui.spacing().item_spacing.y;
+    if let Some(r) = reveal {
+        let end = (r.start + r.len).min(count);
+        pick.picked = (r.start..end).collect();
+        pick.picked_len = count;
+        pick.selected = Some(r.start);
+        if let Some(at) = order.iter().position(|i| *i == r.start) {
+            pick.focused_row = at;
+        }
+    }
+    // The scroll area clamps to last frame's content, which may not hold the new rows yet:
+    // keep aiming at the row for a few frames.
+    let target_id = Id::NULL.with(("media-reveal-target", pane));
+    if let Some(r) = reveal {
+        ui.data_mut(|d| d.insert_temp(target_id, (r.start, 3u8)));
+    }
+    if let Some((index, frames)) = ui.data(|d| d.get_temp::<(usize, u8)>(target_id)) {
+        if let Some(row_at) = rows
+            .iter()
+            .position(|row| matches!(row, PlaylistRow::Item { index: i, .. } if *i == index))
+        {
+            // Past last frame's end, egui would rubber-band and coast away from the row.
+            let max = ui
+                .data(|d| d.get_temp::<f32>(Id::NULL.with(("media-queue-max", pane))))
+                .unwrap_or(f32::MAX);
+            scroll =
+                reveal_scroll(row_at as f32 * pitch, pitch, scroll, ui.available_height()).min(max);
+        }
+        ui.data_mut(|d| {
+            if frames > 1 {
+                d.insert_temp(target_id, (index, frames - 1));
+            } else {
+                d.remove::<(usize, u8)>(target_id);
+            }
+        });
+        ui.ctx().request_repaint();
+    }
     if s.layout.focused() == pane && renaming.is_none() && !ui.ctx().text_edit_focused() {
         let page = ((ui.available_height() / pitch).floor() as isize - 1).max(1);
         let moved = playlist_keys(ui, &mut pick, &order, page);
@@ -534,6 +629,7 @@ fn playlist(
         })
         .collect();
     let mut toggle = None;
+    let mut row_slots: Vec<(egui::Rect, Value)> = Vec::new();
     let output = ScrollArea::vertical()
         .id_salt(("media-queue", pane))
         .vertical_scroll_offset(scroll)
@@ -606,6 +702,13 @@ fn playlist(
                 if let Some(from) = crate::dnd::release_payload::<PlaylistDrag>(&row) {
                     drop_on_row(*from, index, zone, actions);
                 }
+                let slot = match zone {
+                    DropZone::Before => json!({"before": index}),
+                    DropZone::After => json!({"after": index}),
+                    DropZone::AfterFolder => json!({"after": index, "outside": true}),
+                    DropZone::Refused => json!({}),
+                };
+                row_slots.push((rect, slot));
                 // Files dropped on a row of a folder join that folder.
                 let files_here = row.contains_pointer()
                     && egui::DragAndDrop::has_payload_of_type::<crate::dnd::DragPayload>(ui.ctx());
@@ -833,6 +936,10 @@ fn playlist(
         ui.data_mut(|d| d.insert_temp(collapsed_id, collapsed));
     }
     ui.data_mut(|d| d.insert_temp(rename_id, renaming));
+    ui.data_mut(|d| {
+        d.insert_temp(row_slots_id(), row_slots);
+        d.insert_temp(playlist_rect_id(), output.inner_rect);
+    });
     // The app's Delete shortcut leaves a request when this pane has the focus.
     let delete = s.layout.focused() == pane
         && ui.data_mut(|d| d.remove_temp::<bool>(delete_request_id()).unwrap_or(false));
@@ -854,8 +961,21 @@ fn playlist(
         order.get(pick.focused_row).copied()
     };
     pick.queue_scroll = output.state.clamped_offset().y;
+    let max = (output.content_size.y - output.inner_rect.height()).max(0.0);
+    ui.data_mut(|d| d.insert_temp(Id::NULL.with(("media-queue-max", pane)), max));
     if let Some(state) = s.layout.state_mut(pane) {
         state.media = pick;
+    }
+}
+
+/// The scroll offset that shows a row at `top`: unchanged when it is fully visible, else
+/// the row is centred in the `view`.
+fn reveal_scroll(top: f32, pitch: f32, scroll: f32, view: f32) -> f32 {
+    let view = view.max(pitch);
+    if top >= scroll && top + pitch <= scroll + view {
+        scroll
+    } else {
+        (top + pitch / 2.0 - view / 2.0).max(0.0)
     }
 }
 
@@ -1573,7 +1693,7 @@ fn video(
     size: egui::Vec2,
     tokens: &Tokens,
     actions: &mut Vec<(&'static str, Value)>,
-) {
+) -> egui::Response {
     let width = size.x.max(1.0);
     let pixels = width * ui.ctx().pixels_per_point();
     let bucket = fm_engine::video_cmds::width_bucket(pixels);
@@ -1617,6 +1737,148 @@ fn video(
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(16));
     }
+    response
+}
+
+/// The player area (video, display, transport) laid out last frame.
+pub fn player_rect_id() -> Id {
+    Id::NULL.with("media-player-rect")
+}
+
+/// The playlist area laid out last frame.
+pub fn playlist_rect_id() -> Id {
+    Id::NULL.with("media-playlist-rect")
+}
+
+/// Set while dragged files hover the player: dropping plays them at once.
+pub fn drop_play_id() -> Id {
+    Id::NULL.with("media-drop-play")
+}
+
+/// Visible playlist rows and the `media.drop` slot params for each, for drops from the OS.
+fn row_slots_id() -> Id {
+    Id::NULL.with("media-row-slots")
+}
+
+/// `media.drop` params (without `uris`) for files dropped from another app at `pos`: play on
+/// the player, beside the row under the pointer, else at the end of the playlist.
+pub fn external_drop_params(ctx: &egui::Context, pos: egui::Pos2) -> Value {
+    if ctx
+        .data(|d| d.get_temp::<egui::Rect>(player_rect_id()))
+        .is_some_and(|rect| rect.contains(pos))
+    {
+        return json!({"play": true});
+    }
+    ctx.data(|d| d.get_temp::<Vec<(egui::Rect, Value)>>(row_slots_id()))
+        .unwrap_or_default()
+        .into_iter()
+        .find(|(rect, _)| rect.contains(pos))
+        .map_or_else(|| json!({}), |(_, slot)| slot)
+}
+
+fn player_menu_id() -> Id {
+    Id::NULL.with("media-player-menu")
+}
+
+/// Right-click (or Shift+F10) on the player: its actions and settings in one menu.
+fn player_menu_popup(
+    s: &Session,
+    background: &egui::Response,
+    picture: Option<&egui::Response>,
+    keyboard: bool,
+    actions: &mut Vec<(&'static str, Value)>,
+) {
+    use egui::SetOpenCommand;
+    let secondary =
+        background.secondary_clicked() || picture.is_some_and(|p| p.secondary_clicked());
+    let primary = background.clicked() || picture.is_some_and(|p| p.clicked());
+    let command = if secondary || keyboard {
+        Some(SetOpenCommand::Bool(true))
+    } else if primary {
+        Some(SetOpenCommand::Bool(false))
+    } else {
+        None
+    };
+    let popup = egui::Popup::menu(background)
+        .id(player_menu_id())
+        .open_memory(command);
+    let popup = if keyboard {
+        popup.at_position(background.rect.center())
+    } else {
+        popup.at_pointer_fixed()
+    };
+    popup.show(|ui| player_menu(ui, s, actions));
+}
+
+/// The player menu: transport, tracks and subtitles, audio extras, view, location.
+fn player_menu(ui: &mut Ui, s: &Session, actions: &mut Vec<(&'static str, Value)>) {
+    let media = &s.media;
+    let item = |ui: &mut Ui, label: &str, keys: &str, command: &'static str| {
+        let button = egui::Button::new(label).shortcut_text(keys);
+        ui.add_enabled(s.command_enabled(command), button).clicked()
+    };
+    let toggle = if media.playing { "Pause" } else { "Play" };
+    if item(ui, toggle, "Space", "media.toggle") {
+        actions.push(("media.toggle", Value::Null));
+        ui.close();
+    }
+    for (label, keys, command) in [
+        ("Stop", "", "media.stop"),
+        ("Previous", "P", "media.prev"),
+        ("Next", "N", "media.next"),
+    ] {
+        if item(ui, label, keys, command) {
+            actions.push((command, Value::Null));
+            ui.close();
+        }
+    }
+    if media.video.is_some() {
+        ui.separator();
+        track_menus(ui, s, actions);
+        if ui.button("Subtitle appearance…").clicked() {
+            ui.data_mut(|d| d.insert_temp(open_media_prefs_id(), true));
+            ui.close();
+        }
+    }
+    ui.separator();
+    crate::media_audio::menus(ui, s, actions);
+    if media.video.is_some() {
+        ui.menu_button("Speed", |ui| {
+            for speed in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0] {
+                let selected = (media.speed - speed).abs() < 0.01;
+                if ui
+                    .add(egui::Button::selectable(selected, format!("{speed}×")))
+                    .clicked()
+                {
+                    actions.push(("media.speed", json!({"value": speed})));
+                    ui.close();
+                }
+            }
+        });
+        ui.separator();
+        if item(ui, "Fullscreen", "F", "media.fullscreen") {
+            actions.push(("media.fullscreen", Value::Null));
+            ui.close();
+        }
+    }
+    let current = media
+        .queue
+        .current()
+        .filter(|uri| uri.local_path().is_some());
+    ui.separator();
+    if ui
+        .add_enabled(current.is_some(), egui::Button::new("Show in folder"))
+        .clicked()
+        && let Some(uri) = current
+    {
+        actions.push(("file.reveal", json!({"uri": uri.to_string()})));
+        ui.close();
+    }
+}
+
+/// Set by the player menu's Subtitle appearance item: open Preferences on the Media page.
+fn open_media_prefs_id() -> Id {
+    Id::NULL.with("media-open-prefs")
 }
 
 /// Laid out for a right-to-left parent: the first widget added is the rightmost.
@@ -1740,6 +2002,57 @@ pub(crate) use crate::player_controls::clock;
 mod tests {
     use super::*;
     use egui_kittest::{Harness, kittest::Queryable};
+
+    #[test]
+    fn revealing_a_row_scrolls_only_when_it_is_not_fully_visible() {
+        // Rows are 20 high; the view shows 100 from offset 200 (rows 10..15).
+        assert_eq!(reveal_scroll(240.0, 20.0, 200.0, 100.0), 200.0, "visible");
+        assert_eq!(reveal_scroll(200.0, 20.0, 200.0, 100.0), 200.0, "top edge");
+        assert_eq!(
+            reveal_scroll(280.0, 20.0, 200.0, 100.0),
+            200.0,
+            "bottom edge"
+        );
+        assert_eq!(
+            reveal_scroll(290.0, 20.0, 200.0, 100.0),
+            250.0,
+            "partly hidden: centred"
+        );
+        assert_eq!(
+            reveal_scroll(1000.0, 20.0, 200.0, 100.0),
+            960.0,
+            "below: centred"
+        );
+        assert_eq!(
+            reveal_scroll(20.0, 20.0, 200.0, 100.0),
+            0.0,
+            "never above the top"
+        );
+    }
+
+    #[test]
+    fn drops_from_other_apps_play_on_the_player_and_land_beside_rows() {
+        let ctx = egui::Context::default();
+        let player = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 150.0));
+        let row = egui::Rect::from_min_size(egui::pos2(0.0, 200.0), egui::vec2(400.0, 20.0));
+        ctx.data_mut(|d| {
+            d.insert_temp(player_rect_id(), player);
+            d.insert_temp(row_slots_id(), vec![(row, json!({"after": 4}))]);
+        });
+        assert_eq!(
+            external_drop_params(&ctx, egui::pos2(50.0, 50.0)),
+            json!({"play": true})
+        );
+        assert_eq!(
+            external_drop_params(&ctx, egui::pos2(50.0, 210.0)),
+            json!({"after": 4})
+        );
+        assert_eq!(
+            external_drop_params(&ctx, egui::pos2(50.0, 400.0)),
+            json!({}),
+            "below the rows: the end of the playlist"
+        );
+    }
 
     fn harness(tokens: Tokens) -> Harness<'static, Session> {
         let mut s = Session::new().expect("session");

@@ -1,5 +1,5 @@
-//! The jobs panel and the status-bar indicator. Read-only over `Session::fileops`; cancel and
-//! dismiss go through `job.cancel` / `job.dismiss`.
+//! The Activity panel (jobs, recent messages, hints, updates, minimised searches) and the
+//! status-bar indicator. Read-only over the session; every button dispatches a command id.
 
 use egui::{Context, Id, RichText, Ui};
 use fm_engine::{OpState, Session};
@@ -13,6 +13,16 @@ fn open_id() -> Id {
 
 /// A new message opens the panel for this long; hovering it keeps it open.
 const MESSAGE_SHOWN: std::time::Duration = std::time::Duration::from_secs(5);
+/// A one-time hint has buttons to read and choose from, so it stays longer.
+const HINT_SHOWN: std::time::Duration = std::time::Duration::from_secs(15);
+
+fn shown_for(s: &Session) -> std::time::Duration {
+    if s.messages.newest_is_hint() {
+        HINT_SHOWN
+    } else {
+        MESSAGE_SHOWN
+    }
+}
 
 fn until_id() -> Id {
     Id::NULL.with("fm-jobs-until")
@@ -161,8 +171,11 @@ pub fn icon_button(ui: &mut Ui, s: &Session, tokens: &Tokens) {
         };
         painter.circle_filled(rect.right_top() + egui::vec2(-3.0, 4.0), 3.0, dot);
     }
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Jobs"));
-    if response.on_hover_text("Jobs and recent messages").clicked() {
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Activity"));
+    if response
+        .on_hover_text("Activity: jobs and recent messages")
+        .clicked()
+    {
         ctx.data_mut(|d| d.insert_temp(open_id(), !open));
     }
 }
@@ -180,7 +193,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         if fresh && !s.messages.is_empty() {
             ctx.data_mut(|d| {
                 d.remove_temp::<bool>(open_id());
-                d.insert_temp(until_id(), std::time::Instant::now() + MESSAGE_SHOWN);
+                d.insert_temp(until_id(), std::time::Instant::now() + shown_for(s));
             });
         }
     }
@@ -266,14 +279,33 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let mut search_action: Option<&'static str> = None;
     let mut cancel = Vec::new();
     let mut dismiss = Vec::new();
-    let messages: Vec<(String, u64)> = s
+    struct Line {
+        id: u64,
+        text: String,
+        age: u64,
+        hint: bool,
+        /// Button labels; empty once one was used.
+        actions: Vec<String>,
+    }
+    let messages: Vec<Line> = s
         .messages
         .recent()
-        .map(|m| (m.text.clone(), m.at.elapsed().as_secs()))
+        .map(|m| Line {
+            id: m.id,
+            text: m.text.clone(),
+            age: m.at.elapsed().as_secs(),
+            hint: m.hint.is_some(),
+            actions: if m.spent {
+                Vec::new()
+            } else {
+                m.actions.iter().map(|a| a.label.clone()).collect()
+            },
+        })
         .collect();
+    let mut message_action: Option<(u64, usize)> = None;
     let mut clear_messages = false;
     let mut open = true;
-    let shown = crate::dialog_style::window(ctx, tokens, "Jobs", &mut open)
+    let shown = crate::dialog_style::window(ctx, tokens, "Activity", &mut open)
         .id(Id::NULL.with("fm-jobs-panel"))
         .pivot(egui::Align2::RIGHT_BOTTOM)
         .default_pos(ctx.content_rect().right_bottom() + egui::vec2(-8.0, -32.0))
@@ -291,7 +323,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 && messages.is_empty()
                 && !crate::updates::available(s)
             {
-                crate::dialog_style::hint(ui, tokens, "No jobs");
+                crate::dialog_style::hint(ui, tokens, "No jobs or messages");
             }
             if let Some((label, status, running)) = &search_row {
                 ui.add(egui::Label::new(RichText::new(label).color(tokens.text)).truncate());
@@ -338,9 +370,19 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     .max_height(200.0)
                     .id_salt("fm-jobs-messages")
                     .show(ui, |ui| {
-                        for (text, age) in &messages {
-                            ui.label(RichText::new(text).color(tokens.error));
-                            crate::dialog_style::hint(ui, tokens, format!("{age} s ago"));
+                        for line in &messages {
+                            let color = if line.hint { tokens.text } else { tokens.error };
+                            ui.label(RichText::new(&line.text).color(color));
+                            if !line.actions.is_empty() {
+                                ui.horizontal_wrapped(|ui| {
+                                    for (index, label) in line.actions.iter().enumerate() {
+                                        if ui.button(label).clicked() {
+                                            message_action = Some((line.id, index));
+                                        }
+                                    }
+                                });
+                            }
+                            crate::dialog_style::hint(ui, tokens, format!("{} s ago", line.age));
                         }
                     });
                 if !rows.is_empty() {
@@ -378,7 +420,16 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     if shown.is_some_and(|r| r.response.hovered() || r.response.contains_pointer())
         && message_deadline(ctx).is_some()
     {
-        ctx.data_mut(|d| d.insert_temp(until_id(), std::time::Instant::now() + MESSAGE_SHOWN));
+        let keep = shown_for(s);
+        ctx.data_mut(|d| d.insert_temp(until_id(), std::time::Instant::now() + keep));
+    }
+    if let Some((id, index)) = message_action
+        && let Some(commands) = s.messages.use_action(id, index)
+    {
+        // An action may be several commands (e.g. set a preference, then play), in order.
+        for (command, params) in commands {
+            s.dispatch_or_notice(&command, &params);
+        }
     }
     if clear_messages {
         s.dispatch_or_notice("messages.clear", &serde_json::Value::Null);

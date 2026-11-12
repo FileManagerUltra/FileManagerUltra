@@ -109,7 +109,11 @@ pub fn classify(entry: &Entry, os: Os) -> OpenKind {
 pub enum OpenPlan {
     Navigate,
     Launch,
-    ConfirmRun { name: String },
+    /// Audio or video set to play in the Media pane: dispatch `media.play {uris: [uri]}`.
+    PlayMedia,
+    ConfirmRun {
+        name: String,
+    },
 }
 
 /// Decide from the cached listing, without touching the filesystem.
@@ -119,7 +123,12 @@ pub fn plan(s: &mut Session, uri: &VfsUri) -> OpenPlan {
     };
     match classify(&entry, Os::current()) {
         OpenKind::Dir => OpenPlan::Navigate,
-        OpenKind::Document => OpenPlan::Launch,
+        OpenKind::Document => match crate::media_open_cmds::media_open_kind(uri) {
+            Some(kind) if s.media_open_target(kind) == crate::prefs::MediaOpenTarget::MediaPane => {
+                OpenPlan::PlayMedia
+            }
+            _ => OpenPlan::Launch,
+        },
         OpenKind::Executable => OpenPlan::ConfirmRun { name: entry.name },
     }
 }
@@ -283,6 +292,9 @@ pub fn open_file() -> CommandSpec {
             let path = local_path(&uri)?;
             s.jobs
                 .submit(lane_for(uri.scheme()), move |_ctx| launch(&path, mode));
+            if mode == Mode::Default {
+                s.offer_media_open_hint(&uri);
+            }
             Ok(())
         },
     }
@@ -545,6 +557,42 @@ mod tests {
         assert_eq!(plan(&mut s, &file), OpenPlan::Launch);
         let sub = folder.join("sub").expect("join");
         assert_eq!(plan(&mut s, &sub), OpenPlan::Navigate);
+    }
+
+    #[test]
+    fn media_files_follow_the_open_preference_per_kind() {
+        let dir = tempfile::tempdir().expect("tmp");
+        for name in ["song.mp3", "film.mkv", "list.m3u"] {
+            std::fs::write(dir.path().join(name), "x").expect("write");
+        }
+        let mut s = Session::new().expect("session");
+        let folder = VfsUri::parse(&dir.path().to_string_lossy()).expect("uri");
+        s.ensure_read(folder.clone()).expect("read");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while s.dirs.entries(&folder).is_none() && std::time::Instant::now() < deadline {
+            s.poll();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let song = folder.join("song.mp3").expect("join");
+        let film = folder.join("film.mkv").expect("join");
+        let list = folder.join("list.m3u").expect("join");
+        assert_eq!(
+            plan(&mut s, &song),
+            OpenPlan::Launch,
+            "default app by default"
+        );
+        s.prefs.media_open_audio = crate::prefs::MediaOpenTarget::MediaPane;
+        assert_eq!(plan(&mut s, &song), OpenPlan::PlayMedia);
+        assert_eq!(
+            plan(&mut s, &film),
+            OpenPlan::Launch,
+            "video keeps its own setting"
+        );
+        assert_eq!(
+            plan(&mut s, &list),
+            OpenPlan::Launch,
+            "playlists keep the default app"
+        );
     }
 
     #[cfg(unix)]

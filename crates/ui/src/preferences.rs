@@ -63,6 +63,13 @@ impl Topic {
 }
 
 /// Render the dialog while `Session::preferences_open`; Esc or the button closes it.
+/// Open Preferences on the Media page (e.g. from the player's Subtitle appearance item).
+pub fn open_media(ctx: &Context, s: &mut Session) {
+    if s.dispatch_or_notice("app.preferences", &serde_json::Value::Null) {
+        ctx.data_mut(|data| data.insert_temp(Id::NULL.with("fm-preferences-topic"), Topic::Media));
+    }
+}
+
 pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     if !s.preferences_open {
         return;
@@ -372,6 +379,15 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
             );
         }
         Topic::Media => {
+            section(
+                ui,
+                tokens,
+                "Opening files",
+                Some(
+                    "What a double-click or Enter does with an audio or video file on this computer.",
+                ),
+                |ui| media_open_choices(ui, s),
+            );
             section(
                 ui,
                 tokens,
@@ -811,6 +827,39 @@ fn cache_location(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
         s.dispatch_or_notice("preview.thumbs.clear_cache", &Params::Null);
     }
     ui.data_mut(|d| d.insert_temp(id, text));
+}
+
+/// Default app or Media pane, separately for audio and video.
+fn media_open_choices(ui: &mut egui::Ui, s: &mut Session) {
+    use fm_engine::prefs::MediaOpenTarget;
+    for (label, kind, current) in [
+        (
+            "When I open an audio file",
+            "audio",
+            s.prefs.media_open_audio,
+        ),
+        (
+            "When I open a video file",
+            "video",
+            s.prefs.media_open_video,
+        ),
+    ] {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(label);
+            for (target, text, key) in [
+                (
+                    MediaOpenTarget::DefaultApp,
+                    "Open in default app",
+                    "default",
+                ),
+                (MediaOpenTarget::MediaPane, "Play in Media pane", "media"),
+            ] {
+                if ui.radio(current == target, text).clicked() && current != target {
+                    s.dispatch_or_notice("prefs.media_open", &json!({"kind": kind, "target": key}));
+                }
+            }
+        });
+    }
 }
 
 fn set(s: &mut Session, key: &str, value: serde_json::Value) {

@@ -206,6 +206,7 @@ impl Session {
                     )
                     .map_err(|error| error.to_string())?;
             }
+            self.media.note_added(first, count);
             for notice in &loaded.notices {
                 self.messages.push(notice);
             }
@@ -241,6 +242,7 @@ impl Session {
         sources: Vec<VfsUri>,
         notices: Vec<String>,
         folder: bool,
+        play_now: bool,
         group: Option<u32>,
         slot: Option<Slot>,
     ) -> Result<(), FmError> {
@@ -261,7 +263,7 @@ impl Session {
         self.media_source.pending = Some(Pending {
             receiver,
             original: self.media.queue.items().to_vec(),
-            play_now: folder,
+            play_now,
             group,
             slot,
         });
@@ -459,15 +461,30 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Enqueue Dropped Media",
             menu: &["Media", "Enqueue dropped media"],
             shortcut: None,
-            params: "{uris: string[], group?: number, after?: number | before?: number, outside?: bool}: enqueue local files/folders in payload order; auto-play when idle; `group` adds them to that queue folder; `after`/`before` put them beside that queue row (like media.place) instead of at the end",
+            params: "{uris: string[], group?: number, after?: number | before?: number, outside?: bool, play?: bool}: enqueue local files/folders in payload order (auto-play when idle only with the add-autoplay preference); `group` adds them to that queue folder; `after`/`before` put them beside that queue row (like media.place) instead of at the end; `play` (a drop on the player) inserts them after the current item and starts the first, and excludes group/after/before/outside",
             enabled: |s| !s.media_source.is_busy(),
             run: |s, params| {
                 let map = object(params)?.ok_or_else(|| bad("uris: array of paths is required"))?;
                 if map.keys().any(|key| {
-                    !["uris", "group", "after", "before", "outside"].contains(&key.as_str())
+                    !["uris", "group", "after", "before", "outside", "play"].contains(&key.as_str())
                 }) {
                     return Err(bad(
-                        "only uris, group, after, before and outside are accepted",
+                        "only uris, group, after, before, outside and play are accepted",
+                    ));
+                }
+                let play = match map.get("play") {
+                    None => false,
+                    Some(value) => value
+                        .as_bool()
+                        .ok_or_else(|| bad("play must be true or false"))?,
+                };
+                if play
+                    && ["group", "after", "before", "outside"]
+                        .iter()
+                        .any(|key| map.contains_key(*key))
+                {
+                    return Err(bad(
+                        "a drop that plays goes after the current item: leave out group, after, before and outside",
                     ));
                 }
                 let group = match map.get("group") {
@@ -506,7 +523,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         _ => notices.push("Skipped an invalid or remote media path; copy remote files locally first.".into()),
                     }
                 }
-                s.submit_media_sources(sources, notices, false, group, slot)
+                s.submit_media_sources(sources, notices, false, play, group, slot)
             },
         },
         CommandSpec {
@@ -572,7 +589,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         "Choose a local folder; remote media is not available yet.",
                     ));
                 }
-                s.submit_media_sources(vec![uri], Vec::new(), true, None, None)
+                s.submit_media_sources(vec![uri], Vec::new(), true, true, None, None)
             },
         },
     ]
@@ -768,6 +785,48 @@ mod tests {
         assert!(fs.stat(&uri("/music/first.mp3")).is_ok());
         assert!(fs.stat(&uri("/music/album/song2.mp3")).is_ok());
         assert!(s.fileops.jobs().is_empty());
+    }
+
+    #[test]
+    fn a_drop_on_the_player_plays_after_current_and_a_playlist_drop_only_adds() {
+        let (mut s, _) = fixture();
+        for path in ["/music/first.mp3", "/music/last.flac"] {
+            s.media.queue.enqueue(uri(path)).expect("queue");
+        }
+        s.media.queue.select(0).expect("select");
+        s.dispatch(
+            "media.drop",
+            &json!({"uris": ["/music/album/song2.mp3"], "play": true}),
+        )
+        .expect("drop on player");
+        wait(&mut s);
+        assert_eq!(s.media.queue.items()[1], uri("/music/album/song2.mp3"));
+        assert_eq!(s.media.queue.current_index(), Some(1), "starts at once");
+        let shown = s.media.reveal.expect("reveal");
+        assert_eq!((shown.start, shown.len), (1, 1));
+
+        // Fixture files do not decode and would keep skipping: stop, then drop on an idle player.
+        s.dispatch("media.stop", &Params::Null).expect("stop");
+        let current = s.media.queue.current().cloned();
+        s.dispatch(
+            "media.drop",
+            &json!({"uris": ["/music/album/song10.mp3"], "before": 0}),
+        )
+        .expect("drop on playlist");
+        wait(&mut s);
+        assert_eq!(s.media.queue.items()[0], uri("/music/album/song10.mp3"));
+        assert_eq!(
+            s.media.queue.current().cloned(),
+            current,
+            "playback unchanged"
+        );
+        assert!(
+            !s.media.playing,
+            "a playlist drop does not start an idle player"
+        );
+        let next = s.media.reveal.expect("reveal");
+        assert_eq!((next.start, next.len), (0, 1));
+        assert!(next.seq > shown.seq, "each addition is a new reveal");
     }
 
     fn drop_one_item(autoplay: bool) -> Session {
@@ -969,6 +1028,18 @@ mod tests {
             (
                 "media.drop",
                 json!({"uris": ["/music/first.mp3"], "move": true}),
+            ),
+            (
+                "media.drop",
+                json!({"uris": ["/music/first.mp3"], "play": "yes"}),
+            ),
+            (
+                "media.drop",
+                json!({"uris": ["/music/first.mp3"], "play": true, "after": 0}),
+            ),
+            (
+                "media.drop",
+                json!({"uris": ["/music/first.mp3"], "play": true, "group": 1}),
             ),
             ("media.play_folder", json!({"uri": 4})),
             (

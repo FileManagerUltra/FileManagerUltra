@@ -71,7 +71,7 @@ pub struct Session {
     /// Last command failure the user should see; the UI moves it into [`Session::messages`]
     /// with [`Session::drain_notices`].
     pub notice: Option<String>,
-    /// Recent failures and warnings, shown in the jobs panel.
+    /// Recent failures and warnings, shown in the Activity panel.
     pub messages: crate::messages::MessageLog,
     /// Short confirmation for the status bar; the UI hides it after a few seconds.
     pub info: Option<(String, std::time::Instant)>,
