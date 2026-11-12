@@ -484,13 +484,16 @@ fn compare_with_lists_the_folder_picks_a_file_and_cancels() {
                 },
                 s,
             );
-        for _ in 0..40 {
-            h.run();
+        // While the folder loads, a spinner keeps repainting: step instead of `run`, which
+        // fails when the UI does not settle within a few frames (slow CI runners).
+        for _ in 0..200 {
+            h.run_steps(2);
             if h.query_by_label("b.txt").is_some() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
+        h.run();
         assert!(h.query_by_label("sub/").is_some());
         assert!(
             h.query_by_label("a.txt").is_none(),

@@ -13,6 +13,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch cancels the run still going, so only the latest commit
+# uses Windows minutes.
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
