@@ -10,3 +10,7 @@ Installers for Linux, Windows and macOS SHALL NOT bundle `ffmpeg` or `ffprobe`. 
 #### Scenario: Installer contents
 - **WHEN** the release workflow builds the `.deb`/AppImage, NSIS installer and `.dmg`
 - **THEN** none of them contains an `ffmpeg` or `ffprobe` binary
+
+#### Scenario: Linux runtime libraries
+- **WHEN** the `.deb` is built
+- **THEN** its `Depends` lists the binary's runtime libraries (`libc6 (>= 2.35)`, `libgcc-s1`, `libasound2t64 | libasound2`), so apt installs ALSA where it is missing; the AppImage leaves `libasound.so.2` to the host, as the AppImage excludelist does

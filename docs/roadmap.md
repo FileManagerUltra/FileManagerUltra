@@ -11,9 +11,11 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 | 4b | `smb-backend` | SMB via the pure-Rust `smb` crate (NTLM, no system library, one code path on all platforms), reusing the connection model from change 4 | done (archived) |
 | 5 | `live-watch-and-packaging` | `notify`-driven directory refresh; cross-platform watcher and release-package smoke checks | watcher implemented and Linux-tested; Windows/macOS checks remain |
 
-Additional change, implemented: `git-status-and-diff` (git status markers, Diff view in the Preview pane) — see `docs/architecture.md` §12a; pending archive.
+Additional change, done and archived: `git-status-and-diff` (git status markers, Diff view in the Preview pane) — see `docs/architecture.md` §12a.
 
-**Current focus:** close out `live-watch` with Windows/macOS smoke checks, including a mapped drive, then validate the existing release artifacts.
+**Latest release:** 0.2.0 (2026-11-12): the Media pane, Find Files redesign, Activity panel. Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
+
+**Current focus:** see "Current focus" below: finish `add-media-pane`, and run the outstanding Windows/macOS manual checks that keep `live-watch`, `managed-ffmpeg`, `devices-section` and `release-notifications` from being archived.
 
 Session persistence is already delivered by `workspaces` (saved pane layouts and
 startup behavior). Release packaging is also configured in `.github/workflows/release.yml`:
@@ -29,18 +31,28 @@ remain future work (the command registry is already in place).
 
 ## Current focus
 
-`add-media-pane` is in progress (36/47 tasks). Done: shared native audio
-pipeline with Preview sound, the Media pane (persisted queue with folders and lock,
-playlists, drag and drop, Files/Preview entry points with position hand-off),
-local and remote (spooled) video with speed control, audio/subtitle track
-selection, fullscreen, YouTube-style keyboard controls, status-bar transport,
-gapless playback, equalizer, A-B loop, sleep timer, and audiobooks (chapters,
-resume, bookmarks, skip). ffmpeg is no longer bundled: Windows offers a pinned,
-verified download (`managed-ffmpeg`). Remaining: subtitle rendering and hardware
-decoding (6.x), pitch-preserving audio-only speed (5.3), system media controls
-(MPRIS/SMTC/Now Playing, 8.1), packaging checks (8.3), security/docs hardening
-(9.x) and Windows/macOS smoke tests. Most recent Media features are covered by
-automated tests but have not been tried in the real app.
+`add-media-pane` (41/48 tasks) shipped in 0.2.0: shared native audio pipeline
+with Preview sound, the Media pane (persisted queue with lockable playlist folders,
+playlists, drop targets on player and playlist, Files/Preview entry points with
+position hand-off, double-click to play, player right-click menu), local and remote
+(spooled) video with speed control, audio/subtitle track selection, styled text
+subtitles, DVD folders and `.iso` images, fullscreen, YouTube-style keyboard
+controls, status-bar transport, gapless playback, equalizer, A-B loop, sleep timer,
+audiobooks (chapters, resume, bookmarks, skip), and an ffmpeg fallback for audio
+formats Symphonia cannot read. ffmpeg is not bundled: Windows offers a pinned,
+verified download (`managed-ffmpeg`). `media-open-and-play-ux` is archived.
+
+Remaining in `add-media-pane`: pitch-preserving audio-only speed (5.3), bitmap
+(PGS/VobSub) subtitles (6.2), hardware decoding (6.3) with its fallback test (6.4),
+system media controls (MPRIS/SMTC/Now Playing, 8.1), the changelog/devlog entries
+at archive time (9.3), and Windows/macOS smoke tests (9.4).
+
+Manual checks that block archiving other changes:
+
+- `live-watch`: Windows and macOS, including a mapped network drive.
+- `managed-ffmpeg`: the Windows download, play, Update and Reinstall.
+- `devices-section`: USB media and VeraCrypt volumes on Linux, macOS and Windows.
+- `release-notifications`: the installed Windows shortcut icon.
 
 Recent interaction improvements include rich native Markdown previews (nested lists,
 tasks, highlighted code and aligned tables), full-loaded-document selection/copy,

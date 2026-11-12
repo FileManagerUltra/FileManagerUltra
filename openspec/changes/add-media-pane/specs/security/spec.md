@@ -21,7 +21,15 @@ Media files, tags, cover art, subtitles and playlists SHALL be treated as hostil
 
 #### Scenario: Hung decoder
 - **WHEN** a decoder subprocess stops responding
-- **THEN** it is killed after its timeout, an error notice is shown and the next item plays
+- **THEN** it is killed after its timeout (probe 10 s, audio output 20 s without data), an error notice is shown and the next item plays
+
+#### Scenario: Decoder process lifetime
+- **WHEN** an ffmpeg decoder is running and the user seeks, stops, closes the pane or quits
+- **THEN** the running process is killed and reaped before any replacement starts, so no orphaned decoder keeps running
+
+#### Scenario: Hostile tags and cover art
+- **WHEN** a file carries a 40 000-character title, a cover picture over 4 MiB and an absurd picture media type
+- **THEN** tag text is cut to 4 096 characters, the oversized picture is never kept or decoded, a smaller picture is used if present, and its media type is cut to 128 characters
 
 #### Scenario: Corrupt media
 - **WHEN** a decoder fails or panics on a corrupt file

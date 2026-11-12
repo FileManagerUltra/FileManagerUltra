@@ -130,8 +130,11 @@ skipped URLs, missing items and unsupported media without exposing credentials.
 Imports append without starting playback; export snapshots the queue to a new
 owner-only M3U8 through an atomic no-clobber temporary file.
 `media_source_cmds` expands local folder children in natural name order without
-recursion. Media drops enqueue in payload order, never copy/move files, and start
-the first new item when idle. Delayed imports refuse to replace concurrent queue
+recursion. Media drops never copy/move files: a drop on the player area uses Play
+semantics (`media.drop` with `play: true`), a drop on the playlist inserts at the
+hovered slot without starting playback (unless `media_autoplay_on_add`). `fm-ui`
+publishes the player and playlist rects as temp data so `dnd::finish_media` and
+`fm-app`'s OS drops pick the zone from the pointer position. Delayed imports refuse to replace concurrent queue
 edits; command and input caps also bound folder scans and queue growth.
 `media_entry_cmds` resolves Files selections or explicit Preview panes for local
 audio/video actions. Add appends; Play next inserts after current with priority over
@@ -151,9 +154,33 @@ without Media cancels video regardless of the background-audio preference.
 `media.speed` adjusts video playback from 0.5× to 3× in 0.05× steps. The shared
 player applies ffmpeg's pitch-preserving `atempo` chain to the soundtrack and
 scales frame deadlines and reported position against its output clock; silent
-video uses the same speed-scaled monotonic clock. Audio-only speed, track
-selection, fullscreen, YouTube-style shortcuts and advanced playback remain in
-the change's task list.
+video uses the same speed-scaled monotonic clock. Audio-only, pitch-preserving
+speed is still open (it needs a time-stretcher in the audio path).
+
+Formats Symphonia cannot read fall back to `fm-media::ffmpeg_decoder`: `ffprobe`
+for format and tags (10 s deadline), then an `ffmpeg` child piping f32 PCM through a
+bounded channel (20 s without data counts as hung). Both run with an absolute
+path, `-protocol_whitelist file`, no shell and no stdin, and the child is killed and
+reaped on seek, stop and drop. Tools are located through `set_tool_locator`, which
+the app registers so the managed Windows download (`ffmpeg_install`) is found too.
+
+The queue groups items into playlist folders (`Queue::item_group`, always
+contiguous runs). A locked folder (the default for folders added from disk) never
+gains, loses or reorders items; Play/Play next while inside one inserts after it.
+`media_group_cmds` edits folders; `media_book`/`media_resume` detect audiobooks and
+keep bounded resume points, bookmarks and finished marks per book or folder in
+owner-only state. Subtitles are parsed in `fm-media::subtitle` (SRT, WebVTT,
+ASS/SSA as styled text, capped size and cue count); embedded tracks are extracted
+by a capped, cancellable ffmpeg subprocess (`fm-preview::subtitles`). DVD `.iso`
+images are read in place by `fm-preview::dvd_iso` (bounded directory reads, range
+checks) and fed to ffmpeg through `subfile` over the `file` protocol.
+
+`media_open_cmds` applies the per-kind "open audio/video with" preference on
+activation and offers the one-time Activity hint. Every insert path sets
+`MediaState::reveal { start, len, seq }`; each Media pane consumes a new `seq` once to
+select and scroll to the added rows. The player's right-click menu (`fm-ui::media`)
+only dispatches existing `media.*` commands. `fm-ui::media_keys` takes only keys it
+acts on and none while a popup is open, so menus keep Esc and the arrows.
 
 ---
 

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Playing a file while the current item is in a locked playlist folder no longer puts the file inside that folder; it now goes right after it.
 - Esc closes the player's right-click menu again, and the arrow keys move through it instead of seeking or changing the volume.
+- Linux: the `.deb` package now declares what it needs (including the ALSA sound library), so installing it with apt pulls in anything missing instead of failing to start.
 
 ## [0.2.0] - 2026-11-12
 

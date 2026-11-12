@@ -466,6 +466,48 @@ mod tests {
     #![allow(clippy::expect_used)]
     use super::*;
 
+    fn visual(bytes: usize, media_type: String) -> symphonia::core::meta::Visual {
+        symphonia::core::meta::Visual {
+            media_type,
+            dimensions: None,
+            bits_per_pixel: None,
+            color_mode: None,
+            usage: None,
+            tags: Vec::new(),
+            data: vec![1u8; bytes].into_boxed_slice(),
+        }
+    }
+
+    #[test]
+    fn hostile_tags_and_cover_art_are_capped_before_use() {
+        use symphonia::core::meta::{MetadataBuilder, Tag};
+        let mut builder = MetadataBuilder::new();
+        builder.add_tag(Tag::new(
+            Some(StandardTagKey::TrackTitle),
+            "TIT2",
+            Value::String("x".repeat(MAX_TAG_CHARS * 10)),
+        ));
+        // An oversized picture is skipped; the next one that fits is used.
+        builder.add_visual(visual(MAX_COVER_BYTES + 1, "image/png".into()));
+        builder.add_visual(visual(16, "i".repeat(10_000)));
+        let metadata = builder.metadata();
+        let mut tags = AudioTags::default();
+        tags.read(&metadata);
+        assert_eq!(
+            tags.title.as_deref().map(|t| t.chars().count()),
+            Some(MAX_TAG_CHARS)
+        );
+        let cover = tags.cover.expect("the small picture");
+        assert_eq!(cover.bytes.len(), 16);
+        assert_eq!(cover.media_type.chars().count(), 128);
+
+        let mut only_huge = MetadataBuilder::new();
+        only_huge.add_visual(visual(MAX_COVER_BYTES + 1, "image/png".into()));
+        let mut tags = AudioTags::default();
+        tags.read(&only_huge.metadata());
+        assert!(tags.cover.is_none(), "too large art is never kept");
+    }
+
     #[test]
     fn itunsmpb_gives_delay_padding_and_length_and_rejects_nonsense() {
         let t = parse_smpb(" 00000000 00000840 000001CA 0000000000A3C1F0 00000000").expect("smpb");

@@ -112,6 +112,12 @@ pub fn check() -> Result<String, String> {
 
 /// Write `target/Packager.toml` for `cargo-packager` from the brand constants, so installer
 /// labels and ids never hard-code the product name.
+/// Runtime libraries of the Linux binary (its `NEEDED` entries), as Debian packages.
+/// glibc 2.35 is the build runner's (Ubuntu 22.04); ALSA is `libasound2t64` from
+/// Ubuntu 24.04 / Debian 13 on, `libasound2` before. The AppImage leaves ALSA to the
+/// host, as the AppImage excludelist does, so the system's sound plugins and config apply.
+const DEB_DEPENDS: &[&str] = &["libc6 (>= 2.35)", "libgcc-s1", "libasound2t64 | libasound2"];
+
 pub fn packager_config() -> Result<String, String> {
     let root = util::workspace_root()?;
     let brand = read_brand(&root)?;
@@ -130,15 +136,21 @@ pub fn packager_config() -> Result<String, String> {
         .map(|m| m.as_str().to_string())
         .ok_or("workspace version not found in Cargo.toml")?;
     let toml = format!(
-        "name = \"{slug}\"\nversion = \"{version}\"\nproduct-name = \"{name}\"\nidentifier = \"{id}\"\npublisher = \"{name}\"\n\
+        "name = \"{slug}\"\nversion = \"{version}\"\nproduct-name = \"{name}\"\nidentifier = \"{id}\"\npublisher = \"{name}\"\nauthors = [\"{name}\"]\n\
 description = \"A cross-platform multi-pane file manager\"\ncategory = \"Utility\"\n\
 icons = [\"{root}/packaging/icon.png\", \"{root}/packaging/icon.ico\", \"{root}/packaging/icon.icns\"]\nout-dir = \"{root}/target/packager\"\n\
 binaries-dir = \"{root}/target/release\"\nbinaries = [{{ path = \"{slug}\", main = true }}]\n\
+\n[deb]\ndepends = [{deb_depends}]\n\
 \n[nsis]\ninstaller-icon = \"{root}/packaging/icon.ico\"\npreinstall-section = '''\n{icon_refresh}\n'''\n",
         name = brand.name,
         slug = brand.slug,
         root = root.display().to_string().replace('\\', "/"),
         icon_refresh = include_str!("../../packaging/windows-refresh-icons.nsh"),
+        deb_depends = DEB_DEPENDS
+            .iter()
+            .map(|dep| format!("\"{dep}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
     );
     let out = root.join("target/Packager.toml");
     if let Some(dir) = out.parent() {
@@ -401,6 +413,28 @@ mod tests {
     fn replace_const_errors_when_missing() {
         let text = "pub const OTHER: &str = \"x\";\n";
         assert!(replace_const(text, "APP_NAME", "New").is_err());
+    }
+
+    #[test]
+    fn the_deb_declares_its_runtime_libraries() {
+        packager_config().expect("generate config");
+        let root = util::workspace_root().expect("workspace");
+        let text = util::read(&root.join("target/Packager.toml")).expect("config");
+        let config: toml::Table = toml::from_str(&text).expect("parse");
+        let depends: Vec<&str> = config["deb"]["depends"]
+            .as_array()
+            .expect("deb depends")
+            .iter()
+            .filter_map(|dep| dep.as_str())
+            .collect();
+        assert!(
+            depends.iter().any(|dep| dep.contains("libasound2")),
+            "{depends:?}"
+        );
+        assert!(
+            depends.iter().any(|dep| dep.starts_with("libc6")),
+            "{depends:?}"
+        );
     }
 
     #[test]

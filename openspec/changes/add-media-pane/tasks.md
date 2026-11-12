@@ -81,11 +81,11 @@ controls remain pending.
 
 - [ ] 8.1 `souvlaki` (or equivalent) behind a trait in `fm-app`: MPRIS (zbus), SMTC, macOS Now Playing; dispatch only `media.*`; re-add `raw-window-handle` if needed
 - [x] 8.2 ~~Bundle pinned LGPL `ffmpeg`/`ffprobe` in the installers~~ Superseded by `managed-ffmpeg`: installers do not bundle ffmpeg; Windows offers a pinned, SHA-256-verified download from Preferences > Media, elsewhere ffmpeg is discovered on the system (`build-guardrails` delta updated)
-- [ ] 8.3 Verify the `.deb`/AppImage depend on or bundle `libasound2`, and that no installer contains `ffmpeg`/`ffprobe`
+- [x] 8.3 Verify the `.deb`/AppImage depend on or bundle `libasound2`, and that no installer contains `ffmpeg`/`ffprobe` (0.2.0 checked: no ffmpeg in any installer; the `.deb` had no `Depends` at all, now `libc6 (>= 2.35), libgcc-s1, libasound2t64 | libasound2` plus a Maintainer; the AppImage leaves ALSA to the host per the AppImage excludelist)
 
 ## 9. Hardening, docs and release
 
-- [ ] 9.1 Extend `security` coverage: playlist caps, decoder timeouts, spool permissions, no credentials in queue state or notices
-- [ ] 9.2 Update `docs/architecture.md` (crate map, `AudioOwner`, clock, lanes), `docs/roadmap.md`, `docs/development.md` (audio backend, ffmpeg), and sync the delta specs
+- [x] 9.1 Extend `security` coverage: playlist caps, decoder timeouts, spool permissions, no credentials in queue state or notices (audit: most existed; added tests for the hung ffprobe deadline, stalled ffmpeg kill, kill on seek/drop, and tag/cover caps)
+- [x] 9.2 Update `docs/architecture.md` (crate map, `AudioOwner`, clock, lanes), `docs/roadmap.md`, `docs/development.md` (audio backend, ffmpeg), and sync the delta specs (docs updated 2026-11-12; the delta specs sync when the change is archived)
 - [ ] 9.3 Add `CHANGELOG.md` entries under Unreleased and a `log/devlog.md` entry
 - [ ] 9.4 Gate: `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo xtask layers`, `cargo xtask brand-check`, `cargo fmt --all -- --check`; Windows and macOS smoke tests for audio device, ffmpeg discovery and fullscreen

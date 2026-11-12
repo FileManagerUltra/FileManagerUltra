@@ -4,18 +4,19 @@
 
 - Rust stable via [rustup](https://rustup.rs) (`cargo 1.99+`). The workspace uses edition 2024.
 - Linux audio output (`fm-media`, `cpal`) requires `pkg-config` and ALSA development headers: `sudo apt install pkg-config libasound2-dev`. This is an approved exception to the no-system-build-dependencies rule; the windowing stack itself needs no development packages. Windows and macOS use their native audio APIs.
-- Linux audio runtime: `libasound2` (or `libasound2t64` on newer distributions), plus the desktop's ALSA output or PipeWire/PulseAudio ALSA compatibility plugin. A missing output device is reported rather than crashing.
+- Linux audio runtime: `libasound2` (or `libasound2t64` on newer distributions), plus the desktop's ALSA output or PipeWire/PulseAudio ALSA compatibility plugin. A missing output device is reported rather than crashing. The `.deb` declares `libc6 (>= 2.35), libgcc-s1, libasound2t64 | libasound2` (`DEB_DEPENDS` in `xtask/src/brand.rs`; keep it in step with `readelf -d` on the release binary); the AppImage leaves `libasound.so.2` to the host, as the AppImage excludelist does.
 - A display is required to **run** the app (Wayland or X11). CI and headless work use the test/snapshot paths that never open a window.
 - Linux runtime packages for the window itself: `libxkbcommon0`, `libwayland-client0`, `libGL.so.1`, `libEGL.so.1` — present on a normal desktop install; a bare server may need them (`sudo apt install libxkbcommon0 libgl1 libegl1`).
 
-## Everyday commands
+## Media playback
 
 Single-file audio previews offer Play/Pause, seek, volume and mute, with tags and
 cover art when present. Preferences > Preview > Audio can enable autoplay (off by
 default). Playback stops when the preview selection changes or its pane closes.
 Video previews play with sound and offer volume/mute controls. Video autoplay is
 on by default and can be disabled in Preferences > Preview > Playback. Without an
-audio device, video plays silently with a hint. installers do not bundle ffmpeg or ffprobe; Windows builds download a pinned, hash-verified copy from Preferences > Media (see "Managed
+audio device, video plays silently with a hint. Audio formats Symphonia cannot
+decode (WMA, Opus, APE, AC-3…) and all video need ffmpeg. Installers do not bundle ffmpeg or ffprobe; Windows builds download a pinned, hash-verified copy from Preferences > Media (see "Managed
 tools" in `docs/architecture.md`; to bump the pin edit `Pin::WINDOWS` in
 `crates/engine/src/ffmpeg_install.rs`: URL, size and the SHA-256 published by the
 build's author, then run the ignored `real_pin_archive_installs` test with
@@ -27,6 +28,8 @@ to another file, close/switch the Preview pane, switch workspaces and quit while
 playing; sound must stop and no ffmpeg child should remain. Check an audio-only
 file with autoplay off/on, a silent video, a delayed soundtrack and a machine
 without an output device (silent video plus hint, actionable error for audio).
+
+## Everyday commands
 
 ```sh
 cargo run -p fm-app                 # run the desktop app

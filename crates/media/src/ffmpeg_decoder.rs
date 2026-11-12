@@ -65,7 +65,11 @@ fn unsupported() -> FmError {
 /// Run ffprobe with a deadline; `key=value` lines of the first audio stream and format.
 fn probe(path: &str) -> Result<AudioInfo, FmError> {
     let ffprobe = tool("ffprobe").ok_or_else(unsupported)?;
-    let mut c = command(&ffprobe);
+    probe_with(&ffprobe, path, PROBE_TIMEOUT)
+}
+
+fn probe_with(ffprobe: &Path, path: &str, timeout: Duration) -> Result<AudioInfo, FmError> {
+    let mut c = command(ffprobe);
     c.args([
         "-v",
         "error",
@@ -89,7 +93,7 @@ fn probe(path: &str) -> Result<AudioInfo, FmError> {
         let _ = (&mut out).take(PROBE_BYTES).read_to_string(&mut text);
         text
     });
-    let deadline = Instant::now() + PROBE_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let ok = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status.success(),
@@ -161,6 +165,9 @@ enum Chunk {
 }
 
 pub(crate) struct FfmpegDecoder {
+    ffmpeg: PathBuf,
+    /// No PCM for this long means the decoder hangs (`STALL_TIMEOUT`; shorter in tests).
+    stall: Duration,
     path: String,
     info: AudioInfo,
     child: Option<Child>,
@@ -174,7 +181,10 @@ impl FfmpegDecoder {
     pub(crate) fn open(path: &Path) -> Result<Self, FmError> {
         let text = safe_path(path).ok_or_else(|| crate::error("Choose a safe local audio path"))?;
         let info = probe(text)?;
+        let ffmpeg = tool("ffmpeg").ok_or_else(unsupported)?;
         let mut this = Self {
+            ffmpeg,
+            stall: STALL_TIMEOUT,
             path: text.to_string(),
             info,
             child: None,
@@ -200,9 +210,8 @@ impl FfmpegDecoder {
 
     fn spawn(&mut self, from: f64) -> Result<(), FmError> {
         self.stop();
-        let ffmpeg = tool("ffmpeg").ok_or_else(unsupported)?;
         let format = self.info.format;
-        let mut c = command(&ffmpeg);
+        let mut c = command(&self.ffmpeg);
         c.args([
             "-v",
             "error",
@@ -282,7 +291,7 @@ impl FfmpegDecoder {
         let Some(receiver) = &self.receiver else {
             return Ok(None);
         };
-        match receiver.recv_timeout(STALL_TIMEOUT) {
+        match receiver.recv_timeout(self.stall) {
             Ok(Chunk::Pcm(samples)) => {
                 if samples.iter().any(|s| !s.is_finite()) {
                     return Err(crate::error("Decoder returned non-finite audio samples"));
@@ -331,6 +340,94 @@ fn samples(bytes: &[u8]) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stand-in tool that never answers: `exec sleep`, so its pid is the sleeping process.
+    #[cfg(unix)]
+    fn hanging_tool(dir: &Path, name: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, "#!/bin/sh\nexec sleep 30\n").expect("script");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+        path
+    }
+
+    /// The process is gone (killed and reaped), not just orphaned.
+    #[cfg(target_os = "linux")]
+    fn gone(pid: u32) -> bool {
+        !Path::new(&format!("/proc/{pid}")).exists()
+    }
+
+    #[cfg(unix)]
+    fn hanging_decoder(dir: &Path) -> FfmpegDecoder {
+        FfmpegDecoder {
+            ffmpeg: hanging_tool(dir, "ffmpeg"),
+            stall: Duration::from_millis(200),
+            path: "/music/song.wma".into(),
+            info: AudioInfo {
+                format: AudioFormat::new(44_100, 2).expect("format"),
+                duration: Some(60.0),
+                tags: AudioTags::default(),
+                encoder_delay: 0,
+                encoder_padding: 0,
+            },
+            child: None,
+            receiver: None,
+            position: 0.0,
+            decoded_any: false,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_hung_probe_is_killed_at_its_deadline() {
+        let dir = tempfile::tempdir().expect("dir");
+        let ffprobe = hanging_tool(dir.path(), "ffprobe");
+        let started = Instant::now();
+        let result = probe_with(&ffprobe, "/music/song.wma", Duration::from_millis(200));
+        assert!(result.is_err(), "a probe that never answers is an error");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the deadline holds: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stalled_decoder_reports_an_error_and_its_process_is_killed() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut decoder = hanging_decoder(dir.path());
+        decoder.spawn(0.0).expect("spawn");
+        #[cfg(target_os = "linux")]
+        let pid = decoder.child.as_ref().map(Child::id).expect("child");
+        let started = Instant::now();
+        let Err(err) = decoder.next_packet() else {
+            panic!("no PCM within the stall timeout must be an error");
+        };
+        assert!(err.to_string().contains("stopped responding"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(decoder.child.is_none());
+        #[cfg(target_os = "linux")]
+        assert!(gone(pid), "the hung ffmpeg is killed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn seeking_and_dropping_kill_the_running_decoder() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut decoder = hanging_decoder(dir.path());
+        decoder.spawn(0.0).expect("spawn");
+        #[cfg(target_os = "linux")]
+        let first = decoder.child.as_ref().map(Child::id).expect("child");
+        decoder.seek(30.0).expect("seek restarts");
+        #[cfg(target_os = "linux")]
+        {
+            assert!(gone(first), "a seek replaces the old process");
+            let second = decoder.child.as_ref().map(Child::id).expect("child");
+            drop(decoder);
+            assert!(gone(second), "stop, pane close and quit drop the decoder");
+        }
+    }
 
     #[test]
     fn probe_output_parses_and_hostile_values_are_bounded() {
