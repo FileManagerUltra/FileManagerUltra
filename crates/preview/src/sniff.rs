@@ -46,6 +46,11 @@ fn magic(head: &[u8]) -> Option<Kind> {
     if h.starts_with(b"GIF87a") || h.starts_with(b"GIF89a") {
         return Some(Kind::Image("gif"));
     }
+    // TIFF structure: camera RAW photos (DNG, CR2, NEF, ARW…) and TIFF images, shown through
+    // their embedded JPEG.
+    if crate::raw_prev::is_tiff(h) {
+        return Some(Kind::Image("tiff"));
+    }
     if h.len() >= 12 && &h[0..4] == b"RIFF" {
         match &h[8..12] {
             b"WEBP" => return Some(Kind::Image("webp")),

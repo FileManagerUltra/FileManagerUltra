@@ -844,30 +844,39 @@ pub fn reveal() -> CommandSpec {
                 .parent()
                 .ok_or_else(|| FmError::InvalidParams("a root has no folder".to_string()))?;
             let name = uri.file_name().unwrap_or_default().to_string();
-            s.backends.require(&parent)?;
-            let is_files =
-                |s: &Session, p: PaneId| s.layout.state(p).is_some_and(|x| x.kind.is_files());
-            let pane = s
-                .search
-                .as_ref()
-                .map(|x| x.origin)
-                .filter(|p| is_files(s, *p))
-                .or_else(|| Some(s.layout.focused()).filter(|p| is_files(s, *p)))
-                .or_else(|| s.layout.panes().into_iter().find(|p| is_files(s, *p)))
-                .ok_or_else(|| FmError::NotFound("a Files pane".to_string()))?;
-            s.layout.focus_pane(pane)?;
-            if let Some(state) = s.layout.state_mut(pane) {
-                if state.location != parent {
-                    state.navigate(parent.clone());
-                }
-                state.tree.active = false;
-                state.listing.reveal = Some(name);
-            }
-            s.note_visit(&parent);
-            s.ensure_read(parent)?;
-            Ok(())
+            show_in_files(s, parent, Some(name))
         },
     }
+}
+
+/// Open `folder` in a Files pane (the search's origin, the focused pane or the first Files
+/// pane), focus it and, with `select`, select and scroll to that item.
+pub(crate) fn show_in_files(
+    s: &mut Session,
+    folder: VfsUri,
+    select: Option<String>,
+) -> Result<(), FmError> {
+    s.backends.require(&folder)?;
+    let is_files = |s: &Session, p: PaneId| s.layout.state(p).is_some_and(|x| x.kind.is_files());
+    let pane = s
+        .search
+        .as_ref()
+        .map(|x| x.origin)
+        .filter(|p| is_files(s, *p))
+        .or_else(|| Some(s.layout.focused()).filter(|p| is_files(s, *p)))
+        .or_else(|| s.layout.panes().into_iter().find(|p| is_files(s, *p)))
+        .ok_or_else(|| FmError::NotFound("a Files pane".to_string()))?;
+    s.layout.focus_pane(pane)?;
+    if let Some(state) = s.layout.state_mut(pane) {
+        if state.location != folder {
+            state.navigate(folder.clone());
+        }
+        state.tree.active = false;
+        state.listing.reveal = select;
+    }
+    s.note_visit(&folder);
+    s.ensure_read(folder)?;
+    Ok(())
 }
 
 pub fn specs() -> Vec<CommandSpec> {

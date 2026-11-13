@@ -14,6 +14,7 @@ pub mod log;
 pub mod markdown;
 pub mod platform;
 pub mod player;
+pub mod raw_prev;
 pub mod sniff;
 pub mod structured;
 pub mod subtitles;
@@ -386,6 +387,8 @@ fn render_inner(
         Detection::Builtin => sniff::sniff(entry.uri.path_str(), &head),
     };
     match kind {
+        // Camera RAW photos (TIFF structure) are read in pieces: only their embedded JPEG.
+        Kind::Image(_) if raw_prev::is_tiff(&head) => raw_prev::render(vfs, entry, limits),
         Kind::Image(_) => image_prev::render(vfs, entry, limits),
         Kind::Log => log::open_doc_with(vfs, entry, limits, logs).map(Preview::Log),
         Kind::Text(lang) => text::render_text(vfs, entry, limits, &lang),

@@ -1,4 +1,5 @@
-//! Media-pane fullscreen (a view mode of the layout) and native window fullscreen.
+//! Media-pane fullscreen (a view mode of the layout that also takes the native window
+//! fullscreen) and native window fullscreen on its own.
 
 use fm_layout::PaneId;
 use fm_vfs::FmError;
@@ -10,6 +11,8 @@ use crate::{Session, file_cmds::object, registry::CommandSpec};
 pub struct MediaFullscreen {
     restore_focus: PaneId,
     restore_zoom: Option<PaneId>,
+    /// Whether the window was already fullscreen (F11) before; it then stays so.
+    restore_window: bool,
 }
 
 fn bad(message: &str) -> FmError {
@@ -52,17 +55,22 @@ impl Session {
         let restore = MediaFullscreen {
             restore_focus: self.layout.focused(),
             restore_zoom: self.layout.zoomed,
+            restore_window: self.window_fullscreen,
         };
         self.layout.focus_pane(pane)?;
         self.media_fullscreen = Some(restore);
+        // The video fills the screen, not just the window.
+        self.window_fullscreen = true;
         Ok(())
     }
 
-    /// Leave fullscreen; `restore` also returns focus (and a user zoom) to where they were.
+    /// Leave fullscreen and put the window back as it was; `restore` also returns focus
+    /// (and a user zoom) to where they were.
     pub(crate) fn media_fullscreen_leave(&mut self, restore: bool) {
         let Some(saved) = self.media_fullscreen.take() else {
             return;
         };
+        self.window_fullscreen = saved.restore_window;
         if !restore {
             return;
         }
@@ -164,10 +172,15 @@ mod tests {
         s.audio_owner = AudioOwner::Media;
         s.dispatch("media.fullscreen", &json!(null)).expect("enter");
         assert!(s.media_fullscreen_active());
+        assert!(
+            s.window_fullscreen,
+            "the video fills the screen, not the window"
+        );
         assert_eq!(Some(s.layout.focused()), s.media_pane());
         assert!(s.media.playing);
         s.dispatch("media.fullscreen", &json!(null)).expect("leave");
         assert!(!s.media_fullscreen_active());
+        assert!(!s.window_fullscreen, "the window comes back as it was");
         assert_eq!(s.layout.focused(), files);
         assert_eq!(s.layout.panes(), layout);
         assert!(s.media.playing);
@@ -192,12 +205,26 @@ mod tests {
     }
 
     #[test]
-    fn stop_and_pane_close_leave_fullscreen() {
+    fn a_window_already_fullscreen_stays_fullscreen_afterwards() {
+        let mut s = session();
+        s.dispatch("window.fullscreen", &json!({"on": true}))
+            .expect("F11");
+        s.dispatch("media.fullscreen", &json!({"on": true}))
+            .expect("enter");
+        assert!(s.window_fullscreen);
+        s.dispatch("media.fullscreen", &json!({"on": false}))
+            .expect("leave");
+        assert!(s.window_fullscreen);
+    }
+
+    #[test]
+    fn stop_pane_close_and_focus_loss_leave_fullscreen_and_restore_the_window() {
         let mut s = session();
         s.dispatch("media.fullscreen", &json!({"on": true}))
             .expect("enter");
         s.dispatch("media.stop", &json!(null)).expect("stop");
         assert!(!s.media_fullscreen_active());
+        assert!(!s.window_fullscreen);
         let mut s = session();
         s.dispatch("media.fullscreen", &json!({"on": true}))
             .expect("enter");
@@ -205,6 +232,21 @@ mod tests {
         s.dispatch("pane.close", &json!({"pane": pane}))
             .expect("close");
         assert!(!s.media_fullscreen_active());
+        assert!(!s.window_fullscreen);
+        let mut s = session();
+        s.dispatch("media.fullscreen", &json!({"on": true}))
+            .expect("enter");
+        let media = s.media_pane().expect("pane");
+        let other = s
+            .layout
+            .panes()
+            .into_iter()
+            .find(|pane| *pane != media)
+            .expect("files pane");
+        s.layout.focus_pane(other).expect("focus");
+        s.media_fullscreen_check();
+        assert!(!s.media_fullscreen_active());
+        assert!(!s.window_fullscreen);
     }
 
     #[test]

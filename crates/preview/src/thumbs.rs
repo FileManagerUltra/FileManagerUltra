@@ -15,7 +15,8 @@ use crate::{Limits, Preview, image_prev, text, video};
 pub const EDGES: [u32; 3] = [160, 256, 512];
 /// Cached files larger than this are ignored (a thumbnail is never this big).
 const MAX_CACHED_BYTES: u64 = 8 << 20;
-const CACHE_VERSION: u8 = 1;
+/// 2: photos follow their EXIF orientation, so older sideways thumbnails are redrawn.
+const CACHE_VERSION: u8 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThumbKind {
@@ -34,6 +35,7 @@ pub fn classify(name: &str) -> ThumbKind {
         .unwrap_or_default();
     match ext.as_str() {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" => ThumbKind::Image,
+        raw if crate::raw_prev::RAW_EXTENSIONS.contains(&raw) => ThumbKind::Image,
         "svg" | "svgz" => ThumbKind::Svg,
         "mp4" | "m4v" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "flv" | "mpg" | "mpeg" | "3gp"
         | "ogv" | "vob" | "m2ts" | "mts" => ThumbKind::Video,
@@ -80,6 +82,13 @@ pub fn make_as(vfs: &dyn Vfs, entry: &Entry, edge: u32, kind: ThumbKind) -> Opti
         ..Limits::default()
     };
     let doc = match kind {
+        ThumbKind::Image if crate::raw_prev::is_raw_name(&entry.name) => {
+            // Only the directories and the embedded JPEG are read, not the whole RAW file.
+            match crate::raw_prev::render(vfs, entry, &limits).ok()? {
+                Preview::Image(doc) => doc,
+                _ => return None,
+            }
+        }
         ThumbKind::Image => {
             if entry.size.is_some_and(|s| s > limits.image_bytes) {
                 return None;
@@ -261,6 +270,24 @@ mod tests {
         let mut e = Entry::new(VfsUri::parse(path).expect("uri"), EntryKind::File);
         e.size = Some(size);
         e
+    }
+
+    #[test]
+    fn raw_photos_get_thumbnails_from_their_embedded_jpeg() {
+        assert_eq!(classify("IMG_5376.CR2"), ThumbKind::Image);
+        assert_eq!(classify("IMG_0440.dng"), ThumbKind::Image);
+        let fs = fm_testkit::MemFs::new();
+        fs.mkdirs_str("/photos").expect("dir");
+        fs.put_str(
+            "/photos/IMG_1.cr2",
+            &crate::raw_prev::tests::raw_file(6, &[(96, 64)]),
+        )
+        .expect("write");
+        let uri = VfsUri::parse("/photos/IMG_1.cr2").expect("uri");
+        let entry = fs.stat(&uri).expect("stat");
+        let thumb = make(&fs, &entry, 160).expect("thumbnail");
+        // Upright from the camera's orientation: 96×64 turned a quarter.
+        assert_eq!((thumb.width, thumb.height), (64, 96));
     }
 
     #[test]

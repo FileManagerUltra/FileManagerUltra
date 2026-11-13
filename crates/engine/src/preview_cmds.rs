@@ -143,6 +143,8 @@ pub struct PreviewSlot {
     pub zoom: Zoom,
     /// Magnification for this pane's content, separate from image fit mode and UI zoom.
     pub scale: f32,
+    /// Quarter turns clockwise the user gave the shown picture, with the file it is for.
+    pub(crate) turn: Option<(VfsUri, u8)>,
     pub find: crate::preview_find_cmds::Find,
     /// Directory thumbnail grid instead of the summary card.
     pub thumbs: bool,
@@ -188,6 +190,7 @@ impl PreviewSlot {
             wrap: false,
             zoom: Zoom::Fit,
             scale: 1.0,
+            turn: None,
             find: Default::default(),
             thumbs: false,
             thumb_size: 0,
@@ -206,6 +209,15 @@ impl PreviewSlot {
             multi_window: LogLimits::default().initial_tail,
             saved_log: None,
             source_sort: None,
+        }
+    }
+
+    /// Quarter turns clockwise (0-3) to show the current picture with; another file starts
+    /// upright again.
+    pub fn image_turns(&self) -> u8 {
+        match (&self.turn, &self.subject) {
+            (Some((uri, turns)), Some(subject)) if *uri == subject.uri => *turns,
+            _ => 0,
         }
     }
 

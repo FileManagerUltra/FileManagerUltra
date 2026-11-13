@@ -236,6 +236,7 @@ impl Dialogs {
                     path,
                     &verdict,
                     focus,
+                    false,
                 );
                 if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice("media.subtitle.load", &json!({"uri": path.as_str()}));
@@ -253,7 +254,7 @@ impl Dialogs {
                 } else {
                     "Load playlist (M3U, M3U8 or PLS)"
                 };
-                let (go, cancel) = name_dialog(ctx, tokens, title, path, &verdict, focus);
+                let (go, cancel) = name_dialog(ctx, tokens, title, path, &verdict, focus, false);
                 if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         if *save {
@@ -270,7 +271,8 @@ impl Dialogs {
             }
             Dialog::Mkdir { dir, name } => {
                 let verdict = file_cmds::validate_new_name(s, dir, name, None);
-                let (go, cancel) = name_dialog(ctx, tokens, "New folder", name, &verdict, focus);
+                let (go, cancel) =
+                    name_dialog(ctx, tokens, "New folder", name, &verdict, focus, false);
                 if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         "file.mkdir",
@@ -283,7 +285,8 @@ impl Dialogs {
             }
             Dialog::NewFile { dir, name } => {
                 let verdict = file_cmds::validate_new_name(s, dir, name, None);
-                let (go, cancel) = name_dialog(ctx, tokens, "New file", name, &verdict, focus);
+                let (go, cancel) =
+                    name_dialog(ctx, tokens, "New file", name, &verdict, focus, false);
                 if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         "file.newfile",
@@ -296,7 +299,7 @@ impl Dialogs {
             }
             Dialog::Rename { dir, current, name } => {
                 let verdict = file_cmds::validate_new_name(s, dir, name, Some(current));
-                let (go, cancel) = name_dialog(ctx, tokens, "Rename", name, &verdict, focus);
+                let (go, cancel) = name_dialog(ctx, tokens, "Rename", name, &verdict, focus, false);
                 if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     if name != current
                         && let Ok(uri) = dir.join(current)
@@ -316,7 +319,7 @@ impl Dialogs {
                     .map(|_| ())
                     .map_err(|_| "1-40 characters, no control characters".to_string());
                 let (go, cancel) =
-                    name_dialog(ctx, tokens, "Rename workspace", name, &verdict, focus);
+                    name_dialog(ctx, tokens, "Rename workspace", name, &verdict, focus, true);
                 if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         "workspace.rename",
@@ -336,7 +339,7 @@ impl Dialogs {
                     Ok(())
                 };
                 let (go, cancel) =
-                    name_dialog(ctx, tokens, "Rename bookmark", name, &verdict, focus);
+                    name_dialog(ctx, tokens, "Rename bookmark", name, &verdict, focus, true);
                 if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         "bookmark.rename",
@@ -417,7 +420,7 @@ impl Dialogs {
                 } else {
                     "Move to"
                 };
-                let (go, cancel) = name_dialog(ctx, tokens, title, dest, &verdict, focus);
+                let (go, cancel) = name_dialog(ctx, tokens, title, dest, &verdict, focus, false);
                 if !cancel && !esc && (go || enter) && valid {
                     let list: Vec<String> = sources.iter().map(|u| u.to_string()).collect();
                     s.dispatch_or_notice(command, &json!({"sources": list, "dest": dest.as_str()}));
@@ -449,6 +452,7 @@ fn name_dialog(
     text: &mut String,
     verdict: &Result<(), String>,
     focus: bool,
+    select_all: bool,
 ) -> (bool, bool) {
     let (mut go, mut cancel) = (false, false);
     let mut open = true;
@@ -461,6 +465,15 @@ fn name_dialog(
             let edit = edit.labelled_by(caption.id);
             if focus {
                 edit.request_focus();
+                if select_all {
+                    // Typing replaces the old name; arrow keys still keep it.
+                    let mut state =
+                        egui::text_edit::TextEditState::load(ui.ctx(), edit.id).unwrap_or_default();
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::select_all_str(text)));
+                    state.store(ui.ctx(), edit.id);
+                }
             }
             match verdict {
                 Ok(()) => {

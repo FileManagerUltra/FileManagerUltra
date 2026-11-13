@@ -57,6 +57,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(crate::preview_code_cmds::specs());
     specs.extend(crate::preview_open_cmds::specs());
     specs.extend(crate::preview_scale_cmds::specs());
+    specs.extend(crate::preview_rotate_cmds::specs());
     specs.extend(crate::preview_filter_cmds::specs());
     specs.extend(crate::preview_order_cmds::specs());
     specs.extend(crate::preview_reload_cmds::specs());
@@ -77,6 +78,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(crate::media_source_cmds::specs());
     specs.extend(crate::media_resume::specs());
     specs.extend(crate::media_group_cmds::specs());
+    specs.extend(crate::media_reveal_cmds::specs());
     specs.extend(crate::media_book_cmds::specs());
     specs.extend(crate::media_video_cmds::specs());
     specs.extend(crate::media_track_cmds::specs());

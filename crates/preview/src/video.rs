@@ -340,6 +340,9 @@ fn parse_probe(raw: &[u8]) -> Option<Probe> {
                     let w = (f64::from(w) * pixel_aspect(text(s, "sample_aspect_ratio").as_deref()))
                         .round()
                         .clamp(1.0, 16_384.0) as u32;
+                    // Phone videos filmed upright are stored sideways with a rotation that
+                    // ffmpeg applies while decoding: the picture is then h wide and w high.
+                    let (w, h) = if quarter_turn(s) { (h, w) } else { (w, h) };
                     video = Some((w, h, rate.unwrap_or(25.0).min(120.0)));
                 }
                 let fps = rate.map(|f| format!(" · {f:.2} fps")).unwrap_or_default();
@@ -439,6 +442,28 @@ fn track_label(stream: &serde_json::Value, codec: &str, channels: Option<u64>) -
     }
     parts.push(detail);
     parts.join(" · ")
+}
+
+/// Whether a video stream is shown turned by 90 or 270 degrees: the display matrix
+/// rotation (`side_data_list[].rotation`, ffprobe 5 and later) or the older `rotate` tag.
+fn quarter_turn(stream: &serde_json::Value) -> bool {
+    let side = stream
+        .get("side_data_list")
+        .and_then(|list| list.as_array())
+        .into_iter()
+        .flatten()
+        .take(16)
+        .find_map(|data| data.get("rotation").and_then(serde_json::Value::as_f64));
+    let tag = || {
+        stream
+            .get("tags")
+            .and_then(|tags| tags.get("rotate"))
+            .and_then(|rotate| rotate.as_str())
+            .and_then(|rotate| rotate.trim().parse::<f64>().ok())
+    };
+    side.or_else(tag)
+        .filter(|degrees| degrees.is_finite())
+        .is_some_and(|degrees| (degrees.round() as i64).rem_euclid(180) == 90)
 }
 
 /// `sample_aspect_ratio` such as "16:11"; 1.0 when missing, unknown ("0:1") or absurd.
@@ -577,6 +602,39 @@ mod tests {
     }
 
     #[test]
+    fn upright_phone_videos_are_taller_than_wide() {
+        // A phone video filmed upright: stored 1920×1080, shown turned a quarter.
+        let side = |rotation: &str| {
+            format!(
+                r#"{{"streams":[{{"codec_type":"video","codec_name":"h264","width":1920,"height":1080,"sample_aspect_ratio":"1:1","side_data_list":[{{"side_data_type":"Display Matrix","rotation":{rotation}}}]}}]}}"#
+            )
+        };
+        let size = |raw: &str| {
+            parse_probe(raw.as_bytes())
+                .and_then(|p| p.video)
+                .map(|(w, h, _)| (w, h))
+        };
+        for rotation in ["-90", "90", "270", "-270", "90.0"] {
+            assert_eq!(size(&side(rotation)), Some((1080, 1920)), "{rotation}");
+        }
+        for rotation in ["0", "180", "-180", "45"] {
+            assert_eq!(size(&side(rotation)), Some((1920, 1080)), "{rotation}");
+        }
+        // Older ffprobe: a "rotate" tag.
+        let tag = |rotate: &str| {
+            format!(
+                r#"{{"streams":[{{"codec_type":"video","codec_name":"h264","width":1920,"height":1080,"tags":{{"rotate":"{rotate}"}}}}]}}"#
+            )
+        };
+        assert_eq!(size(&tag("90")), Some((1080, 1920)));
+        assert_eq!(size(&tag("180")), Some((1920, 1080)));
+        assert_eq!(size(&tag("sideways")), Some((1920, 1080)));
+        // An anamorphic upright video: the pixel aspect widens the stored width first.
+        let anamorphic = r#"{"streams":[{"codec_type":"video","codec_name":"mpeg2video","width":720,"height":576,"sample_aspect_ratio":"64:45","side_data_list":[{"rotation":90}]}]}"#;
+        assert_eq!(size(anamorphic), Some((576, 1024)));
+    }
+
+    #[test]
     fn chapters_parse_sorted_and_skip_garbage() {
         let raw = br#"{"chapters":[{"start_time":"10.0","end_time":"20.0","tags":{"title":"B"}},{"start_time":"0.0","end_time":"10.0"},{"start_time":"x","end_time":"1"},{"start_time":"5","end_time":"1"}]}"#;
         let c = super::parse_chapters(raw);
@@ -608,6 +666,110 @@ mod tests {
             crate::player::tests::combing(rgba, doc.width, doc.height),
             0
         );
+    }
+
+    /// A 320×180 clip, left half red and right half white, stored with a 90° display
+    /// rotation like an upright phone video: shown 180×320 with the red half at the bottom.
+    fn upright_phone_clip(dir: &Path) -> Option<std::path::PathBuf> {
+        let ff = find_tool("ffmpeg")?;
+        let plain = dir.join("plain.mp4");
+        let rotated = dir.join("upright.mp4");
+        let run = |args: &[&str], out: &Path| {
+            command(&ff)
+                .args(["-v", "error", "-y"])
+                .args(args)
+                .arg(out)
+                .status()
+                .is_ok_and(|status| status.success())
+        };
+        // H.264 where this ffmpeg can encode it, so hardware decoders take part too.
+        let source = [
+            "-f",
+            "lavfi",
+            "-i",
+            "color=white:size=320x180:duration=1:rate=25,\
+             drawbox=x=0:y=0:w=160:h=180:color=red:t=fill",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:v",
+        ];
+        let encoded = |codec: &str| {
+            let mut args = source.to_vec();
+            args.push(codec);
+            run(&args, &plain)
+        };
+        let made = (encoded("libx264") || encoded("mpeg4"))
+            && run(
+                &[
+                    "-display_rotation:v:0",
+                    "90",
+                    "-i",
+                    plain.to_str()?,
+                    "-c",
+                    "copy",
+                ],
+                &rotated,
+            );
+        made.then_some(rotated)
+    }
+
+    /// Red pixels in the top and bottom quarter of an RGBA picture.
+    fn red_top_and_bottom(rgba: &[u8], width: u32, height: u32) -> (usize, usize) {
+        let red = |rows: std::ops::Range<u32>| {
+            rows.filter_map(|row| {
+                let stride = width as usize * 4;
+                rgba.get(row as usize * stride..(row as usize + 1) * stride)
+            })
+            .flat_map(|line| line.as_chunks::<4>().0.iter())
+            .filter(|px| px[0] > 200 && px[1] < 80)
+            .count()
+        };
+        (red(0..height / 4), red(height * 3 / 4..height))
+    }
+
+    #[test]
+    fn upright_phone_videos_play_and_thumbnail_upright_and_unstretched() {
+        let Ok(dir) = tempfile::tempdir() else {
+            return;
+        };
+        let Some(path) = upright_phone_clip(dir.path()) else {
+            return;
+        };
+        let uri = fm_vfs::VfsUri::parse(&path.to_string_lossy()).expect("uri");
+        let Ok(info) = playback_info(&uri, &AtomicBool::new(false)) else {
+            // Without ffprobe nothing can be checked.
+            return;
+        };
+        assert_eq!((info.width, info.height), (180, 320));
+        for hardware in [None, Some(crate::player::HwAccel::for_platform())] {
+            let spec = crate::player::PlaySpec {
+                info: info.clone(),
+                from: 0.5,
+                width: 180,
+                speed: 1.0,
+                still: true,
+                hardware,
+                overlay: None,
+            };
+            let player =
+                crate::player::Player::start(&spec, fm_media::Gain::default()).expect("player");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+            while !player.finished() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let frame = player.latest().expect("frame");
+            eprintln!("{hardware:?}: decoded with {:?}", player.decoding());
+            assert_eq!((frame.width, frame.height), (180, 320), "{hardware:?}");
+            let (top, bottom) = red_top_and_bottom(&frame.rgba, frame.width, frame.height);
+            assert!(
+                top == 0 && bottom > 10_000,
+                "{hardware:?}: red {top} / {bottom}"
+            );
+        }
+        let entry = Entry::new(uri, fm_vfs::EntryKind::File);
+        if let Some(doc) = thumbnail(&entry, 320) {
+            assert!(doc.height > doc.width, "{}×{}", doc.width, doc.height);
+        }
     }
 
     #[test]
