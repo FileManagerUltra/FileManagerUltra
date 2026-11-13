@@ -101,7 +101,7 @@ plist = "1"
 
 # external — platform drag and drop (fm-dragout, fm-wayland, fm-winout) and Windows
 # executable resources (fm-app build script)
-x11rb = { version = "0.13", default-features = false }
+x11rb = { version = "0.14", default-features = false }
 wayland-client = "0.31"
 wayland-backend = { version = "0.3", default-features = false }
 rustix = "1"
