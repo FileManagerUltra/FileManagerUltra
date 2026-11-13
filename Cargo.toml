@@ -4,7 +4,7 @@ members = ["crates/*", "apps/*", "xtask"]
 default-members = ["crates/*", "apps/*", "xtask"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/filemanagerultra/filemanagerultra"
@@ -152,6 +152,10 @@ opt-level = 3
 
 # Decoding/resizing is generic and inlined into this crate, so it needs optimising too.
 [profile.dev.package.fm-preview]
+opt-level = 3
+
+# Real-time audio DSP (time stretch, equalizer) must keep up in dev builds too.
+[profile.dev.package.fm-media]
 opt-level = 3
 
 [patch.crates-io]

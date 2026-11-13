@@ -117,6 +117,15 @@ fn right_clicking_the_audio_player_opens_its_menu_without_video_entries() {
         h.run();
         right_click_player(&mut h);
         h.get_by_label("Equalizer…");
+        assert!(
+            h.query_by_label("Speed").is_none(),
+            "no current item: no speed"
+        );
+        h.key_press(egui::Key::Escape);
+        h.run();
+        h.state_mut().media.queue.select(0).expect("current");
+        right_click_player(&mut h);
+        h.get_by_label("Speed");
         h.get_by_label("Show in folder");
         assert!(
             h.query_by_label("Fullscreen").is_none(),

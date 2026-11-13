@@ -23,8 +23,8 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Playback Speed",
             menu: &["Media", "Speed"],
             shortcut: None,
-            params: "{value: number}: video speed from 0.5 to 3 in 0.05 increments",
-            enabled: |s| s.media.is_video(),
+            params: "{value: number}: speed from 0.5 to 3 in 0.05 increments, pitch kept; an audiobook remembers its own",
+            enabled: |s| s.media.queue.current().is_some(),
             run: |s, params| {
                 let map =
                     object(params)?.ok_or_else(|| bad("value: speed from 0.5 to 3 required"))?;
@@ -40,10 +40,22 @@ pub fn specs() -> Vec<CommandSpec> {
                 if (steps - steps.round()).abs() > 0.000_1 {
                     return Err(bad("speed must use 0.05 increments"));
                 }
-                if !s.media.is_video() {
-                    return Err(bad("video speed is unavailable for this item"));
+                let Some(index) = s.media.queue.current_index() else {
+                    return Err(bad("nothing is playing"));
+                };
+                if let Some(player) = &s.media.player {
+                    player.set_speed(value)?;
                 }
                 s.media.speed = value;
+                match s.media.book_ref(index).filter(|book| !book.video) {
+                    Some(book) => {
+                        let at = s.media.touch_state(&book.key, book.folder.is_none());
+                        if let Some(state) = s.media.books.items.get_mut(at) {
+                            state.speed = Some(value);
+                        }
+                    }
+                    None => s.media.session_speed = value,
+                }
                 if let Some(video) = &mut s.media.video {
                     video.speed = value;
                     if video.playing {
@@ -275,8 +287,52 @@ mod tests {
             .enqueue(VfsUri::parse("/audio/song.mp3").expect("uri"))
             .expect("queue");
         s.media.queue.select(0).expect("current");
+        assert!(s.command_enabled("media.speed"), "audio plays faster too");
+        s.dispatch("media.speed", &json!({"value": 2.0}))
+            .expect("audio speed");
+        assert_eq!((s.media.speed, s.media.session_speed), (2.0, 2.0));
+        s.media.queue = fm_media::Queue::default();
         assert!(!s.command_enabled("media.speed"));
-        assert!(s.dispatch("media.speed", &json!({"value": 2.0})).is_err());
+        assert!(s.dispatch("media.speed", &json!({"value": 1.5})).is_err());
+    }
+
+    #[test]
+    fn an_audiobook_remembers_its_speed_and_other_items_share_the_session_speed() {
+        let mut s = Session::new().expect("session");
+        for uri in ["/books/Story.m4b", "/music/song.mp3"] {
+            s.media
+                .queue
+                .enqueue(VfsUri::parse(uri).expect("uri"))
+                .expect("queue");
+        }
+        s.media.queue.select(0).expect("book");
+        s.dispatch("media.speed", &json!({"value": 1.5}))
+            .expect("book speed");
+        assert_eq!(
+            s.media.session_speed, 1.0,
+            "a book keeps its speed to itself"
+        );
+        assert_eq!(
+            s.media
+                .state_of("/books/Story.m4b")
+                .and_then(|state| state.speed),
+            Some(1.5)
+        );
+
+        s.media.queue.select(1).expect("song");
+        assert_eq!(s.media.speed_for_current(), 1.0);
+        s.dispatch("media.speed", &json!({"value": 1.25}))
+            .expect("session speed");
+        assert_eq!(s.media.session_speed, 1.25);
+
+        s.media.queue.select(0).expect("book again");
+        assert_eq!(
+            s.media.speed_for_current(),
+            1.5,
+            "the book's own speed returns"
+        );
+        s.media.queue.select(1).expect("song again");
+        assert_eq!(s.media.speed_for_current(), 1.25);
     }
 
     #[test]

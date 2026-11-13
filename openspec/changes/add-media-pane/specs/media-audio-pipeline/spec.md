@@ -36,7 +36,7 @@ The pane SHALL provide a 10-band graphic equalizer (31 Hz–16 kHz, ±12 dB) wit
 - **THEN** it is rejected with an error and the current equalizer is unchanged
 
 ### Requirement: Playback speed with pitch kept
-`media.speed` SHALL accept 0.5× to 3× in steps no larger than 0.05× and SHALL keep pitch unchanged for audio and video soundtracks; video frames follow the audio clock. Speed SHALL persist per audiobook and otherwise per session.
+`media.speed` SHALL accept 0.5× to 3× in steps no larger than 0.05× and SHALL keep pitch unchanged for audio and video soundtracks; video frames follow the audio clock. Audio speed SHALL work in-process for every format the app decodes, without ffmpeg. Speed SHALL persist per audiobook and otherwise per session. The reported position SHALL stay in media time, so the clock, seek bar, resume points and chapters are unaffected by speed.
 
 #### Scenario: Speed up
 - **WHEN** speed is set to 1.5× during playback
@@ -45,6 +45,14 @@ The pane SHALL provide a 10-band graphic equalizer (31 Hz–16 kHz, ±12 dB) wit
 #### Scenario: Out of range
 - **WHEN** `media.speed` is given 0, 5 or NaN
 - **THEN** it returns an error and the speed is unchanged
+
+#### Scenario: Audiobook keeps its speed
+- **WHEN** an audiobook is set to 1.5×, a song is then played at the session speed 1.25×, and the book is played again (also after a restart)
+- **THEN** the book plays at 1.5× and the song at 1.25×
+
+#### Scenario: Speed without ffmpeg
+- **WHEN** ffmpeg is not installed and an mp3 is set to 2×
+- **THEN** it plays at 2× with the same pitch, and a 60 s file finishes after about 30 s with the clock showing 1:00
 
 ### Requirement: Loop and sleep timer
 `media.loop` SHALL set loop points A and B on the current item (A at the current position, then B), clear them, and SHALL loop between them until cleared or the item changes. `media.sleep` SHALL stop playback after a chosen number of minutes, at the end of the current item, or at the end of the current chapter, with a 10 s fade-out, and SHALL be cancellable and visible in the pane while armed.

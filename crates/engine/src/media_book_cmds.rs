@@ -624,6 +624,43 @@ mod tests {
     }
 
     #[test]
+    fn videos_in_a_folder_are_remembered_one_by_one_not_as_a_book() {
+        use crate::media_book::RowMark;
+        let mut s = Session::new().expect("session");
+        let dir = "/Videos/The Life Collection";
+        for name in ["01 Challenges.mkv", "02 Reptiles.mkv", "03 Insects.mkv"] {
+            s.media
+                .queue
+                .enqueue(uri(&format!("{dir}/{name}")))
+                .expect("enqueue");
+        }
+        s.media
+            .queue
+            .group_range(0, 3, "The Life", Some(dir.into()))
+            .expect("folder");
+        s.media.queue.select(1).expect("episode 2");
+        s.media
+            .books
+            .set_duration_for_tests(&format!("{dir}/02 Reptiles.mkv"), 3_000.0);
+        assert!(
+            s.media
+                .book_ref(1)
+                .is_some_and(|b| b.video && b.folder.is_none()),
+            "a video is never a folder book"
+        );
+        s.media.position = 1_200.0;
+        s.media.note_book();
+        assert_eq!(
+            s.media.row_mark(0),
+            None,
+            "episode 1 is not marked as played"
+        );
+        assert_eq!(s.media.row_mark(1), Some(RowMark::Resume(1_200.0)));
+        assert_eq!(s.media.row_mark(2), None);
+        assert!(s.media.remembered_position(1).is_some_and(|p| p > 1_100.0));
+    }
+
+    #[test]
     fn the_least_recently_played_item_is_dropped_past_the_cap() {
         let mut s = Session::new().expect("session");
         for n in 0..=MAX_ITEMS {

@@ -31,7 +31,7 @@ remain future work (the command registry is already in place).
 
 ## Current focus
 
-`add-media-pane` (42/48 tasks) shipped in 0.2.0: shared native audio pipeline
+`add-media-pane` (43/48 tasks) shipped in 0.2.0: shared native audio pipeline
 with Preview sound, the Media pane (persisted queue with lockable playlist folders,
 playlists, drop targets on player and playlist, Files/Preview entry points with
 position hand-off, double-click to play, player right-click menu), local and remote
@@ -42,7 +42,7 @@ audiobooks (chapters, resume, bookmarks, skip), and an ffmpeg fallback for audio
 formats Symphonia cannot read. ffmpeg is not bundled: Windows offers a pinned,
 verified download (`managed-ffmpeg`). `media-open-and-play-ux` is archived.
 
-Remaining in `add-media-pane`: pitch-preserving audio-only speed (5.3), bitmap
+Remaining in `add-media-pane`: bitmap
 (PGS/VobSub) subtitles (6.2), hardware decoding (6.3) with its fallback test (6.4), the changelog/devlog entries
 at archive time (9.3), and Windows/macOS smoke tests (9.4).
 

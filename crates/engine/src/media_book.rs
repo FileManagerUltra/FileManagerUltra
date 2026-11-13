@@ -443,12 +443,11 @@ impl MediaSession {
     /// What the playlist shows for a row: where it would resume, or that its book is finished.
     pub fn row_mark(&self, index: usize) -> Option<RowMark> {
         let uri = self.queue.items().get(index)?;
-        self.book_ref(index)?;
-        let grouped = self
-            .queue
-            .group_of(index)
-            .and_then(|g| g.dir.map(str::to_string));
-        if let Some(dir) = grouped {
+        let book = self.book_ref(index)?;
+        // Only a folder audiobook plays as one timeline; videos in a folder (episodes, DVD
+        // parts) are remembered one by one, so earlier ones are never marked as played.
+        if book.folder.is_some() {
+            let dir = book.key;
             if self.state_of(&dir).is_some_and(|s| s.finished) {
                 return Some(RowMark::Finished);
             }
@@ -512,7 +511,9 @@ impl MediaSession {
                     }
                 }
             }
-            None if grouped => {}
+            // A file in a folder book is tracked by the folder's resume point; a video in a
+            // folder is still remembered on its own.
+            None if grouped && !book.video => {}
             None => {
                 let unchanged = self.books.items.last().is_some_and(|s| {
                     s.key == book.key

@@ -154,8 +154,14 @@ without Media cancels video regardless of the background-audio preference.
 `media.speed` adjusts video playback from 0.5× to 3× in 0.05× steps. The shared
 player applies ffmpeg's pitch-preserving `atempo` chain to the soundtrack and
 scales frame deadlines and reported position against its output clock; silent
-video uses the same speed-scaled monotonic clock. Audio-only, pitch-preserving
-speed is still open (it needs a time-stretcher in the audio path).
+video uses the same speed-scaled monotonic clock. Audio items stretch in-process:
+`fm-media::stretch` (WSOLA: 30 ms Hann frames at 50% overlap, a ±12 ms coarse-to-fine
+similarity search on a mono mix) runs after the resampler at the device rate. The
+worker keeps one speed per segment; `AudioPlayer::set_speed` makes it restart the
+segment at the current position, like a seek, and the reported position is
+`start + played × speed`, so everything above it stays in media time. At 1× no
+stretcher runs. `MediaSession::speed_for_current` picks an audiobook's remembered
+speed (`ItemState::speed`) or the session speed.
 
 Formats Symphonia cannot read fall back to `fm-media::ffmpeg_decoder`: `ffprobe`
 for format and tags (10 s deadline), then an `ffmpeg` child piping f32 PCM through a
