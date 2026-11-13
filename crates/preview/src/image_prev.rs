@@ -3,6 +3,7 @@
 use std::io::Cursor;
 
 use fm_vfs::{Entry, FmError, Vfs};
+use image::metadata::Orientation;
 use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 
 use crate::{ImageDoc, Limits, MetaDoc, Preview, base_meta, text};
@@ -59,6 +60,35 @@ fn resize_simd(img: &DynamicImage, w: u32, h: u32) -> Option<DynamicImage> {
     }
 }
 
+/// Decode the first frame and the way the camera says it should be turned (EXIF
+/// orientation). `fallback` (EXIF 1-8) applies when the picture carries none, such as the
+/// JPEG inside a RAW photo whose orientation is stored in the RAW file.
+fn decode_oriented(
+    reader: ImageReader<Cursor<&[u8]>>,
+    fallback: u16,
+) -> image::ImageResult<(DynamicImage, Orientation)> {
+    let mut decoder = reader.into_decoder()?;
+    let orientation = match decoder.orientation() {
+        Ok(Orientation::NoTransforms) | Err(_) => u8::try_from(fallback)
+            .ok()
+            .and_then(Orientation::from_exif)
+            .unwrap_or(Orientation::NoTransforms),
+        Ok(orientation) => orientation,
+    };
+    Ok((DynamicImage::from_decoder(decoder)?, orientation))
+}
+
+/// Whether showing a picture with `orientation` swaps its width and height.
+fn turns_sideways(orientation: Orientation) -> bool {
+    matches!(
+        orientation,
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    )
+}
+
 fn name(f: ImageFormat) -> &'static str {
     match f {
         ImageFormat::Png => "PNG",
@@ -83,17 +113,44 @@ pub fn render(vfs: &dyn Vfs, entry: &Entry, limits: &Limits) -> Result<Preview, 
 }
 
 pub fn decode(entry: &Entry, bytes: &[u8], limits: &Limits) -> Preview {
-    decode_with(entry, bytes, limits, true)
+    if crate::raw_prev::is_tiff(bytes) {
+        return crate::raw_prev::decode(entry, bytes, limits);
+    }
+    decode_with(entry, bytes, limits, true, 1, None)
 }
 
 /// Like [`decode`] but never decodes animation frames (thumbnails want the first frame only).
 pub fn decode_still(entry: &Entry, bytes: &[u8], limits: &Limits) -> Preview {
-    decode_with(entry, bytes, limits, false)
+    if crate::raw_prev::is_tiff(bytes) {
+        return crate::raw_prev::decode(entry, bytes, limits);
+    }
+    decode_with(entry, bytes, limits, false, 1, None)
+}
+
+/// The JPEG embedded in a RAW photo, turned by the RAW file's `orientation` (EXIF 1-8) unless
+/// the JPEG says otherwise, and labelled `format`.
+pub(crate) fn decode_embedded(
+    entry: &Entry,
+    jpeg: &[u8],
+    limits: &Limits,
+    orientation: u16,
+    format: &'static str,
+) -> Preview {
+    decode_with(entry, jpeg, limits, false, orientation, Some(format))
 }
 
 /// Full-resolution RGBA of the first frame, for the clipboard. The header is checked against
 /// `max_pixels` before any pixel is decoded.
 pub fn decode_original(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32, Vec<u8>), String> {
+    // A camera RAW photo copies as the picture the camera embedded in it.
+    let embedded;
+    let (bytes, fallback) = if crate::raw_prev::is_tiff(bytes) {
+        embedded = crate::raw_prev::embedded_jpeg(bytes)
+            .ok_or("no embedded picture that can be copied")?;
+        (embedded.0.as_slice(), embedded.1)
+    } else {
+        (bytes, 1)
+    };
     let reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| e.to_string())?;
@@ -110,14 +167,21 @@ pub fn decode_original(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32, Vec<u
     lim.max_image_height = Some(h);
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     reader.limits(lim);
-    let rgba = reader
-        .decode()
-        .map_err(|e| format!("could not decode: {e}"))?
-        .to_rgba8();
+    let (mut img, orientation) =
+        decode_oriented(reader, fallback).map_err(|e| format!("could not decode: {e}"))?;
+    img.apply_orientation(orientation);
+    let rgba = img.to_rgba8();
     Ok((rgba.width(), rgba.height(), rgba.into_raw()))
 }
 
-fn decode_with(entry: &Entry, bytes: &[u8], limits: &Limits, animate: bool) -> Preview {
+fn decode_with(
+    entry: &Entry,
+    bytes: &[u8],
+    limits: &Limits,
+    animate: bool,
+    orientation: u16,
+    label: Option<&'static str>,
+) -> Preview {
     let reader = match ImageReader::new(Cursor::new(bytes)).with_guessed_format() {
         Ok(r) => r,
         Err(e) => return error_card(entry, e.to_string()),
@@ -146,17 +210,25 @@ fn decode_with(entry: &Entry, bytes: &[u8], limits: &Limits, animate: bool) -> P
     }
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     reader.limits(lim);
-    let img = match reader.decode() {
-        Ok(i) => fit(i, limits.image_edge),
+    let (img, orientation) = match decode_oriented(reader, orientation) {
+        Ok((i, orientation)) => (fit(i, limits.image_edge), orientation),
         Err(e) => return error_card(entry, format!("could not decode: {e}")),
+    };
+    // Phone photos are stored sideways with an EXIF note to turn them: show them upright.
+    let mut img = img;
+    img.apply_orientation(orientation);
+    let original = if turns_sideways(orientation) {
+        (h, w)
+    } else {
+        (w, h)
     };
     let rgba = img.to_rgba8();
     Preview::Image(ImageDoc {
         width: rgba.width(),
         height: rgba.height(),
         frames: vec![(rgba.into_raw(), 0)],
-        original: (w, h),
-        format: name(format),
+        original,
+        format: label.unwrap_or(name(format)),
     })
 }
 
@@ -203,6 +275,78 @@ mod tests {
         img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png)
             .expect("png");
         out
+    }
+
+    /// A 64×32 JPEG, left half red and right half white, stored with EXIF `orientation`.
+    fn jpeg_with_orientation(orientation: u16) -> Vec<u8> {
+        use image::ImageEncoder;
+        let img = image::RgbImage::from_fn(64, 32, |x, _| {
+            if x < 32 {
+                image::Rgb([230, 20, 20])
+            } else {
+                image::Rgb([255, 255, 255])
+            }
+        });
+        // Big-endian TIFF block with one IFD entry: Orientation (0x0112), SHORT, 1 value.
+        let mut exif = b"MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01".to_vec();
+        exif.extend_from_slice(&orientation.to_be_bytes());
+        exif.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+        let mut out = Vec::new();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 95);
+        encoder.set_exif_metadata(exif).expect("exif");
+        encoder
+            .write_image(img.as_raw(), 64, 32, image::ExtendedColorType::Rgb8)
+            .expect("jpeg");
+        out
+    }
+
+    fn red(rgba: &[u8], width: u32, at: (u32, u32)) -> bool {
+        let i = ((at.1 * width + at.0) * 4) as usize;
+        rgba.get(i..i + 3)
+            .is_some_and(|px| px[0] > 180 && px[1] < 90 && px[2] < 90)
+    }
+
+    #[test]
+    fn photos_are_shown_the_way_the_camera_says() {
+        let jpeg = entry_named("/photo.jpg");
+        // 6: turn 90° clockwise. The left half (red) ends up on top.
+        let Preview::Image(doc) = decode(&jpeg, &jpeg_with_orientation(6), &Limits::default())
+        else {
+            panic!("not an image");
+        };
+        assert_eq!((doc.width, doc.height, doc.original), (32, 64, (32, 64)));
+        let (rgba, _) = doc.frames.first().expect("frame");
+        assert!(red(rgba, 32, (16, 8)) && !red(rgba, 32, (16, 56)));
+        // 8: turn 90° counter-clockwise. The red half ends up at the bottom.
+        let Preview::Image(doc) =
+            decode_still(&jpeg, &jpeg_with_orientation(8), &Limits::default())
+        else {
+            panic!("not an image");
+        };
+        let (rgba, _) = doc.frames.first().expect("frame");
+        assert_eq!((doc.width, doc.height), (32, 64));
+        assert!(!red(rgba, 32, (16, 8)) && red(rgba, 32, (16, 56)));
+        // 1 (upright) and 3 (upside down) keep the shape; 3 puts red on the right.
+        for (orientation, red_left) in [(1, true), (3, false)] {
+            let Preview::Image(doc) = decode(
+                &jpeg,
+                &jpeg_with_orientation(orientation),
+                &Limits::default(),
+            ) else {
+                panic!("not an image");
+            };
+            let (rgba, _) = doc.frames.first().expect("frame");
+            assert_eq!((doc.width, doc.height), (64, 32), "{orientation}");
+            assert_eq!(red(rgba, 64, (8, 16)), red_left, "{orientation}");
+        }
+        // Copying the picture copies it upright too.
+        let (w, h, rgba) = decode_original(&jpeg_with_orientation(6), 1 << 20).expect("copy");
+        assert_eq!((w, h), (32, 64));
+        assert!(red(&rgba, 32, (16, 8)));
+    }
+
+    fn entry_named(path: &str) -> Entry {
+        Entry::new(VfsUri::parse(path).expect("uri"), EntryKind::File)
     }
 
     #[test]

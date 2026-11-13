@@ -604,3 +604,37 @@ fn right_clicking_a_found_file_opens_its_menu() {
         assert!(h.query_by_label("Open With…").is_none(), "menu closes");
     }
 }
+
+#[test]
+fn renaming_a_workspace_replaces_the_old_name_as_you_type() {
+    let tokens = Tokens::dark();
+    let s = Session::new().expect("session");
+    let old = s
+        .workspaces
+        .tabs
+        .first()
+        .map(|t| t.name.clone())
+        .expect("tab");
+    let mut dialogs = Dialogs::default();
+    dialogs.request(Dialog::RenameWorkspace {
+        tab: 0,
+        name: old.clone(),
+    });
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 800.0))
+        .build_ui_state(
+            move |ui, (dialogs, s): &mut (Dialogs, Session)| {
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                dialogs.show(ui.ctx(), s, &tokens);
+            },
+            (dialogs, s),
+        );
+    h.run();
+    h.event(egui::Event::Text("Music".into()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert!(!h.state().0.is_open());
+    let name = h.state().1.workspaces.tabs.first().map(|t| t.name.clone());
+    assert_eq!(name.as_deref(), Some("Music"), "old name was {old:?}");
+}

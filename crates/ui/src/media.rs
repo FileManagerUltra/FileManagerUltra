@@ -869,6 +869,14 @@ fn playlist(
                         ui.close();
                     }
                     crate::media_book::menu_items(ui, book, index, actions);
+                    if ui
+                        .button("Show in folder")
+                        .on_hover_text("Open its folder in a Files pane with the file selected")
+                        .clicked()
+                    {
+                        actions.push(("media.reveal", json!({"index": index})));
+                        ui.close();
+                    }
                     let many = pick.picked.len() > 1 && pick.picked.contains(&index);
                     let label = if many {
                         format!("Remove {} items", pick.picked.len())
@@ -1414,6 +1422,16 @@ fn group_header(
             ui.close();
         }
         crate::media_book::menu_items(ui, book, group.start, actions);
+        let on_disk = group.dir.is_some();
+        if ui
+            .add_enabled(on_disk, egui::Button::new("Go to folder on disk"))
+            .on_hover_text("Open the folder it was made from in a Files pane")
+            .on_disabled_hover_text("This folder was made in the playlist")
+            .clicked()
+        {
+            actions.push(("media.reveal", json!({"group": group.id})));
+            ui.close();
+        }
         if ui.button("Rename…").clicked() {
             *renaming = Some((group.id, group.name.clone(), false));
             ui.close();

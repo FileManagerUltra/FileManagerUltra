@@ -290,6 +290,9 @@ impl ThumbService {
                 Some(fm_preview::Kind::Image(_)) => ThumbKind::Image,
                 Some(fm_preview::Kind::Video) => ThumbKind::Video,
                 Some(fm_preview::Kind::Svg) => ThumbKind::Svg,
+                // No configured type: like the preview's content check, camera RAW photos
+                // are still pictures (their extensions are not in the default patterns).
+                None if fm_preview::raw_prev::is_raw_name(&entry.name) => ThumbKind::Image,
                 _ => ThumbKind::Other,
             }
         });

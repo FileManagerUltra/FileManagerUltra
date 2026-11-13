@@ -100,6 +100,17 @@ DVD-Video disc images (`.iso`) on a local disk SHALL play their main title (the 
 - **WHEN** a folder `Movie` with `VIDEO_TS/VIDEO_TS.VOB`, `VTS_01_0.VOB`, `VTS_01_1.VOB` and `VTS_01_2.VOB` is dropped on the Media pane
 - **THEN** a playlist folder "Movie" holds VTS_01_1 and VTS_01_2 in that order, without the menus
 
+### Requirement: Jump from the playlist to the file
+The context menu of a playlist row SHALL offer "Show in folder", which opens the row's folder in a Files pane (the focused one if it is a Files pane, otherwise the first) with the file selected and scrolled into view, and gives that pane focus; playback SHALL continue. The context menu of a playlist folder SHALL offer "Go to folder on disk", which opens the folder it was made from in a Files pane; for a folder made in the playlist the entry SHALL be disabled. Both dispatch `media.reveal`; without a Files pane, or for a row or folder that does not exist, it SHALL fail with a message and change nothing.
+
+#### Scenario: Show a row's file
+- **WHEN** the user right-clicks the playlist row of `/music/Album/Song.mp3` and picks Show in folder
+- **THEN** a Files pane shows `/music/Album` with `Song.mp3` selected, and the music keeps playing
+
+#### Scenario: Folder made in the playlist
+- **WHEN** the user right-clicks a playlist folder created with "New folder from this"
+- **THEN** "Go to folder on disk" is disabled
+
 ### Requirement: Entry points
 Files and Preview panes SHALL offer Play, Play next, Add to queue and Play folder for supported media (context menu and menu bar); dropping supported files or a folder on a Media pane SHALL play them when dropped on the player and add them when dropped on the playlist (see `media-open-and-play-ux`); a Preview video card SHALL offer "Play in Media pane". If no Media pane exists, Play SHALL switch a suitable pane to `Media` (or open one beside the focused pane) rather than fail.
 
@@ -178,11 +189,15 @@ Audio SHALL be the master clock. For video, frames SHALL be dropped when late an
 - **THEN** it plays silently and the pane shows a hint
 
 ### Requirement: Fullscreen
-`media.fullscreen` SHALL toggle a mode in which the Media pane fills the window with all other panes hidden and their state preserved; `window.fullscreen` SHALL toggle native window fullscreen and the two SHALL be usable together. In fullscreen the transport controls and cursor SHALL auto-hide after three seconds without pointer movement and reappear on movement. Esc, F or a double-click SHALL leave fullscreen, restoring the previous layout, focus and window state; fullscreen SHALL NOT overwrite the saved normal window geometry. Playback SHALL continue uninterrupted when entering or leaving fullscreen. Closing the pane or a stopped queue SHALL leave fullscreen.
+`media.fullscreen` SHALL toggle a mode in which the Media pane fills the screen: all other panes are hidden with their state preserved, and the window itself goes native fullscreen. Leaving SHALL return the window to its previous state, so a window that was already fullscreen (`window.fullscreen`) stays fullscreen. `window.fullscreen` SHALL toggle native window fullscreen on its own and the two SHALL be usable together. In fullscreen the transport controls and cursor SHALL auto-hide after three seconds without pointer movement and reappear on movement. Esc, F or a double-click SHALL leave fullscreen, restoring the previous layout, focus and window state; fullscreen SHALL NOT overwrite the saved normal window geometry. Playback SHALL continue uninterrupted when entering or leaving fullscreen. Closing the pane or a stopped queue SHALL leave fullscreen.
 
 #### Scenario: Enter and leave
 - **WHEN** a video plays and the user presses F, then Esc
-- **THEN** the video fills the window, then the previous layout, selection and focus return, with playback never interrupted
+- **THEN** the video fills the screen, then the previous layout, selection, focus and window size return, with playback never interrupted
+
+#### Scenario: Window already fullscreen
+- **WHEN** the window is fullscreen (F11) and the user enters and leaves Media fullscreen
+- **THEN** the window is still fullscreen afterwards
 
 #### Scenario: Controls hide
 - **WHEN** the pointer is still for three seconds in fullscreen

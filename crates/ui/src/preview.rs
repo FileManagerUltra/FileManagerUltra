@@ -179,7 +179,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let mut actions: Vec<Action> = Vec::new();
     let mut open: Option<fm_vfs::VfsUri> = None;
     let mut published: Option<fm_engine::file_cmds::GridSelection> = None;
-    toolbar(ui, s, pane, &mut actions);
+    toolbar(ui, s, pane, tokens, &mut actions);
     find::bar(ui, s, pane, tokens, &mut actions);
     find::begin(ui, s, pane);
     ui.separator();
@@ -315,6 +315,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                         source: slot.source,
                         wrap: slot.wrap,
                         zoom: slot.zoom,
+                        turns: slot.image_turns(),
                     };
                     let images = match (&*p, slot.source, slot.subject.as_ref()) {
                         (Preview::Markdown(m), false, Some(document)) => Some(
@@ -467,7 +468,7 @@ fn remember_scroll<R>(ui: &Ui, output: &egui::scroll_area::ScrollAreaOutput<R>) 
     ui.data_mut(|d| d.insert_temp(output.id.with("pv-bottom"), bottom));
 }
 
-fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
+fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mut Vec<Action>) {
     let Some(slot) = s.preview_slot(pane) else {
         return;
     };
@@ -550,7 +551,10 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                     }
                     wrap_pretty(ui, actions);
                 }
-                Preview::Image(_) => zoom_buttons(ui, actions),
+                Preview::Image(_) => {
+                    zoom_buttons(ui, actions);
+                    rotate_buttons(ui, tokens, actions);
+                }
                 Preview::Svg(d) => {
                     // The git Preview button already toggles the source when it is shown.
                     if !diff.is_some_and(|d| !d.is_pair())
@@ -929,6 +933,21 @@ fn zoom_buttons(ui: &mut Ui, actions: &mut Vec<(&'static str, Value)>) {
     }
 }
 
+/// Turn the shown picture; the file itself is not changed.
+fn rotate_buttons(ui: &mut Ui, tokens: &Tokens, actions: &mut Vec<(&'static str, Value)>) {
+    use crate::media_icons::Icon;
+    for (icon, name, direction) in [
+        (Icon::RotateLeft, "Rotate left", "left"),
+        (Icon::RotateRight, "Rotate right", "right"),
+    ] {
+        let response = crate::media_icons::button(ui, tokens, icon, name, true, false)
+            .on_hover_text("Only the view turns; the file is not changed");
+        if response.clicked() {
+            actions.push(("preview.image.rotate", json!({ "direction": direction })));
+        }
+    }
+}
+
 fn pretty_button(ui: &mut Ui, doc: &StructDoc, on: bool, actions: &mut Vec<(&'static str, Value)>) {
     let r = ui.add_enabled(doc.pretty.is_ok(), egui::Button::selectable(on, "Pretty"));
     let r = match &doc.pretty {
@@ -957,6 +976,8 @@ struct View<'a> {
     source: bool,
     wrap: bool,
     zoom: Zoom,
+    /// Quarter turns clockwise the user gave a picture.
+    turns: u8,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -971,6 +992,7 @@ fn static_body(
         source,
         wrap,
         zoom,
+        turns,
     }: View,
     link: &mut Option<String>,
     images: Option<markdown::ImageStates>,
@@ -983,7 +1005,7 @@ fn static_body(
         Preview::Markdown(m) => {
             return markdown::show(ui, pane, tokens, m, wrap, link, images, want);
         }
-        Preview::Image(i) => image(ui, pane, tokens, p, i, zoom, subject),
+        Preview::Image(i) => image(ui, pane, tokens, p, i, zoom, subject, turns),
         Preview::Svg(d) if source => structured(ui, pane, tokens, &d.source, pretty, wrap),
         Preview::Svg(d) => svg(ui, pane, tokens, p, d, zoom, wrap),
         Preview::Hex(h) => hex(ui, tokens, h),
@@ -991,7 +1013,7 @@ fn static_body(
         Preview::Meta(m) => scrolled(ui, pane, "meta", |ui| {
             meta_card(ui, tokens, m);
             if let Some(poster) = &m.poster {
-                image(ui, pane, tokens, p, poster, Zoom::Fit, None);
+                image(ui, pane, tokens, p, poster, Zoom::Fit, None, 0);
             }
         }),
         Preview::Error(e) => scrolled(ui, pane, "err", |ui| {
@@ -1056,7 +1078,7 @@ fn multi_grid(
                                     pane,
                                     tokens,
                                     preview,
-                                    View { pretty: false, subject: Some(&entry.uri), source: false, wrap: false, zoom: Zoom::Fit },
+                                    View { pretty: false, subject: Some(&entry.uri), source: false, wrap: false, zoom: Zoom::Fit, turns: 0 },
                                     &mut link,
                                     None,
                                     &mut Vec::new(),
@@ -1212,6 +1234,7 @@ fn structured(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &StructDoc, pretty:
     text_view(ui, pane, tokens, doc, wrap);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn image(
     ui: &mut Ui,
     pane: PaneId,
@@ -1220,6 +1243,7 @@ fn image(
     img: &ImageDoc,
     zoom: Zoom,
     subject: Option<&fm_vfs::VfsUri>,
+    turns: u8,
 ) {
     if img.frames.is_empty() {
         centered(ui, tokens, "No pixels to show");
@@ -1266,7 +1290,13 @@ fn image(
     let Some(tex) = textures.get(frame) else {
         return;
     };
-    let (ow, oh) = img.original;
+    // A quarter turn shows the picture sideways: its width and height swap.
+    let sideways = turns % 2 == 1;
+    let (ow, oh) = if sideways {
+        (img.original.1, img.original.0)
+    } else {
+        img.original
+    };
     let avail = ui.available_size() - vec2(0.0, 22.0);
     let natural = vec2(ow.max(1) as f32, oh.max(1) as f32);
     // A drawing is rasterized larger than its declared size, so Fit may enlarge it that far.
@@ -1297,8 +1327,18 @@ fn image(
                 svg_backdrop(ui, tokens, rect, background);
                 egui::Image::new((tex.id(), size)).paint_at(ui, rect);
                 response
-            } else {
+            } else if turns.is_multiple_of(4) {
                 ui.add(egui::Image::new((tex.id(), size)).sense(Sense::click()))
+            } else {
+                let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+                let drawn = if sideways { vec2(size.y, size.x) } else { size };
+                egui::Image::new((tex.id(), drawn))
+                    .rotate(
+                        f32::from(turns % 4) * std::f32::consts::FRAC_PI_2,
+                        vec2(0.5, 0.5),
+                    )
+                    .paint_at(ui, egui::Rect::from_center_size(rect.center(), drawn));
+                response
             };
             if let Some(uri) = subject {
                 response.context_menu(|ui| crate::context_menu::copy_image_item(ui, uri));
@@ -1328,7 +1368,7 @@ fn svg(
     wrap: bool,
 ) {
     match &d.image {
-        Ok(img) => image(ui, pane, tokens, p, img, zoom, None),
+        Ok(img) => image(ui, pane, tokens, p, img, zoom, None, 0),
         Err(why) => {
             ui.label(RichText::new(format!("Cannot draw this SVG: {why}")).color(tokens.error));
             structured(ui, pane, tokens, &d.source, false, wrap);
@@ -1553,7 +1593,7 @@ fn audio_body(
                     }
                 });
             if let Some(cover) = &meta.poster {
-                image(ui, pane, tokens, model, cover, Zoom::Fit, None);
+                image(ui, pane, tokens, model, cover, Zoom::Fit, None, 0);
             }
             meta_card(ui, tokens, meta);
         });
@@ -1793,6 +1833,15 @@ pub(crate) fn video_texture(
     };
     let texture = match cached {
         Some((old, texture)) if Arc::ptr_eq(&old, frame) => texture,
+        // Same size: overwrite the pixels in place. A full `set` makes the renderer create a
+        // new GPU texture for every frame; on Windows (Direct3D 12) the old ones are released
+        // late, so the commit size grew by about 8 MB per 1080p frame.
+        Some((_, mut texture))
+            if texture.size() == [frame.width as usize, frame.height as usize] =>
+        {
+            texture.set_partial([0, 0], image(), egui::TextureOptions::LINEAR);
+            texture
+        }
         Some((_, mut texture)) => {
             texture.set(image(), egui::TextureOptions::LINEAR);
             texture
@@ -3094,6 +3143,41 @@ pub fn grid_has_keyboard(ctx: &egui::Context) -> bool {
 mod tests {
     use super::*;
     use fm_layout::PaneKind;
+
+    #[test]
+    fn video_frames_of_the_same_size_reuse_one_gpu_texture() {
+        let frame = |seq: u64, width: u32, height: u32| {
+            Arc::new(fm_preview::player::Frame {
+                width,
+                height,
+                rgba: vec![seq as u8; (width * height * 4) as usize],
+                seq,
+            })
+        };
+        let ctx = egui::Context::default();
+        let id = Id::NULL.with("video-texture-test");
+        // (pixels, size): a new texture only for the first frame and a size change.
+        let mut deltas = Vec::new();
+        for (seq, (w, h)) in [(64, 36), (64, 36), (64, 36), (32, 18), (32, 18)]
+            .into_iter()
+            .enumerate()
+        {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let _texture = video_texture(ui.ctx(), id, &frame(seq as u64, w, h));
+            });
+            deltas.push(
+                out.textures_delta
+                    .set
+                    .values()
+                    .flat_map(|deltas| deltas.iter().map(|delta| delta.pos.is_none()))
+                    .collect::<Vec<_>>(),
+            );
+            out.textures_delta.clear();
+        }
+        let full: Vec<bool> = deltas.iter().map(|d| d.contains(&true)).collect();
+        assert_eq!(full, [true, false, false, true, false], "{deltas:?}");
+        assert!(deltas.iter().all(|d| d.len() <= 2), "{deltas:?}");
+    }
 
     #[test]
     fn preview_add_button_targets_its_own_media_without_interrupting_it() {

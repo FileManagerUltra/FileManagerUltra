@@ -1411,3 +1411,95 @@ fn new_images_in_a_shown_grid_get_thumbnails_without_a_window_change() {
     });
     assert!(found, "new image was never requested");
 }
+
+/// A minimal CR2-like file: a little-endian TIFF whose IFD0 holds one JPEG strip.
+fn tiny_raw(width: u32, height: u32) -> Vec<u8> {
+    let mut jpeg = Vec::new();
+    image::RgbImage::from_pixel(width, height, image::Rgb([200, 40, 40]))
+        .write_to(
+            &mut std::io::Cursor::new(&mut jpeg),
+            image::ImageFormat::Jpeg,
+        )
+        .expect("jpeg");
+    let mut data = b"II*\0\x08\0\0\0".to_vec();
+    let entries: [(u16, u16, u32); 3] = [
+        (259, 3, 6),
+        (273, 4, 8 + 2 + 3 * 12 + 4),
+        (279, 4, jpeg.len() as u32),
+    ];
+    data.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    for (tag, kind, value) in entries {
+        data.extend_from_slice(&tag.to_le_bytes());
+        data.extend_from_slice(&kind.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&value.to_le_bytes());
+    }
+    data.extend_from_slice(&0u32.to_le_bytes());
+    data.extend_from_slice(&jpeg);
+    data
+}
+
+#[test]
+fn raw_photos_preview_and_thumbnail_without_a_configured_pattern() {
+    use fm_engine::thumbs::ThumbState;
+    let dir = tempfile::tempdir().expect("tmp");
+    std::fs::create_dir(dir.path().join("photos")).expect("dir");
+    std::fs::write(dir.path().join("photos/IMG_1.CR2"), tiny_raw(48, 32)).expect("raw");
+    let mut r = rig(&[]);
+    let uri = VfsUri::parse(&dir.path().to_string_lossy()).expect("uri");
+    r.s.layout
+        .state_mut(r.files)
+        .expect("pane")
+        .navigate(uri.clone());
+    r.s.refresh_read(uri).expect("read");
+    assert!(pump(&mut r.s, |s| s
+        .pane_view(r.files)
+        .is_some_and(|(e, _)| e.len() == 1)));
+    r.cursor("photos");
+    let Preview::Dir(d) = &*r.wait_static() else {
+        panic!("dir")
+    };
+    let items = d.items.clone();
+    assert!(
+        r.s.prefs
+            .preview_filters
+            .compile()
+            .expect("rules")
+            .kind("IMG_1.CR2")
+            .is_none()
+    );
+    r.s.dispatch("preview.thumbs.toggle", &json!({}))
+        .expect("on");
+    r.s.dispatch("preview.thumbs.visible", &json!({"first": 0, "count": 5}))
+        .expect("visible");
+    assert!(pump(&mut r.s, |s| matches!(
+        s.thumbs.get(&items[0], 160),
+        ThumbState::Ready(t) if (t.width, t.height) == (48, 32)
+    )));
+    // The file itself previews as its embedded picture.
+    let photos = VfsUri::parse(&dir.path().join("photos").to_string_lossy()).expect("uri");
+    r.s.layout
+        .state_mut(r.files)
+        .expect("pane")
+        .navigate(photos.clone());
+    r.s.refresh_read(photos).expect("read");
+    assert!(pump(&mut r.s, |s| s
+        .pane_view(r.files)
+        .is_some_and(|(e, _)| e.len() == 1)));
+    r.cursor("IMG_1.CR2");
+    let preview = r.preview;
+    let shown = pump(
+        &mut r.s,
+        |s| matches!(s.preview_slot(preview).map(|x| &x.body), Some(Body::Static(p)) if matches!(&**p, Preview::Image(_))),
+    );
+    let Body::Static(p) = r.body() else {
+        panic!("not loaded")
+    };
+    let Preview::Image(doc) = &**p else {
+        panic!("not a picture: {shown} {p:?}")
+    };
+    assert_eq!(
+        (doc.width, doc.height, doc.format),
+        (48, 32, "Canon CR2 camera preview")
+    );
+}

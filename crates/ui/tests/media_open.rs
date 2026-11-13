@@ -545,3 +545,94 @@ fn selecting_another_image_shows_the_new_image() {
         );
     }
 }
+
+#[test]
+fn show_in_folder_on_a_playlist_row_opens_its_folder_in_files() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let album = tmp.path().join("Album");
+    std::fs::create_dir(&album).expect("dir");
+    let song = album.join("Song.mp3");
+    std::fs::write(&song, b"x").expect("write");
+    let song = song.to_str().expect("utf8").to_string();
+    let mut h = media_harness(Tokens::dark(), Session::new().expect("session"), &[&song]);
+    h.run();
+    h.get_by_label("Song").click_secondary();
+    h.run();
+    h.get_by_label("Show in folder").click();
+    h.run();
+    let s = h.state();
+    let focused = s.layout.state(s.layout.focused()).expect("focused pane");
+    assert!(focused.kind.is_files(), "a Files pane takes focus");
+    let album = fm_vfs::VfsUri::parse(album.to_str().expect("utf8")).expect("uri");
+    assert_eq!(focused.location, album);
+    assert_eq!(focused.listing.reveal.as_deref(), Some("Song.mp3"));
+}
+
+/// Size of the drawn picture: the bounding box of its textured shape.
+fn picture_size(h: &Harness<'_, Session>) -> Option<egui::Vec2> {
+    fn walk(shape: &egui::Shape, out: &mut Option<egui::Rect>) {
+        match shape {
+            egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                *out = Some(egui::Rect::from_points(
+                    &mesh.vertices.iter().map(|v| v.pos).collect::<Vec<_>>(),
+                ));
+            }
+            egui::Shape::Rect(rect) if rect.fill_texture_id() != egui::TextureId::default() => {
+                *out = Some(rect.rect);
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = None;
+    for clipped in &h.output().shapes {
+        walk(&clipped.shape, &mut out);
+    }
+    out.map(|rect| rect.size())
+}
+
+#[test]
+fn the_rotate_buttons_turn_the_shown_picture() {
+    let mut s = Session::new().expect("session");
+    s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+        .expect("preview");
+    let pane = s.layout.focused();
+    s.poll();
+    let slot = s.previews.slots.get_mut(&pane).expect("slot");
+    slot.subject = Some(fm_vfs::Entry::new(
+        fm_vfs::VfsUri::parse("/photos/wide.png").expect("uri"),
+        fm_vfs::EntryKind::File,
+    ));
+    slot.body = image_body(40, 30, 90);
+    let tokens = Tokens::dark();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(900.0, 600.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    fm_ui::preview::show(ui, s, pane, &tokens);
+                });
+            },
+            s,
+        );
+    h.run();
+    let wide = picture_size(&h).expect("picture");
+    assert!(wide.x > wide.y, "{wide:?}");
+    h.get_by_label("Rotate right").click();
+    h.run();
+    h.run();
+    let turned = picture_size(&h).expect("picture");
+    assert!(
+        turned.y > turned.x,
+        "drawn tall after a quarter turn: {turned:?}"
+    );
+    assert!(
+        (turned.y / turned.x - wide.x / wide.y).abs() < 0.01,
+        "same shape, turned"
+    );
+    h.get_by_label("Rotate left").click();
+    h.run();
+    h.run();
+    let back = picture_size(&h).expect("picture");
+    assert!((back - wide).length() < 0.5, "{back:?} vs {wide:?}");
+}

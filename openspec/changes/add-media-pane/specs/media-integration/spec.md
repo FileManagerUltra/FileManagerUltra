@@ -34,6 +34,13 @@ Video SHALL be deinterlaced without any setting: every picture made from a video
 - **WHEN** a progressive H.264 video plays
 - **THEN** its frames are identical to those without the deinterlacer
 
+### Requirement: Video is shown in its display shape
+Video SHALL be shown with the shape it is meant to be seen in, not the shape it is stored in: an anamorphic pixel aspect (DVD 16:9) widens the picture, and a stored rotation of 90 or 270 degrees (phone videos filmed upright, from the display matrix or the older `rotate` tag) turns it upright with width and height swapped. This SHALL hold for playback with hardware and software decoding, posters and thumbnails.
+
+#### Scenario: Upright phone video
+- **WHEN** a video stored as 1920×1080 with a 90° rotation plays
+- **THEN** it is shown upright as 1080×1920, not squeezed into a wide frame
+
 ### Requirement: Hardware video decoding
 Video SHALL be decoded with the platform's hardware acceleration when available (VA-API on Linux, D3D11/DXVA on Windows, VideoToolbox on macOS) and SHALL fall back to software decoding automatically when hardware decoding is unavailable or fails mid-stream. A preference "Hardware video decoding" (Preferences > Media > Playback) SHALL be on by default and applies to the Media pane and Preview videos; changing it restarts a running decoder. The player menu SHALL show which mode is active ("Decoding: hardware (VA-API)" or "Decoding: software"). When the decode device cannot be opened at all, later videos SHALL skip it until the preference is switched off and on again. Switching to software SHALL restart only the video decoder, so audio continues.
 

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Camera RAW photos (DNG, CR2, NEF, ARW, ORF, PEF and similar) are shown in Preview and as folder thumbnails, using the preview picture the camera stored inside them. Copy Image copies that picture.
+- Pictures in Preview have Rotate left and Rotate right buttons. Only the view turns; the file is not changed, and the next picture starts upright.
+- Right-click a playlist row and pick Show in folder to open its folder in a Files pane with the file selected. A playlist folder made from a folder on disk offers Go to folder on disk.
 - SVG files are shown as pictures in Preview, including their text, with Fit and 100% and a choice of background behind transparent parts (checkered, white, black or 50% grey, remembered). Turn off Preview in the header to read the SVG source (with Pretty and Wrap). SVG is a new type in Preferences > Preview > File types; existing settings pick it up automatically.
 - SVG drawings, including compressed `.svgz` files, show as pictures in folder thumbnails, over the same background.
 - Picture-based subtitles from Blu-ray rips (PGS) and DVDs (VobSub) can now be shown in the Media pane. They follow the subtitle Size and Distance from bottom settings; switching them keeps the sound playing.
@@ -17,12 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In Preferences > Preview > File types, the arrow keys work in both lists: Up and Down move through types or patterns; Tab, Shift+Tab, Left and Right switch between the two lists.
 
 ### Changed
+- Media fullscreen (F, or a double-click on the video) now fills the whole screen instead of only the app window. Leaving it puts the window back as it was.
+- Renaming a workspace tab or a bookmark starts with the current name selected, so typing replaces it.
 - Dropping a file on the Media player that is already in the playlist no longer adds it a second time: its row is selected and it starts playing (a file that is already playing just keeps playing).
 - Text in SVG images inside Markdown documents is now drawn.
 - Preferences > Preview > File types is easier to use: pick a type in the list on the left to see its filename patterns on the right, then add (+), remove (−) or edit (pencil, a second click, or F2) them in place. Up and down arrows change which type is checked first. In Preferences, Esc in a text field now leaves the field first instead of closing the window.
 - The subtitle Font and Edge style in Preferences > Media are now option rows instead of dropdowns, so every choice is visible at once.
 
 ### Fixed
+- Playing a video no longer makes the app's memory use grow steadily on Windows: each new frame now reuses the same picture on the graphics card instead of making a new one.
+- Photos from phones and cameras are shown upright in Preview, folder thumbnails and Markdown documents, following the orientation the camera stored. Thumbnails made earlier are redrawn.
+- Videos filmed upright on a phone no longer play stretched sideways: they are shown upright and tall, as on the phone.
 - Arrow keys pressed in Preferences no longer also move the cursor in the file list or folder thumbnails behind it.
 
 ### Security

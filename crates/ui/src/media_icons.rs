@@ -33,6 +33,9 @@ pub(crate) enum Icon {
     Edit,
     MoveUp,
     MoveDown,
+    /// Picture previews: turn a quarter counter-clockwise or clockwise.
+    RotateLeft,
+    RotateRight,
 }
 
 pub(crate) const BUTTON: egui::Vec2 = vec2(28.0, 26.0);
@@ -163,9 +166,41 @@ fn arrow_head(painter: &egui::Painter, tip: Pos2, dir: f32, color: Color32) {
     );
 }
 
+/// A circular arrow (three quarters of a circle open at the top) whose head points
+/// clockwise, or counter-clockwise when mirrored.
+fn turn_arrow(painter: &egui::Painter, c: Pos2, clockwise: bool, stroke: Stroke) {
+    let radius = 5.5;
+    let side = if clockwise { 1.0 } else { -1.0 };
+    // Screen angles grow clockwise (y points down); mirroring flips x.
+    let at = |degrees: f32| {
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        c + vec2(side * radius * cos, radius * sin)
+    };
+    let (from, to) = (-30.0_f32, 250.0_f32);
+    let points: Vec<Pos2> = (0..=20)
+        .map(|i| at(from + (to - from) * i as f32 / 20.0))
+        .collect();
+    painter.add(Shape::line(points, stroke));
+    let end = at(to);
+    let (sin, cos) = to.to_radians().sin_cos();
+    let along = vec2(-side * sin, cos);
+    let across = vec2(-along.y, along.x);
+    tri(
+        painter,
+        [
+            end + along * 3.0,
+            end - along * 1.5 + across * 3.0,
+            end - along * 1.5 - across * 3.0,
+        ],
+        stroke.color,
+    );
+}
+
 fn draw(painter: &egui::Painter, icon: Icon, c: Pos2, color: Color32) {
     let stroke = Stroke::new(1.6, color);
     match icon {
+        Icon::RotateLeft => turn_arrow(painter, c, false, stroke),
+        Icon::RotateRight => turn_arrow(painter, c, true, stroke),
         Icon::Play => right_tri(painter, c.x - 4.0, c.y, 9.0, 11.0, color),
         Icon::Pause => {
             bar_rect(painter, c.x - 4.5, c.y - 5.0, 3.0, 10.0, color);
