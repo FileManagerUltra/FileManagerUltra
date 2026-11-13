@@ -110,7 +110,7 @@ windows = "0.62"
 winresource = "0.1"
 
 # external — SFTP (fm-fs-sftp only; tokio never leaks to other crates)
-russh = "0.64"
+russh = "0.65"
 russh-sftp = "3"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
 secrecy = "0.10"
