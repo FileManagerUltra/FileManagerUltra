@@ -4,14 +4,20 @@ Where FileManagerUltra is heading. Plans, not promises: order and scope can chan
 Engineering detail lives in [docs/roadmap.md](docs/roadmap.md) and the OpenSpec changes
 under `openspec/`.
 
-## Now: 0.1.x (beta)
+## Now: 0.2.x (beta)
 
-Stabilise the first public release.
+Make the current release solid on every platform and close the gaps in the Media pane.
 
 - Windows and macOS smoke checks: live folder refresh (including mapped network
-  drives), the installed Windows shortcut icon, and USB / VeraCrypt devices.
+  drives), USB / VeraCrypt devices, the ffmpeg download on Windows and the installed
+  Windows shortcut icon.
 - Signed and notarized installers, so the OS stops warning on first start.
+- Picture-based subtitles (DVD VobSub, Blu-ray PGS) in the Media pane.
+- Hardware video decoding, with a fallback to software decoding.
 - Fix what early users report.
+
+What is already done on `main` but not released yet is listed under `[Unreleased]` in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Next
 
@@ -31,7 +37,7 @@ Stabilise the first public release.
 - **File synchronization**: compare two folders, review a plan of copies, updates and
   deletions, then run it (one-way, mirror, two-way; saved folder-pair profiles).
 - **Archives**: browse and extract zip/tar as folders.
-- **Preferences menu** with a pane-layout restore policy (yes / no / ask).
+- **Pane-layout restore policy** at startup: yes / no / ask, set in Preferences.
 - **Automation**: CLI / control channel on top of the command registry.
 - **Plugins.**
 
