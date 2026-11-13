@@ -1,12 +1,12 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fm_vfs::FmError;
 
-use crate::{AudioDecoder, AudioInfo, AudioSink, DeviceSink, Gain, Pipeline};
+use crate::{AudioDecoder, AudioInfo, AudioSink, DeviceSink, Gain, Pipeline, Stretcher};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlaybackState {
@@ -32,6 +32,26 @@ struct Shared {
     status: Mutex<PlaybackStatus>,
     cancelled: AtomicBool,
     paused: AtomicBool,
+    /// Playback speed as `f64` bits; pitch is kept (see `stretch`).
+    speed: AtomicU64,
+}
+
+impl Shared {
+    fn speed(&self) -> f64 {
+        f64::from_bits(self.speed.load(Ordering::Acquire))
+    }
+}
+
+fn valid_speed(speed: f64) -> Result<f64, FmError> {
+    if speed.is_finite() && (crate::MIN_SPEED..=crate::MAX_SPEED).contains(&speed) {
+        Ok(speed)
+    } else {
+        Err(FmError::InvalidParams(format!(
+            "speed must be between {} and {}",
+            crate::MIN_SPEED,
+            crate::MAX_SPEED
+        )))
+    }
 }
 
 /// Non-blocking playback handle. Opening files/devices and decoding happen on its worker.
@@ -58,6 +78,17 @@ impl AudioPlayer {
     /// Start playing at `position` seconds; the status reports it from the first poll, so
     /// callers never see a jump back to zero while the first seek is processed.
     pub fn start_at(path: PathBuf, gain: Gain, position: f64) -> Result<Self, FmError> {
+        Self::start_with(path, gain, position, 1.0)
+    }
+
+    /// Like [`Self::start_at`], playing at `speed` (0.5–3×) with the pitch kept.
+    pub fn start_with(
+        path: PathBuf,
+        gain: Gain,
+        position: f64,
+        speed: f64,
+    ) -> Result<Self, FmError> {
+        let speed = valid_speed(speed)?;
         if !position.is_finite() || position < 0.0 {
             return Err(FmError::InvalidParams(
                 "start position must be finite and non-negative".into(),
@@ -73,6 +104,7 @@ impl AudioPlayer {
             }),
             cancelled: AtomicBool::new(false),
             paused: AtomicBool::new(false),
+            speed: AtomicU64::new(speed.to_bits()),
         });
         let (seeks, rx) = sync_channel(8);
         if position > 0.0 {
@@ -119,6 +151,13 @@ impl AudioPlayer {
 
     pub fn set_paused(&self, paused: bool) {
         self.shared.paused.store(paused, Ordering::Release);
+    }
+
+    /// Play at `speed` (0.5–3×) with the pitch kept; takes effect at the current position.
+    pub fn set_speed(&self, speed: f64) -> Result<(), FmError> {
+        let speed = valid_speed(speed)?;
+        self.shared.speed.store(speed.to_bits(), Ordering::Release);
+        Ok(())
     }
 
     pub fn seek(&self, position: f64) -> Result<(), FmError> {
@@ -196,6 +235,16 @@ fn run(
         let (sink, mut producer, clock) = open(gain.clone())?;
         let out = sink.format();
         let mut pipeline = Pipeline::new(info.format, out)?;
+        // One speed per segment; a change restarts the segment where playback is.
+        let speed = shared.speed();
+        let stretch = || -> Result<Option<Stretcher>, FmError> {
+            if (speed - 1.0).abs() < 1e-9 {
+                Ok(None)
+            } else {
+                Stretcher::new(out.rate(), out.channels(), speed).map(Some)
+            }
+        };
+        let mut stretcher = stretch()?;
         sink.play()?;
         let mut audible = Audible { start: 0.0, from };
         let mut boundaries: std::collections::VecDeque<Boundary> = Default::default();
@@ -264,9 +313,14 @@ fn run(
                 } else {
                     PlaybackState::Playing
                 };
-                status.position = audible.from + (played - audible.start).max(0.0);
+                status.position = audible.from + (played - audible.start).max(0.0) * speed;
                 status.position
             };
+            if boundaries.is_empty() && (shared.speed() - speed).abs() > 1e-9 {
+                from = info.duration.map_or(position, |d| position.min(d));
+                decoder.seek(from)?;
+                continue 'segment;
+            }
             if paused {
                 std::thread::sleep(Duration::from_millis(5));
                 continue;
@@ -294,10 +348,24 @@ fn run(
                 written_frames += (written / out.channels()) as u64;
             } else if !ended {
                 pcm = match decoder.next_packet()? {
-                    Some(packet) => pipeline.process(&packet.samples)?,
+                    Some(packet) => {
+                        let pcm = pipeline.process(&packet.samples)?;
+                        match &mut stretcher {
+                            Some(stretcher) => stretcher.process(&pcm),
+                            None => pcm,
+                        }
+                    }
                     None => {
                         ended = true;
-                        pipeline.finish()?
+                        let tail = pipeline.finish()?;
+                        match &mut stretcher {
+                            Some(stretcher) => {
+                                let mut out = stretcher.process(&tail);
+                                out.extend(stretcher.finish());
+                                out
+                            }
+                            None => tail,
+                        }
                     }
                 };
                 offset = 0;
@@ -305,6 +373,7 @@ fn run(
                 // Same sink, same ring: the next item's first frame follows the last one.
                 let following_info = Arc::new(following.info().clone());
                 pipeline = Pipeline::new(following_info.format, out)?;
+                stretcher = stretch()?;
                 boundaries.push_back(Boundary {
                     at: written_frames as f64 / f64::from(out.rate()),
                     token: id,
@@ -334,7 +403,7 @@ fn run(
                 status.state = PlaybackState::Finished;
                 status.position = info
                     .duration
-                    .unwrap_or(audible.from + (played - audible.start).max(0.0));
+                    .unwrap_or(audible.from + (played - audible.start).max(0.0) * speed);
                 return Ok(());
             }
             if offset < pcm.len() || ended {
@@ -385,6 +454,7 @@ mod tests {
             }),
             cancelled: AtomicBool::new(false),
             paused: AtomicBool::new(false),
+            speed: AtomicU64::new(1.0_f64.to_bits()),
         }
     }
 
@@ -451,6 +521,68 @@ mod tests {
         let status = shared.status.lock().expect("status");
         assert_eq!(status.state, PlaybackState::Finished);
         assert_eq!(status.position, 0.01);
+    }
+
+    /// Play `file` at `speed` on a fake 48 kHz mono device; the samples it rendered.
+    fn play_at(file: &std::path::Path, speed: f64) -> (Vec<f32>, PlaybackStatus) {
+        let shared = shared();
+        shared.speed.store(speed.to_bits(), Ordering::Release);
+        let (_tx, rx) = sync_channel(8);
+        let out = Arc::new(Mutex::new(Vec::new()));
+        let sink_out = out.clone();
+        run(
+            file.into(),
+            &shared,
+            rx,
+            no_nexts(),
+            Gain::default(),
+            move |gain| {
+                let format = AudioFormat::new(48_000, 1)?;
+                let (writer, consumer, clock) = audio_buffer(format, 48_000, gain)?;
+                Ok((
+                    Box::new(FakeSink {
+                        consumer: Mutex::new(consumer),
+                        format,
+                        out: sink_out.clone(),
+                    }),
+                    writer,
+                    clock,
+                ))
+            },
+        )
+        .expect("play");
+        let status = shared.status.lock().expect("status").clone();
+        let samples = out.lock().expect("out").clone();
+        (samples, status)
+    }
+
+    #[test]
+    fn faster_playback_takes_less_time_and_reports_media_time() {
+        let file = tone(48_000, 8_192);
+        let (normal, _) = play_at(file.path(), 1.0);
+        let (fast, status) = play_at(file.path(), 2.0);
+        let audible = |s: &[f32]| s.iter().filter(|v| v.abs() > 0.01).count() as f64;
+        let ratio = audible(&fast) / audible(&normal);
+        assert!(
+            (0.45..=0.55).contains(&ratio),
+            "2x took {ratio} of the time"
+        );
+        assert_eq!(status.state, PlaybackState::Finished);
+        assert_eq!(
+            status.position, 1.0,
+            "the position is media time, not device time"
+        );
+    }
+
+    #[test]
+    fn invalid_speeds_are_refused_before_any_worker_starts() {
+        let file = fixture();
+        for speed in [0.0, 0.25, 3.5, f64::NAN] {
+            assert!(
+                AudioPlayer::start_with(file.path().into(), Gain::default(), 0.0, speed).is_err(),
+                "{speed}"
+            );
+        }
     }
 
     #[test]

@@ -22,6 +22,10 @@ The position of every audiobook and every video SHALL be remembered (by path or 
 - **WHEN** a video was closed at 42:10 and is played again
 - **THEN** it resumes at about 42:07
 
+#### Scenario: Videos in a folder
+- **WHEN** a folder of documentary episodes (or the parts of a DVD) is in the playlist and episode 2 was stopped at 20:00
+- **THEN** episode 2 resumes at about 19:57, and episode 1 is not marked as played: videos are remembered one by one, never as one book
+
 #### Scenario: Replaced file
 - **WHEN** the file's size or modified time changed since the position was saved
 - **THEN** playback starts from the beginning

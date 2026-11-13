@@ -21,6 +21,17 @@ TBD - created by archiving change dnd-and-file-ops. Update Purpose after archive
 - **WHEN** the user cancels the confirm
 - **THEN** nothing is removed
 
+### Requirement: Panes leave a deleted folder
+When a trash or permanent delete finishes and a Files pane shows a removed folder (or a folder inside one), the pane SHALL move to the folder its tree now highlights, if that is not removed too, and otherwise to the nearest parent that still exists; it SHALL NOT keep showing a "not found" error. A delete that failed or was cancelled part way SHALL leave the pane where it is. The move SHALL be decided from the job's own sources, without filesystem calls on the UI thread.
+
+#### Scenario: Delete the shown folder from the tree
+- **WHEN** the folder shown in the listing is moved to the trash from the tree, and the tree highlight moves to the next folder
+- **THEN** the listing shows that next folder
+
+#### Scenario: Delete a parent of the shown folder
+- **WHEN** a folder above the shown one is deleted and the tree highlights nothing else
+- **THEN** the pane shows the deleted folder's parent
+
 ### Requirement: Undo stack
 The session SHALL keep a bounded (100) stack of inverse records for trash, move, rename, mkdir and copy; `edit.undo` SHALL replay the newest, undoing a copy or mkdir by moving the created items to the trash.
 

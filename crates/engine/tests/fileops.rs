@@ -356,6 +356,51 @@ fn mkdir_and_permanent_delete() {
 }
 
 #[test]
+fn deleting_the_shown_folder_moves_the_pane_to_the_highlighted_or_parent_folder() {
+    let fs = MemFs::new();
+    for book in ["Alastair", "Douglas", "Kevin/Part 1"] {
+        fs.put_str(&format!("/books/{book}/01.mp3"), b"x")
+            .expect("file");
+    }
+    let mut s = session_on(Arc::new(fs.clone()));
+    let pane = s.layout.focused();
+    let delete = |s: &mut Session, what: &str| {
+        dispatch(
+            s,
+            "file.delete_permanent",
+            json!({"sources": [what], "confirm": true}),
+        )
+        .expect("delete");
+        let id = only_job(&s.fileops);
+        assert_eq!(finish(s, id), OpState::Finished);
+    };
+    let location = |s: &Session| s.layout.state(pane).expect("pane").location.clone();
+
+    // Deleted from the tree: its highlight has moved on to the next folder.
+    dispatch(&mut s, "nav.open", json!({"uri": "/books/Alastair"})).expect("open");
+    s.layout.state_mut(pane).expect("pane").tree.focused = Some(uri("/books/Douglas"));
+    delete(&mut s, "/books/Alastair");
+    assert_eq!(
+        location(&s),
+        uri("/books/Douglas"),
+        "the highlighted folder is shown"
+    );
+    poll_until(&mut s, "Douglas to be read", |s| {
+        s.dirs.state(&uri("/books/Douglas")).is_ready()
+    });
+
+    // A folder above the shown one goes, and the tree has nothing else highlighted.
+    dispatch(&mut s, "nav.open", json!({"uri": "/books/Kevin/Part 1"})).expect("open");
+    delete(&mut s, "/books/Kevin");
+    assert_eq!(location(&s), uri("/books"), "the nearest surviving parent");
+
+    // Deleting something elsewhere leaves the pane alone.
+    fs.put_str("/books/Other/01.mp3", b"x").expect("file");
+    delete(&mut s, "/books/Other");
+    assert_eq!(location(&s), uri("/books"));
+}
+
+#[test]
 fn drop_resolves_in_the_engine() {
     let fs = MemFs::new();
     fs.put_str("/src/a.txt", b"a").expect("put");

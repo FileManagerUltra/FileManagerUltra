@@ -400,7 +400,7 @@ fn subtitle_overlay(ui: &Ui, s: &Session, picture: egui::Rect, tokens: &Tokens) 
 
 fn options_menu(ui: &mut Ui, s: &Session, actions: &mut Vec<(&'static str, Value)>) {
     crate::media_audio::menus(ui, s, actions);
-    if s.media.video.is_some() {
+    if s.media.queue.current().is_some() {
         ui.menu_button("Speed", |ui| {
             for speed in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0] {
                 let selected = (s.media.speed - speed).abs() < 0.01;
@@ -690,12 +690,14 @@ fn playlist(
                     .map_or(0.5, |pos| (pos.y - rect.top()) / rect.height());
                 let last_in_folder = media.queue.group_of(index).is_some_and(|g| g.last);
                 let locked = media.queue.is_locked(index);
-                let zone = if index == 0 && !grouped && fraction < 1.0 / 3.0 {
-                    DropZone::Before
-                } else if last_in_folder && fraction > 2.0 / 3.0 {
+                // Upper half: before the row; lower half: after it; the bottom third of a
+                // folder's last row steps out behind the folder.
+                let zone = if last_in_folder && fraction > 2.0 / 3.0 {
                     DropZone::AfterFolder
                 } else if locked {
                     DropZone::Refused
+                } else if fraction < 0.5 {
+                    DropZone::Before
                 } else {
                     DropZone::After
                 };
@@ -726,7 +728,7 @@ fn playlist(
                 {
                     let (y, from) = match zone {
                         DropZone::Refused => (rect.top(), rect.left()),
-                        DropZone::Before => (rect.top(), rect.left()),
+                        DropZone::Before => (rect.top(), rect.left() + 20.0),
                         DropZone::After => (rect.bottom(), rect.left() + 20.0),
                         DropZone::AfterFolder => (rect.bottom(), rect.left()),
                     };
@@ -1059,8 +1061,8 @@ enum DropZone {
     Refused,
 }
 
-/// Dropped on an item row: right after it (inside its folder), with edge zones for the very
-/// first row and for stepping out behind a folder.
+/// Dropped on an item row: before or after it (inside its folder), with an edge zone for
+/// stepping out behind a folder.
 fn drop_on_row(
     from: PlaylistDrag,
     onto: usize,
@@ -1842,7 +1844,7 @@ fn player_menu(ui: &mut Ui, s: &Session, actions: &mut Vec<(&'static str, Value)
     }
     ui.separator();
     crate::media_audio::menus(ui, s, actions);
-    if media.video.is_some() {
+    if media.queue.current().is_some() {
         ui.menu_button("Speed", |ui| {
             for speed in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0] {
                 let selected = (media.speed - speed).abs() < 0.01;
@@ -1855,6 +1857,8 @@ fn player_menu(ui: &mut Ui, s: &Session, actions: &mut Vec<(&'static str, Value)
                 }
             }
         });
+    }
+    if media.video.is_some() {
         ui.separator();
         if item(ui, "Fullscreen", "F", "media.fullscreen") {
             actions.push(("media.fullscreen", Value::Null));
@@ -2501,7 +2505,7 @@ mod tests {
     }
 
     #[test]
-    fn files_hovering_a_row_ask_to_land_after_it() {
+    fn files_hovering_a_row_land_before_or_after_it() {
         let mut s = Session::new().expect("session");
         s.dispatch(
             "media.enqueue",
@@ -2538,14 +2542,63 @@ mod tests {
                 origin: 1,
             },
         );
-        h.hover_at(h.get_by_label("b").rect().center());
+        // `c` sits outside the folder, so its lower half means "after" (no step-out zone).
+        let label = h.get_by_label("c").rect();
+        for (y, want) in [
+            (label.top() - 1.0, json!({"before": 2})),
+            (label.bottom() + 1.0, json!({"after": 2})),
+        ] {
+            seen.lock().expect("lock").clear();
+            h.hover_at(egui::pos2(label.center().x, y));
+            h.run();
+            h.run();
+            assert!(
+                seen.lock().expect("lock").contains(&Some(want.clone())),
+                "{want}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_row_dropped_on_the_upper_half_of_another_lands_above_it() {
+        let mut s = Session::new().expect("session");
+        s.dispatch(
+            "media.enqueue",
+            &json!({"uris": ["/m/a.mp3", "/m/b.mp3", "/m/c.mp3"]}),
+        )
+        .expect("enqueue");
+        let pane = s.media_pane().expect("media");
+        let tokens = Tokens::dark();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(640.0, 480.0))
+            .build_ui_state(
+                move |ui, s| {
+                    egui::CentralPanel::default().show(ui, |ui| show(ui, s, pane, &tokens));
+                },
+                s,
+            );
+        h.run();
+        let away = egui::pos2(300.0, 450.0);
+        h.hover_at(away);
+        h.drag_at(away);
+        h.run();
+        egui::DragAndDrop::set_payload(&h.ctx, PlaylistDrag::Row(2));
+        let label = h.get_by_label("a").rect();
+        let above = egui::pos2(label.center().x, label.top() - 1.0);
+        h.hover_at(above);
+        h.run();
+        h.drop_at(above);
         h.run();
         h.run();
-        assert!(
-            seen.lock()
-                .expect("lock")
-                .contains(&Some(json!({"after": 1})))
-        );
+        let order: Vec<_> = h
+            .state()
+            .media
+            .queue
+            .items()
+            .iter()
+            .filter_map(|u| u.file_name().map(str::to_string))
+            .collect();
+        assert_eq!(order, ["c.mp3", "a.mp3", "b.mp3"]);
     }
 
     #[test]

@@ -46,7 +46,10 @@ pub struct MediaSession {
     pub position: f64,
     pub volume: f32,
     pub muted: bool,
+    /// Speed of the current item (0.5–3×, pitch kept).
     pub speed: f64,
+    /// Speed for items that are not audiobooks; books remember their own.
+    pub session_speed: f64,
     pub info: Option<Arc<AudioInfo>>,
     pub cover: Option<Arc<fm_preview::ImageDoc>>,
     pub error: Option<String>,
@@ -81,6 +84,7 @@ impl Default for MediaSession {
             volume: 100.0,
             muted: false,
             speed: 1.0,
+            session_speed: 1.0,
             info: None,
             cover: None,
             error: None,
@@ -137,6 +141,16 @@ impl MediaSession {
             .or_else(|| self.cached_length())
     }
 
+    /// An audiobook's remembered speed, else the session speed.
+    pub fn speed_for_current(&self) -> f64 {
+        self.queue
+            .current_index()
+            .and_then(|index| self.book_ref(index))
+            .filter(|book| !book.video)
+            .and_then(|book| self.state_of(&book.key).and_then(|state| state.speed))
+            .unwrap_or(self.session_speed)
+    }
+
     pub fn is_video(&self) -> bool {
         self.queue.current().is_some_and(is_video)
     }
@@ -174,7 +188,8 @@ impl MediaSession {
             .playable(uri)
             .and_then(|uri| uri.local_path())
             .ok_or_else(|| bad("media needs a local file"))?;
-        let player = AudioPlayer::start_at(path, self.gain.clone(), self.position)?;
+        self.speed = self.speed_for_current();
+        let player = AudioPlayer::start_with(path, self.gain.clone(), self.position, self.speed)?;
         self.extras.item_changed();
         self.player = Some(player);
         self.playing = true;
@@ -415,6 +430,7 @@ impl Session {
                         );
                         video.width = Some(self.media.video_width);
                         video.pos = self.media.position;
+                        self.media.speed = self.media.speed_for_current();
                         video.speed = self.media.speed;
                         if !self.media.playing {
                             // Decode one still frame without playing.

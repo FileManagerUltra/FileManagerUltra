@@ -215,11 +215,7 @@ fn view(s: &Session) -> Option<View> {
                 position: media.position,
                 duration: media.duration(),
                 volume: media.volume,
-                speed: if media.video.is_some() {
-                    media.speed
-                } else {
-                    1.0
-                },
+                speed: media.speed,
                 fullscreen: s.media_fullscreen_active(),
             })
         }
