@@ -183,8 +183,12 @@ impl russh::server::Handler for SshSession {
         }
     }
 
-    async fn auth_publickey(&mut self, user: &str, key: &PublicKey) -> Result<Auth, Self::Error> {
-        if user == self.ctx.user && *key == self.ctx.authorized {
+    async fn auth_publickey(
+        &mut self,
+        user: &str,
+        key: russh::server::VerifiedPublicKey<'_>,
+    ) -> Result<Auth, Self::Error> {
+        if user == self.ctx.user && *key.public_key == self.ctx.authorized {
             Ok(Auth::Accept)
         } else {
             Ok(Auth::reject())
