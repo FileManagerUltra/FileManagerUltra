@@ -12,6 +12,7 @@ use serde_json::json;
 
 use crate::{
     dialog_style::{hint, section_heading},
+    focus_nav::{self, Lock, Tab},
     media_icons::{self, Icon},
     theme::Tokens,
 };
@@ -46,6 +47,14 @@ fn edit_id() -> Id {
 
 fn error_id() -> Id {
     Id::NULL.with("preview-filter-error")
+}
+
+fn type_widget(kind: PreviewType) -> Id {
+    Id::NULL.with(("preview-filter-type-row", kind))
+}
+
+fn pattern_widget(kind: PreviewType, row: usize) -> Id {
+    Id::NULL.with(("preview-filter-pattern-row", kind, row))
 }
 
 fn apply(s: &mut Session, groups: &[FilterGroup]) -> Result<(), String> {
@@ -160,16 +169,30 @@ fn panel<R>(
 }
 
 /// One full-width list row. Draws `text` (and an optional muted `detail` at the right).
+/// Only the list's current row is `focusable`: each list is a single Tab stop.
+#[allow(clippy::too_many_arguments)]
 fn row(
     ui: &mut Ui,
     tokens: &Tokens,
+    id: Id,
+    focusable: bool,
     text: &str,
     detail: Option<&str>,
     selected: bool,
     accessible: String,
 ) -> egui::Response {
     let size = egui::vec2(ui.available_width(), row_height(tokens));
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let sense = if focusable {
+        Sense::click()
+    } else {
+        Sense::CLICK
+    };
+    let response = ui.interact(rect, id, sense);
+    // Clicking a row gives it the keyboard, so the arrows, Delete and F2 work right away.
+    if response.clicked() {
+        focus_nav::focus_later(ui.ctx(), id);
+    }
     response.widget_info(|| {
         WidgetInfo::selected(egui::Role::ListBoxOption, true, selected, &accessible)
     });
@@ -179,14 +202,6 @@ fn row(
             painter.rect_filled(rect, 0.0, tokens.selection_bg);
         } else if response.hovered() {
             painter.rect_filled(rect, 0.0, tokens.hover_bg);
-        }
-        if response.has_focus() {
-            painter.rect_stroke(
-                rect.shrink(1.0),
-                0.0,
-                Stroke::new(1.5, tokens.accent),
-                egui::StrokeKind::Inside,
-            );
         }
         let color = if selected {
             tokens.selection_text
@@ -263,11 +278,60 @@ fn types_panel(
             }
         },
         |ui| {
+            let ctx = ui.ctx().clone();
             for (i, group) in groups.iter().enumerate() {
+                let id = type_widget(group.kind);
+                let focusable = i == index;
+                if focusable {
+                    // Into the patterns, at the remembered selection or the first one.
+                    let enter_patterns = |select: &mut Option<PreviewType>| {
+                        let remembered = pattern_id(group.kind);
+                        let len = group.patterns.len();
+                        let row = ctx
+                            .data(|data| data.get_temp::<usize>(remembered))
+                            .filter(|row| *row < len)
+                            .unwrap_or(0);
+                        ctx.data_mut(|data| data.insert_temp(remembered, row));
+                        *select = Some(group.kind);
+                        focus_nav::focus_later(&ctx, pattern_widget(group.kind, row));
+                    };
+                    let keys = focus_nav::keys(
+                        ui,
+                        id,
+                        Lock {
+                            tab: true,
+                            arrows: true,
+                        },
+                    );
+                    match keys.tab {
+                        Some(Tab::Forward) if !group.patterns.is_empty() => {
+                            enter_patterns(&mut select);
+                        }
+                        Some(tab) => focus_nav::pass_tab(ui, tab),
+                        None => {}
+                    }
+                    let step = match keys.arrow {
+                        Some(Key::ArrowDown) => Some(i + 1),
+                        Some(Key::ArrowUp) => i.checked_sub(1),
+                        Some(Key::Home) => Some(0),
+                        Some(Key::End) => Some(groups.len().saturating_sub(1)),
+                        Some(Key::ArrowRight) if !group.patterns.is_empty() => {
+                            enter_patterns(&mut select);
+                            None
+                        }
+                        _ => None,
+                    };
+                    if let Some(next) = step.filter(|n| *n != i).and_then(|n| groups.get(n)) {
+                        select = Some(next.kind);
+                        focus_nav::focus_later(&ctx, type_widget(next.kind));
+                    }
+                }
                 let count = group.patterns.len().to_string();
                 let response = row(
                     ui,
                     tokens,
+                    id,
+                    focusable,
                     group.kind.label(),
                     Some(&count),
                     i == index,
@@ -278,22 +342,9 @@ fn types_panel(
                     1 => "1 filename pattern".to_string(),
                     n => format!("{n} filename patterns"),
                 });
+                focus_nav::claim(ui, &response);
                 if response.clicked() {
                     select = Some(group.kind);
-                }
-                if response.has_focus() {
-                    let step = ui.input(|input| {
-                        if input.key_pressed(Key::ArrowDown) {
-                            Some(i + 1)
-                        } else if input.key_pressed(Key::ArrowUp) {
-                            i.checked_sub(1)
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(next) = step.and_then(|n| groups.get(n)) {
-                        select = Some(next.kind);
-                    }
                 }
             }
         },
@@ -340,6 +391,9 @@ fn patterns_panel(
     let mut remove: Option<usize> = None;
     let mut commit: Option<String> = None;
     let mut cancel = false;
+    // Enter or Escape ended an edit: the keyboard goes back to the list afterwards.
+    let mut by_key = false;
+    let mut removed_by_key = false;
     let width = ui.available_width();
     let toolbar_chosen = chosen;
     let (add, gone, edit) = panel(
@@ -367,6 +421,15 @@ fn patterns_panel(
             );
             let edit =
                 media_icons::button(ui, tokens, Icon::Edit, "Edit selected pattern", has, false);
+            if !current.patterns.is_empty() {
+                // The list has keys for these (Insert, Delete, F2): keep Tab moving between
+                // the lists instead of stopping on every toolbar button.
+                ui.memory_mut(|m| {
+                    for response in [&add, &gone, &edit] {
+                        m.ignore_focus(response.id);
+                    }
+                });
+            }
             (add.clicked(), gone.clicked(), edit.clicked())
         },
         |ui| {
@@ -391,6 +454,8 @@ fn patterns_panel(
                     if let Some(edit) = editing.as_mut() {
                         let (done, keep) = edit_row(ui, tokens, edit);
                         if done {
+                            by_key = ui
+                                .input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Escape));
                             match keep {
                                 Some(text) if text != edit.saved => commit = Some(text),
                                 _ => cancel = true,
@@ -400,20 +465,77 @@ fn patterns_panel(
                     continue;
                 }
                 let Some(pattern) = pattern else { continue };
+                let id = pattern_widget(kind, row_index);
+                // The list is one Tab stop: the selected row, or the first one.
+                let focusable = row_index == chosen.unwrap_or(0);
+                if focusable {
+                    let keys = focus_nav::keys(
+                        ui,
+                        id,
+                        Lock {
+                            tab: true,
+                            arrows: true,
+                        },
+                    );
+                    match keys.tab {
+                        Some(Tab::Back) => focus_nav::focus_later(ui.ctx(), type_widget(kind)),
+                        Some(Tab::Forward) => focus_nav::pass_tab(ui, Tab::Forward),
+                        None => {}
+                    }
+                    let step = match keys.arrow {
+                        Some(Key::ArrowDown) => Some(row_index + 1),
+                        Some(Key::ArrowUp) => row_index.checked_sub(1),
+                        Some(Key::Home) => Some(0),
+                        Some(Key::End) => Some(current.patterns.len().saturating_sub(1)),
+                        Some(Key::ArrowLeft) => {
+                            focus_nav::focus_later(ui.ctx(), type_widget(kind));
+                            None
+                        }
+                        _ => None,
+                    };
+                    if let Some(next) =
+                        step.filter(|n| *n < current.patterns.len() && *n != row_index)
+                    {
+                        chosen = Some(next);
+                        focus_nav::focus_later(ui.ctx(), pattern_widget(kind, next));
+                    }
+                }
                 let selected = chosen == Some(row_index);
-                let response = row(ui, tokens, pattern, None, selected, pattern.clone())
-                    .on_hover_text("Click to select; click again or double-click to edit");
+                let response = row(
+                    ui,
+                    tokens,
+                    id,
+                    focusable,
+                    pattern,
+                    None,
+                    selected,
+                    pattern.clone(),
+                )
+                .on_hover_text(
+                    "Click to select; click again, Enter or F2 to edit; Delete to remove",
+                );
+                focus_nav::claim(ui, &response);
                 if response.clicked() || response.double_clicked() {
                     if selected {
                         start = Some(Some(row_index));
                     }
                     chosen = Some(row_index);
                 }
-                if response.has_focus() && ui.input(|input| input.key_pressed(Key::Delete)) {
-                    remove = Some(row_index);
-                }
-                if response.has_focus() && ui.input(|input| input.key_pressed(Key::F2)) {
-                    start = Some(Some(row_index));
+                if response.has_focus() {
+                    // Arriving by Shift+Tab focuses the row without selecting it.
+                    chosen = chosen.or(Some(row_index));
+                    ui.input(|input| {
+                        if input.key_pressed(Key::Delete) {
+                            remove = Some(row_index);
+                            removed_by_key = true;
+                        }
+                        if input.key_pressed(Key::F2) {
+                            start = Some(Some(row_index));
+                        }
+                        if input.key_pressed(Key::Insert) {
+                            start = Some(None);
+                        }
+                    });
                 }
             }
         },
@@ -455,7 +577,17 @@ fn patterns_panel(
         }
     }
     if cancel {
+        let edited = editing.as_ref().and_then(|e| e.row);
         editing = None;
+        if by_key {
+            focus_nav::focus_later(
+                ui.ctx(),
+                match chosen.or(edited) {
+                    Some(row) => pattern_widget(kind, row),
+                    None => type_widget(kind),
+                },
+            );
+        }
     }
     if let Some(row) = remove {
         let mut next = groups.to_vec();
@@ -465,7 +597,18 @@ fn patterns_panel(
             group.patterns.remove(row);
             let left = group.patterns.len();
             match apply(s, &next) {
-                Ok(()) => chosen = (left > 0).then(|| row.min(left - 1)),
+                Ok(()) => {
+                    chosen = (left > 0).then(|| row.min(left - 1));
+                    if removed_by_key {
+                        focus_nav::focus_later(
+                            ui.ctx(),
+                            match chosen {
+                                Some(row) => pattern_widget(kind, row),
+                                None => type_widget(kind),
+                            },
+                        );
+                    }
+                }
                 Err(message) => error = Some(message),
             }
         }
@@ -573,6 +716,107 @@ mod tests {
             .0
             .iter()
             .position(|g| g.kind == kind)
+    }
+
+    #[test]
+    fn arrow_keys_move_the_pattern_selection() {
+        let mut h = harness(Tokens::dark());
+        let selected = |h: &Harness<'_, Session>, label: &str| {
+            h.get_by_label(label).accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
+        };
+        h.get_by_label("*.log").click();
+        h.run();
+        assert!(selected(&h, "*.log"));
+        h.key_press(egui::Key::ArrowDown);
+        h.run();
+        assert!(selected(&h, "*.log.gz"));
+        assert!(!selected(&h, "*.log"));
+        h.key_press(egui::Key::ArrowDown);
+        h.run();
+        assert!(selected(&h, "*.log.[0-9]*"));
+        h.key_press(egui::Key::ArrowUp);
+        h.run();
+        assert!(selected(&h, "*.log.gz"));
+        h.get_by_label("Remove selected pattern").click();
+        h.run();
+        assert!(
+            !h.state()
+                .prefs
+                .preview_filters
+                .patterns(PreviewType::Logs)
+                .iter()
+                .any(|p| p == "*.log.gz"),
+            "the keyboard selection is what Remove acts on"
+        );
+        // Left into the types, Down to the next type, Right back into its patterns.
+        h.get_by_label("*.log").click();
+        h.run();
+        h.key_press(egui::Key::ArrowLeft);
+        h.run();
+        h.key_press(egui::Key::ArrowDown);
+        h.run();
+        h.get_by_label("Filename patterns for Images");
+        h.key_press(egui::Key::ArrowRight);
+        h.run();
+        assert!(selected(&h, "*.png"), "Right selects the first pattern");
+        h.key_press(egui::Key::ArrowDown);
+        h.run();
+        assert!(selected(&h, "*.jpg"));
+        assert!(!selected(&h, "*.jpeg"), "one step per key press");
+        // Shift+Tab goes back to the types, Tab forward into the patterns and then on.
+        h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        h.run();
+        h.key_press(egui::Key::ArrowDown);
+        h.run();
+        h.get_by_label("Filename patterns for Video");
+        h.key_press(egui::Key::Tab);
+        h.run();
+        assert!(
+            selected(&h, "*.mp4"),
+            "Tab enters the patterns at the first one"
+        );
+        h.key_press(egui::Key::ArrowDown);
+        h.run();
+        assert!(selected(&h, "*.m4v"));
+        h.key_press(egui::Key::Tab);
+        h.run();
+        assert!(
+            h.get_by_label("Restore default file types")
+                .accesskit_node()
+                .is_focused(),
+            "Tab leaves the lists instead of bouncing between them"
+        );
+        h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        h.run();
+        assert!(
+            h.get_by_label("*.m4v").accesskit_node().is_focused(),
+            "Shift+Tab comes back to the selected pattern"
+        );
+        h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        h.run();
+        h.key_press(egui::Key::ArrowUp);
+        h.run();
+        h.get_by_label("Filename patterns for Images");
+        // Keys for the toolbar actions: Insert adds, F2 edits, Delete removes.
+        h.key_press(egui::Key::Tab);
+        h.run();
+        h.key_press(egui::Key::Insert);
+        h.run();
+        h.get_by_role(Role::TextInput).type_text("*.heic");
+        h.key_press(egui::Key::Enter);
+        h.run();
+        assert!(patterns(&h, PreviewType::Images).contains(&"*.heic".to_string()));
+        assert!(
+            h.get_by_label("*.heic").accesskit_node().is_focused(),
+            "after Enter the keyboard is back on the list, on the new pattern"
+        );
+        h.key_press(egui::Key::Delete);
+        h.run();
+        assert!(!patterns(&h, PreviewType::Images).contains(&"*.heic".to_string()));
+        assert!(
+            h.get_by_label("*.ico").accesskit_node().is_focused(),
+            "after Delete the neighbouring pattern has the keyboard"
+        );
     }
 
     #[test]

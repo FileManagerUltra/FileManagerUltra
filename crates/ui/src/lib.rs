@@ -11,6 +11,7 @@ pub mod dialogs;
 pub mod diff;
 pub mod dnd;
 pub mod ffmpeg_prompt;
+mod focus_nav;
 pub mod git_marks;
 pub mod jobs;
 pub mod listing;

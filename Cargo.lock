@@ -2322,6 +2322,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "egui_kittest",
+ "flate2",
  "fm-discovery",
  "fm-engine",
  "fm-fs-local",

@@ -289,6 +289,7 @@ impl ThumbService {
             match rules.kind(&entry.name) {
                 Some(fm_preview::Kind::Image(_)) => ThumbKind::Image,
                 Some(fm_preview::Kind::Video) => ThumbKind::Video,
+                Some(fm_preview::Kind::Svg) => ThumbKind::Svg,
                 _ => ThumbKind::Other,
             }
         });
@@ -496,6 +497,50 @@ mod tests {
         assert!(matches!(svc.get(&entry, 160), ThumbState::Ready(_)));
         svc.invalidate_associations();
         set_patterns(&mut filters, PreviewType::Images, &[]);
+        svc.want_configured(
+            1,
+            &vfs(),
+            std::slice::from_ref(&entry),
+            160,
+            &filters.compile().expect("rules"),
+        );
+        wait_idle(&svc);
+        assert!(matches!(svc.get(&entry, 160), ThumbState::None));
+    }
+
+    #[test]
+    fn svg_files_get_thumbnails_through_the_svg_type() {
+        use crate::preview_types::{PreviewFilters, PreviewType};
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join("logo.svg");
+        std::fs::write(
+            &path,
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#f00"/></svg>"##,
+        )
+        .expect("write");
+        let mut entry = Entry::new(
+            VfsUri::parse(&path.to_string_lossy()).expect("uri"),
+            EntryKind::File,
+        );
+        entry.size = std::fs::metadata(&path).ok().map(|m| m.len());
+        let mut filters = PreviewFilters::default();
+        let svc = ThumbService::default();
+        svc.want_configured(
+            1,
+            &vfs(),
+            std::slice::from_ref(&entry),
+            160,
+            &filters.compile().expect("rules"),
+        );
+        wait_idle(&svc);
+        match svc.get(&entry, 160) {
+            ThumbState::Ready(t) => assert_eq!((t.width, t.height), (160, 80)),
+            other => panic!("expected an SVG thumbnail, got {other:?}"),
+        }
+        svc.invalidate_associations();
+        if let Some(group) = filters.0.iter_mut().find(|g| g.kind == PreviewType::Svg) {
+            group.patterns.clear();
+        }
         svc.want_configured(
             1,
             &vfs(),

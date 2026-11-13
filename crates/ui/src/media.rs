@@ -598,7 +598,11 @@ fn playlist(
         });
         ui.ctx().request_repaint();
     }
-    if s.layout.focused() == pane && renaming.is_none() && !ui.ctx().text_edit_focused() {
+    if s.layout.focused() == pane
+        && renaming.is_none()
+        && !crate::dialogs::window_owns_keyboard(s)
+        && !ui.ctx().text_edit_focused()
+    {
         let page = ((ui.available_height() / pitch).floor() as isize - 1).max(1);
         let moved = playlist_keys(ui, &mut pick, &order, page);
         // Keep the cursor's row in view.

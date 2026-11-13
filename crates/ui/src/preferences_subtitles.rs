@@ -57,21 +57,14 @@ pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
 
     super::section(ui, tokens, "Subtitle text", None, |ui| {
         slider(ui, s, tokens, "Size", "size", current.size, SIZE_RANGE, "%");
-        ui.horizontal(|ui| {
-            let caption = caption(ui, "Font");
-            let mut font = current.font;
-            egui::ComboBox::from_id_salt("fm-subtitle-font")
-                .selected_text(match font {
-                    SubtitleFont::Sans => "Sans-serif",
-                    SubtitleFont::Mono => "Monospace",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut font, SubtitleFont::Sans, "Sans-serif");
-                    ui.selectable_value(&mut font, SubtitleFont::Mono, "Monospace");
-                })
-                .response
-                .labelled_by(caption.id);
-            if font != current.font {
+        ui.horizontal_wrapped(|ui| {
+            let fonts = [
+                ("Sans-serif", SubtitleFont::Sans),
+                ("Monospace", SubtitleFont::Mono),
+            ];
+            if let Some(font) =
+                super::choose(ui, tokens, "subtitle-font", "Font", &fonts, current.font)
+            {
                 let name = if font == SubtitleFont::Mono {
                     "mono"
                 } else {
@@ -84,7 +77,15 @@ pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
                 style(s, json!({"bold": bold}));
             }
         });
-        color_row(ui, s, "Colour", "text_color", &current.text_color, true);
+        color_row(
+            ui,
+            s,
+            tokens,
+            "Colour",
+            "text_color",
+            &current.text_color,
+            true,
+        );
         slider(
             ui,
             s,
@@ -126,6 +127,7 @@ pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
             color_row(
                 ui,
                 s,
+                tokens,
                 "Colour",
                 "background_color",
                 &current.background_color,
@@ -146,30 +148,15 @@ pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
 
     super::section(ui, tokens, "Subtitle edge", None, |ui| {
         ui.horizontal(|ui| {
-            let caption = caption(ui, "Style");
-            let mut edge = current.edge;
-            let name = |edge: SubtitleEdge| match edge {
-                SubtitleEdge::None => "None",
-                SubtitleEdge::Outline => "Outline",
-                SubtitleEdge::Shadow => "Drop shadow",
-                SubtitleEdge::Raised => "Raised",
-                SubtitleEdge::Depressed => "Depressed",
-            };
-            egui::ComboBox::from_id_salt("fm-subtitle-edge")
-                .selected_text(name(edge))
-                .show_ui(ui, |ui| {
-                    for option in [
-                        SubtitleEdge::None,
-                        SubtitleEdge::Outline,
-                        SubtitleEdge::Shadow,
-                        SubtitleEdge::Raised,
-                        SubtitleEdge::Depressed,
-                    ] {
-                        ui.selectable_value(&mut edge, option, name(option));
-                    }
-                })
-                .response
-                .labelled_by(caption.id);
+            let edges = [
+                ("None", SubtitleEdge::None),
+                ("Outline", SubtitleEdge::Outline),
+                ("Drop shadow", SubtitleEdge::Shadow),
+                ("Raised", SubtitleEdge::Raised),
+                ("Depressed", SubtitleEdge::Depressed),
+            ];
+            let edge = super::choose(ui, tokens, "subtitle-edge", "Style", &edges, current.edge)
+                .unwrap_or(current.edge);
             if edge != current.edge {
                 let value = match edge {
                     SubtitleEdge::None => "none",
@@ -182,7 +169,15 @@ pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
             }
         });
         ui.add_enabled_ui(current.edge != SubtitleEdge::None, |ui| {
-            color_row(ui, s, "Colour", "edge_color", &current.edge_color, true);
+            color_row(
+                ui,
+                s,
+                tokens,
+                "Colour",
+                "edge_color",
+                &current.edge_color,
+                true,
+            );
             slider(
                 ui,
                 s,
@@ -302,48 +297,42 @@ fn slider(
 fn color_row(
     ui: &mut Ui,
     s: &mut Session,
+    tokens: &Tokens,
     label: &str,
     key: &str,
     current: &str,
     allow_default: bool,
 ) {
+    // Accessible names say which colour, since every row's visible label is just "Colour".
+    let subject = match key {
+        "text_color" => "Text colour",
+        "background_color" => "Background colour",
+        "edge_color" => "Edge colour",
+        _ => label,
+    };
     ui.horizontal_wrapped(|ui| {
-        caption(ui, label);
-        for (name, hex) in SWATCHES {
-            let Some(color) = crate::theme::swatch(hex) else {
-                continue;
-            };
-            let (rect, response) = ui.allocate_exact_size(vec2(22.0, 22.0), egui::Sense::click());
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::Button, true, format!("{label} {name}"))
-            });
-            ui.painter().rect_filled(rect.shrink(2.0), 4.0, color);
-            // White and black swatches must stay visible on either theme.
-            ui.painter().rect_stroke(
-                rect.shrink(2.0),
-                4.0,
-                egui::Stroke::new(
-                    1.0,
-                    ui.visuals()
-                        .widgets
-                        .noninteractive
-                        .fg_stroke
-                        .color
-                        .gamma_multiply(0.5),
-                ),
-                egui::StrokeKind::Inside,
-            );
-            if current == hex || response.hovered() {
-                ui.painter().rect_stroke(
-                    rect,
-                    5.0,
-                    egui::Stroke::new(2.0, ui.visuals().text_color()),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            if response.on_hover_text(name).clicked() {
-                style(s, json!({ key: hex }));
-            }
+        let swatches: Vec<(String, egui::Color32, &str)> = SWATCHES
+            .iter()
+            .filter_map(|(name, hex)| {
+                crate::theme::swatch(hex).map(|color| (format!("{subject} {name}"), color, *hex))
+            })
+            .collect();
+        let faces: Vec<crate::focus_nav::Face<'_>> = swatches
+            .iter()
+            .map(|(name, color, _)| crate::focus_nav::Face::Swatch(*color, name))
+            .collect();
+        let selected = swatches.iter().position(|(_, _, hex)| current == *hex);
+        if let Some((_, _, hex)) = crate::focus_nav::choice_row(
+            ui,
+            tokens,
+            Id::NULL.with(("fm-subtitle-swatches", key)),
+            Some(label),
+            &faces,
+            selected,
+        )
+        .and_then(|index| swatches.get(index))
+        {
+            style(s, json!({ key: hex }));
         }
         if allow_default
             && ui
@@ -364,7 +353,7 @@ fn color_row(
                     .char_limit(7)
                     .desired_width(80.0),
             )
-            .on_hover_text(format!("Custom {} colour", label.to_lowercase()));
+            .on_hover_text(format!("Custom {}", subject.to_lowercase()));
         if response.changed() && fm_engine::prefs::parse_hex_color(&text).is_some() {
             style(s, json!({ key: text.to_ascii_lowercase() }));
         }

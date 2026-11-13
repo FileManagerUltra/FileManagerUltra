@@ -88,7 +88,7 @@ impl PreviewType {
             Self::Audio => "*.mp3; *.flac; *.ogg; *.wav; *.m4a; *.aac".into(),
             Self::Pdf => "*.pdf".into(),
             Self::Markdown => "*.md; *.markdown".into(),
-            Self::Svg => "*.svg".into(),
+            Self::Svg => "*.svg; *.svgz".into(),
             Self::Json => "*.json; *.geojson; *.webmanifest".into(),
             Self::Yaml => "*.yaml; *.yml".into(),
             Self::Toml => "*.toml".into(),

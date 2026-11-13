@@ -170,6 +170,8 @@ pub fn sniff(path: &str, head: &[u8]) -> Kind {
     if head.starts_with(&[0x1F, 0x8B]) {
         return if is_system_log_name(name) {
             Kind::Log
+        } else if ext_of(name) == "svgz" {
+            Kind::Svg
         } else {
             Kind::Binary
         };
@@ -259,7 +261,7 @@ pub fn content(path: &str, head: &[u8]) -> Kind {
 /// Associations choose a renderer, but do not turn binary input into text.
 pub fn configured(path: &str, head: &[u8], association: Option<Kind>) -> Kind {
     match association {
-        Some(Kind::Log) if head.starts_with(&[0x1f, 0x8b]) => Kind::Log,
+        Some(kind @ (Kind::Log | Kind::Svg)) if head.starts_with(&[0x1f, 0x8b]) => kind,
         Some(
             kind @ (Kind::Log | Kind::Markdown | Kind::Svg | Kind::Structured(_) | Kind::Text(_)),
         ) => {
@@ -299,6 +301,10 @@ mod tests {
         assert_eq!(sniff("a.xml", b"<root/>"), Kind::Structured(Format::Xml));
         assert_eq!(content("drawing", svg), Kind::Svg);
         assert_eq!(configured("a.svg", svg, Some(Kind::Svg)), Kind::Svg);
+        let gz = [0x1f, 0x8b, 8, 0];
+        assert_eq!(sniff("a.svgz", &gz), Kind::Svg);
+        assert_eq!(sniff("a.gz", &gz), Kind::Binary);
+        assert_eq!(configured("a.svgz", &gz, Some(Kind::Svg)), Kind::Svg);
         assert_eq!(
             configured("a.svg", &[0x89, b'P', b'N', b'G', 0], Some(Kind::Svg)),
             Kind::Image("png"),

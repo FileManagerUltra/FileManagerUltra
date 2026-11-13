@@ -18,19 +18,70 @@ pub const MAX_BYTES: usize = 16 << 20;
 /// A declared width or height above this is treated as broken rather than drawn.
 const MAX_DECLARED: f32 = 1_000_000.0;
 
+/// Gzip data: an `.svgz` file.
+pub fn is_gzip(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0x1f, 0x8b])
+}
+
+/// Decompress at most `cap` bytes of gzip data. Returns what was decoded (for the source
+/// view) and whether it is complete; a small file can never expand past `cap` in memory.
+pub fn inflate(bytes: &[u8], cap: usize) -> (Vec<u8>, Result<(), String>) {
+    use std::io::Read;
+    let mut out = Vec::new();
+    let read = flate2::read::GzDecoder::new(bytes)
+        .take(cap as u64 + 1)
+        .read_to_end(&mut out);
+    if out.len() > cap {
+        out.truncate(cap);
+        return (
+            out,
+            Err(format!(
+                "The SVG is larger than {} MiB once decompressed, so only the start of its source is shown",
+                cap >> 20
+            )),
+        );
+    }
+    match read {
+        Ok(_) => (out, Ok(())),
+        Err(_) => (out, Err("The compressed SVG is damaged".into())),
+    }
+}
+
+/// The SVG text of a file read up to `cap` bytes: decompressed when gzip. `Err` explains
+/// why it cannot be drawn; the bytes are still what the source view can show.
+fn svg_bytes(bytes: Vec<u8>, more: bool, cap: usize) -> (Vec<u8>, bool, Result<(), String>) {
+    if more {
+        let why = format!(
+            "The SVG is larger than {} MiB, so only its source is shown",
+            cap >> 20
+        );
+        if is_gzip(&bytes) {
+            let (text, _) = inflate(&bytes, cap);
+            return (text, true, Err(why));
+        }
+        return (bytes, true, Err(why));
+    }
+    if is_gzip(&bytes) {
+        let (text, status) = inflate(&bytes, cap);
+        let cut = status.is_err();
+        return (text, cut, status);
+    }
+    (bytes, false, Ok(()))
+}
+
 /// Read an SVG file once and build both the drawing and the highlighted source.
 pub fn render(vfs: &dyn Vfs, entry: &Entry, limits: &Limits) -> Result<SvgDoc, FmError> {
     let cap = MAX_BYTES.min(usize::try_from(limits.image_bytes).unwrap_or(MAX_BYTES));
-    let (bytes, more) = text::read_capped(vfs, entry, cap)?;
-    let total = entry.size.unwrap_or(bytes.len() as u64);
-    let image = if more || total > cap as u64 {
-        Err(format!(
-            "The SVG is larger than {} MiB, so only its source is shown",
-            cap >> 20
-        ))
+    let (raw, more) = text::read_capped(vfs, entry, cap)?;
+    let compressed = is_gzip(&raw);
+    let (bytes, more, status) =
+        svg_bytes(raw, more || entry.size.is_some_and(|s| s > cap as u64), cap);
+    let total = if compressed {
+        bytes.len() as u64
     } else {
-        draw(&bytes, limits)
+        entry.size.unwrap_or(bytes.len() as u64)
     };
+    let image = status.and_then(|()| draw(&bytes, limits));
     let shown = bytes.len().min(limits.text_bytes);
     let source: StructDoc = structured::doc(
         bytes.get(..shown).unwrap_or_default(),
@@ -40,6 +91,25 @@ pub fn render(vfs: &dyn Vfs, entry: &Entry, limits: &Limits) -> Result<SvgDoc, F
         structured::Format::Xml,
     );
     Ok(SvgDoc { image, source })
+}
+
+/// A thumbnail whose longest edge is `edge`: small icons are drawn larger, not stretched.
+pub fn thumbnail(vfs: &dyn Vfs, entry: &Entry, edge: u32) -> Option<Thumb> {
+    let (raw, more) = text::read_capped(vfs, entry, MAX_BYTES).ok()?;
+    let (bytes, _, status) = svg_bytes(raw, more, MAX_BYTES);
+    status.ok()?;
+    let limits = Limits {
+        image_edge: edge,
+        ..Limits::default()
+    };
+    let doc = draw(&bytes, &limits).ok()?;
+    let (rgba, _) = doc.frames.into_iter().next()?;
+    let thumb = Thumb {
+        width: doc.width,
+        height: doc.height,
+        rgba,
+    };
+    thumb.valid().then_some(thumb)
 }
 
 /// Draw `bytes` so the longest edge is `limits.image_edge` pixels (scaling up small icons and
@@ -438,6 +508,68 @@ mod tests {
             "neither the local file nor the data URL was drawn"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn gzip(data: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(data).expect("gzip");
+        enc.finish().expect("gzip")
+    }
+
+    #[test]
+    fn svgz_is_decompressed_with_a_cap() {
+        use fm_testkit::MemFs;
+        use fm_vfs::VfsUri;
+        let vfs = MemFs::new();
+        let stat = |path: &str| vfs.stat(&VfsUri::parse(path).expect("uri")).expect("stat");
+        vfs.put_str("/a.svgz", &gzip(SVG)).expect("file");
+        let doc = render(&vfs, &stat("/a.svgz"), &Limits::default()).expect("render");
+        assert_eq!(doc.image.expect("drawn").original, (40, 20));
+        assert!(
+            doc.source.pretty.is_ok(),
+            "the source is the decompressed XML"
+        );
+        let thumb = thumbnail(&vfs, &stat("/a.svgz"), 160).expect("thumb");
+        assert_eq!((thumb.width, thumb.height), (160, 80));
+
+        // 64 MiB of zeros compresses to about 64 KiB: decoding stops at the cap.
+        let bomb = gzip(&vec![b' '; 64 << 20]);
+        assert!(bomb.len() < 1 << 20);
+        let (out, status) = inflate(&bomb, 1 << 20);
+        assert_eq!(out.len(), 1 << 20);
+        assert!(status.expect_err("too large").contains("decompressed"));
+        vfs.put_str("/bomb.svgz", &bomb).expect("file");
+        let doc = render(&vfs, &stat("/bomb.svgz"), &Limits::default()).expect("render");
+        assert!(doc.image.is_err());
+        assert!(thumbnail(&vfs, &stat("/bomb.svgz"), 160).is_none());
+
+        let mut damaged = gzip(SVG);
+        damaged.truncate(damaged.len() / 2);
+        let (_, status) = inflate(&damaged, 1 << 20);
+        assert!(status.expect_err("damaged").contains("damaged"));
+    }
+
+    #[test]
+    fn thumbnails_fill_the_edge() {
+        use fm_testkit::MemFs;
+        use fm_vfs::VfsUri;
+        let vfs = MemFs::new();
+        vfs.put_str("/a.svg", SVG).expect("file");
+        let entry = vfs
+            .stat(&VfsUri::parse("/a.svg").expect("uri"))
+            .expect("stat");
+        let thumb = thumbnail(&vfs, &entry, 256).expect("thumb");
+        assert_eq!(
+            (thumb.width, thumb.height),
+            (256, 128),
+            "a 40x20 drawing fills 256 px"
+        );
+        vfs.put_str("/b.svg", b"<svg").expect("file");
+        let entry = vfs
+            .stat(&VfsUri::parse("/b.svg").expect("uri"))
+            .expect("stat");
+        assert!(thumbnail(&vfs, &entry, 256).is_none());
     }
 
     #[test]

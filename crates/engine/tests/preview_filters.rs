@@ -60,6 +60,7 @@ fn defaults_cover_existing_types_logs_and_rotations() {
         Some(Kind::Structured(Format::Toml))
     );
     assert_eq!(rules.kind("drawing.SVG"), Some(Kind::Svg));
+    assert_eq!(rules.kind("drawing.svgz"), Some(Kind::Svg));
     assert_eq!(rules.kind("data.xml"), Some(Kind::Structured(Format::Xml)));
     let svg = filters.0.iter().position(|g| g.kind == PreviewType::Svg);
     let xml = filters.0.iter().position(|g| g.kind == PreviewType::Xml);
@@ -87,7 +88,7 @@ fn settings_from_before_svg_gain_it_above_xml() {
             ][..]
         )
     );
-    assert_eq!(filters.patterns(PreviewType::Svg), ["*.svg"]);
+    assert_eq!(filters.patterns(PreviewType::Svg), ["*.svg", "*.svgz"]);
     assert_eq!(filters.patterns(PreviewType::Xml), ["*.xml", "*.mine"]);
     assert_eq!(filters.patterns(PreviewType::Logs), ["*.trace"]);
     assert_eq!(filters.patterns(PreviewType::Text), ["*.txt", "*.SVG2"]);
@@ -106,7 +107,10 @@ fn settings_from_before_svg_gain_it_above_xml() {
     // Legacy one-string-per-type settings migrate the same way.
     let prefs: Prefs = toml::from_str("[preview_filters]\nxml = '*.xml; *.svg'").expect("legacy");
     assert_eq!(prefs.preview_filters.patterns(PreviewType::Xml), ["*.xml"]);
-    assert_eq!(prefs.preview_filters.patterns(PreviewType::Svg), ["*.svg"]);
+    assert_eq!(
+        prefs.preview_filters.patterns(PreviewType::Svg),
+        ["*.svg", "*.svgz"]
+    );
 }
 
 fn set(filters: &mut PreviewFilters, kind: PreviewType, patterns: &[&str]) {

@@ -7,6 +7,7 @@ use serde_json::json;
 use fm_engine::{DateFormat, Density, Params, Session, SizeUnits, TerminalShell, ThemePreference};
 
 use crate::dialog_style::{hint, section_heading};
+use crate::focus_nav::{self, Face, Lock, Tab};
 use crate::theme::Tokens;
 
 #[path = "preferences_shortcuts.rs"]
@@ -70,17 +71,58 @@ pub fn open_media(ctx: &Context, s: &mut Session) {
     }
 }
 
+fn topic_widget(topic: Topic) -> Id {
+    Id::NULL.with(("fm-preferences-topic-row", topic.label()))
+}
+
+fn close_widget_key() -> Id {
+    Id::NULL.with("fm-preferences-close-id")
+}
+
+/// Keyboard model (see `focus_nav`): Tab cycles topic list → the topic's controls → Close →
+/// topic list and never leaves the dialog; the topic list is one Tab stop driven by the
+/// arrow keys; Ctrl+Tab and Ctrl+PageUp/PageDown switch topics from anywhere.
 pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     if !s.preferences_open {
         return;
     }
-    // The first Esc leaves a text field (cancelling an edit there); the next one closes.
-    // egui drops focus on Esc before widgets run, so use the previous frame's focus.
+    focus_nav::track(ctx);
+    // Escape closes the innermost thing first: an open popup, then a text field, then the
+    // dialog. egui drops focus and popups on Esc before widgets run, so use the last frame.
     let typing_id = Id::NULL.with("fm-preferences-typing");
+    let popup_id = Id::NULL.with("fm-preferences-popup");
     let was_typing = ctx.data(|data| data.get_temp::<bool>(typing_id).unwrap_or(false));
-    let mut close = ctx.input(|i| i.key_pressed(Key::Escape)) && !was_typing;
+    let had_popup = ctx.data(|data| data.get_temp::<bool>(popup_id).unwrap_or(false));
+    let mut close = ctx.input(|i| i.key_pressed(Key::Escape)) && !was_typing && !had_popup;
     let topic_id = Id::NULL.with("fm-preferences-topic");
     let mut topic = ctx.data_mut(|data| data.get_temp::<Topic>(topic_id).unwrap_or_default());
+    let step = ctx.input_mut(|i| {
+        use egui::Modifiers;
+        let shift_ctrl = Modifiers::CTRL | Modifiers::SHIFT;
+        if i.consume_key(shift_ctrl, Key::Tab) || i.consume_key(Modifiers::CTRL, Key::PageUp) {
+            Some(Topic::ALL.len() - 1)
+        } else if i.consume_key(Modifiers::CTRL, Key::Tab)
+            || i.consume_key(Modifiers::CTRL, Key::PageDown)
+        {
+            Some(1)
+        } else {
+            None
+        }
+    });
+    if let Some(step) = step {
+        let at = Topic::ALL.iter().position(|t| *t == topic).unwrap_or(0);
+        topic = Topic::ALL
+            .get((at + step) % Topic::ALL.len())
+            .copied()
+            .unwrap_or_default();
+        focus_nav::focus_later(ctx, topic_widget(topic));
+    }
+    // With nothing focused (just opened, or after Esc left a text field), the keyboard
+    // starts on the topic list instead of in the panes behind the dialog.
+    if ctx.memory(|m| m.focused()).is_none() {
+        ctx.memory_mut(|m| m.request_focus(topic_widget(topic)));
+    }
+    let close_widget = ctx.data(|data| data.get_temp::<Id>(close_widget_key()));
     let available = ctx.content_rect().size() - egui::vec2(32.0, 32.0);
     let width = available.x.clamp(260.0, 820.0);
     let height = (available.y - 110.0).clamp(120.0, 440.0);
@@ -99,24 +141,8 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                         .max_height(height)
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.y = 2.0;
-                            for item in Topic::ALL {
-                                let response = ui.add_sized(
-                                    [160.0, 32.0],
-                                    egui::Button::selectable(topic == item, "")
-                                        .left_text(item.label())
-                                        .corner_radius(2.0),
-                                );
-                                response.widget_info(|| {
-                                    egui::WidgetInfo::labeled(
-                                        egui::Role::Button,
-                                        response.enabled(),
-                                        item.label(),
-                                    )
-                                });
-                                if response.clicked() {
-                                    topic = item;
-                                }
-                            }
+                            topic = topic_list(ui, tokens, topic, close_widget);
+                            focus_nav::scroll_to_focus(ui);
                         });
                 });
                 let (divider, _) =
@@ -139,7 +165,10 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                         .id_salt(("preferences-settings", topic.label()))
                         .max_height(height - 48.0)
                         .auto_shrink([false, false])
-                        .show(ui, |ui| settings(ui, s, tokens, topic));
+                        .show(ui, |ui| {
+                            settings(ui, s, tokens, topic);
+                            focus_nav::scroll_to_focus(ui);
+                        });
                 });
             });
             ui.separator();
@@ -148,10 +177,29 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add_sized([88.0, 30.0], egui::Button::new("Close"))
-                            .clicked()
-                        {
+                        // Close is the last stop: Tab goes round to the topic list.
+                        if let Some(id) = close_widget {
+                            match focus_nav::keys(
+                                ui,
+                                id,
+                                Lock {
+                                    tab: true,
+                                    arrows: false,
+                                },
+                            )
+                            .tab
+                            {
+                                Some(Tab::Forward) => {
+                                    focus_nav::focus_later(ui.ctx(), topic_widget(topic));
+                                }
+                                Some(Tab::Back) => focus_nav::pass_tab(ui, Tab::Back),
+                                None => {}
+                            }
+                        }
+                        let response = ui.add_sized([88.0, 30.0], egui::Button::new("Close"));
+                        focus_nav::claim(ui, &response);
+                        ui.data_mut(|data| data.insert_temp(close_widget_key(), response.id));
+                        if response.clicked() {
                             close = true;
                         }
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -168,15 +216,131 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     });
                 },
             );
+            focus_nav::paint_focus_ring(ui, tokens);
         });
     let typing = ctx.text_edit_focused() && !close && open;
+    let popup = ctx.any_popup_open() && !close && open;
+    focus_nav::end_frame(ctx);
     ctx.data_mut(|data| {
         data.insert_temp(topic_id, topic);
         data.insert_temp(typing_id, typing);
+        data.insert_temp(popup_id, popup);
     });
     if close || !open {
         s.preferences_open = false;
+        // The panes behind take the keyboard back.
+        ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
     }
+}
+
+/// The topics, as one Tab stop (the selected topic): Up/Down/Home/End select, Shift+Tab goes
+/// round to Close. Returns the selected topic.
+fn topic_list(ui: &mut egui::Ui, tokens: &Tokens, mut topic: Topic, close: Option<Id>) -> Topic {
+    let count = Topic::ALL.len();
+    let at = Topic::ALL.iter().position(|t| *t == topic).unwrap_or(0);
+    let mut chosen = None;
+    for (index, item) in Topic::ALL.into_iter().enumerate() {
+        let id = topic_widget(item);
+        let selected = item == topic;
+        if selected {
+            let keys = focus_nav::keys(
+                ui,
+                id,
+                Lock {
+                    tab: true,
+                    arrows: true,
+                },
+            );
+            match keys.tab {
+                Some(Tab::Back) => {
+                    if let Some(close) = close {
+                        focus_nav::focus_later(ui.ctx(), close);
+                    }
+                }
+                Some(Tab::Forward) => focus_nav::pass_tab(ui, Tab::Forward),
+                None => {}
+            }
+            let next = match keys.arrow {
+                Some(Key::ArrowUp | Key::ArrowLeft) => Some(at.saturating_sub(1)),
+                Some(Key::ArrowDown | Key::ArrowRight) => Some((at + 1).min(count - 1)),
+                Some(Key::Home) => Some(0),
+                Some(Key::End) => Some(count - 1),
+                _ => None,
+            };
+            if let Some(next) = next.filter(|n| *n != at) {
+                chosen = Some(next);
+            }
+        }
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(160.0, 32.0), egui::Sense::hover());
+        let sense = if selected {
+            egui::Sense::click()
+        } else {
+            egui::Sense::CLICK
+        };
+        let response = ui.interact(rect, id, sense);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::Role::Tab, true, selected, item.label())
+        });
+        focus_nav::claim(ui, &response);
+        if response.clicked() && !selected {
+            chosen = Some(index);
+        }
+        if ui.is_rect_visible(rect) {
+            let fill = if selected {
+                Some(tokens.selection_bg)
+            } else if response.hovered() {
+                Some(tokens.hover_bg)
+            } else {
+                None
+            };
+            if let Some(fill) = fill {
+                ui.painter().rect_filled(rect, 2.0, fill);
+            }
+            ui.painter().text(
+                egui::pos2(rect.left() + 6.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                item.label(),
+                egui::TextStyle::Button.resolve(ui.style()),
+                if selected {
+                    tokens.selection_text
+                } else {
+                    tokens.text
+                },
+            );
+        }
+    }
+    if let Some(next) = chosen.and_then(|i| Topic::ALL.get(i)) {
+        topic = *next;
+        focus_nav::focus_later(ui.ctx(), topic_widget(topic));
+    }
+    topic
+}
+
+/// A choice row for preference values: returns the newly chosen value.
+fn choose<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    tokens: &Tokens,
+    key: &str,
+    label: &str,
+    options: &[(&str, T)],
+    current: T,
+) -> Option<T> {
+    let faces: Vec<Face<'_>> = options.iter().map(|(text, _)| Face::Text(text)).collect();
+    let selected = options.iter().position(|(_, value)| *value == current);
+    focus_nav::choice_row(
+        ui,
+        tokens,
+        Id::NULL.with(("fm-preferences-choice", key)),
+        Some(label),
+        &faces,
+        selected,
+    )
+    .and_then(|index| options.get(index))
+    .map(|(_, value)| *value)
 }
 
 fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
@@ -194,33 +358,46 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
         }
         Topic::Appearance => {
             section_heading(ui, tokens, "Interface");
-            ui.horizontal(|ui| {
-                ui.label("Theme");
-                for (label, id, value) in [
-                    ("System", "view.theme.system", ThemePreference::System),
-                    ("Dark", "view.theme.dark", ThemePreference::Dark),
-                    ("Light", "view.theme.light", ThemePreference::Light),
-                ] {
-                    if ui.radio(s.prefs.theme == value, label).clicked() {
-                        s.dispatch_or_notice(id, &Params::Null);
-                    }
-                }
-            });
+            if let Some(id) = choose(
+                ui,
+                tokens,
+                "theme",
+                "Theme",
+                &[
+                    ("System", "view.theme.system"),
+                    ("Dark", "view.theme.dark"),
+                    ("Light", "view.theme.light"),
+                ],
+                match s.prefs.theme {
+                    ThemePreference::System => "view.theme.system",
+                    ThemePreference::Dark => "view.theme.dark",
+                    ThemePreference::Light => "view.theme.light",
+                },
+            ) {
+                s.dispatch_or_notice(id, &Params::Null);
+            }
             ui.add_space(8.0);
-            accent_row(ui, s);
+            accent_row(ui, s, tokens);
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.label("Density");
-                for (label, value, current) in [
-                    ("Compact", "compact", Density::Compact),
-                    ("Normal", "normal", Density::Normal),
-                    ("Comfortable", "comfortable", Density::Comfortable),
-                ] {
-                    if ui.radio(s.prefs.density == current, label).clicked() {
-                        set(s, "density", json!(value));
-                    }
-                }
-            });
+            if let Some(value) = choose(
+                ui,
+                tokens,
+                "density",
+                "Density",
+                &[
+                    ("Compact", Density::Compact),
+                    ("Normal", Density::Normal),
+                    ("Comfortable", Density::Comfortable),
+                ],
+                s.prefs.density,
+            ) {
+                let value = match value {
+                    Density::Compact => "compact",
+                    Density::Normal => "normal",
+                    Density::Comfortable => "comfortable",
+                };
+                set(s, "density", json!(value));
+            }
             ui.add_space(8.0);
             size_row(ui, s, "Text size", "font_size", s.prefs.ui_font_size());
             hint(
@@ -248,33 +425,43 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                 }
             });
             section(ui, tokens, "Display", None, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Sizes");
-                    for (label, value, current) in [
-                        ("KiB (1024)", "binary", SizeUnits::Binary),
-                        ("kB (1000)", "decimal", SizeUnits::Decimal),
-                        ("Bytes", "bytes", SizeUnits::Bytes),
-                    ] {
-                        if ui.radio(s.prefs.size_units == current, label).clicked() {
-                            set(s, "size_units", json!(value));
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Dates").on_hover_text(
-                        "File times use your operating system's timezone, detected at startup, including daylight saving. Log time filters remain UTC.",
-                    );
-                    for (label, value, current) in [
-                        ("2026-10-28 13:40", "iso", DateFormat::Iso),
-                        ("2026-10-28 13:40:05", "isoseconds", DateFormat::IsoSeconds),
-                        ("28/10/2026", "eu", DateFormat::Eu),
-                        ("10/28/2026", "us", DateFormat::Us),
-                    ] {
-                        if ui.radio(s.prefs.date_format == current, label).clicked() {
-                            set(s, "date_format", json!(value));
-                        }
-                    }
-                });
+                let units = [
+                    ("KiB (1024)", SizeUnits::Binary),
+                    ("kB (1000)", SizeUnits::Decimal),
+                    ("Bytes", SizeUnits::Bytes),
+                ];
+                if let Some(value) =
+                    choose(ui, tokens, "sizes", "Sizes", &units, s.prefs.size_units)
+                {
+                    let value = match value {
+                        SizeUnits::Binary => "binary",
+                        SizeUnits::Decimal => "decimal",
+                        SizeUnits::Bytes => "bytes",
+                    };
+                    set(s, "size_units", json!(value));
+                }
+                let formats = [
+                    ("2026-10-28 13:40", DateFormat::Iso),
+                    ("2026-10-28 13:40:05", DateFormat::IsoSeconds),
+                    ("28/10/2026", DateFormat::Eu),
+                    ("10/28/2026", DateFormat::Us),
+                ];
+                if let Some(value) =
+                    choose(ui, tokens, "dates", "Dates", &formats, s.prefs.date_format)
+                {
+                    let value = match value {
+                        DateFormat::Iso => "iso",
+                        DateFormat::IsoSeconds => "isoseconds",
+                        DateFormat::Eu => "eu",
+                        DateFormat::Us => "us",
+                    };
+                    set(s, "date_format", json!(value));
+                }
+                hint(
+                    ui,
+                    tokens,
+                    "File times use your operating system's timezone, detected at startup, including daylight saving. Log time filters remain UTC.",
+                );
             });
             section(
                 ui,
@@ -394,7 +581,7 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                 Some(
                     "What a double-click or Enter does with an audio or video file on this computer.",
                 ),
-                |ui| media_open_choices(ui, s),
+                |ui| media_open_choices(ui, s, tokens),
             );
             section(
                 ui,
@@ -607,33 +794,19 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
         }
         Topic::Terminal => {
             section_heading(ui, tokens, "New terminals");
-            ui.horizontal(|ui| {
-                ui.label("Shell");
-                let choices: &[(&str, &str, TerminalShell)] = if cfg!(windows) {
-                    &[
-                        ("PowerShell", "default", TerminalShell::Default),
-                        ("cmd", "cmd", TerminalShell::Cmd),
-                    ]
-                } else {
-                    &[
-                        ("Login shell", "default", TerminalShell::Default),
-                        ("PowerShell", "powershell", TerminalShell::PowerShell),
-                    ]
-                };
-                for (label, value, shell) in choices {
-                    let current = s.prefs.terminal_shell == *shell
-                        || (cfg!(windows)
-                            && *shell == TerminalShell::Default
-                            && s.prefs.terminal_shell == TerminalShell::PowerShell);
-                    if ui
-                        .radio(current, *label)
-                        .on_hover_text("Used by new terminals; restart a running one to switch.")
-                        .clicked()
-                    {
-                        s.dispatch_or_notice("prefs.terminal.shell", &json!({"value": value}));
-                    }
-                }
-            });
+            let shells: &[(&str, &str)] = if cfg!(windows) {
+                &[("PowerShell", "default"), ("cmd", "cmd")]
+            } else {
+                &[("Login shell", "default"), ("PowerShell", "powershell")]
+            };
+            let current = match s.prefs.terminal_shell {
+                TerminalShell::Cmd => "cmd",
+                TerminalShell::PowerShell if !cfg!(windows) => "powershell",
+                _ => "default",
+            };
+            if let Some(value) = choose(ui, tokens, "shell", "Shell", shells, current) {
+                s.dispatch_or_notice("prefs.terminal.shell", &json!({"value": value}));
+            }
             hint(
                 ui,
                 tokens,
@@ -838,7 +1011,7 @@ fn cache_location(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
 }
 
 /// Default app or Media pane, separately for audio and video.
-fn media_open_choices(ui: &mut egui::Ui, s: &mut Session) {
+fn media_open_choices(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
     use fm_engine::prefs::MediaOpenTarget;
     for (label, kind, current) in [
         (
@@ -852,21 +1025,17 @@ fn media_open_choices(ui: &mut egui::Ui, s: &mut Session) {
             s.prefs.media_open_video,
         ),
     ] {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(label);
-            for (target, text, key) in [
-                (
-                    MediaOpenTarget::DefaultApp,
-                    "Open in default app",
-                    "default",
-                ),
-                (MediaOpenTarget::MediaPane, "Play in Media pane", "media"),
-            ] {
-                if ui.radio(current == target, text).clicked() && current != target {
-                    s.dispatch_or_notice("prefs.media_open", &json!({"kind": kind, "target": key}));
-                }
-            }
-        });
+        let targets = [
+            ("Open in default app", MediaOpenTarget::DefaultApp),
+            ("Play in Media pane", MediaOpenTarget::MediaPane),
+        ];
+        if let Some(target) = choose(ui, tokens, kind, label, &targets, current) {
+            let key = match target {
+                MediaOpenTarget::DefaultApp => "default",
+                MediaOpenTarget::MediaPane => "media",
+            };
+            s.dispatch_or_notice("prefs.media_open", &json!({"kind": kind, "target": key}));
+        }
     }
 }
 
@@ -896,32 +1065,33 @@ fn size_row(ui: &mut egui::Ui, s: &mut Session, label: &str, key: &str, current:
 }
 
 /// Accent presets, a custom `#rrggbb` field and a way back to the theme's own colour.
-fn accent_row(ui: &mut egui::Ui, s: &mut Session) {
+fn accent_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
     let current = s.prefs.accent.clone();
     ui.horizontal(|ui| {
-        ui.label("Accent");
-        for (name, hex) in crate::theme::ACCENT_PRESETS {
-            let Some(color) = crate::theme::swatch(hex) else {
-                continue;
-            };
-            let chosen = current.as_deref() == Some(hex);
-            let (rect, response) =
-                ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Accent {name}"))
-            });
-            ui.painter().rect_filled(rect.shrink(2.0), 4.0, color);
-            if chosen || response.hovered() {
-                ui.painter().rect_stroke(
-                    rect,
-                    5.0,
-                    egui::Stroke::new(2.0, ui.visuals().text_color()),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            if response.on_hover_text(name).clicked() {
-                set(s, "accent", json!(hex));
-            }
+        let presets: Vec<(String, egui::Color32, &str)> = crate::theme::ACCENT_PRESETS
+            .iter()
+            .filter_map(|(name, hex)| {
+                crate::theme::swatch(hex).map(|color| (format!("Accent {name}"), color, *hex))
+            })
+            .collect();
+        let faces: Vec<Face<'_>> = presets
+            .iter()
+            .map(|(name, color, _)| Face::Swatch(*color, name))
+            .collect();
+        let selected = presets
+            .iter()
+            .position(|(_, _, hex)| current.as_deref() == Some(*hex));
+        if let Some((_, _, hex)) = focus_nav::choice_row(
+            ui,
+            tokens,
+            Id::NULL.with("fm-preferences-accent"),
+            Some("Accent"),
+            &faces,
+            selected,
+        )
+        .and_then(|index| presets.get(index))
+        {
+            set(s, "accent", json!(hex));
         }
         if ui
             .add_enabled(current.is_some(), egui::Button::new("Default"))
@@ -1045,6 +1215,143 @@ fn ffmpeg_section(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
 mod tests {
     use super::*;
     use egui_kittest::{Harness, kittest::Queryable};
+
+    /// Preferences over a pane: the "Behind pane" button is drawn first, like the real panes.
+    fn walk_harness(size: egui::Vec2) -> Harness<'static, Session> {
+        let mut session = Session::new().expect("session");
+        session.preferences_open = true;
+        Harness::builder().with_size(size).build_ui_state(
+            move |ui, session| {
+                let tokens = Tokens::dark();
+                crate::theme::apply_to(ui.ctx(), &tokens);
+                let _ = ui.button("Behind pane");
+                show(ui.ctx(), session, &tokens);
+            },
+            session,
+        )
+    }
+
+    fn focused(h: &Harness<'_, Session>) -> String {
+        use egui_kittest::kittest::NodeT;
+        h.query_by(|n| n.is_focused())
+            .and_then(|n| n.accesskit_node().label())
+            .unwrap_or_default()
+    }
+
+    fn press(h: &mut Harness<'_, Session>, key: Key, modifiers: egui::Modifiers) -> String {
+        h.key_press_modifiers(modifiers, key);
+        h.run();
+        focused(h)
+    }
+
+    fn topic_of(h: &Harness<'_, Session>) -> &'static str {
+        h.ctx
+            .data_mut(|d| d.get_temp::<Topic>(Id::NULL.with("fm-preferences-topic")))
+            .unwrap_or_default()
+            .label()
+    }
+
+    #[test]
+    fn tab_cycles_inside_the_dialog_and_never_reaches_the_panes() {
+        use egui::Modifiers;
+        let mut h = walk_harness(egui::vec2(1000.0, 700.0));
+        h.run();
+        assert_eq!(
+            focused(&h),
+            "General",
+            "opening puts the keyboard on the topics"
+        );
+        let forward: Vec<String> = (0..3)
+            .map(|_| press(&mut h, Key::Tab, Modifiers::NONE))
+            .collect();
+        assert_eq!(
+            forward,
+            ["Check for updates at startup", "Close", "General"]
+        );
+        let back: Vec<String> = (0..3)
+            .map(|_| press(&mut h, Key::Tab, Modifiers::SHIFT))
+            .collect();
+        assert_eq!(back, ["Close", "Check for updates at startup", "General"]);
+
+        // Topics are one stop: arrows select, and a full Tab round visits each control once.
+        assert_eq!(press(&mut h, Key::ArrowDown, Modifiers::NONE), "Appearance");
+        assert_eq!(topic_of(&h), "Appearance");
+        let mut stops = Vec::new();
+        for _ in 0..20 {
+            let at = press(&mut h, Key::Tab, Modifiers::NONE);
+            if at == "Appearance" {
+                break;
+            }
+            stops.push(at);
+        }
+        assert_eq!(
+            stops.first().map(String::as_str),
+            Some("System"),
+            "{stops:?}"
+        );
+        assert_eq!(stops.last().map(String::as_str), Some("Close"), "{stops:?}");
+        for skipped in ["Dark", "Light", "Compact", "Comfortable", "Behind pane"] {
+            assert!(
+                !stops.iter().any(|s| s == skipped),
+                "{skipped} in {stops:?}"
+            );
+        }
+        assert!(
+            stops.iter().any(|s| s == "Normal"),
+            "the selected density is the stop"
+        );
+
+        // A choice row: the arrows choose and apply, and the focus follows.
+        assert_eq!(press(&mut h, Key::Tab, Modifiers::NONE), "System");
+        assert_eq!(press(&mut h, Key::ArrowRight, Modifiers::NONE), "Dark");
+        assert_eq!(h.state().prefs.theme, ThemePreference::Dark);
+        assert_eq!(press(&mut h, Key::End, Modifiers::NONE), "Light");
+        assert_eq!(h.state().prefs.theme, ThemePreference::Light);
+
+        // Topic switching from anywhere in the dialog.
+        assert_eq!(press(&mut h, Key::Tab, Modifiers::CTRL), "Files");
+        assert_eq!(topic_of(&h), "Files");
+        assert_eq!(
+            press(&mut h, Key::Tab, Modifiers::CTRL | Modifiers::SHIFT),
+            "Appearance"
+        );
+        assert_eq!(press(&mut h, Key::PageDown, Modifiers::CTRL), "Files");
+        assert_eq!(press(&mut h, Key::End, Modifiers::NONE), "Advanced");
+        assert_eq!(press(&mut h, Key::Home, Modifiers::NONE), "General");
+        assert_eq!(
+            press(&mut h, Key::PageUp, Modifiers::CTRL),
+            "Advanced",
+            "wraps"
+        );
+        assert!(h.state().preferences_open);
+    }
+
+    #[test]
+    fn tabbing_scrolls_the_focused_control_into_view() {
+        let mut h = walk_harness(egui::vec2(900.0, 650.0));
+        h.run();
+        h.get_by_label("Media").click();
+        h.run();
+        let close = h.get_by_label("Close").rect();
+        let mut reached = false;
+        for _ in 0..60 {
+            let at = press(&mut h, Key::Tab, egui::Modifiers::NONE);
+            if at == "Distance from bottom" {
+                reached = true;
+                break;
+            }
+        }
+        assert!(reached, "Tab reaches the end of a long topic");
+        let shown = h
+            .get_all_by_label("Distance from bottom")
+            .map(|n| n.rect())
+            .find(|r| r.width() > 0.0)
+            .expect("slider");
+        assert!(
+            shown.bottom() <= close.top() && shown.top() > 100.0,
+            "{shown:?} is scrolled into view above the footer ({close:?})"
+        );
+    }
 
     fn harness(tokens: Tokens, size: egui::Vec2) -> Harness<'static, Session> {
         let mut session = Session::new().expect("session");

@@ -184,6 +184,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     find::begin(ui, s, pane);
     ui.separator();
     let can_page = s.layout.focused() == pane
+        && !crate::dialogs::window_owns_keyboard(s)
         && ui.is_enabled()
         && ui.ctx().memory(|m| m.is_above_modal_layer(ui.layer_id()))
         && !ui.ctx().text_edit_focused()
@@ -1293,18 +1294,7 @@ fn image(
                 let background = ui
                     .data(|d| d.get_temp::<SvgBackground>(svg_background_id()))
                     .unwrap_or_default();
-                let fill = match background {
-                    SvgBackground::Checkered => None,
-                    SvgBackground::White => Some(crate::theme::PICTURE_WHITE),
-                    SvgBackground::Black => Some(crate::theme::PICTURE_BLACK),
-                    SvgBackground::Grey => Some(crate::theme::PICTURE_GREY),
-                };
-                match fill {
-                    Some(color) => {
-                        ui.painter().rect_filled(rect, 0.0, color);
-                    }
-                    None => checkerboard(ui, tokens, rect),
-                }
+                svg_backdrop(ui, tokens, rect, background);
                 egui::Image::new((tex.id(), size)).paint_at(ui, rect);
                 response
             } else {
@@ -1344,6 +1334,17 @@ fn svg(
             structured(ui, pane, tokens, &d.source, false, wrap);
         }
     }
+}
+
+/// The chosen background behind an SVG picture or thumbnail.
+fn svg_backdrop(ui: &Ui, tokens: &Tokens, rect: egui::Rect, background: SvgBackground) {
+    let fill = match background {
+        SvgBackground::Checkered => return checkerboard(ui, tokens, rect),
+        SvgBackground::White => crate::theme::PICTURE_WHITE,
+        SvgBackground::Black => crate::theme::PICTURE_BLACK,
+        SvgBackground::Grey => crate::theme::PICTURE_GREY,
+    };
+    ui.painter().rect_filled(rect, 0.0, fill);
 }
 
 /// Theme checker squares behind `rect`, from a repeating 2×2 texture (one draw call).
@@ -2180,7 +2181,8 @@ fn thumb_grid(
     // Keep asking until egui reports the focus (the first pass of a window may be discarded).
     // A preview following another pane's cursor (e.g. landing on a folder) must not steal the
     // keyboard from that pane, so the grid only claims focus when its own pane is focused.
-    let pane_focused = s.layout.focused() == pane;
+    // A dialog such as Preferences owns the keyboard: the grid lets go until it closes.
+    let pane_focused = s.layout.focused() == pane && !crate::dialogs::window_owns_keyboard(s);
     let want = ctx.data(|dt| dt.get_temp::<bool>(want_id)).unwrap_or(false);
     if pane_focused {
         if ctx.memory(|m| m.has_focus(grid_id)) {
@@ -2404,6 +2406,11 @@ fn thumb_grid(
                         let fit = cell / edge as f32;
                         let draw = natural * fit;
                         let at = egui::Rect::from_center_size(art.center(), draw);
+                        if fm_preview::thumbs::classify(&entry.name)
+                            == fm_preview::thumbs::ThumbKind::Svg
+                        {
+                            svg_backdrop(ui, tokens, at, s.prefs.svg_background);
+                        }
                         egui::Image::new((tex.id(), draw)).paint_at(ui, at);
                         used.insert(key, (t, tex));
                     }

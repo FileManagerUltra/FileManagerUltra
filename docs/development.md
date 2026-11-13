@@ -196,7 +196,14 @@ keyboard ownership.
 Check proportional typography, left-aligned navigation and flat, divider-separated sections
 with aligned controls; the file listing keeps its existing typography. Connections separates SMB
 security, remote timing and a bordered trusted-host list with aligned Forget buttons.
-Theme and shell choices use radio controls. Changes apply immediately; Close/Escape and
+Theme, density, sizes, dates, shell, accent and subtitle choices are choice rows: one Tab
+stop each, arrows (and Home/End) pick an option and apply it. Keyboard-only walk: opening
+Preferences focuses the selected topic; Tab goes through that topic's controls to Close and
+back to the topic list (Shift+Tab the other way) and never reaches the panes behind; Up/Down
+in the topic list and Ctrl+Tab / Ctrl+Shift+Tab (or Ctrl+PageDown/PageUp) anywhere change
+topic. The focused control has an accent ring after a key press (none after a click) and
+scrolls into view. Esc closes an open dropdown first, then leaves a text field, then closes
+the window. Changes apply immediately; Close/Escape and
 reopening retain the topic. Shrink the window to check independent scrolling and that Close
 remains accessible; verify both themes.
 
@@ -349,7 +356,7 @@ Works as expected
 
 ### SVG preview checks
 
-Select an `.svg` with labels (for example a draw.io export using Helvetica): it shows as a picture over a checkerboard, text included, in both themes. The background dropdown next to 100% switches to White, Black or 50% grey, also from the ☰ menu in a narrow pane, and is remembered after a restart. Fit enlarges small icons sharply; 100% shows the declared size. Turn off Preview: the XML source appears without a reload, Pretty and Wrap work, and selecting another file returns to the picture. A broken SVG shows "Cannot draw this SVG" above its source. An SVG with `<image href="/etc/hostname">` draws nothing for that element. Older settings: start with a prefs file from 0.2.1 and check Preferences > Preview > File types lists SVG above XML with `*.svg`, and XML no longer has it.
+Select an `.svg` with labels (for example a draw.io export using Helvetica): it shows as a picture over a checkerboard, text included, in both themes. The background dropdown next to 100% switches to White, Black or 50% grey, also from the ☰ menu in a narrow pane, and is remembered after a restart. A folder of `.svg` and `.svgz` files in thumbnail mode shows each drawing over that background; a gzip bomb renamed to `.svgz` is refused quickly without using much memory. In File types, click a pattern and use Up/Down to move the selection (one row per press), Tab/Shift+Tab or Left/Right to switch between the lists, then − removes the selected one. With a Files pane or a thumbnail grid behind Preferences, the arrow keys must not move their cursor. Fit enlarges small icons sharply; 100% shows the declared size. Turn off Preview: the XML source appears without a reload, Pretty and Wrap work, and selecting another file returns to the picture. A broken SVG shows "Cannot draw this SVG" above its source. An SVG with `<image href="/etc/hostname">` draws nothing for that element. Older settings: start with a prefs file from 0.2.1 and check Preferences > Preview > File types lists SVG above XML with `*.svg`, and XML no longer has it.
 
 ### Preview file-filter checks
 

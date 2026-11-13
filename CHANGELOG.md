@@ -9,10 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - SVG files are shown as pictures in Preview, including their text, with Fit and 100% and a choice of background behind transparent parts (checkered, white, black or 50% grey, remembered). Turn off Preview in the header to read the SVG source (with Pretty and Wrap). SVG is a new type in Preferences > Preview > File types; existing settings pick it up automatically.
+- SVG drawings, including compressed `.svgz` files, show as pictures in folder thumbnails, over the same background.
+- Preferences can be used with the keyboard alone. Tab moves through the topic list, the topic's settings and Close, and stays inside the window. Up and Down in the topic list, or Ctrl+Tab and Ctrl+Shift+Tab anywhere, switch topics. Choices such as theme, accent colour and density are a single Tab stop whose options you pick with the arrow keys. The focused control is ringed and scrolls into view.
+- In Preferences > Preview > File types, the arrow keys work in both lists: Up and Down move through types or patterns; Tab, Shift+Tab, Left and Right switch between the two lists.
 
 ### Changed
 - Text in SVG images inside Markdown documents is now drawn.
 - Preferences > Preview > File types is easier to use: pick a type in the list on the left to see its filename patterns on the right, then add (+), remove (−) or edit (pencil, a second click, or F2) them in place. Up and down arrows change which type is checked first. In Preferences, Esc in a text field now leaves the field first instead of closing the window.
+- The subtitle Font and Edge style in Preferences > Media are now option rows instead of dropdowns, so every choice is visible at once.
+
+### Fixed
+- Arrow keys pressed in Preferences no longer also move the cursor in the file list or folder thumbnails behind it.
 
 ### Security
 - An SVG (in Preview or as an image in a Markdown document) can no longer make the app read other files from your computer through image references.

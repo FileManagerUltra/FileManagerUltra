@@ -756,6 +756,12 @@ fn preferences_dialog_dark_light() {
                     topic.to_lowercase().replace(' ', "_")
                 ));
             }
+            if topic == "Appearance" {
+                // Keyboard focus is ringed: Tab from the topic list to the Theme row.
+                harness.key_press(egui::Key::Tab);
+                harness.run_steps(3);
+                harness.snapshot(format!("dialog_preferences_keyboard_{theme}"));
+            }
             if topic == "Keyboard shortcuts" {
                 harness.get_by_label("Search shortcuts").click();
                 harness
@@ -2133,6 +2139,164 @@ fn svg_preview_picture_source_and_error_dark_light() {
             }
             results.extend_harness(&mut harness);
         }
+    }
+}
+
+/// Folder thumbnails draw SVG and SVGZ files over the chosen SVG background.
+#[test]
+fn svg_thumbnails_dark_light() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    const OUTLINE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M4 4h16v16H4z" fill="none" stroke="#000" stroke-width="2"/></svg>"##;
+    const DOT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="9" fill="#e8710a"/></svg>"##;
+    let gz = |data: &[u8]| {
+        use std::io::Write;
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(data).expect("gzip");
+        enc.finish().expect("gzip")
+    };
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mem = MemFs::new();
+        mem.mkdirs_str("/home/alice/icons").expect("mkdirs");
+        mem.put_str("/home/alice/icons/outline.svg", OUTLINE)
+            .expect("put");
+        mem.put_str("/home/alice/icons/dot.svgz", &gz(DOT))
+            .expect("put");
+        let entries: Vec<_> = ["dot.svgz", "outline.svg"]
+            .iter()
+            .map(|n| {
+                mem.stat(&VfsUri::parse(&format!("/home/alice/icons/{n}")).expect("uri"))
+                    .expect("stat")
+            })
+            .collect();
+        let mem = Arc::new(mem);
+        let mut session = with_fixed_places(Session::new().expect("session"));
+        session.backends.register(mem.clone());
+        let dir = VfsUri::parse("/home/alice").expect("uri");
+        {
+            let st = session.layout.state_mut(1).expect("pane");
+            st.location = dir.clone();
+            st.listing.on_parent = false;
+            st.listing.focused_row = 0;
+        }
+        session.submit_read(dir.clone()).expect("submit");
+        wait_ready(&mut session, &dir);
+        session
+            .dispatch("view.preview.toggle", &serde_json::json!({}))
+            .expect("toggle");
+        let pane = *session.layout.panes().last().expect("panes");
+        let mut h = Harness::builder()
+            .renderer(renderer)
+            .with_accessibility_check(false)
+            .with_size(egui::vec2(900.0, 650.0))
+            .build_ui_state(
+                move |ui, session: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    fm_ui::preview::show(ui, session, pane, &tokens);
+                    fm_ui::preferences::show(ui.ctx(), session, &tokens);
+                },
+                session,
+            );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !h
+            .state()
+            .preview_slot(pane)
+            .is_some_and(|slot| matches!(slot.body, fm_engine::preview_cmds::Body::Static(_)))
+        {
+            h.state_mut().poll();
+            h.step();
+            std::thread::sleep(Duration::from_millis(5));
+            assert!(Instant::now() < deadline, "folder preview never settled");
+        }
+        h.state_mut()
+            .dispatch("preview.thumbs.toggle", &serde_json::json!({"pane": pane}))
+            .expect("thumbnails");
+        let ready = |s: &Session| {
+            let edge = s
+                .preview_slot(pane)
+                .map(|slot| {
+                    fm_preview::thumbs::EDGES
+                        .get(slot.thumb_size)
+                        .copied()
+                        .unwrap_or(160)
+                })
+                .unwrap_or(160);
+            entries.iter().all(|e| {
+                matches!(
+                    s.thumbs.get(e, edge),
+                    fm_engine::thumbs::ThumbState::Ready(_)
+                )
+            })
+        };
+        while !ready(h.state()) {
+            h.state_mut().poll();
+            h.step();
+            std::thread::sleep(Duration::from_millis(5));
+            assert!(Instant::now() < deadline, "SVG thumbnails never arrived");
+        }
+        h.run_steps(4);
+        assert!(h.query_by_label("…").is_none(), "no placeholders left");
+        h.snapshot(format!("svg_thumbnails_{theme}"));
+        h.state_mut()
+            .dispatch(
+                "preview.svg.background",
+                &serde_json::json!({"value": "white"}),
+            )
+            .expect("white");
+        h.run_steps(4);
+        h.snapshot(format!("svg_thumbnails_white_{theme}"));
+
+        // Arrow keys reach the grid while nothing else is open...
+        let picked = |s: &Session| s.grid_selection.as_ref().map(|g| g.items.clone());
+        h.state_mut()
+            .layout
+            .focus_pane(pane)
+            .expect("focus the preview");
+        h.run_steps(3);
+        h.key_press(egui::Key::ArrowRight);
+        h.run_steps(3);
+        let before = picked(h.state());
+        assert!(
+            before.as_ref().is_some_and(|items| !items.is_empty()),
+            "the grid takes arrow keys on its own"
+        );
+        // ...but not while Preferences is open: there they move the File types selection.
+        h.state_mut()
+            .dispatch("app.preferences", &serde_json::Value::Null)
+            .expect("preferences");
+        h.run_steps(3);
+        h.get_by_label("Preview").click();
+        h.run_steps(3);
+        h.get_by_label("Filename patterns for Logs").scroll_to_me();
+        h.run_steps(3);
+        h.get_by_label("*.log").click();
+        h.run_steps(3);
+        for _ in 0..2 {
+            h.key_press(egui::Key::ArrowDown);
+            h.run_steps(3);
+        }
+        assert_eq!(
+            h.get_by_label("*.log.[0-9]*").accesskit_node().toggled(),
+            Some(egui::accesskit::Toggled::True),
+            "Down moved the pattern selection twice"
+        );
+        // Left goes to the types list, where Down picks the next type.
+        h.key_press(egui::Key::ArrowLeft);
+        h.run_steps(3);
+        h.key_press(egui::Key::ArrowDown);
+        h.run_steps(3);
+        h.get_by_label("Filename patterns for Images");
+        assert_eq!(picked(h.state()), before, "the grid ignored every key");
+        results.extend_harness(&mut h);
     }
 }
 
