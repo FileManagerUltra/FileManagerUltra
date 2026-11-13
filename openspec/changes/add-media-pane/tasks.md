@@ -66,9 +66,9 @@ controls remain pending.
 
 - [x] 6.1 SRT/WebVTT parser with caps, external-file discovery (`.en.srt` style), `media.subtitle.load`, `media.subtitle.delay`, UI overlay with size/position prefs (`fm-media::subtitle`, `fm-preview::subtitles`, `engine::media_subtitle_cmds`; embedded text tracks and ASS/SSA are converted to cues by ffmpeg so they share the overlay; G/H keys move the delay)
 - [x] 6.1a Subtitle appearance for low vision, identical for every text format: `engine::subtitle_style` + `media.subtitle.style` (size, position, font, bold, colours and opacity, background box, edge style/colour/thickness, letter/line spacing, presets), a Subtitles section in Preferences > Media with live preview and WCAG contrast check (`fm-ui::subtitles` paints both), theme tokens `subtitle_text`/`subtitle_outline`
-- [ ] 6.2 Bitmap (PGS, VobSub) subtitles shown over the video, honouring size/position/background where possible; track switching restarts only the video decoder (ASS/SSA is no longer burned in: it is drawn as text with the user's style, see 6.1)
-- [ ] 6.3 Hardware decoding flags per platform with `hwdownload`, automatic software fallback, preference and active-mode indicator
-- [ ] 6.4 Tests: malformed and oversized subtitle files, delay arithmetic (done with 6.1), fallback restarts at the current position (with 6.3)
+- [x] 6.2 Bitmap (PGS, VobSub) subtitles shown over the video, honouring size/position/background where possible; track switching restarts only the video decoder (ASS/SSA is no longer burned in: it is drawn as text with the user's style, see 6.1)
+- [x] 6.3 Hardware decoding flags per platform with `hwdownload`, automatic software fallback, preference and active-mode indicator
+- [x] 6.4 Tests: malformed and oversized subtitle files, delay arithmetic (done with 6.1), fallback restarts at the current position (with 6.3)
 
 ## 7. Audiobooks and resume (slice F)
 

@@ -24,6 +24,7 @@ jiff.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
+flate2 = { workspace = true, features = ["rust_backend"] }
 fm-testkit.workspace = true
 fm-fs-local.workspace = true
 fm-discovery.workspace = true

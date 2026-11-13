@@ -798,6 +798,48 @@ fn pretty_is_opt_in_and_resets_on_file_change() {
 }
 
 #[test]
+fn svg_renders_and_toggles_to_its_source() {
+    let mut r = rig(&[
+        (
+            "logo.svg",
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#00f"/><text x="2" y="15">Hi</text></svg>"##,
+        ),
+        ("broken.svg", b"<svg><g>"),
+    ]);
+    r.cursor("logo.svg");
+    let Preview::Svg(d) = &*r.wait_static() else {
+        panic!("svg")
+    };
+    let image = d.image.as_ref().expect("drawn");
+    assert_eq!(image.original, (40, 20));
+    assert!(!d.source.raw.lines.is_empty());
+    // Pretty belongs to the source view.
+    assert!(r.s.dispatch("preview.toggle_pretty", &json!({})).is_err());
+    r.s.dispatch("preview.toggle_source", &json!({}))
+        .expect("source");
+    r.s.dispatch("preview.toggle_pretty", &json!({}))
+        .expect("pretty source");
+    let slot = r.s.preview_slot(r.preview).expect("slot");
+    assert!(slot.source && slot.pretty);
+    r.s.dispatch("preview.toggle_source", &json!({}))
+        .expect("picture");
+    let slot = r.s.preview_slot(r.preview).expect("slot");
+    assert!(!slot.source && !slot.pretty, "back to the picture");
+
+    r.cursor("broken.svg");
+    assert!(pump(&mut r.s, |s| {
+        s.preview_slot(r.preview)
+            .and_then(|x| x.subject.as_ref())
+            .is_some_and(|e| e.name == "broken.svg")
+    }));
+    let Preview::Svg(d) = &*r.wait_static() else {
+        panic!("svg")
+    };
+    assert!(d.image.is_err(), "the reason is kept for the view");
+    assert!(!d.source.raw.lines.is_empty(), "and the source is shown");
+}
+
+#[test]
 fn markdown_source_view_toggles_and_resets() {
     let mut r = rig(&[
         ("a.md", b"# Title\n\nsee [docs](https://example.org) here\n"),

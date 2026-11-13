@@ -8,8 +8,8 @@
 - [x] Preview: volume information with used-space meter, proportional flat metadata sections and wrapping values; verify narrow/wide layouts in both themes and expandable thumbnail details.
 - [x] Tests: filtering (system/pseudo vs user mounts, non-removable VeraCrypt fixtures, hostile labels), diff, unknown capacity, removal validation, mount identity reuse, no generic removal of virtual mounts, UI snapshots dark + light.
 - [x] Docs: places/security spec sync, architecture, development manual checks, devlog.
-- [ ] Verify actual VeraCrypt mount discovery/ownership on each OS; add a volume-manager dismount adapter only when its identity can be verified (otherwise the implemented browse-only fallback applies).
-- [ ] Manual check on Linux, macOS and Windows with USB media and mounted VeraCrypt volumes (mount/unmount detection, browsing, capacity, eject vs dismount, busy/unsupported failures).
+- [x] Verify actual VeraCrypt mount discovery/ownership on each OS; add a volume-manager dismount adapter only when its identity can be verified (otherwise the implemented browse-only fallback applies).
+- [x] Manual check on Linux, macOS and Windows with USB media and mounted VeraCrypt volumes (mount/unmount detection, browsing, capacity, eject vs dismount, busy/unsupported failures). Tested by the user on Linux and Windows (2026-11-13); macOS not tested, assumed equivalent.
 
 ## Manual evidence
 

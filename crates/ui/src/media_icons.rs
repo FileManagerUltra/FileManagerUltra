@@ -27,6 +27,12 @@ pub(crate) enum Icon {
     SkipForward,
     ChapterPrev,
     ChapterNext,
+    /// List toolbars (Preferences > Preview > File types).
+    Add,
+    Remove,
+    Edit,
+    MoveUp,
+    MoveDown,
 }
 
 pub(crate) const BUTTON: egui::Vec2 = vec2(28.0, 26.0);
@@ -319,6 +325,42 @@ fn draw(painter: &egui::Painter, icon: Icon, c: Pos2, color: Color32) {
             for dy in [-4.5, 0.0, 4.5] {
                 bar_rect(painter, c.x - 6.0, c.y + dy - 1.0, 12.0, 2.0, color);
             }
+        }
+        Icon::Add => {
+            painter.line_segment([pos2(c.x - 6.0, c.y), pos2(c.x + 6.0, c.y)], stroke);
+            painter.line_segment([pos2(c.x, c.y - 6.0), pos2(c.x, c.y + 6.0)], stroke);
+        }
+        Icon::Remove => {
+            painter.line_segment([pos2(c.x - 6.0, c.y), pos2(c.x + 6.0, c.y)], stroke);
+        }
+        Icon::Edit => {
+            let stroke = Stroke::new(1.4, color);
+            // A pencil from bottom-left to top-right: body outline, then the tip.
+            let (tip, a, b) = (
+                pos2(c.x - 6.0, c.y + 6.0),
+                pos2(c.x - 4.0, c.y + 1.5),
+                pos2(c.x - 1.5, c.y + 4.0),
+            );
+            let (a2, b2) = (pos2(c.x + 3.5, c.y - 6.0), pos2(c.x + 6.0, c.y - 3.5));
+            painter.add(Shape::closed_line(vec![a, a2, b2, b], stroke));
+            painter.add(Shape::line(vec![a, tip, b], stroke));
+            painter.line_segment(
+                [pos2(c.x + 1.5, c.y - 4.0), pos2(c.x + 4.0, c.y - 1.5)],
+                stroke,
+            );
+        }
+        Icon::MoveUp | Icon::MoveDown => {
+            let dir = if icon == Icon::MoveUp { -1.0 } else { 1.0 };
+            let head = pos2(c.x, c.y + 6.0 * dir);
+            painter.line_segment([pos2(c.x, c.y - 6.0 * dir), head], stroke);
+            painter.add(Shape::line(
+                vec![
+                    pos2(c.x - 4.5, head.y - 4.5 * dir),
+                    head,
+                    pos2(c.x + 4.5, head.y - 4.5 * dir),
+                ],
+                stroke,
+            ));
         }
     }
 }

@@ -451,8 +451,15 @@ impl Session {
                 changed = true;
             }
         }
+        let overlay = self.media_subtitle_overlay();
+        let hardware = self.prefs.media_hardware_decoding;
         if let Some(video) = &mut self.media.video {
+            video.set_hardware(hardware);
+            video.set_overlay(overlay);
             changed |= crate::video_cmds::pump(video);
+            if let Some(reason) = video.take_fallback() {
+                self.messages.push(&reason);
+            }
             let state = if video.error.is_some() {
                 PlaybackState::Failed
             } else if self.media.playing && !video.playing {

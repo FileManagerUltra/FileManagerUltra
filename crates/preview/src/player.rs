@@ -4,7 +4,8 @@
 mod pipe;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -12,13 +13,119 @@ use fm_media::{AudioFormat, AudioProducer, AudioSink, Clock, DeviceSink, Gain, P
 use fm_vfs::FmError;
 
 use crate::VideoInfo;
-use crate::video::{command, find_tool};
+use crate::video::{DEINTERLACE, command, find_tool};
 use pipe::Pipe;
 
 pub const MAX_WIDTH: u32 = 1280;
 pub const MIN_WIDTH: u32 = 160;
 const DECODE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Picture subtitles shown at the seek point may have started this long before it.
+const SUBTITLE_PREROLL: f64 = 2.0;
+/// Hardware failures this close to the end are damaged data at the end of the file (a DVD's
+/// VOB parts end mid-group); software decodes the rest quietly.
+const END_TAIL: f64 = 2.0;
+/// A changed subtitle overlay restarts the video decoder at most this often.
+const OVERLAY_RESTART: Duration = Duration::from_millis(250);
+/// Scale of picture subtitles relative to their authored size.
+pub const OVERLAY_SCALE: std::ops::RangeInclusive<f64> = 0.5..=1.5;
+/// Largest upward shift of picture subtitles, as a fraction of the picture height.
+pub const OVERLAY_LIFT_MAX: f64 = 0.45;
 static WORKERS: Mutex<Vec<Weak<Shared>>> = Mutex::new(Vec::new());
+/// One bit per [`HwAccel`] whose decode device could not be opened at all; later videos
+/// skip that method.
+static HARDWARE_UNAVAILABLE: AtomicU8 = AtomicU8::new(0);
+
+/// Platform video decode acceleration, passed to ffmpeg as `-hwaccel`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HwAccel {
+    Vaapi,
+    D3d11va,
+    VideoToolbox,
+    /// A method ffmpeg does not know, to exercise the software fallback.
+    #[cfg(test)]
+    Missing,
+}
+
+impl HwAccel {
+    /// VA-API on Linux and the BSDs, Direct3D 11 on Windows, VideoToolbox on macOS.
+    pub fn for_platform() -> Self {
+        if cfg!(windows) {
+            Self::D3d11va
+        } else if cfg!(target_os = "macos") {
+            Self::VideoToolbox
+        } else {
+            Self::Vaapi
+        }
+    }
+
+    fn flag(self) -> &'static str {
+        match self {
+            Self::Vaapi => "vaapi",
+            Self::D3d11va => "d3d11va",
+            Self::VideoToolbox => "videotoolbox",
+            #[cfg(test)]
+            Self::Missing => "fm-missing-hwaccel",
+        }
+    }
+
+    fn bit(self) -> u8 {
+        match self {
+            Self::Vaapi => 1,
+            Self::D3d11va => 2,
+            Self::VideoToolbox => 4,
+            #[cfg(test)]
+            Self::Missing => 8,
+        }
+    }
+
+    fn unavailable(self) -> bool {
+        HARDWARE_UNAVAILABLE.load(Ordering::Acquire) & self.bit() != 0
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Vaapi => "VA-API",
+            Self::D3d11va => "Direct3D 11",
+            Self::VideoToolbox => "VideoToolbox",
+            #[cfg(test)]
+            Self::Missing => "missing",
+        }
+    }
+}
+
+/// How the running decoder produces frames.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decoding {
+    Hardware(HwAccel),
+    Software,
+}
+
+/// Picture-based subtitles (PGS, VobSub) that ffmpeg draws into the frames. Their colours
+/// are part of the picture; only their size and height can change.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Overlay {
+    /// Index among the video's subtitle streams (`0:s:N`).
+    pub stream: usize,
+    /// Size relative to the authored picture, within [`OVERLAY_SCALE`]; anchored at the bottom.
+    pub scale: f64,
+    /// Upward shift as a fraction of the picture height, `0.0..=OVERLAY_LIFT_MAX`.
+    pub lift: f64,
+}
+
+impl Overlay {
+    fn valid(&self, info: &VideoInfo) -> bool {
+        self.stream < info.tracks.subtitles.len().min(crate::MAX_TRACKS)
+            && self.scale.is_finite()
+            && OVERLAY_SCALE.contains(&self.scale)
+            && self.lift.is_finite()
+            && (0.0..=OVERLAY_LIFT_MAX).contains(&self.lift)
+    }
+}
+
+/// Try the decode devices again, for example after hardware decoding was switched back on.
+pub fn reset_hardware() {
+    HARDWARE_UNAVAILABLE.store(0, Ordering::Release);
+}
 
 #[derive(Debug)]
 pub struct Frame {
@@ -35,6 +142,10 @@ pub struct PlaySpec {
     pub width: u32,
     pub speed: f64,
     pub still: bool,
+    /// Try this decode acceleration first; `None` decodes in software.
+    pub hardware: Option<HwAccel>,
+    /// Picture subtitles drawn into the frames.
+    pub overlay: Option<Overlay>,
 }
 
 #[derive(Debug, Default)]
@@ -44,6 +155,12 @@ struct Snapshot {
     done: bool,
     error: Option<String>,
     hint: Option<String>,
+    /// Known once the first frame has been decoded.
+    decoding: Option<Decoding>,
+    /// Why hardware decoding stopped during playback, until the owner takes it.
+    fallback: Option<String>,
+    /// The overlay the owner wants; the worker restarts its video decoder to match.
+    overlay: Option<Overlay>,
 }
 
 #[derive(Debug, Default)]
@@ -152,6 +269,9 @@ impl Player {
             || !spec.info.audio_delay.is_finite()
             || spec.info.audio_delay < 0.0
             || !tracks_valid(&spec.info)
+            || spec
+                .overlay
+                .is_some_and(|overlay| !overlay.valid(&spec.info))
             || atempo_chain(spec.speed).is_none()
             || decode_size(&spec.info, spec.width).is_none()
         {
@@ -170,11 +290,14 @@ impl Player {
             }
             workers.push(Arc::downgrade(&shared));
         }
-        shared
-            .snapshot
-            .lock()
-            .map_err(|_| error("Video status unavailable"))?
-            .position = spec.from;
+        {
+            let mut snapshot = shared
+                .snapshot
+                .lock()
+                .map_err(|_| error("Video status unavailable"))?;
+            snapshot.position = spec.from;
+            snapshot.overlay = spec.overlay;
+        }
         let sh = shared.clone();
         let work = spec.clone();
         std::thread::Builder::new()
@@ -228,6 +351,31 @@ impl Player {
             .ok()
             .and_then(|s| s.hint.clone())
     }
+
+    /// Hardware or software, once the first frame is decoded.
+    pub fn decoding(&self) -> Option<Decoding> {
+        self.shared.snapshot.lock().ok().and_then(|s| s.decoding)
+    }
+
+    /// Why hardware decoding stopped during playback; returned once.
+    pub fn take_fallback(&self) -> Option<String> {
+        self.shared
+            .snapshot
+            .lock()
+            .ok()
+            .and_then(|mut s| s.fallback.take())
+    }
+
+    /// Draw `overlay` from now on. A playing video restarts only its video decoder at the
+    /// current position, so audio continues; invalid overlays are ignored.
+    pub fn set_overlay(&self, overlay: Option<Overlay>, info: &VideoInfo) {
+        if overlay.is_some_and(|overlay| !overlay.valid(info)) {
+            return;
+        }
+        if let Ok(mut snapshot) = self.shared.snapshot.lock() {
+            snapshot.overlay = overlay;
+        }
+    }
 }
 
 impl Drop for Player {
@@ -246,8 +394,29 @@ fn tracks_valid(info: &VideoInfo) -> bool {
             .all(|track| track.delay.is_finite() && track.delay >= 0.0)
 }
 
-/// `exact` seeks after the input: slower, but works on files whose only keyframe is at the start.
-fn video_pipe(tool: &std::path::Path, spec: &PlaySpec, exact: bool) -> Result<Pipe, FmError> {
+/// A video decoder from `at` seconds. `exact` seeks after the input: slower, but works on
+/// files whose only keyframe is at the start.
+fn video_pipe(
+    tool: &std::path::Path,
+    spec: &PlaySpec,
+    at: f64,
+    exact: bool,
+    hardware: Option<HwAccel>,
+    overlay: Option<Overlay>,
+) -> Result<Pipe, FmError> {
+    let (w, h) = decode_size(&spec.info, spec.width).ok_or_else(|| error("Invalid video size"))?;
+    let c = video_command(tool, spec, at, exact, hardware, overlay)?;
+    Pipe::spawn(c, w as usize * h as usize * 4, DECODE_TIMEOUT)
+}
+
+fn video_command(
+    tool: &std::path::Path,
+    spec: &PlaySpec,
+    at: f64,
+    exact: bool,
+    hardware: Option<HwAccel>,
+    overlay: Option<Overlay>,
+) -> Result<std::process::Command, FmError> {
     let (w, h) = decode_size(&spec.info, spec.width).ok_or_else(|| error("Invalid video size"))?;
     let fps = spec.info.fps.max(1.0);
     let (protocols, input) = spec
@@ -255,23 +424,175 @@ fn video_pipe(tool: &std::path::Path, spec: &PlaySpec, exact: bool) -> Result<Pi
         .ffmpeg_input()
         .ok_or_else(|| error("Invalid video path"))?;
     let mut c = command(tool);
-    c.args(["-v", "error", "-nostdin", "-protocol_whitelist", protocols]);
+    c.stderr(Stdio::piped());
+    c.args([
+        "-v",
+        "warning",
+        "-nostdin",
+        "-protocol_whitelist",
+        protocols,
+    ]);
+    if let Some(hardware) = hardware {
+        // Frames come back to system memory, so the software filters below still apply.
+        c.args(["-hwaccel", hardware.flag()]);
+    }
+    // A subtitle on screen at `at` may have started earlier: decode a little before it.
+    let preroll = if overlay.is_some() {
+        at.min(SUBTITLE_PREROLL)
+    } else {
+        0.0
+    };
     if !exact {
-        c.args(["-ss"]).arg(format!("{:.6}", spec.from));
+        c.args(["-ss"]).arg(format!("{:.6}", at - preroll));
     }
     c.arg("-i").arg(input);
     if exact {
-        c.args(["-ss"]).arg(format!("{:.6}", spec.from));
+        c.args(["-ss"]).arg(format!("{at:.6}"));
+    } else if preroll > 0.0 {
+        c.args(["-ss"]).arg(format!("{preroll:.6}"));
     }
-    c.args(["-map", "0:v:0", "-an", "-sn", "-dn", "-vf"])
-        // Raw frames have no PTS: normalize VFR to the probed, bounded cadence.
-        .arg(format!("fps=fps={fps:.9}:start_time=0,scale={w}:{h}"))
-        .args(["-pix_fmt", "rgba", "-f", "rawvideo", "-threads", "1"]);
+    // Raw frames have no PTS: normalize VFR to the probed, bounded cadence.
+    let cadence = format!("fps=fps={fps:.9}:start_time=0");
+    match overlay {
+        None => {
+            c.args(["-map", "0:v:0", "-an", "-sn", "-dn", "-vf"])
+                .arg(format!("{DEINTERLACE},{cadence},scale={w}:{h}"));
+        }
+        Some(overlay) => {
+            let ow = ((f64::from(w) * overlay.scale) as u32 / 2 * 2).max(2);
+            let oh = ((f64::from(h) * overlay.scale) as u32 / 2 * 2).max(2);
+            let lift = (f64::from(h) * overlay.lift).round() as u32;
+            c.arg("-filter_complex")
+                .arg(format!(
+                    "[0:v:0]{DEINTERLACE},scale={w}:{h}[v];[0:s:{stream}]scale={ow}:{oh}[s];\
+                     [v][s]overlay=x=(W-w)/2:y=H-h-{lift}:eof_action=pass,{cadence}[out]",
+                    stream = overlay.stream
+                ))
+                .args(["-map", "[out]"]);
+        }
+    }
+    c.args(["-pix_fmt", "rgba", "-f", "rawvideo", "-threads", "1"]);
     if spec.still {
         c.args(["-frames:v", "1"]);
     }
     c.arg("-");
-    Pipe::spawn(c, w as usize * h as usize * 4, DECODE_TIMEOUT)
+    Ok(c)
+}
+
+/// `at` seconds lies in the last [`END_TAIL`] of a video `duration` long (when known).
+fn near_end(at: f64, duration: f64) -> bool {
+    duration.is_finite() && duration > 0.0 && at >= duration - END_TAIL
+}
+
+fn strip_prefixes(line: &str) -> &str {
+    let mut rest = line.trim();
+    while let Some(after) = rest.strip_prefix('[') {
+        match after.split_once(']') {
+            Some((_, tail)) => rest = tail.trim_start(),
+            None => break,
+        }
+    }
+    rest
+}
+
+/// One running video decoder and where its frames belong on the timeline.
+struct Video {
+    pipe: Pipe,
+    /// Media seconds after `spec.from` that this decoder's first frame shows.
+    origin: f64,
+    /// Frames read from this decoder.
+    frames: u64,
+    exact: bool,
+    hardware: Option<HwAccel>,
+    overlay: Option<Overlay>,
+    started: Instant,
+}
+
+impl Video {
+    fn spawn(
+        tool: &std::path::Path,
+        spec: &PlaySpec,
+        origin: f64,
+        exact: bool,
+        hardware: Option<HwAccel>,
+        overlay: Option<Overlay>,
+    ) -> Result<Self, FmError> {
+        Ok(Self {
+            pipe: video_pipe(tool, spec, spec.from + origin, exact, hardware, overlay)?,
+            origin,
+            frames: 0,
+            exact,
+            hardware,
+            overlay,
+            started: Instant::now(),
+        })
+    }
+
+    /// Timeline position (after `spec.from`) of the next frame this decoder delivers.
+    fn next_time(&self, fps: f64) -> f64 {
+        self.origin + self.frames as f64 / fps
+    }
+
+    fn decoding(&self) -> Decoding {
+        match self.hardware {
+            // ffmpeg itself falls back to software for a codec the device cannot decode.
+            Some(hardware) if !self.pipe.diagnostics().contains("Failed setup for format") => {
+                Decoding::Hardware(hardware)
+            }
+            _ => Decoding::Software,
+        }
+    }
+}
+
+/// The decode device itself is missing (as opposed to one file failing).
+fn device_unavailable(diagnostics: &str) -> bool {
+    [
+        "Device creation failed",
+        "No device available",
+        "Failed to initialise",
+        "Unrecognized hwaccel",
+        "hwaccel initialisation returned error",
+    ]
+    .iter()
+    .any(|needle| diagnostics.contains(needle))
+}
+
+/// The last diagnostic line, credential-redacted and without ffmpeg's `[component @ 0x…]`
+/// prefixes, for the message log.
+fn fallback_reason(hardware: HwAccel, diagnostics: &str, err: &FmError) -> String {
+    let lines: Vec<&str> = diagnostics
+        .lines()
+        .map(strip_prefixes)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let recent = lines
+        .get(lines.len().saturating_sub(12)..)
+        .unwrap_or_default();
+    // ffmpeg ends with generic "Terminating thread…" lines; the cause comes before them.
+    let generic = [
+        "Terminating thread",
+        "Task finished",
+        "Error processing packet",
+        "Error while processing",
+    ];
+    let detail = recent
+        .iter()
+        .find(|line| {
+            let lower = line.to_ascii_lowercase();
+            (lower.contains("fail") || lower.contains("error"))
+                && !generic.iter().any(|g| line.starts_with(g))
+        })
+        .or_else(|| recent.last())
+        .map_or_else(|| err.to_string(), |line| (*line).to_string());
+    let detail: String = fm_vfs::redact::redact(&detail)
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(200)
+        .collect();
+    format!(
+        "Hardware video decoding ({}) stopped; continuing in software: {detail}",
+        hardware.label()
+    )
 }
 
 fn audio_pipe(
@@ -437,12 +758,13 @@ fn run(
     if shared.cancelled.load(Ordering::Acquire) {
         return Ok(());
     }
-    let mut video = video_pipe(&tool, spec, false)?;
-    let mut exact = false;
+    let fps = spec.info.fps.max(1.0);
+    let hardware = spec.hardware.filter(|accel| !accel.unavailable());
+    let mut video = Video::spawn(&tool, spec, 0.0, false, hardware, spec.overlay)?;
     let (width, height) =
         decode_size(&spec.info, spec.width).ok_or_else(|| error("Invalid video size"))?;
-    let fps = spec.info.fps.max(1.0);
-    let mut next = None;
+    // The decoded frame waiting for its time, and that time (seconds after `spec.from`).
+    let mut next: Option<(Arc<Frame>, f64)> = None;
     let mut sequence = 0_u64;
     let mut wall = None;
     let mut tail = None;
@@ -459,29 +781,70 @@ fn run(
             ));
             audio = None;
         }
-        if next.is_none()
-            && let Some(rgba) = match video.poll() {
+        if next.is_none() {
+            let polled = video.pipe.poll();
+            let rgba = match polled {
                 Ok(frame) => frame,
-                // Fast seek can land on a non-keyframe and decode nothing; retry exactly.
-                Err(_) if !exact && sequence == 0 && spec.from > 0.0 => {
-                    exact = true;
-                    video = video_pipe(&tool, spec, true)?;
-                    continue;
+                Err(err) => {
+                    let origin = video.next_time(fps);
+                    if let Some(hw) = video.hardware {
+                        let diagnostics = video.pipe.diagnostics();
+                        if sequence == 0 && device_unavailable(&diagnostics) {
+                            HARDWARE_UNAVAILABLE.fetch_or(hw.bit(), Ordering::AcqRel);
+                        }
+                        {
+                            let mut snapshot = shared
+                                .snapshot
+                                .lock()
+                                .map_err(|_| error("Video status unavailable"))?;
+                            // Software from here on, even if no frame follows (end of file).
+                            if sequence > 0 {
+                                snapshot.decoding = Some(Decoding::Software);
+                            }
+                            // Only a failure during playback is news; an unsupported file
+                            // simply plays in software, and a damaged end of file is the
+                            // file's fault, not the graphics card's.
+                            if sequence > 0 && !near_end(spec.from + origin, spec.info.duration) {
+                                snapshot.fallback = Some(fallback_reason(hw, &diagnostics, &err));
+                            }
+                        }
+                        video =
+                            Video::spawn(&tool, spec, origin, video.exact, None, video.overlay)?;
+                        continue;
+                    }
+                    // Fast seek can land on a non-keyframe and decode nothing; retry exactly.
+                    if !video.exact && video.frames == 0 && spec.from + origin > 0.0 {
+                        video = Video::spawn(&tool, spec, origin, true, None, video.overlay)?;
+                        continue;
+                    }
+                    return Err(err);
                 }
-                Err(err) => return Err(err),
+            };
+            if let Some(rgba) = rgba {
+                if rgba.len() != width as usize * height as usize * 4 {
+                    return Err(error("Truncated video frame"));
+                }
+                if video.frames == 0 {
+                    shared
+                        .snapshot
+                        .lock()
+                        .map_err(|_| error("Video status unavailable"))?
+                        .decoding = Some(video.decoding());
+                }
+                let at = video.next_time(fps);
+                video.frames += 1;
+                next = Some((
+                    Arc::new(Frame {
+                        width,
+                        height,
+                        rgba,
+                        seq: sequence,
+                    }),
+                    at,
+                ));
+                sequence += 1;
+                wall.get_or_insert_with(Instant::now);
             }
-        {
-            if rgba.len() != width as usize * height as usize * 4 {
-                return Err(error("Truncated video frame"));
-            }
-            next = Some(Arc::new(Frame {
-                width,
-                height,
-                rgba,
-                seq: sequence,
-            }));
-            sequence += 1;
-            wall.get_or_insert_with(Instant::now);
         }
         let elapsed = if spec.still {
             0.0
@@ -495,18 +858,30 @@ fn run(
         let media_elapsed = elapsed * spec.speed;
         let due = next
             .as_ref()
-            .is_some_and(|frame| spec.still || frame.seq as f64 / fps <= media_elapsed);
-        {
+            .is_some_and(|(_, at)| spec.still || *at <= media_elapsed);
+        let wanted = {
             let mut s = shared
                 .snapshot
                 .lock()
                 .map_err(|_| error("Video status unavailable"))?;
             s.position = spec.from + media_elapsed;
             if due {
-                s.latest = next.take();
+                s.latest = next.take().map(|(frame, _)| frame);
             }
+            s.overlay
+        };
+        if wanted != video.overlay
+            && !spec.still
+            && !video.pipe.ended()
+            && video.started.elapsed() >= OVERLAY_RESTART
+        {
+            // New picture subtitles: restart only the video decoder, here and now.
+            let origin = media_elapsed.max(video.origin);
+            video = Video::spawn(&tool, spec, origin, false, video.hardware, wanted)?;
+            next = None;
+            continue;
         }
-        if video.ended() && next.is_none() && audio.is_none() {
+        if video.pipe.ended() && next.is_none() && audio.is_none() {
             return Ok(());
         }
         // Catch up without waiting for the UI, but hold a future frame until the clock.
@@ -518,4 +893,4 @@ fn run(
 
 #[cfg(test)]
 #[path = "player/tests.rs"]
-mod tests;
+pub(crate) mod tests;

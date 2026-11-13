@@ -2,17 +2,52 @@ use fm_vfs::FmError;
 
 use crate::{
     file_cmds::object,
+    prefs::SvgBackground,
     preview_types::{FilterGroup, PreviewFilters},
     registry::CommandSpec,
 };
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![CommandSpec {
+    vec![filters(), svg_background()]
+}
+
+/// `preview.svg.background` — what is drawn behind SVG pictures: `checkered` (default),
+/// `white`, `black` or `grey` (50%). Without `value` it moves to the next one. Saved.
+fn svg_background() -> CommandSpec {
+    CommandSpec {
+        id: "preview.svg.background",
+        label: "Next SVG Background",
+        menu: &["View", "Next SVG Background"],
+        shortcut: None,
+        params: "{value?: \"checkered\"|\"white\"|\"black\"|\"grey\"} (omitted: the next one)",
+        enabled: |_| true,
+        run: |s, params| {
+            let next = match object(params)?.and_then(|m| m.get("value")) {
+                None => s.prefs.svg_background.next(),
+                Some(value) => {
+                    value
+                        .as_str()
+                        .and_then(SvgBackground::from_id)
+                        .ok_or_else(|| {
+                            FmError::InvalidParams(
+                                "value must be checkered, white, black or grey".into(),
+                            )
+                        })?
+                }
+            };
+            s.prefs.svg_background = next;
+            Ok(())
+        },
+    }
+}
+
+fn filters() -> CommandSpec {
+    CommandSpec {
         id: "prefs.preview.filters",
         label: "Preview Filename Filters",
         menu: &["File", "Preferences", "Preview filename filters"],
         shortcut: None,
-        params: "{groups: [{type: logs|images|video|audio|pdf|markdown|json|yaml|toml|xml|html|csv|text, patterns: [string, ...]}, ...]} (array order is match priority; omitted types get defaults at the end) or {reset: true}",
+        params: "{groups: [{type: logs|images|video|audio|pdf|markdown|svg|json|yaml|toml|xml|html|csv|text, patterns: [string, ...]}, ...]} (array order is match priority; omitted types get defaults at the end, except svg which goes above xml and takes over *.svg) or {reset: true}",
         enabled: |_| true,
         run: |s, params| {
             let map = object(params)?
@@ -47,5 +82,39 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(())
         },
-    }]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn svg_background_sets_cycles_and_rejects_bad_values() {
+        let mut s = crate::Session::new().expect("session");
+        assert_eq!(s.prefs.svg_background, SvgBackground::Checkered);
+        s.dispatch("preview.svg.background", &json!({"value": "grey"}))
+            .expect("set");
+        assert_eq!(s.prefs.svg_background, SvgBackground::Grey);
+        s.dispatch("preview.svg.background", &json!({}))
+            .expect("next");
+        assert_eq!(s.prefs.svg_background, SvgBackground::Checkered, "wraps");
+        s.dispatch("preview.svg.background", &serde_json::Value::Null)
+            .expect("next");
+        assert_eq!(s.prefs.svg_background, SvgBackground::White);
+        for bad in [
+            json!({"value": "pink"}),
+            json!({"value": 3}),
+            json!({"value": null}),
+            json!([1]),
+            json!("white"),
+        ] {
+            assert!(s.dispatch("preview.svg.background", &bad).is_err(), "{bad}");
+            assert_eq!(s.prefs.svg_background, SvgBackground::White);
+        }
+        let saved = toml::to_string(&s.prefs).expect("save");
+        let back: crate::Prefs = toml::from_str(&saved).expect("load");
+        assert_eq!(back.svg_background, SvgBackground::White);
+    }
 }

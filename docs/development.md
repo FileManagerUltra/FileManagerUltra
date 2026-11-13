@@ -29,6 +29,20 @@ playing; sound must stop and no ffmpeg child should remain. Check an audio-only
 file with autoplay off/on, a silent video, a delayed soundtrack and a machine
 without an output device (silent video plus hint, actionable error for audio).
 
+Hardware decoding (Preferences > Media > Playback, on by default): play a video and
+open the player menu; it says "Decoding: hardware (VA-API / Direct3D 11 /
+VideoToolbox)" where the GPU decodes, otherwise "Decoding: software" with no error.
+Switch the preference off and on during playback: the video restarts in the chosen
+mode. On Linux without a working VA-API driver, playback must start normally in
+software. Picture subtitles: play a Blu-ray rip (PGS) or DVD/`.iso` (VobSub), pick
+the "(picture)" track under Subtitles and check timing, then change Size and Distance
+from bottom in Preferences > Media while it plays; audio must not stutter and the
+picture subtitles must follow within a second. Seek into the middle of a line: it is
+shown. Interlaced video: play a DVD (or a TV recording) with fast motion; moving edges
+show no comb lines in the player, the poster and the folder thumbnail.
+Drag a file that is already in the playlist onto the player: no duplicate row
+appears, its row is selected and it plays; dropping the playing file keeps playing.
+
 ## Everyday commands
 
 ```sh
@@ -196,7 +210,14 @@ keyboard ownership.
 Check proportional typography, left-aligned navigation and flat, divider-separated sections
 with aligned controls; the file listing keeps its existing typography. Connections separates SMB
 security, remote timing and a bordered trusted-host list with aligned Forget buttons.
-Theme and shell choices use radio controls. Changes apply immediately; Close/Escape and
+Theme, density, sizes, dates, shell, accent and subtitle choices are choice rows: one Tab
+stop each, arrows (and Home/End) pick an option and apply it. Keyboard-only walk: opening
+Preferences focuses the selected topic; Tab goes through that topic's controls to Close and
+back to the topic list (Shift+Tab the other way) and never reaches the panes behind; Up/Down
+in the topic list and Ctrl+Tab / Ctrl+Shift+Tab (or Ctrl+PageDown/PageUp) anywhere change
+topic. The focused control has an accent ring after a key press (none after a click) and
+scrolls into view. Esc closes an open dropdown first, then leaves a text field, then closes
+the window. Changes apply immediately; Close/Escape and
 reopening retain the topic. Shrink the window to check independent scrolling and that Close
 remains accessible; verify both themes.
 
@@ -347,9 +368,13 @@ Works as expected
 8. `Ctrl+C` / `Ctrl+X` / `Ctrl+V` copy, cut and paste files (Files pane or thumbnail grid) into the focused folder; Edit menu and context menu show the same entries. Double-clicking a folder thumbnail navigates the connected Files pane. Clicking the only selected file again selects `.`.
 Works as expected
 
+### SVG preview checks
+
+Select an `.svg` with labels (for example a draw.io export using Helvetica): it shows as a picture over a checkerboard, text included, in both themes. The background dropdown next to 100% switches to White, Black or 50% grey, also from the ☰ menu in a narrow pane, and is remembered after a restart. A folder of `.svg` and `.svgz` files in thumbnail mode shows each drawing over that background; a gzip bomb renamed to `.svgz` is refused quickly without using much memory. In File types, click a pattern and use Up/Down to move the selection (one row per press), Tab/Shift+Tab or Left/Right to switch between the lists, then − removes the selected one. With a Files pane or a thumbnail grid behind Preferences, the arrow keys must not move their cursor. Fit enlarges small icons sharply; 100% shows the declared size. Turn off Preview: the XML source appears without a reload, Pretty and Wrap work, and selecting another file returns to the picture. A broken SVG shows "Cannot draw this SVG" above its source. An SVG with `<image href="/etc/hostname">` draws nothing for that element. Older settings: start with a prefs file from 0.2.1 and check Preferences > Preview > File types lists SVG above XML with `*.svg`, and XML no longer has it.
+
 ### Preview file-filter checks
 
-In Preferences > Preview, scroll to File type filters. In both themes, press Show on Logs, add `*.trace` (Enter or Add) and confirm a selected `.trace` file changes to log preview immediately. Edit a row and leave the field to save; Remove rows to drop name associations (unmatched files still use content detection). Add `*.trace` to CSV too and confirm Logs wins; press Up on CSV and confirm CSV now wins. Try `../*.log` or `a;b` and confirm an inline error preserves the previous setting. Restore default file filters, verify every field resets, then restart to check persistence. Check custom image extensions in both individual previews and directory thumbnails. HTML/CSV remain text previews.
+In Preferences > Preview, scroll to File types. In both themes, select Logs, press + and type `*.trace` (Enter) and confirm a selected `.trace` file changes to log preview immediately. Click a pattern twice (or the pencil, or F2) to edit it in place and leave the field to save; Escape cancels the edit without closing Preferences. Select a pattern and press − (or Delete) to drop a name association (unmatched files still use content detection). Add `*.trace` to CSV too and confirm Logs wins; select CSV, press the up arrow and confirm CSV now wins. Try `../*.log` or `a;b` and confirm an inline error preserves the previous setting. Restore default file types, verify every pattern resets, then restart to check persistence. Check custom image extensions in both individual previews and directory thumbnails. HTML/CSV remain text previews.
 
 Focus a long `.txt`/source or `.md` preview, press Ctrl+A then Ctrl+C (Cmd on macOS)
 and paste elsewhere: all loaded text, including offscreen rows, should copy without

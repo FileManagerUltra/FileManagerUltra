@@ -21,6 +21,8 @@ const CACHE_VERSION: u8 = 1;
 pub enum ThumbKind {
     Image,
     Video,
+    /// SVG or SVGZ, drawn by the safe SVG renderer.
+    Svg,
     Other,
 }
 
@@ -32,6 +34,7 @@ pub fn classify(name: &str) -> ThumbKind {
         .unwrap_or_default();
     match ext.as_str() {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" => ThumbKind::Image,
+        "svg" | "svgz" => ThumbKind::Svg,
         "mp4" | "m4v" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "flv" | "mpg" | "mpeg" | "3gp"
         | "ogv" | "vob" | "m2ts" | "mts" => ThumbKind::Video,
         _ => ThumbKind::Other,
@@ -91,6 +94,7 @@ pub fn make_as(vfs: &dyn Vfs, entry: &Entry, edge: u32, kind: ThumbKind) -> Opti
             }
         }
         ThumbKind::Video => video::thumbnail(entry, edge)?,
+        ThumbKind::Svg => return crate::svg::thumbnail(vfs, entry, edge),
         ThumbKind::Other => return None,
     };
     let (rgba, _) = doc.frames.into_iter().next()?;
@@ -263,6 +267,8 @@ mod tests {
     fn classifies_by_extension() {
         assert_eq!(classify("a.JPG"), ThumbKind::Image);
         assert_eq!(classify("clip.mkv"), ThumbKind::Video);
+        assert_eq!(classify("logo.SVG"), ThumbKind::Svg);
+        assert_eq!(classify("logo.svgz"), ThumbKind::Svg);
         assert_eq!(classify("notes.txt"), ThumbKind::Other);
         assert_eq!(classify("noext"), ThumbKind::Other);
     }

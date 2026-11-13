@@ -128,7 +128,14 @@ pub fn render(
 ) -> Result<Preview, FmError> {
     let (bytes, more) = text::read_capped(vfs, entry, limits.text_bytes)?;
     let total = entry.size.unwrap_or(bytes.len() as u64);
-    let src = text::decode(&bytes);
+    Ok(Preview::Structured(doc(
+        &bytes, more, total, limits, format,
+    )))
+}
+
+/// Raw and pretty views of `bytes`, the first part of a `total`-byte file (`more` when cut).
+pub fn doc(bytes: &[u8], more: bool, total: u64, limits: &Limits, format: Format) -> StructDoc {
+    let src = text::decode(bytes);
     let raw = text::make_doc(&src, format.lang(), limits, more, total);
     let too_big = more || total > limits.pretty_bytes;
     let pretty = if too_big {
@@ -140,12 +147,12 @@ pub fn render(
         pretty(format, &src)
             .map(|p| text::make_doc(&p, format.lang(), limits, false, p.len() as u64))
     };
-    Ok(Preview::Structured(StructDoc {
+    StructDoc {
         format,
         raw,
         pretty,
         pretty_note: format.note().map(str::to_string),
-    }))
+    }
 }
 
 #[cfg(test)]

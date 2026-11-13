@@ -10,7 +10,9 @@ use std::sync::Arc;
 use crate::audio_owner::AudioOwner;
 use fm_layout::PaneId;
 use fm_media::Gain;
-use fm_preview::player::{Frame, MAX_WIDTH, MIN_WIDTH, PlaySpec, Player};
+use fm_preview::player::{
+    Decoding, Frame, HwAccel, MAX_WIDTH, MIN_WIDTH, Overlay, PlaySpec, Player,
+};
 use fm_preview::{Preview, VideoInfo};
 
 use crate::file_cmds::object;
@@ -46,6 +48,14 @@ pub struct VideoState {
     pub volume: f32,
     pub muted: bool,
     pub speed: f64,
+    /// Hardware or software decoding, known once the running decoder showed a frame.
+    pub decoding: Option<Decoding>,
+    /// Try hardware decoding first (the preference, set by the owner every tick).
+    hardware: bool,
+    /// Picture subtitles drawn into the frames (Media pane only).
+    overlay: Option<Overlay>,
+    /// Why hardware decoding stopped mid-stream, for the message log.
+    fallback: Option<String>,
     gain: Gain,
     player: Option<Player>,
     need_start: bool,
@@ -64,6 +74,10 @@ impl VideoState {
             volume: 100.0,
             muted: false,
             speed: 1.0,
+            decoding: None,
+            hardware: true,
+            overlay: None,
+            fallback: None,
             gain: Gain::default(),
             player: None,
             need_start: autoplay,
@@ -104,6 +118,40 @@ impl VideoState {
 
     fn duration(&self) -> f64 {
         self.info.duration.max(0.0)
+    }
+
+    /// Follow the hardware decoding preference; a change restarts the decoder.
+    pub(crate) fn set_hardware(&mut self, on: bool) {
+        if self.hardware == on {
+            return;
+        }
+        self.hardware = on;
+        self.decoding = None;
+        if self.player.is_some() || (self.frame.is_some() && !self.playing) {
+            self.restart();
+        }
+    }
+
+    /// Draw `overlay` (picture subtitles) from now on. While playing only the video decoder
+    /// restarts, so audio continues; a paused video decodes a new still frame.
+    pub(crate) fn set_overlay(&mut self, overlay: Option<Overlay>) {
+        if self.overlay == overlay {
+            return;
+        }
+        self.overlay = overlay;
+        match &self.player {
+            Some(player) if self.playing && !player.still => {
+                player.set_overlay(overlay, &self.info);
+            }
+            Some(_) => self.restart(),
+            None if !self.playing && !self.need_start && self.frame.is_some() => self.restart(),
+            None => {}
+        }
+    }
+
+    /// Why hardware decoding stopped during playback; returned once.
+    pub(crate) fn take_fallback(&mut self) -> Option<String> {
+        self.fallback.take()
     }
 }
 
@@ -165,9 +213,14 @@ impl Session {
         if let Some(pane) = started {
             self.claim_audio(AudioOwner::PreviewVideo(pane));
         }
+        let hardware = self.prefs.media_hardware_decoding;
         for slot in self.previews.slots.values_mut() {
             if let Some(v) = &mut slot.video {
+                v.set_hardware(hardware);
                 changed |= pump(v);
+                if let Some(reason) = v.take_fallback() {
+                    self.messages.push(&reason);
+                }
             }
         }
         changed
@@ -186,6 +239,8 @@ pub(crate) fn pump(v: &mut VideoState) -> bool {
             width,
             speed: v.speed,
             still: !v.playing,
+            hardware: v.hardware.then(HwAccel::for_platform),
+            overlay: v.overlay,
         };
         match Player::start(&spec, v.gain.clone()) {
             Ok(p) => v.player = Some(p),
@@ -214,6 +269,15 @@ pub(crate) fn pump(v: &mut VideoState) -> bool {
         };
         changed |= (v.pos - position).abs() > 0.02;
         v.pos = position;
+    }
+    let decoding = player.decoding();
+    if decoding.is_some() && v.decoding != decoding {
+        v.decoding = decoding;
+        changed = true;
+    }
+    if let Some(reason) = player.take_fallback() {
+        v.fallback = Some(reason);
+        changed = true;
     }
     let hint = player.hint();
     if v.hint != hint {
@@ -438,6 +502,41 @@ mod tests {
             },
             true,
         )
+    }
+
+    #[test]
+    fn the_hardware_switch_and_subtitle_overlay_restart_only_when_they_change() {
+        let mut v = state();
+        v.need_start = false;
+        v.playing = false;
+        // Nothing decoded yet: nothing to redo.
+        v.set_hardware(true);
+        v.set_overlay(None);
+        assert!(v.player_is_idle());
+        v.set_hardware(false);
+        assert!(v.player_is_idle(), "no frame yet, no decoder needed");
+        // A paused video with a still frame decodes it again with the new settings.
+        v.frame = Some(Arc::new(Frame {
+            width: 2,
+            height: 2,
+            rgba: vec![0; 16],
+            seq: 0,
+        }));
+        v.set_hardware(true);
+        assert!(v.need_start, "switching decoding redoes the still frame");
+        v.need_start = false;
+        let overlay = Overlay {
+            stream: 0,
+            scale: 1.0,
+            lift: 0.0,
+        };
+        v.set_overlay(Some(overlay));
+        assert!(v.need_start, "new subtitles redo the still frame");
+        v.need_start = false;
+        v.set_overlay(Some(overlay));
+        v.set_hardware(true);
+        assert!(!v.need_start, "unchanged settings leave the decoder alone");
+        assert_eq!(v.take_fallback(), None);
     }
 
     #[test]

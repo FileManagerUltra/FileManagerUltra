@@ -114,7 +114,7 @@ impl Session {
         let Some(pending) = self.media_source.pending.take() else {
             return false;
         };
-        let result = result.and_then(|loaded| {
+        let result = result.and_then(|mut loaded| {
             if self.media.queue.items() != pending.original {
                 return Err(
                     "Media was not added because the queue changed during import. Try again."
@@ -130,6 +130,18 @@ impl Session {
                 > MAX_QUEUE_ITEMS
             {
                 return Err("The dropped media does not fit in the queue.".into());
+            }
+            // Files dropped on the player that are already in the playlist are not added
+            // twice: the first dropped file plays from the row it already has.
+            let mut already = None;
+            if pending.play_now && pending.group.is_none() && loaded.folders.is_empty() {
+                let queue = self.media.queue.items();
+                already = loaded
+                    .items
+                    .first()
+                    .filter(|first| queue.contains(first))
+                    .cloned();
+                loaded.items.retain(|item| !queue.contains(item));
             }
             let has_items = !loaded.items.is_empty();
             let count = loaded.items.len();
@@ -215,6 +227,28 @@ impl Session {
                     "{} media items were skipped; see Messages.",
                     loaded.notices.len()
                 ));
+            }
+            if let Some(uri) = already {
+                let row = self
+                    .media
+                    .queue
+                    .items()
+                    .iter()
+                    .position(|item| *item == uri)
+                    .ok_or_else(|| "The dropped file left the playlist.".to_string())?;
+                // Selected and scrolled into view, like newly added rows.
+                self.media.note_added(row, 1);
+                let started = if self.media.queue.current_index() == Some(row) {
+                    // Already the current item: keep its place, just make sure it plays.
+                    if self.media.playing {
+                        self.show_media_pane()
+                    } else {
+                        self.media_resume()
+                    }
+                } else {
+                    self.media_play_row(row, false)
+                };
+                return started.map_err(|error| error.to_string());
             }
             if has_items
                 && (pending.play_now || (self.prefs.media_autoplay_on_add && !self.media.playing))
@@ -838,6 +872,75 @@ mod tests {
         assert!(fs.stat(&uri("/music/first.mp3")).is_ok());
         assert!(fs.stat(&uri("/music/album/song2.mp3")).is_ok());
         assert!(s.fileops.jobs().is_empty());
+    }
+
+    #[test]
+    fn dropping_a_playlist_file_on_the_player_plays_it_where_it_is() {
+        let (mut s, _) = fixture();
+        for path in [
+            "/music/first.mp3",
+            "/music/last.flac",
+            "/music/album/song2.mp3",
+        ] {
+            s.media.queue.enqueue(uri(path)).expect("queue");
+        }
+        s.media.queue.select(0).expect("select");
+        s.dispatch(
+            "media.drop",
+            &json!({"uris": ["/music/album/song2.mp3"], "play": true}),
+        )
+        .expect("drop on player");
+        wait(&mut s);
+        assert_eq!(s.media.queue.items().len(), 3, "not added twice");
+        assert_eq!(
+            s.media.queue.current_index(),
+            Some(2),
+            "plays the existing row"
+        );
+        let shown = s.media.reveal.expect("reveal");
+        assert_eq!((shown.start, shown.len), (2, 1), "selected and scrolled to");
+
+        // A mix: only the new file is added; the first dropped file (already there) plays.
+        s.dispatch("media.stop", &Params::Null).expect("stop");
+        s.dispatch(
+            "media.drop",
+            &json!({"uris": ["/music/last.flac", "/music/album/song10.mp3"], "play": true}),
+        )
+        .expect("mixed drop");
+        wait(&mut s);
+        let items = s.media.queue.items();
+        assert_eq!(items.len(), 4);
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| **item == uri("/music/last.flac"))
+                .count(),
+            1
+        );
+        assert!(items.contains(&uri("/music/album/song10.mp3")));
+        let last = items
+            .iter()
+            .position(|item| *item == uri("/music/last.flac"));
+        assert_eq!(s.media.queue.current_index(), last);
+
+        // Dropping what is already playing keeps its place instead of restarting it.
+        s.media.playing = true;
+        s.media.position = 12.0;
+        s.dispatch(
+            "media.drop",
+            &json!({"uris": ["/music/last.flac"], "play": true}),
+        )
+        .expect("drop current");
+        // Only the drop is applied: a full poll would try to play the undecodable fixture.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while s.media_source.is_busy() {
+            s.media_source_tick();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(s.media.queue.items().len(), 4);
+        assert_eq!(s.media.queue.current_index(), last);
+        assert!((s.media.position - 12.0).abs() < 1e-9, "not restarted");
     }
 
     #[test]

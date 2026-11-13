@@ -18,6 +18,11 @@ const POSTER_TIMEOUT: Duration = Duration::from_secs(8);
 const PROBE_BYTES: u64 = 1 << 20;
 const POSTER_BYTES: u64 = 32 << 20;
 
+/// First filter of every picture chain: deinterlaces only frames the decoder marks as
+/// interlaced (DVDs, TV recordings), so progressive video passes through untouched. It
+/// must run before scaling, which would otherwise smear the fields together.
+pub(crate) const DEINTERLACE: &str = "bwdif=mode=send_frame:parity=auto:deint=interlaced";
+
 static MANAGED_TOOLS: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// Register the folder holding app-downloaded tools; it is searched after every system location.
@@ -478,7 +483,7 @@ fn poster(
     .arg("-i")
     .arg(path)
     .args(["-frames:v", "1", "-vf"])
-    .arg(format!("scale='min({width},iw)':-2"))
+    .arg(format!("{DEINTERLACE},scale='min({width},iw)':-2"))
     .args(["-f", "image2pipe", "-c:v", "png", "-"]);
     let png = run(c, POSTER_TIMEOUT, POSTER_BYTES, None)?;
     match image_prev::decode(entry, &png, limits) {
@@ -582,6 +587,28 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn interlaced_video_thumbnails_are_deinterlaced() {
+        let Ok(dir) = tempfile::tempdir() else {
+            return;
+        };
+        let Some(path) = crate::player::tests::interlaced_clip(dir.path()) else {
+            return;
+        };
+        let uri = fm_vfs::VfsUri::parse(&path.to_string_lossy()).expect("uri");
+        let entry = Entry::new(uri, fm_vfs::EntryKind::File);
+        let Some(doc) = thumbnail(&entry, 720) else {
+            // Without ffprobe the poster cannot be placed; nothing to check.
+            return;
+        };
+        let (rgba, _) = doc.frames.first().expect("frame");
+        assert_eq!((doc.width, doc.height), (720, 576));
+        assert_eq!(
+            crate::player::tests::combing(rgba, doc.width, doc.height),
+            0
+        );
+    }
 
     #[test]
     fn rejects_option_like_and_relative_paths() {

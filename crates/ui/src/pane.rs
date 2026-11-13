@@ -676,6 +676,61 @@ mod tests {
     }
 
     #[test]
+    fn arrow_keys_leave_the_listing_alone_while_preferences_is_open() {
+        let tokens = Tokens::dark();
+        let mut s = ready_session();
+        let ctx = egui::Context::default();
+        let key = |k| egui::Event::Key {
+            key: k,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let frame = |s: &mut Session, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let _ = show(ui, s, 1, &tokens);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+        };
+        frame(&mut s, vec![]);
+        let cursor = |s: &Session| {
+            s.layout.state(1).map(|p| {
+                (
+                    p.listing.focused_row,
+                    p.listing.on_parent,
+                    p.listing.on_current,
+                )
+            })
+        };
+        let before = cursor(&s);
+        s.preferences_open = true;
+        for k in [egui::Key::ArrowDown, egui::Key::ArrowUp, egui::Key::End] {
+            frame(&mut s, vec![key(k)]);
+        }
+        assert_eq!(cursor(&s), before, "Preferences owns the keys");
+        s.preferences_open = false;
+        frame(&mut s, vec![key(egui::Key::ArrowUp)]);
+        assert_ne!(
+            cursor(&s),
+            before,
+            "the listing takes them again once it closes"
+        );
+    }
+
+    #[test]
     fn an_empty_directory_starts_with_the_cursor_on_the_current_row() {
         let tokens = Tokens::dark();
         let mut s = Session::default();

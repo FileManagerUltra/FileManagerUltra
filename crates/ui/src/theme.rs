@@ -57,6 +57,9 @@ pub struct Tokens {
     /// Subtitle text drawn over video, and the outline that keeps it readable on any picture.
     pub subtitle_text: Color32,
     pub subtitle_outline: Color32,
+    /// The two squares behind transparent pictures (SVG drawings). Light in both themes so
+    /// dark artwork stays visible, as in image editors.
+    pub checker: [Color32; 2],
     /// Virtualized listing row height (px).
     pub row_height: f32,
     /// Generic inner padding (px).
@@ -77,6 +80,12 @@ pub struct Tokens {
     /// The 16 ANSI colours (0-7 normal, 8-15 bright).
     pub ansi: [Color32; 16],
 }
+
+/// Fixed backgrounds for pictures (SVG): the same in every theme, unlike the tokens.
+pub const PICTURE_WHITE: Color32 = Color32::from_rgb(0xff, 0xff, 0xff);
+pub const PICTURE_BLACK: Color32 = Color32::from_rgb(0x00, 0x00, 0x00);
+/// 50% grey.
+pub const PICTURE_GREY: Color32 = Color32::from_rgb(0x80, 0x80, 0x80);
 
 impl Tokens {
     /// Dark palette.
@@ -108,6 +117,10 @@ impl Tokens {
             diff_del_word: Color32::from_rgb(0x7a, 0x30, 0x38),
             subtitle_text: Color32::from_rgb(0xff, 0xff, 0xff),
             subtitle_outline: Color32::from_rgba_unmultiplied(0x00, 0x00, 0x00, 0xe0),
+            checker: [
+                Color32::from_rgb(0xd4, 0xd6, 0xda),
+                Color32::from_rgb(0xb4, 0xb8, 0xbe),
+            ],
             row_height: 24.0,
             padding: 6.0,
             corner_radius: 6.0,
@@ -171,6 +184,10 @@ impl Tokens {
             // Drawn on the video, not on the light UI, so it stays light-on-dark.
             subtitle_text: Color32::from_rgb(0xff, 0xff, 0xfa),
             subtitle_outline: Color32::from_rgba_unmultiplied(0x10, 0x10, 0x10, 0xe0),
+            checker: [
+                Color32::from_rgb(0xff, 0xff, 0xff),
+                Color32::from_rgb(0xe2, 0xe4, 0xe8),
+            ],
             row_height: 24.0,
             padding: 6.0,
             corner_radius: 6.0,
@@ -681,6 +698,7 @@ mod tests {
                 diff_del_word,
                 subtitle_text,
                 subtitle_outline,
+                checker,
                 row_height,
                 padding,
                 corner_radius,
@@ -723,6 +741,8 @@ mod tests {
                 ("term_selection", term_selection),
                 ("subtitle_text", subtitle_text),
                 ("subtitle_outline", subtitle_outline),
+                ("checker light", checker[0]),
+                ("checker dark", checker[1]),
             ] {
                 assert_ne!(color.a(), 0, "{name} must be opaque");
             }

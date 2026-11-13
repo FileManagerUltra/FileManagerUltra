@@ -23,13 +23,28 @@ Playback SHALL integrate with the operating system's media controls: MPRIS on Li
 - **WHEN** the controls cannot register (no D-Bus session, name taken, OS refusal)
 - **THEN** one log line is written, playback is unaffected, and registration is tried again only after playback has ended and started again
 
+### Requirement: Interlaced video is deinterlaced automatically
+Video SHALL be deinterlaced without any setting: every picture made from a video (Media pane and Preview playback, picture-subtitle playback, poster frames and folder thumbnails) SHALL pass frames the decoder marks as interlaced (DVDs, TV recordings) through a motion-adaptive deinterlacer before scaling, and SHALL leave progressive frames untouched. It SHALL work with hardware and software decoding alike.
+
+#### Scenario: DVD with fast motion
+- **WHEN** an interlaced PAL DVD title with fast horizontal motion plays, or is shown as a poster or thumbnail
+- **THEN** no comb lines appear along moving edges
+
+#### Scenario: Progressive video
+- **WHEN** a progressive H.264 video plays
+- **THEN** its frames are identical to those without the deinterlacer
+
 ### Requirement: Hardware video decoding
-Video SHALL be decoded with the platform's hardware acceleration when available (VA-API on Linux, D3D11/DXVA on Windows, VideoToolbox on macOS) and SHALL fall back to software decoding automatically when hardware decoding is unavailable or fails mid-stream. A preference "hardware decoding" SHALL be on by default and the pane SHALL show which mode is active.
+Video SHALL be decoded with the platform's hardware acceleration when available (VA-API on Linux, D3D11/DXVA on Windows, VideoToolbox on macOS) and SHALL fall back to software decoding automatically when hardware decoding is unavailable or fails mid-stream. A preference "Hardware video decoding" (Preferences > Media > Playback) SHALL be on by default and applies to the Media pane and Preview videos; changing it restarts a running decoder. The player menu SHALL show which mode is active ("Decoding: hardware (VA-API)" or "Decoding: software"). When the decode device cannot be opened at all, later videos SHALL skip it until the preference is switched off and on again. Switching to software SHALL restart only the video decoder, so audio continues.
 
 #### Scenario: Unsupported codec
-- **WHEN** a video uses a codec the GPU cannot decode
-- **THEN** it plays with software decoding and no error is shown
+- **WHEN** a video uses a codec the GPU cannot decode, or the machine has no usable decode device
+- **THEN** it plays with software decoding, no error or log entry is shown, and the player menu says "Decoding: software"
 
 #### Scenario: Hardware failure
 - **WHEN** hardware decoding fails mid-stream
-- **THEN** playback restarts from the current position in software mode and a log entry records why
+- **THEN** playback restarts from the current position in software mode and a log entry records why (the cause line from ffmpeg, not its closing "Terminating thread" lines)
+
+#### Scenario: Damaged end of a file
+- **WHEN** hardware decoding fails within the last 2 seconds of a video, as on a DVD `VTS_xx_1.VOB` part that ends in the middle of a group of pictures
+- **THEN** the remaining frames are decoded in software, the player menu says "Decoding: software", and no log entry is written

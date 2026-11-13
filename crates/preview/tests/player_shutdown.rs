@@ -51,6 +51,8 @@ fn quitting_waits_for_active_and_replaced_video_workers() {
         width: 320,
         speed: 1.0,
         still: false,
+        hardware: None,
+        overlay: None,
     };
     let first = Player::start(&spec, Gain::default()).expect("first");
     let second = Player::start(&spec, Gain::default()).expect("second");
