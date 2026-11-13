@@ -387,6 +387,9 @@ impl Session {
         self.media_fullscreen_check();
         if self.media_pane().is_none() && !self.prefs.media_background_audio {
             self.media_stop();
+            // Nothing shows the picture any more: drop the decoder state and its last
+            // frame. Opening the pane again probes the file and shows its first frame.
+            self.media.video = None;
         }
     }
 

@@ -708,6 +708,7 @@ pub(super) fn show(
     }
     let used = std::mem::take(&mut actions.textures_used);
     ui.ctx().data_mut(|d| d.insert_temp(texture_id, used));
+    crate::frame_cache::touch::<Textures>(ui.ctx(), texture_id);
     actions.clicked
 }
 

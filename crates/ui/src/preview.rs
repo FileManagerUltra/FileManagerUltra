@@ -1273,6 +1273,7 @@ fn image(
             t
         }
     };
+    crate::frame_cache::touch::<(Arc<Preview>, Vec<egui::TextureHandle>)>(&ctx, id);
     let mut frame = 0;
     if textures.len() > 1 {
         let total: u32 = img.frames.iter().map(|f| f.1.max(20)).sum();
@@ -1807,6 +1808,7 @@ fn poster_texture(
         ctx.data(|d| d.get_temp::<(Arc<Preview>, egui::TextureHandle)>(id))
         && Arc::ptr_eq(&cached, p)
     {
+        crate::frame_cache::touch::<(Arc<Preview>, egui::TextureHandle)>(ctx, id);
         return Some(texture);
     }
     let image = egui::ColorImage::from_rgba_unmultiplied(
@@ -1815,6 +1817,7 @@ fn poster_texture(
     );
     let texture = ctx.load_texture("video-poster", image, egui::TextureOptions::LINEAR);
     ctx.data_mut(|d| d.insert_temp(id, (p.clone(), texture.clone())));
+    crate::frame_cache::touch::<(Arc<Preview>, egui::TextureHandle)>(ctx, id);
     Some(texture)
 }
 
@@ -1849,6 +1852,7 @@ pub(crate) fn video_texture(
         None => ctx.load_texture("video-frame", image(), egui::TextureOptions::LINEAR),
     };
     ctx.data_mut(|d| d.insert_temp(id, (frame.clone(), texture.clone())));
+    crate::frame_cache::touch::<(Arc<fm_preview::player::Frame>, egui::TextureHandle)>(ctx, id);
     texture
 }
 
@@ -2152,6 +2156,7 @@ fn arranged_for(
         (usize, usize, usize, u64, bool, ThumbSort, bool),
         Arc<fm_preview::arrange::Arranged>,
     );
+    crate::frame_cache::touch::<Cached>(ctx, id);
     if let Some((k, a)) = ctx.data(|dt| dt.get_temp::<Cached>(id))
         && k == key
     {
@@ -2519,6 +2524,7 @@ fn thumb_grid(
     }
     ctx.data_mut(|dt| dt.insert_temp(sel_id, sel));
     ctx.data_mut(|dt| dt.insert_temp(cache_id, used));
+    crate::frame_cache::touch::<Cache>(&ctx, cache_id);
     if waiting {
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }

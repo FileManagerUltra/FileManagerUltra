@@ -382,7 +382,8 @@ mod tests {
                     s.media_stop();
                 } else {
                     assert!(!s.media.playing, "{action}");
-                    assert!(s.media.video.as_ref().expect("video").player_is_idle());
+                    // Nothing shows the picture: the decoder state and its frame are released.
+                    assert!(s.media.video.is_none(), "{action}");
                     assert_eq!(s.audio_owner, AudioOwner::None);
                 }
                 assert_eq!(s.media.queue.items().len(), 1);

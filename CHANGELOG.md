@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The subtitle Font and Edge style in Preferences > Media are now option rows instead of dropdowns, so every choice is visible at once.
 
 ### Fixed
+- Closing a workspace, a pane or the Media pane now gives back the memory its pictures, video frames and thumbnails used.
 - Playing a video no longer makes the app's memory use grow steadily on Windows: each new frame now reuses the same picture on the graphics card instead of making a new one.
 - Photos from phones and cameras are shown upright in Preview, folder thumbnails and Markdown documents, following the orientation the camera stored. Thumbnails made earlier are redrawn.
 - Videos filmed upright on a phone no longer play stretched sideways: they are shown upright and tall, as on the phone.

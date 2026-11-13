@@ -636,3 +636,47 @@ fn the_rotate_buttons_turn_the_shown_picture() {
     let back = picture_size(&h).expect("picture");
     assert!((back - wide).length() < 0.5, "{back:?} vs {wide:?}");
 }
+
+/// A pane that is no longer drawn (its workspace closed) gives back its textures.
+#[test]
+fn textures_of_panes_that_are_no_longer_drawn_are_released() {
+    let mut s = Session::new().expect("session");
+    s.dispatch("pane.kind.set", &json!({"kind": "preview"}))
+        .expect("preview");
+    let pane = s.layout.focused();
+    s.poll();
+    s.previews.slots.get_mut(&pane).expect("slot").body = image_body(400, 300, 70);
+    let tokens = Tokens::dark();
+    let shown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let draw = shown.clone();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(900.0, 600.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    if draw.load(std::sync::atomic::Ordering::Relaxed) {
+                        fm_ui::preview::show(ui, s, pane, &tokens);
+                    }
+                });
+                fm_ui::frame_cache::sweep(ui.ctx());
+            },
+            s,
+        );
+    h.run();
+    let textures = |h: &Harness<'_, Session>| h.ctx.tex_manager().read().num_allocated();
+    let with_picture = textures(&h);
+    assert!(fm_ui::frame_cache::live(&h.ctx) >= 1);
+    // Still shown on later frames: kept, not re-uploaded.
+    h.run();
+    assert_eq!(textures(&h), with_picture);
+    shown.store(false, std::sync::atomic::Ordering::Relaxed);
+    h.run();
+    h.run();
+    assert_eq!(fm_ui::frame_cache::live(&h.ctx), 0);
+    assert!(
+        textures(&h) < with_picture,
+        "{} textures before, {} after",
+        with_picture,
+        textures(&h)
+    );
+}

@@ -402,6 +402,11 @@ impl Session {
             self.thumbs.cancel(pane);
             self.invalidate_view(pane);
         }
+        // No thumbnail grid left anywhere: give back the in-memory thumbnails (the disk
+        // cache still serves them when a grid opens again).
+        if !self.previews.slots.values().any(|slot| slot.thumbs) {
+            self.thumbs.clear_memory();
+        }
     }
 
     fn kick_reads(&mut self) {

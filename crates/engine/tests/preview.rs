@@ -1503,3 +1503,43 @@ fn raw_photos_preview_and_thumbnail_without_a_configured_pattern() {
         (48, 32, "Canon CR2 camera preview")
     );
 }
+
+#[test]
+fn closing_the_last_thumbnail_workspace_gives_back_thumbnail_memory() {
+    use fm_engine::thumbs::ThumbState;
+    let dir = tempfile::tempdir().expect("tmp");
+    std::fs::create_dir(dir.path().join("photos")).expect("dir");
+    for i in 0..4 {
+        image::RgbaImage::from_pixel(64, 48, image::Rgba([9, 9, 9, 255]))
+            .save(dir.path().join(format!("photos/{i}.png")))
+            .expect("png");
+    }
+    let mut r = rig(&[]);
+    let uri = VfsUri::parse(&dir.path().to_string_lossy()).expect("uri");
+    r.s.layout
+        .state_mut(r.files)
+        .expect("pane")
+        .navigate(uri.clone());
+    r.s.refresh_read(uri).expect("read");
+    assert!(pump(&mut r.s, |s| s
+        .pane_view(r.files)
+        .is_some_and(|(e, _)| e.len() == 1)));
+    r.cursor("photos");
+    let Preview::Dir(d) = &*r.wait_static() else {
+        panic!("dir")
+    };
+    let items = d.items.clone();
+    r.s.dispatch("preview.thumbs.toggle", &json!({}))
+        .expect("on");
+    r.s.dispatch("preview.thumbs.visible", &json!({"first": 0, "count": 4}))
+        .expect("visible");
+    assert!(pump(&mut r.s, |s| items
+        .iter()
+        .all(|e| matches!(s.thumbs.get(e, 160), ThumbState::Ready(_)))));
+    assert!(r.s.thumbs.memory_bytes() > 0);
+    r.s.dispatch("workspace.new", &json!({})).expect("new");
+    // Only hidden: the grid may come back, so its thumbnails stay.
+    assert!(r.s.thumbs.memory_bytes() > 0);
+    r.s.workspace_close_now(0).expect("close");
+    assert_eq!(r.s.thumbs.memory_bytes(), 0);
+}
