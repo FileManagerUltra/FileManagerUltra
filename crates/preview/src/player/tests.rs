@@ -813,8 +813,6 @@ pub(crate) fn interlaced_clip(dir: &std::path::Path) -> Option<std::path::PathBu
             "mpeg2video",
             "-flags",
             "+ilme+ildct",
-            "-top",
-            "1",
             "-b:v",
             "8M",
             "-threads",
