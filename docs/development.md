@@ -347,9 +347,13 @@ Works as expected
 8. `Ctrl+C` / `Ctrl+X` / `Ctrl+V` copy, cut and paste files (Files pane or thumbnail grid) into the focused folder; Edit menu and context menu show the same entries. Double-clicking a folder thumbnail navigates the connected Files pane. Clicking the only selected file again selects `.`.
 Works as expected
 
+### SVG preview checks
+
+Select an `.svg` with labels (for example a draw.io export using Helvetica): it shows as a picture over a checkerboard, text included, in both themes. The background dropdown next to 100% switches to White, Black or 50% grey, also from the ☰ menu in a narrow pane, and is remembered after a restart. Fit enlarges small icons sharply; 100% shows the declared size. Turn off Preview: the XML source appears without a reload, Pretty and Wrap work, and selecting another file returns to the picture. A broken SVG shows "Cannot draw this SVG" above its source. An SVG with `<image href="/etc/hostname">` draws nothing for that element. Older settings: start with a prefs file from 0.2.1 and check Preferences > Preview > File types lists SVG above XML with `*.svg`, and XML no longer has it.
+
 ### Preview file-filter checks
 
-In Preferences > Preview, scroll to File type filters. In both themes, press Show on Logs, add `*.trace` (Enter or Add) and confirm a selected `.trace` file changes to log preview immediately. Edit a row and leave the field to save; Remove rows to drop name associations (unmatched files still use content detection). Add `*.trace` to CSV too and confirm Logs wins; press Up on CSV and confirm CSV now wins. Try `../*.log` or `a;b` and confirm an inline error preserves the previous setting. Restore default file filters, verify every field resets, then restart to check persistence. Check custom image extensions in both individual previews and directory thumbnails. HTML/CSV remain text previews.
+In Preferences > Preview, scroll to File types. In both themes, select Logs, press + and type `*.trace` (Enter) and confirm a selected `.trace` file changes to log preview immediately. Click a pattern twice (or the pencil, or F2) to edit it in place and leave the field to save; Escape cancels the edit without closing Preferences. Select a pattern and press − (or Delete) to drop a name association (unmatched files still use content detection). Add `*.trace` to CSV too and confirm Logs wins; select CSV, press the up arrow and confirm CSV now wins. Try `../*.log` or `a;b` and confirm an inline error preserves the previous setting. Restore default file types, verify every pattern resets, then restart to check persistence. Check custom image extensions in both individual previews and directory thumbnails. HTML/CSV remain text previews.
 
 Focus a long `.txt`/source or `.md` preview, press Ctrl+A then Ctrl+C (Cmd on macOS)
 and paste elsewhere: all loaded text, including offscreen rows, should copy without

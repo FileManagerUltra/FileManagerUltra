@@ -59,7 +59,54 @@ fn defaults_cover_existing_types_logs_and_rotations() {
         rules.kind("data.toml"),
         Some(Kind::Structured(Format::Toml))
     );
-    assert_eq!(rules.kind("data.svg"), Some(Kind::Structured(Format::Xml)));
+    assert_eq!(rules.kind("drawing.SVG"), Some(Kind::Svg));
+    assert_eq!(rules.kind("data.xml"), Some(Kind::Structured(Format::Xml)));
+    let svg = filters.0.iter().position(|g| g.kind == PreviewType::Svg);
+    let xml = filters.0.iter().position(|g| g.kind == PreviewType::Xml);
+    assert!(svg < xml, "SVG is checked before XML");
+}
+
+#[test]
+fn settings_from_before_svg_gain_it_above_xml() {
+    // Saved by 0.2.1: no SVG group, `*.svg` listed under XML, a custom order and patterns.
+    let old = json!([
+        {"type": "xml", "patterns": ["*.xml", "*.svg", "*.mine"]},
+        {"type": "logs", "patterns": ["*.trace"]},
+        {"type": "text", "patterns": ["*.txt", "*.SVG2"]}
+    ]);
+    let filters: PreviewFilters = serde_json::from_value(old).expect("old settings");
+    let kinds: Vec<_> = filters.0.iter().map(|g| g.kind).collect();
+    assert_eq!(
+        kinds.get(..4),
+        Some(
+            &[
+                PreviewType::Svg,
+                PreviewType::Xml,
+                PreviewType::Logs,
+                PreviewType::Text
+            ][..]
+        )
+    );
+    assert_eq!(filters.patterns(PreviewType::Svg), ["*.svg"]);
+    assert_eq!(filters.patterns(PreviewType::Xml), ["*.xml", "*.mine"]);
+    assert_eq!(filters.patterns(PreviewType::Logs), ["*.trace"]);
+    assert_eq!(filters.patterns(PreviewType::Text), ["*.txt", "*.SVG2"]);
+    let rules = filters.compile().expect("valid");
+    assert_eq!(rules.kind("a.svg"), Some(Kind::Svg));
+
+    // Once SVG is saved, the user's choices stand: emptied SVG keeps `*.svg` under XML.
+    let kept = json!([
+        {"type": "svg", "patterns": []},
+        {"type": "xml", "patterns": ["*.xml", "*.svg"]}
+    ]);
+    let filters: PreviewFilters = serde_json::from_value(kept).expect("settings");
+    assert_eq!(filters.patterns(PreviewType::Svg), &[] as &[String]);
+    assert_eq!(filters.patterns(PreviewType::Xml), ["*.xml", "*.svg"]);
+
+    // Legacy one-string-per-type settings migrate the same way.
+    let prefs: Prefs = toml::from_str("[preview_filters]\nxml = '*.xml; *.svg'").expect("legacy");
+    assert_eq!(prefs.preview_filters.patterns(PreviewType::Xml), ["*.xml"]);
+    assert_eq!(prefs.preview_filters.patterns(PreviewType::Svg), ["*.svg"]);
 }
 
 fn set(filters: &mut PreviewFilters, kind: PreviewType, patterns: &[&str]) {

@@ -134,6 +134,14 @@ pub struct ImageDoc {
     pub format: &'static str,
 }
 
+/// An SVG file: the drawing (or why it could not be drawn) and its XML source.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SvgDoc {
+    /// `original` is the declared size; the raster is larger or smaller so Fit stays sharp.
+    pub image: Result<ImageDoc, String>,
+    pub source: StructDoc,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct HexDoc {
     pub bytes: Vec<u8>,
@@ -253,6 +261,7 @@ pub enum Preview {
     Structured(StructDoc),
     Markdown(markdown::MdDoc),
     Image(ImageDoc),
+    Svg(SvgDoc),
     Hex(HexDoc),
     Dir(DirDoc),
     Log(log::LogDoc),
@@ -382,6 +391,7 @@ fn render_inner(
         Kind::Text(lang) => text::render_text(vfs, entry, limits, &lang),
         Kind::Structured(f) => structured::render(vfs, entry, limits, f),
         Kind::Markdown => markdown::render(vfs, entry, limits),
+        Kind::Svg => svg::render(vfs, entry, limits).map(Preview::Svg),
         Kind::Video => Ok(video::render(entry, limits)),
         Kind::Audio => audio::render(entry, limits),
         Kind::Pdf => Ok(Preview::Meta(MetaDoc {

@@ -791,16 +791,23 @@ fn preferences_dialog_dark_light() {
                 harness.run_steps(3);
             }
             if topic == "Preview" {
-                harness.get_by_label("Logs").scroll_to_me();
+                harness
+                    .get_by_label("Filename patterns for Logs")
+                    .scroll_to_me();
                 harness.run();
                 harness.snapshot(format!("dialog_preferences_file_filters_{theme}"));
                 harness.get_by_label("Images").click();
                 harness.run_steps(3);
-                harness.get_by_label("Add Images pattern").scroll_to_me();
+                harness.get_by_label("*.gif").click();
+                harness.run_steps(3);
+                harness.get_by_label("*.gif").click();
                 harness.run_steps(3);
                 harness.snapshot(format!("dialog_preferences_file_filters_open_{theme}"));
+                // Enter on an unchanged edit ends it without saving.
+                harness.key_press(egui::Key::Enter);
+                harness.run_steps(3);
                 harness
-                    .get_by_label("Restore default file filters")
+                    .get_by_label("Restore default file types")
                     .scroll_to_me();
                 harness.run();
                 harness.snapshot(format!("dialog_preferences_file_filters_bottom_{theme}"));
@@ -2043,6 +2050,87 @@ fn preview_cards_dark_light() {
             harness.set_size(egui::vec2(560.0, 400.0));
             harness.run();
             harness.snapshot(format!("preview_{case}_{theme}"));
+            results.extend_harness(&mut harness);
+        }
+    }
+}
+
+/// SVG: the drawing over the checkerboard, its source after Preview is turned off, and the
+/// error line above the source for a broken file. No text in the drawing: snapshots must not
+/// depend on the fonts installed on the machine running them.
+#[test]
+fn svg_preview_picture_source_and_error_dark_light() {
+    use egui_kittest::kittest::Queryable;
+    const DRAWING: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="40" viewBox="0 0 64 40"><rect x="2" y="2" width="36" height="36" rx="6" fill="none" stroke="#000" stroke-width="3"/><circle cx="46" cy="20" r="14" fill="#2a7de1" fill-opacity="0.8"/></svg>"##;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for (case, bytes) in [("svg", DRAWING), ("svg_error", &b"<svg><g>"[..])] {
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let (session, pane) = preview_fixture("drawing.svg", bytes, false);
+            let mut harness = Harness::builder()
+                .renderer(renderer)
+                .with_accessibility_check(false)
+                .with_size(egui::vec2(820.0, 420.0))
+                .build_ui_state(
+                    move |ui, session: &mut Session| {
+                        theme::apply_to(ui.ctx(), &tokens);
+                        ui.ctx().set_theme(if tokens.dark {
+                            egui::Theme::Dark
+                        } else {
+                            egui::Theme::Light
+                        });
+                        fm_ui::preview::show(ui, session, pane, &tokens);
+                    },
+                    session,
+                );
+            harness.run();
+            harness.snapshot(format!("preview_{case}_{theme}"));
+            if case == "svg" {
+                harness.get_by_label("SVG background").click();
+                harness.run();
+                harness.get_by_label("50% grey").click();
+                harness.run();
+                assert_eq!(
+                    harness.state().prefs.svg_background,
+                    fm_engine::prefs::SvgBackground::Grey
+                );
+                harness.snapshot(format!("preview_svg_grey_{theme}"));
+                harness.get_by_label("SVG background").click();
+                harness.run();
+                harness.get_by_label("Checkered").click();
+                harness.run();
+                harness.get_by_label("Fit");
+                harness.get_by_label("Preview").click();
+                harness.run();
+                assert!(harness.state().preview_slot(pane).expect("slot").source);
+                assert!(harness.query_by_label("Fit").is_none(), "no zoom on source");
+                harness.get_by_label("Pretty").click();
+                harness.run();
+                assert!(harness.state().preview_slot(pane).expect("slot").pretty);
+                harness.snapshot(format!("preview_svg_source_{theme}"));
+                harness.get_by_label("Preview").click();
+                harness.run();
+                let slot = harness.state().preview_slot(pane).expect("slot");
+                assert!(!slot.source && !slot.pretty, "back to the drawing");
+                // Narrow: the picker lives in the View options menu and still works there.
+                harness.set_size(egui::vec2(320.0, 300.0));
+                harness.run();
+                harness.get_by_label("View options").click();
+                harness.run();
+                harness.get_by_label("SVG background").click();
+                harness.run();
+                harness.get_by_label("Black").click();
+                harness.run();
+                assert_eq!(
+                    harness.state().prefs.svg_background,
+                    fm_engine::prefs::SvgBackground::Black
+                );
+            } else {
+                harness.get_by_label_contains("Cannot draw this SVG");
+            }
             results.extend_harness(&mut harness);
         }
     }

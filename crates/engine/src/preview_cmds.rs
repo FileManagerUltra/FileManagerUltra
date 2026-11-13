@@ -1083,15 +1083,29 @@ pub(crate) fn has_preview(s: &Session) -> bool {
 
 fn has_structured(s: &Session) -> bool {
     s.previews.slots.values().any(|sl| {
-        matches!(&sl.body, Body::Static(p) if matches!(&**p, Preview::Structured(d) if d.pretty.is_ok()))
+        matches!(&sl.body, Body::Static(p) if structured_doc(p, sl.source).is_some_and(|d| d.pretty.is_ok()))
     })
+}
+
+/// The document Pretty applies to: a structured file, or an SVG while its source is shown.
+fn structured_doc(p: &Preview, source: bool) -> Option<&fm_preview::StructDoc> {
+    match p {
+        Preview::Structured(doc) => Some(doc),
+        Preview::Svg(doc) if source => Some(&doc.source),
+        _ => None,
+    }
+}
+
+/// Markdown and SVG previews can switch between the rendered view and the source.
+fn has_source_view(p: &Preview) -> bool {
+    matches!(p, Preview::Markdown(_) | Preview::Svg(_))
 }
 
 fn has_markdown(s: &Session) -> bool {
     s.previews
         .slots
         .values()
-        .any(|sl| matches!(&sl.body, Body::Static(p) if matches!(&**p, Preview::Markdown(_))))
+        .any(|sl| matches!(&sl.body, Body::Static(p) if has_source_view(p)))
 }
 
 fn has_log(s: &Session) -> bool {
@@ -1272,9 +1286,9 @@ pub fn toggle_pretty() -> CommandSpec {
             let Body::Static(prev) = &slot.body else {
                 return Err(FmError::InvalidParams("nothing to pretty-print".into()));
             };
-            let Preview::Structured(doc) = &**prev else {
+            let Some(doc) = structured_doc(prev, slot.source) else {
                 return Err(FmError::InvalidParams(
-                    "only JSON, YAML, TOML and XML can be pretty-printed".into(),
+                    "only JSON, YAML, TOML, XML and SVG source can be pretty-printed".into(),
                 ));
             };
             if let Err(why) = &doc.pretty {
@@ -1286,12 +1300,12 @@ pub fn toggle_pretty() -> CommandSpec {
     }
 }
 
-/// `preview.toggle_source` — show a Markdown file's text instead of the rendered document.
+/// `preview.toggle_source` — show a Markdown or SVG file's text instead of the rendered view.
 pub fn toggle_source() -> CommandSpec {
     CommandSpec {
         id: "preview.toggle_source",
-        label: "Preview Markdown Source",
-        menu: &["View", "Preview Markdown Source"],
+        label: "Preview Source",
+        menu: &["View", "Preview Source"],
         shortcut: None,
         params: "{pane?: number}",
         enabled: has_markdown,
@@ -1307,12 +1321,16 @@ pub fn toggle_source() -> CommandSpec {
                     "nothing to show the source of".into(),
                 ));
             };
-            if !matches!(&**prev, Preview::Markdown(_)) {
+            if !has_source_view(prev) {
                 return Err(FmError::InvalidParams(
-                    "only Markdown previews have a source view".into(),
+                    "only Markdown and SVG previews have a source view".into(),
                 ));
             }
             slot.source = !slot.source;
+            if matches!(&**prev, Preview::Svg(_)) && !slot.source {
+                // Pretty belongs to the source view; the picture has no such mode.
+                slot.pretty = false;
+            }
             Ok(())
         },
     }

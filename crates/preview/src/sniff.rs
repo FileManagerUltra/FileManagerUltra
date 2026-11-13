@@ -11,6 +11,8 @@ pub enum Kind {
     Pdf,
     Log,
     Markdown,
+    /// An SVG drawing: rendered, with its XML source one toggle away.
+    Svg,
     Structured(Format),
     /// Plain text with a highlighter language token (extension or name), possibly empty.
     Text(String),
@@ -125,6 +127,34 @@ fn is_text(head: &[u8]) -> bool {
     }
 }
 
+/// Whether the document's root element is `<svg`: only an XML declaration, comments, a
+/// doctype and whitespace may come before it (unlike [`crate::svg::looks_like_svg`], an HTML
+/// page with an inline drawing does not count).
+pub fn is_svg_document(head: &[u8]) -> bool {
+    let mut rest = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
+    loop {
+        rest = rest.trim_ascii_start();
+        if rest.starts_with(b"<svg") {
+            return rest
+                .get(4)
+                .is_none_or(|b| b.is_ascii_whitespace() || matches!(b, b'>' | b'/'));
+        }
+        let end: &[u8] = if rest.starts_with(b"<?") {
+            b"?>"
+        } else if rest.starts_with(b"<!--") {
+            b"-->"
+        } else if rest.starts_with(b"<!") {
+            b">"
+        } else {
+            return false;
+        };
+        let Some(at) = rest.windows(end.len()).position(|w| w == end) else {
+            return false;
+        };
+        rest = rest.get(at + end.len()..).unwrap_or_default();
+    }
+}
+
 fn ext_of(name: &str) -> String {
     name.rsplit_once('.')
         .map(|(_, e)| e.to_ascii_lowercase())
@@ -172,6 +202,9 @@ pub fn sniff(path: &str, head: &[u8]) -> Kind {
     if norm.contains("/var/report/") && head.first() == Some(&b'{') {
         return Kind::Log;
     }
+    if ext == "svg" || is_svg_document(head) {
+        return Kind::Svg;
+    }
     if let Some(f) = Format::from_ext(&ext) {
         return Kind::Structured(f);
     }
@@ -205,6 +238,9 @@ pub fn content(path: &str, head: &[u8]) -> Kind {
     if head.starts_with(&[0x1f, 0x8b]) || !is_text(head) {
         return Kind::Binary;
     }
+    if is_svg_document(head) {
+        return Kind::Svg;
+    }
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     let text = String::from_utf8_lossy(head);
     if (!name.contains('.') && log::detect_text(&text).is_some())
@@ -224,7 +260,9 @@ pub fn content(path: &str, head: &[u8]) -> Kind {
 pub fn configured(path: &str, head: &[u8], association: Option<Kind>) -> Kind {
     match association {
         Some(Kind::Log) if head.starts_with(&[0x1f, 0x8b]) => Kind::Log,
-        Some(kind @ (Kind::Log | Kind::Markdown | Kind::Structured(_) | Kind::Text(_))) => {
+        Some(
+            kind @ (Kind::Log | Kind::Markdown | Kind::Svg | Kind::Structured(_) | Kind::Text(_)),
+        ) => {
             if is_text(head) {
                 kind
             } else {
@@ -239,6 +277,34 @@ pub fn configured(path: &str, head: &[u8], association: Option<Kind>) -> Kind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn svg_documents() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#;
+        let prolog = b"\xEF\xBB\xBF<?xml version=\"1.0\"?>\n<!-- made by hand -->\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"x\">\n<svg>";
+        for head in [&svg[..], &prolog[..], b"<svg>", b"  <svg\nwidth=\"1\">"] {
+            assert!(is_svg_document(head), "{}", String::from_utf8_lossy(head));
+        }
+        for head in [
+            &b"<html><body><svg/></body></html>"[..],
+            b"<svgfoo/>",
+            b"<?xml version=\"1.0\"?><root/>",
+            b"<!-- never closed <svg",
+            b"",
+        ] {
+            assert!(!is_svg_document(head), "{}", String::from_utf8_lossy(head));
+        }
+        assert_eq!(sniff("a.svg", b"<svg/>"), Kind::Svg);
+        assert_eq!(sniff("a.xml", svg), Kind::Svg);
+        assert_eq!(sniff("a.xml", b"<root/>"), Kind::Structured(Format::Xml));
+        assert_eq!(content("drawing", svg), Kind::Svg);
+        assert_eq!(configured("a.svg", svg, Some(Kind::Svg)), Kind::Svg);
+        assert_eq!(
+            configured("a.svg", &[0x89, b'P', b'N', b'G', 0], Some(Kind::Svg)),
+            Kind::Image("png"),
+            "binary data is never parsed as SVG text"
+        );
+    }
 
     #[test]
     fn bytes_beat_extension() {

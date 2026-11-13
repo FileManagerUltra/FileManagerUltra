@@ -21,6 +21,49 @@ pub enum ThemePreference {
     Light,
 }
 
+/// What is drawn behind an SVG picture in Preview.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SvgBackground {
+    #[default]
+    Checkered,
+    White,
+    Black,
+    Grey,
+}
+
+impl SvgBackground {
+    pub const ALL: [Self; 4] = [Self::Checkered, Self::White, Self::Black, Self::Grey];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Checkered => "Checkered",
+            Self::White => "White",
+            Self::Black => "Black",
+            Self::Grey => "50% grey",
+        }
+    }
+
+    /// The command parameter value.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Checkered => "checkered",
+            Self::White => "white",
+            Self::Black => "black",
+            Self::Grey => "grey",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|b| b.id() == id)
+    }
+
+    pub fn next(self) -> Self {
+        let at = Self::ALL.iter().position(|b| *b == self).unwrap_or(0);
+        Self::ALL.get(at + 1).copied().unwrap_or(Self::Checkered)
+    }
+}
+
 /// Which shell terminal panes start (capability `terminal-pane`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -263,6 +306,9 @@ pub struct Prefs {
     /// Longest a preview may take to render.
     #[serde(default = "default_preview_secs")]
     pub preview_time_secs: u64,
+    /// Behind SVG pictures in Preview.
+    #[serde(default)]
+    pub svg_background: SvgBackground,
 }
 
 pub const FONT_SIZE_RANGE: std::ops::RangeInclusive<f32> = 9.0..=24.0;
@@ -557,6 +603,7 @@ impl Default for Prefs {
             thumb_disk_mib: default_thumb_disk(),
             thumb_cache_dir: None,
             preview_time_secs: default_preview_secs(),
+            svg_background: SvgBackground::default(),
         }
     }
 }
@@ -943,6 +990,7 @@ mod tests {
                 "size_units",
                 "smb_require_encryption",
                 "subtitle_style",
+                "svg_background",
                 "terminal_font_size",
                 "terminal_scrollback_rows",
                 "terminal_shell",

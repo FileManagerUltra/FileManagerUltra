@@ -6,11 +6,12 @@ use std::sync::Arc;
 use egui::text::LayoutJob;
 use egui::{FontId, Id, RichText, ScrollArea, Sense, TextFormat, Ui, vec2};
 use fm_engine::Session;
+use fm_engine::prefs::SvgBackground;
 use fm_engine::preview_cmds::{Body, LogView, Zoom};
 use fm_layout::{PaneId, PreviewSource};
 use fm_preview::arrange::ThumbSort;
 use fm_preview::log::{Level, LogDoc, LogRecord};
-use fm_preview::{DirDoc, HexDoc, ImageDoc, MetaDoc, Preview, Span, StructDoc, TextDoc};
+use fm_preview::{DirDoc, HexDoc, ImageDoc, MetaDoc, Preview, Span, StructDoc, SvgDoc, TextDoc};
 use serde_json::{Value, json};
 
 use crate::theme::Tokens;
@@ -216,6 +217,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         }
         let tokens = &content_tokens;
         ui.data_mut(|d| d.insert_temp(Id::NULL.with("pv-content-scale"), scale));
+        ui.data_mut(|d| d.insert_temp(svg_background_id(), s.prefs.svg_background));
         if s.pane_diff(pane).is_some_and(|d| d.active) {
             crate::diff::show(ui, s, pane, tokens);
         } else if let Some(slot) = s.preview_slot(pane) {
@@ -531,15 +533,7 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
         if let Body::Static(p) = &slot.body {
             match &**p {
                 Preview::Structured(d) => {
-                    let ok = d.pretty.is_ok();
-                    let r = ui.add_enabled(ok, egui::Button::selectable(slot.pretty, "Pretty"));
-                    let r = match &d.pretty {
-                        Err(e) => r.on_disabled_hover_text(e),
-                        Ok(_) => r,
-                    };
-                    if r.clicked() {
-                        actions.push(("preview.toggle_pretty", json!({})));
-                    }
+                    pretty_button(ui, d, slot.pretty, actions);
                     wrap_pretty(ui, actions);
                 }
                 Preview::Text(_) => wrap_pretty(ui, actions),
@@ -555,11 +549,23 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                     }
                     wrap_pretty(ui, actions);
                 }
-                Preview::Image(_) => {
-                    for (label, mode) in [("Fit", "fit"), ("100%", "actual")] {
-                        if ui.button(label).clicked() {
-                            actions.push(("preview.zoom", json!({ "mode": mode })));
-                        }
+                Preview::Image(_) => zoom_buttons(ui, actions),
+                Preview::Svg(d) => {
+                    // The git Preview button already toggles the source when it is shown.
+                    if !diff.is_some_and(|d| !d.is_pair())
+                        && ui
+                            .add(egui::Button::selectable(!slot.source, "Preview"))
+                            .on_hover_text(svg_toggle_hint(slot.source))
+                            .clicked()
+                    {
+                        actions.push(("preview.toggle_source", json!({})));
+                    }
+                    if slot.source {
+                        pretty_button(ui, &d.source, slot.pretty, actions);
+                        wrap_pretty(ui, actions);
+                    } else if d.image.is_ok() {
+                        zoom_buttons(ui, actions);
+                        svg_background_picker(ui, pane, s.prefs.svg_background, actions);
                     }
                 }
                 Preview::Dir(_) => thumb_toolbar(
@@ -578,7 +584,7 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
     };
     ui.horizontal(|ui| {
         source_picker(ui, s, pane, actions);
-        let plain_text = !matches!(&slot.body, Body::Static(p) if matches!(&**p, Preview::Markdown(_)));
+        let plain_text = !matches!(&slot.body, Body::Static(p) if has_source_view(p));
         if let Some(d) = diff.filter(|d| d.is_pair() || plain_text) {
             // Two files, or anything but Markdown (the only view with a source toggle): one compact toggle.
             let resp = ui
@@ -594,7 +600,8 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                 actions.push(("preview.diff.toggle", json!({ "show": !d.active })));
             }
         } else if let Some(d) = diff {
-            let markdown = matches!(&slot.body, Body::Static(p) if matches!(&**p, Preview::Markdown(_)));
+            let markdown = matches!(&slot.body, Body::Static(p) if has_source_view(p));
+            let svg = matches!(&slot.body, Body::Static(p) if matches!(&**p, Preview::Svg(_)));
             for (label, show) in [("Preview", false), ("Diff", true)] {
                 let rendered = markdown && !slot.source;
                 let selected = d.active == show && (show || !markdown || rendered);
@@ -602,6 +609,8 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
                     .add(egui::Button::selectable(selected, label))
                     .on_hover_text(if show {
                         "Show the changes against the last commit"
+                    } else if svg {
+                        svg_toggle_hint(slot.source)
                     } else if markdown {
                         markdown_toggle_hint(slot.source)
                     } else {
@@ -854,6 +863,82 @@ fn source_picker(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Actio
     });
 }
 
+/// Markdown and SVG previews switch between a rendered view and their source.
+fn has_source_view(p: &Preview) -> bool {
+    matches!(p, Preview::Markdown(_) | Preview::Svg(_))
+}
+
+fn svg_toggle_hint(source: bool) -> &'static str {
+    if source {
+        "Showing the SVG source. Click to show the drawing."
+    } else {
+        "Click to show the SVG source instead of the drawing."
+    }
+}
+
+fn svg_background_id() -> Id {
+    Id::NULL.with("pv-svg-background")
+}
+
+fn svg_background_picker(
+    ui: &mut Ui,
+    pane: PaneId,
+    current: SvgBackground,
+    actions: &mut Vec<(&'static str, Value)>,
+) {
+    let choices = |ui: &mut Ui| {
+        for background in SvgBackground::ALL {
+            if ui
+                .selectable_label(background == current, background.label())
+                .clicked()
+            {
+                if background != current {
+                    actions.push((
+                        "preview.svg.background",
+                        json!({ "value": background.id() }),
+                    ));
+                }
+                ui.close();
+            }
+        }
+    };
+    // A combo box cannot open from inside the narrow toolbar's menu: use a submenu there.
+    let response = if egui::containers::menu::is_in_menu(ui) {
+        ui.menu_button(format!("Background: {}", current.label()), choices)
+            .response
+    } else {
+        egui::ComboBox::from_id_salt(("pv-svg-background", pane))
+            .selected_text(current.label())
+            .show_ui(ui, choices)
+            .response
+    };
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "SVG background"));
+    response.on_hover_text("What to show behind the drawing");
+}
+
+fn zoom_buttons(ui: &mut Ui, actions: &mut Vec<(&'static str, Value)>) {
+    for (label, mode, hint) in [
+        ("Fit", "fit", "Fit the picture in the pane"),
+        ("100%", "actual", "Show the picture at its own size"),
+    ] {
+        if ui.button(label).on_hover_text(hint).clicked() {
+            actions.push(("preview.zoom", json!({ "mode": mode })));
+        }
+    }
+}
+
+fn pretty_button(ui: &mut Ui, doc: &StructDoc, on: bool, actions: &mut Vec<(&'static str, Value)>) {
+    let r = ui.add_enabled(doc.pretty.is_ok(), egui::Button::selectable(on, "Pretty"));
+    let r = match &doc.pretty {
+        Err(e) => r.on_disabled_hover_text(e),
+        Ok(_) => r,
+    };
+    if r.clicked() {
+        actions.push(("preview.toggle_pretty", json!({})));
+    }
+}
+
 fn markdown_toggle_hint(source: bool) -> &'static str {
     if source {
         "Showing the Markdown text. Click to show the rendered document."
@@ -898,6 +983,8 @@ fn static_body(
             return markdown::show(ui, pane, tokens, m, wrap, link, images, want);
         }
         Preview::Image(i) => image(ui, pane, tokens, p, i, zoom, subject),
+        Preview::Svg(d) if source => structured(ui, pane, tokens, &d.source, pretty, wrap),
+        Preview::Svg(d) => svg(ui, pane, tokens, p, d, zoom, wrap),
         Preview::Hex(h) => hex(ui, tokens, h),
         Preview::Dir(d) => scrolled(ui, pane, "dir", |ui| dir_card(ui, tokens, d)),
         Preview::Meta(m) => scrolled(ui, pane, "meta", |ui| {
@@ -1181,11 +1268,18 @@ fn image(
     let (ow, oh) = img.original;
     let avail = ui.available_size() - vec2(0.0, 22.0);
     let natural = vec2(ow.max(1) as f32, oh.max(1) as f32);
+    // A drawing is rasterized larger than its declared size, so Fit may enlarge it that far.
+    let vector = img.format == "svg";
+    let most = if vector {
+        (img.width as f32 / natural.x).max(1.0)
+    } else {
+        1.0
+    };
     let scale = content_scale(ui)
         * match zoom {
             Zoom::Fit => (avail.x / natural.x)
                 .min(avail.y / natural.y)
-                .clamp(0.01, 1.0),
+                .clamp(0.01, most),
             Zoom::Actual => 1.0,
             Zoom::Scale(v) => v,
         };
@@ -1193,8 +1287,29 @@ fn image(
         .auto_shrink(false)
         .max_height(avail.y)
         .show(ui, |ui| {
-            let response =
-                ui.add(egui::Image::new((tex.id(), natural * scale)).sense(Sense::click()));
+            let size = natural * scale;
+            let response = if vector {
+                let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+                let background = ui
+                    .data(|d| d.get_temp::<SvgBackground>(svg_background_id()))
+                    .unwrap_or_default();
+                let fill = match background {
+                    SvgBackground::Checkered => None,
+                    SvgBackground::White => Some(crate::theme::PICTURE_WHITE),
+                    SvgBackground::Black => Some(crate::theme::PICTURE_BLACK),
+                    SvgBackground::Grey => Some(crate::theme::PICTURE_GREY),
+                };
+                match fill {
+                    Some(color) => {
+                        ui.painter().rect_filled(rect, 0.0, color);
+                    }
+                    None => checkerboard(ui, tokens, rect),
+                }
+                egui::Image::new((tex.id(), size)).paint_at(ui, rect);
+                response
+            } else {
+                ui.add(egui::Image::new((tex.id(), size)).sense(Sense::click()))
+            };
             if let Some(uri) = subject {
                 response.context_menu(|ui| crate::context_menu::copy_image_item(ui, uri));
             }
@@ -1204,12 +1319,55 @@ fn image(
         "{} · {ow}×{oh} · {:.0}%{}",
         img.format,
         scale * 100.0,
-        if (img.width, img.height) != img.original {
+        if !vector && (img.width, img.height) != img.original {
             " (preview downscaled)"
         } else {
             ""
         }
     )));
+}
+
+/// An SVG: the drawing, or why it could not be drawn followed by its source.
+fn svg(
+    ui: &mut Ui,
+    pane: PaneId,
+    tokens: &Tokens,
+    p: &Arc<Preview>,
+    d: &SvgDoc,
+    zoom: Zoom,
+    wrap: bool,
+) {
+    match &d.image {
+        Ok(img) => image(ui, pane, tokens, p, img, zoom, None),
+        Err(why) => {
+            ui.label(RichText::new(format!("Cannot draw this SVG: {why}")).color(tokens.error));
+            structured(ui, pane, tokens, &d.source, false, wrap);
+        }
+    }
+}
+
+/// Theme checker squares behind `rect`, from a repeating 2×2 texture (one draw call).
+fn checkerboard(ui: &Ui, tokens: &Tokens, rect: egui::Rect) {
+    const CELL: f32 = 8.0;
+    let ctx = ui.ctx();
+    let id = Id::NULL.with("pv-checker");
+    let cached: Option<([egui::Color32; 2], egui::TextureHandle)> =
+        ctx.data_mut(|d| d.get_temp(id));
+    let texture = match cached {
+        Some((colors, texture)) if colors == tokens.checker => texture,
+        _ => {
+            let [a, b] = tokens.checker;
+            let image = egui::ColorImage::new([2, 2], vec![a, b, b, a]);
+            let texture =
+                ctx.load_texture("pv-checker", image, egui::TextureOptions::NEAREST_REPEAT);
+            ctx.data_mut(|d| d.insert_temp(id, (tokens.checker, texture.clone())));
+            texture
+        }
+    };
+    let uv = egui::Rect::from_min_size(egui::Pos2::ZERO, rect.size() / (2.0 * CELL));
+    egui::Image::new((texture.id(), rect.size()))
+        .uv(uv)
+        .paint_at(ui, rect);
 }
 
 fn content_scale(ui: &Ui) -> f32 {

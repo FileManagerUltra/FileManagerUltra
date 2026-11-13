@@ -74,7 +74,11 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     if !s.preferences_open {
         return;
     }
-    let mut close = ctx.input(|i| i.key_pressed(Key::Escape));
+    // The first Esc leaves a text field (cancelling an edit there); the next one closes.
+    // egui drops focus on Esc before widgets run, so use the previous frame's focus.
+    let typing_id = Id::NULL.with("fm-preferences-typing");
+    let was_typing = ctx.data(|data| data.get_temp::<bool>(typing_id).unwrap_or(false));
+    let mut close = ctx.input(|i| i.key_pressed(Key::Escape)) && !was_typing;
     let topic_id = Id::NULL.with("fm-preferences-topic");
     let mut topic = ctx.data_mut(|data| data.get_temp::<Topic>(topic_id).unwrap_or_default());
     let available = ctx.content_rect().size() - egui::vec2(32.0, 32.0);
@@ -165,7 +169,11 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 },
             );
         });
-    ctx.data_mut(|data| data.insert_temp(topic_id, topic));
+    let typing = ctx.text_edit_focused() && !close && open;
+    ctx.data_mut(|data| {
+        data.insert_temp(topic_id, topic);
+        data.insert_temp(typing_id, typing);
+    });
     if close || !open {
         s.preferences_open = false;
     }
@@ -1157,6 +1165,41 @@ mod tests {
         h.state_mut().preferences_open = true;
         h.run();
         h.get_by_label("Recursive folder preview");
+        h.key_press(Key::Escape);
+        h.run();
+        assert!(!h.state().preferences_open);
+    }
+
+    #[test]
+    fn escape_in_a_text_field_leaves_it_before_closing() {
+        let mut h = harness(Tokens::dark(), egui::vec2(900.0, 650.0));
+        h.get_by_label("Preview").click();
+        h.run();
+        let fields = h
+            .query_all_by_role(egui::accesskit::Role::TextInput)
+            .count();
+        h.get_by_label("Filename patterns for Logs").scroll_to_me();
+        h.run();
+        h.get_by_label("PDF").click();
+        h.run();
+        h.get_by_label("*.pdf").click();
+        h.run();
+        // A second click on the selected pattern edits it in place.
+        h.get_by_label("*.pdf").click();
+        h.run();
+        assert_eq!(
+            h.query_all_by_role(egui::accesskit::Role::TextInput)
+                .count(),
+            fields + 1
+        );
+        h.key_press(Key::Escape);
+        h.run();
+        assert!(h.state().preferences_open, "Esc cancelled the edit only");
+        assert_eq!(
+            h.query_all_by_role(egui::accesskit::Role::TextInput)
+                .count(),
+            fields
+        );
         h.key_press(Key::Escape);
         h.run();
         assert!(!h.state().preferences_open);

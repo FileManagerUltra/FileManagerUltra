@@ -17,6 +17,7 @@ pub enum PreviewType {
     Audio,
     Pdf,
     Markdown,
+    Svg,
     Json,
     Yaml,
     Toml,
@@ -28,13 +29,14 @@ pub enum PreviewType {
 
 impl PreviewType {
     /// Also the matching priority shown in Preferences.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Logs,
         Self::Images,
         Self::Video,
         Self::Audio,
         Self::Pdf,
         Self::Markdown,
+        Self::Svg,
         Self::Json,
         Self::Yaml,
         Self::Toml,
@@ -52,6 +54,7 @@ impl PreviewType {
             Self::Audio => "Audio",
             Self::Pdf => "PDF",
             Self::Markdown => "Markdown",
+            Self::Svg => "SVG",
             Self::Json => "JSON",
             Self::Yaml => "YAML",
             Self::Toml => "TOML",
@@ -85,10 +88,11 @@ impl PreviewType {
             Self::Audio => "*.mp3; *.flac; *.ogg; *.wav; *.m4a; *.aac".into(),
             Self::Pdf => "*.pdf".into(),
             Self::Markdown => "*.md; *.markdown".into(),
+            Self::Svg => "*.svg".into(),
             Self::Json => "*.json; *.geojson; *.webmanifest".into(),
             Self::Yaml => "*.yaml; *.yml".into(),
             Self::Toml => "*.toml".into(),
-            Self::Xml => "*.xml; *.svg; *.xsd; *.xsl; *.xslt; *.plist; *.xhtml; *.csproj; *.wsdl".into(),
+            Self::Xml => "*.xml; *.xsd; *.xsl; *.xslt; *.plist; *.xhtml; *.csproj; *.wsdl".into(),
             Self::Html => "*.html; *.htm".into(),
             Self::Csv => "*.csv; *.tsv".into(),
             Self::Text => "*.txt; *.text".into(),
@@ -103,6 +107,7 @@ impl PreviewType {
             Self::Audio => Kind::Audio,
             Self::Pdf => Kind::Pdf,
             Self::Markdown => Kind::Markdown,
+            Self::Svg => Kind::Svg,
             Self::Json => Kind::Structured(Format::Json),
             Self::Yaml => Kind::Structured(Format::Yaml),
             Self::Toml => Kind::Structured(Format::Toml),
@@ -183,12 +188,29 @@ impl Default for PreviewFilters {
 
 impl PreviewFilters {
     /// Keep the first group of each type and append defaults for any missing type.
+    ///
+    /// Settings from before the SVG type existed listed `*.svg` under XML: SVG is inserted
+    /// directly above XML and takes that default pattern over; other patterns stay put.
     pub fn from_groups(groups: Vec<FilterGroup>) -> Self {
         let mut out: Vec<FilterGroup> = Vec::new();
         for group in groups {
             if !out.iter().any(|g| g.kind == group.kind) {
                 out.push(group);
             }
+        }
+        if !out.iter().any(|g| g.kind == PreviewType::Svg)
+            && let Some(xml) = out.iter().position(|g| g.kind == PreviewType::Xml)
+        {
+            if let Some(group) = out.get_mut(xml) {
+                group.patterns.retain(|p| !p.eq_ignore_ascii_case("*.svg"));
+            }
+            out.insert(
+                xml,
+                FilterGroup {
+                    kind: PreviewType::Svg,
+                    patterns: PreviewType::Svg.default_patterns(),
+                },
+            );
         }
         for kind in PreviewType::ALL {
             if !out.iter().any(|g| g.kind == kind) {
@@ -256,7 +278,7 @@ fn validate_pattern(kind: PreviewType, pattern: &str) -> Result<(), FmError> {
     let label = kind.label();
     if pattern.trim().is_empty() {
         return Err(FmError::InvalidParams(format!(
-            "{label} patterns cannot be empty; remove the row instead"
+            "{label} patterns cannot be empty; remove the pattern instead"
         )));
     }
     if pattern.len() > 256 {

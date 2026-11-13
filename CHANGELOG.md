@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- SVG files are shown as pictures in Preview, including their text, with Fit and 100% and a choice of background behind transparent parts (checkered, white, black or 50% grey, remembered). Turn off Preview in the header to read the SVG source (with Pretty and Wrap). SVG is a new type in Preferences > Preview > File types; existing settings pick it up automatically.
+
+### Changed
+- Text in SVG images inside Markdown documents is now drawn.
+- Preferences > Preview > File types is easier to use: pick a type in the list on the left to see its filename patterns on the right, then add (+), remove (−) or edit (pencil, a second click, or F2) them in place. Up and down arrows change which type is checked first. In Preferences, Esc in a text field now leaves the field first instead of closing the window.
+
+### Security
+- An SVG (in Preview or as an image in a Markdown document) can no longer make the app read other files from your computer through image references.
+
 ## [0.2.1] - 2026-11-12
 
 ### Added

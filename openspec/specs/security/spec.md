@@ -35,7 +35,7 @@ The scaffolded preferences file SHALL contain only non-secret settings (theme, w
 - **WHEN** the `Prefs` type and its serialized form are inspected by test
 - **THEN** no field can hold a password/passphrase/token (the type is closed: theme + window fields only)
 - **AND** saved window geometry contains only bounded numeric size, position and scale-factor fields, using the existing owner-only atomic preferences writer
-- **AND** preview filters contain only non-secret filename patterns in 13 closed type groups, bounded to 256 bytes per pattern, 64 patterns and 1024 bytes per group, with no paths, list separators or control characters
+- **AND** preview filters contain only non-secret filename patterns in 14 closed type groups, bounded to 256 bytes per pattern, 64 patterns and 1024 bytes per group, with no paths, list separators or control characters
 
 #### Scenario: Redaction in errors
 - **WHEN** a backend error message is constructed from a URI or connection string containing `user:password@host`
@@ -113,6 +113,8 @@ File content shown in a Preview SHALL be treated as hostile: bounded reads, head
 
 Markdown images SHALL be limited to 8 MiB of source and 100 megapixels, at most 200 per document. Local images SHALL resolve only inside the previewed file's root. Remote images SHALL load only with the explicit, default-off preference, over `http`/`https` with URLs of at most 2048 characters and no embedded credentials, no cookies, at most 3 redirects, a 10 second timeout and the byte cap enforced on both `Content-Length` and streamed data. Every resolved address, including after each redirect, SHALL be public; loopback, private, link-local, unique-local, CGNAT, multicast, unspecified and IPv4-mapped equivalents SHALL be refused, and the connection SHALL use the validated address. The preference SHALL hold no secret and a malformed value SHALL mean off.
 
+SVG files and SVG images in Markdown SHALL be parsed from at most 16 MiB and drawn within the image pixel limits. Rendering SHALL NOT follow any `<image>` reference (local path, relative path, URL or `data:` payload), load stylesheets, scripts or remote fonts, or run animation; the only files read besides the SVG are the installed system fonts. Font files SHALL be read, not memory-mapped.
+
 #### Scenario: Rich Markdown remains inert and bounded
 - **WHEN** Markdown contains remote images/links, HTML/script tags, deeply nested
   lists/quotes or excessive table cells and inline nodes
@@ -123,6 +125,10 @@ Markdown images SHALL be limited to 8 MiB of source and 100 megapixels, at most 
 #### Scenario: Hostile filename to the decoder
 - **WHEN** a video file is named `-i evil.mp4` or contains shell metacharacters
 - **THEN** the decoder receives it as one argument and no other file or command is touched
+
+#### Scenario: SVG cannot read other files
+- **WHEN** a previewed SVG (or an SVG image in Markdown) contains `<image href="/home/u/secret.svg">` or a `data:` image
+- **THEN** nothing is read or drawn for that element, and the rest of the drawing renders
 
 #### Scenario: Remote image targets an internal host
 - **WHEN** remote images are enabled and an image URL (or a redirect) resolves to `127.0.0.1`, `192.168.x.x`, `169.254.169.254` or `::1`
