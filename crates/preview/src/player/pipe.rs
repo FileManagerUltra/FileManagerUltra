@@ -1,15 +1,21 @@
 use std::io::Read;
 use std::process::{Child, Command};
 use std::sync::mpsc::{Receiver, TryRecvError, sync_channel};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use fm_vfs::FmError;
 
 use super::error;
 
+/// Most bytes of decoder diagnostics kept (the newest ones).
+const STDERR_TAIL: usize = 4096;
+
 /// Two queued blocks plus one reader block. Backpressure never expands this bound.
 pub(super) struct Pipe {
     child: Child,
+    /// The newest diagnostics, when the command pipes stderr.
+    stderr: Arc<Mutex<Vec<u8>>>,
     receiver: Receiver<Result<Vec<u8>, FmError>>,
     waiting: Option<Instant>,
     eof: bool,
@@ -29,6 +35,34 @@ impl Pipe {
             let _ = child.wait();
             return Err(error("Decoder stdout unavailable"));
         };
+        let stderr = Arc::new(Mutex::new(Vec::new()));
+        if let Some(mut err) = child.stderr.take() {
+            let tail = stderr.clone();
+            // Draining keeps ffmpeg from blocking on a full stderr pipe.
+            let drained = std::thread::Builder::new()
+                .name("media-stderr".into())
+                .spawn(move || {
+                    let mut chunk = [0_u8; 1024];
+                    loop {
+                        match err.read(&mut chunk) {
+                            Ok(0) => return,
+                            Ok(n) => {
+                                let Ok(mut tail) = tail.lock() else { return };
+                                tail.extend_from_slice(chunk.get(..n).unwrap_or_default());
+                                let excess = tail.len().saturating_sub(STDERR_TAIL);
+                                tail.drain(..excess);
+                            }
+                            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+                            Err(_) => return,
+                        }
+                    }
+                });
+            if let Err(err) = drained {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(err.into());
+            }
+        }
         let (sender, receiver) = sync_channel(2);
         let reader = std::thread::Builder::new()
             .name("media-pipe".into())
@@ -65,6 +99,7 @@ impl Pipe {
         }
         Ok(Self {
             child,
+            stderr,
             receiver,
             waiting: None,
             eof: false,
@@ -108,6 +143,14 @@ impl Pipe {
 
     pub(super) fn ended(&self) -> bool {
         self.ended
+    }
+
+    /// The newest diagnostics as text (empty unless stderr is piped).
+    pub(super) fn diagnostics(&self) -> String {
+        self.stderr
+            .lock()
+            .map(|tail| String::from_utf8_lossy(&tail).into_owned())
+            .unwrap_or_default()
     }
 }
 

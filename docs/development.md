@@ -29,6 +29,20 @@ playing; sound must stop and no ffmpeg child should remain. Check an audio-only
 file with autoplay off/on, a silent video, a delayed soundtrack and a machine
 without an output device (silent video plus hint, actionable error for audio).
 
+Hardware decoding (Preferences > Media > Playback, on by default): play a video and
+open the player menu; it says "Decoding: hardware (VA-API / Direct3D 11 /
+VideoToolbox)" where the GPU decodes, otherwise "Decoding: software" with no error.
+Switch the preference off and on during playback: the video restarts in the chosen
+mode. On Linux without a working VA-API driver, playback must start normally in
+software. Picture subtitles: play a Blu-ray rip (PGS) or DVD/`.iso` (VobSub), pick
+the "(picture)" track under Subtitles and check timing, then change Size and Distance
+from bottom in Preferences > Media while it plays; audio must not stutter and the
+picture subtitles must follow within a second. Seek into the middle of a line: it is
+shown. Interlaced video: play a DVD (or a TV recording) with fast motion; moving edges
+show no comb lines in the player, the poster and the folder thumbnail.
+Drag a file that is already in the playlist onto the player: no duplicate row
+appears, its row is selected and it plays; dropping the playing file keeps playing.
+
 ## Everyday commands
 
 ```sh

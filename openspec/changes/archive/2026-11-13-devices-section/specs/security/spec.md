@@ -6,10 +6,3 @@ Eject and Dismount SHALL execute fixed per-OS adapters with argument arrays and 
 #### Scenario: Hostile volume label
 - **WHEN** a device label contains control characters, a newline or shell metacharacters
 - **THEN** it is shown sanitised and has no effect on any executed command
-
-### Requirement: Encrypted volume discovery requires no secrets
-Discovery and dismount SHALL NOT unlock volumes, request credentials, inspect locked container contents, store passwords or log credentials. Dismounting a virtual encrypted volume SHALL NOT power off the underlying disk or other volumes on that disk.
-
-#### Scenario: Container on an external disk
-- **WHEN** the user dismounts a VeraCrypt volume whose container resides on a USB disk
-- **THEN** only the encrypted volume is dismounted and the USB disk remains available

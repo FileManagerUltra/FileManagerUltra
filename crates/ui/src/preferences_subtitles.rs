@@ -39,7 +39,8 @@ pub(super) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
         tokens,
         "Applies to every subtitle format: SRT, WebVTT, subtitles embedded in the video and \
          ASS/SSA, so subtitles always look the same. Styling inside ASS/SSA files is replaced \
-         by these settings. Picture-based subtitles (PGS, DVD) cannot be restyled.",
+         by these settings. Picture-based subtitles (PGS, DVD) follow Size and Distance from \
+         bottom only: their colours and background are part of the picture.",
     );
     ui.add_space(6.0);
     preview(ui, &current, tokens);

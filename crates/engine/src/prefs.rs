@@ -203,6 +203,9 @@ pub struct Prefs {
     pub media_background_audio: bool,
     #[serde(default = "default_true")]
     pub media_gapless: bool,
+    /// Decode video on the GPU when the platform supports it, with a software fallback.
+    #[serde(default = "default_true")]
+    pub media_hardware_decoding: bool,
     /// Start playing the first added item when nothing is playing (never interrupts playback).
     #[serde(default)]
     pub media_autoplay_on_add: bool,
@@ -566,6 +569,7 @@ impl Default for Prefs {
             preview_video_autoplay: true,
             media_background_audio: true,
             media_gapless: true,
+            media_hardware_decoding: true,
             media_autoplay_on_add: false,
             media_skip_back_secs: default_skip_back(),
             media_skip_forward_secs: default_skip_forward(),
@@ -970,6 +974,7 @@ mod tests {
                 "media_autoplay_on_add",
                 "media_background_audio",
                 "media_gapless",
+                "media_hardware_decoding",
                 "media_open_audio",
                 "media_open_video",
                 "media_skip_back_secs",

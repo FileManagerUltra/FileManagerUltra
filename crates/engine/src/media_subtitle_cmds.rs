@@ -137,12 +137,12 @@ impl Session {
 
     fn subtitle_usable(&self, source: SubtitleSource) -> bool {
         match source {
-            SubtitleSource::Embedded(i) => self.subtitle_tracks().get(i).is_some_and(|t| t.text),
+            SubtitleSource::Embedded(i) => i < self.subtitle_tracks().len(),
             SubtitleSource::External(i) => i < self.media.subtitles.external.len(),
         }
     }
 
-    /// Every selectable source: external files first, then embedded text tracks.
+    /// Every selectable source: external files first, then embedded tracks.
     fn subtitle_sources(&self) -> Vec<SubtitleSource> {
         (0..self.media.subtitles.external.len())
             .map(SubtitleSource::External)
@@ -180,9 +180,17 @@ impl Session {
                     .get(index)
                     .ok_or_else(|| bad("subtitle track out of range"))?;
                 if !track.text {
-                    return Err(bad(
-                        "Picture-based subtitles (such as PGS or DVD) cannot be shown yet.",
-                    ));
+                    // Picture subtitles have no cues: the video decoder draws them
+                    // (see `media_subtitle_overlay`).
+                    if explicit {
+                        self.media.subtitles.preferred_language = self.subtitle_language(source);
+                    }
+                    let subs = &mut self.media.subtitles;
+                    subs.selected = Some(source);
+                    subs.last = Some(source);
+                    subs.cues = None;
+                    subs.load = None;
+                    return Ok(());
                 }
                 let path = self
                     .media
@@ -217,6 +225,27 @@ impl Session {
         subs.cues = None;
         subs.load = Some(load);
         Ok(())
+    }
+
+    /// The selected picture subtitle track as a video overlay, sized and raised by the
+    /// subtitle style. Their colours are part of the picture and cannot change.
+    pub(crate) fn media_subtitle_overlay(&self) -> Option<fm_preview::player::Overlay> {
+        use fm_preview::player::{OVERLAY_LIFT_MAX, OVERLAY_SCALE, Overlay};
+        let Some(SubtitleSource::Embedded(stream)) = self.media.subtitles.selected else {
+            return None;
+        };
+        if self.subtitle_tracks().get(stream)?.text {
+            return None;
+        }
+        let style = &self.prefs.subtitle_style;
+        // Discs place their subtitles already; the default distance leaves them there.
+        let authored = crate::subtitle_style::SubtitleStyle::default().position_fraction();
+        Some(Overlay {
+            stream,
+            scale: f64::from(style.size_factor())
+                .clamp(*OVERLAY_SCALE.start(), *OVERLAY_SCALE.end()),
+            lift: f64::from(style.position_fraction() - authored).clamp(0.0, OVERLAY_LIFT_MAX),
+        })
     }
 
     /// Scan the folder, choose by preferred language and collect loaded cues.
@@ -570,12 +599,8 @@ mod tests {
     }
 
     #[test]
-    fn toggle_remembers_the_last_source_and_bitmap_tracks_are_refused() {
+    fn toggle_remembers_the_last_source() {
         let mut s = session_with("/video/a.mkv", tracks());
-        let err = s
-            .dispatch("media.track.subtitle", &json!({"index": 1}))
-            .expect_err("pgs");
-        assert!(err.to_string().contains("Picture-based"));
         s.dispatch("media.track.subtitle", &json!({"toggle": true}))
             .expect("on");
         assert_eq!(
@@ -593,6 +618,60 @@ mod tests {
             s.media.subtitles.selected,
             Some(SubtitleSource::Embedded(2))
         );
+    }
+
+    #[test]
+    fn picture_tracks_become_an_overlay_sized_and_raised_by_the_style() {
+        let mut s = session_with("/video/a.mkv", tracks());
+        assert_eq!(s.media_subtitle_overlay(), None);
+        s.dispatch("media.track.subtitle", &json!({"index": 1}))
+            .expect("pgs");
+        assert_eq!(
+            s.media.subtitles.selected,
+            Some(SubtitleSource::Embedded(1))
+        );
+        // No cues to extract: the video decoder draws the pictures.
+        assert!(!s.media.subtitles.is_loading());
+        assert!(s.media.subtitles.cues.is_none());
+        assert_eq!(s.media.subtitles.preferred_language.as_deref(), Some("nl"));
+        let overlay = s.media_subtitle_overlay().expect("overlay");
+        assert_eq!(overlay.stream, 1);
+        assert!((overlay.scale - 1.0).abs() < 1e-6);
+        assert!(
+            overlay.lift.abs() < 1e-6,
+            "the default distance keeps the authored place"
+        );
+
+        s.dispatch(
+            "media.subtitle.style",
+            &json!({"size": 120, "position": 25}),
+        )
+        .expect("style");
+        let overlay = s.media_subtitle_overlay().expect("overlay");
+        assert!((overlay.scale - 1.2).abs() < 1e-6);
+        assert!((overlay.lift - 0.20).abs() < 1e-6);
+        // Beyond what a picture can take, the size is capped; lower than authored stays put.
+        s.dispatch("media.subtitle.style", &json!({"size": 400, "position": 0}))
+            .expect("style");
+        let overlay = s.media_subtitle_overlay().expect("overlay");
+        assert!((overlay.scale - 1.5).abs() < 1e-6);
+        assert!(overlay.lift.abs() < 1e-6);
+
+        s.dispatch("media.track.subtitle", &json!({"index": 0}))
+            .expect("text");
+        assert_eq!(
+            s.media_subtitle_overlay(),
+            None,
+            "text tracks are drawn as cues"
+        );
+        s.dispatch("media.track.subtitle", &json!({"index": 1}))
+            .expect("pgs");
+        s.dispatch("media.track.subtitle", &json!({"toggle": true}))
+            .expect("off");
+        assert_eq!(s.media_subtitle_overlay(), None);
+        s.dispatch("media.track.subtitle", &json!({"toggle": true}))
+            .expect("on");
+        assert_eq!(s.media_subtitle_overlay().map(|o| o.stream), Some(1));
     }
 
     #[test]

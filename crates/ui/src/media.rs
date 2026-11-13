@@ -1548,10 +1548,10 @@ fn subtitle_menu(
         let label = if track.text {
             track.label.clone()
         } else {
-            format!("{} (picture-based, not supported yet)", track.label)
+            format!("{} (picture)", track.label)
         };
         if ui
-            .add_enabled(track.text, egui::Button::new(label).selected(selected))
+            .add(egui::Button::new(label).selected(selected))
             .clicked()
         {
             actions.push(("media.track.subtitle", json!({"index": index})));
@@ -1816,6 +1816,16 @@ fn player_menu_popup(
     popup.show(|ui| player_menu(ui, s, actions));
 }
 
+/// Which decoder the player menu reports.
+fn decoding_label(decoding: fm_preview::player::Decoding) -> String {
+    match decoding {
+        fm_preview::player::Decoding::Hardware(accel) => {
+            format!("Decoding: hardware ({})", accel.label())
+        }
+        fm_preview::player::Decoding::Software => "Decoding: software".to_string(),
+    }
+}
+
 /// The player menu: transport, tracks and subtitles, audio extras, view, location.
 fn player_menu(ui: &mut Ui, s: &Session, actions: &mut Vec<(&'static str, Value)>) {
     let media = &s.media;
@@ -1844,6 +1854,9 @@ fn player_menu(ui: &mut Ui, s: &Session, actions: &mut Vec<(&'static str, Value)
         if ui.button("Subtitle appearance…").clicked() {
             ui.data_mut(|d| d.insert_temp(open_media_prefs_id(), true));
             ui.close();
+        }
+        if let Some(decoding) = media.video.as_ref().and_then(|video| video.decoding) {
+            ui.add_enabled(false, egui::Label::new(decoding_label(decoding)));
         }
     }
     ui.separator();

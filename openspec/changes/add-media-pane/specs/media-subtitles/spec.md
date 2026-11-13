@@ -42,11 +42,15 @@ The Media page of Preferences SHALL have a Subtitles section whose settings appl
 - **THEN** it returns an error and no setting changes
 
 ### Requirement: Bitmap subtitles
-Bitmap subtitle tracks (PGS and VobSub/DVD) SHALL be shown over the video. They SHALL honour the subtitle position and size settings where the decoder allows, and the background box when enabled; their colours cannot be changed, and the Subtitles section SHALL say so. Until they are supported, such tracks SHALL be listed as not supported and SHALL NOT be selectable. Switching a bitmap track SHALL restart the video decoder at the current position without interrupting audio.
+Bitmap subtitle tracks (PGS and VobSub/DVD) SHALL be selectable and shown over the video, drawn into the frames by the video decoder. They SHALL honour the subtitle size setting (scaled from the bottom centre, capped at 0.5×–1.5× of the authored size) and the distance from bottom (raised by the amount above the default; lower values keep the authored place). Their colours and background are part of the picture and cannot be changed, and the Subtitles section SHALL say so. A subtitle already on screen at a seek point SHALL be shown (the decoder starts up to 2 s early). Switching a bitmap track, or changing its size or distance while it plays, SHALL restart only the video decoder at the current position without interrupting audio.
 
 #### Scenario: PGS track
 - **WHEN** a Blu-ray rip with a PGS track is played with that track selected
 - **THEN** the subtitles appear over the picture in time with the dialogue
+
+#### Scenario: Bigger picture subtitles
+- **WHEN** the subtitle size is 120% and the distance from bottom is 25% while a PGS track is shown
+- **THEN** the subtitle picture is 1.2× its authored size and raised by 20% of the picture height
 
 #### Scenario: Switch while playing
 - **WHEN** the subtitle track is switched during playback

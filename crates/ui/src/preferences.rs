@@ -607,6 +607,17 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                     {
                         set(s, "media_background_audio", json!(background));
                     }
+                    let mut hardware = s.prefs.media_hardware_decoding;
+                    if ui
+                        .checkbox(&mut hardware, "Hardware video decoding")
+                        .on_hover_text(format!(
+                            "Decode video on the graphics card ({}). If it cannot, playback continues in software. The player's menu shows which is used",
+                            fm_preview::player::HwAccel::for_platform().label()
+                        ))
+                        .changed()
+                    {
+                        set(s, "media_hardware_decoding", json!(hardware));
+                    }
                     let mut autoplay = s.prefs.media_autoplay_on_add;
                     if ui
                         .checkbox(&mut autoplay, "Start playing when items are added")

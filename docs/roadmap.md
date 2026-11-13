@@ -15,7 +15,7 @@ Additional change, done and archived: `git-status-and-diff` (git status markers,
 
 **Latest release:** 0.2.0 (2026-11-12): the Media pane, Find Files redesign, Activity panel. Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
 
-**Current focus:** see "Current focus" below: finish `add-media-pane`, and run the outstanding Windows/macOS manual checks that keep `live-watch`, `managed-ffmpeg`, `devices-section` and `release-notifications` from being archived.
+**Current focus:** see "Current focus" below: finish `add-media-pane`, and run the outstanding Windows/macOS manual checks that keep `live-watch` and `managed-ffmpeg` from being archived.
 
 Session persistence is already delivered by `workspaces` (saved pane layouts and
 startup behavior). Release packaging is also configured in `.github/workflows/release.yml`:
@@ -42,16 +42,15 @@ audiobooks (chapters, resume, bookmarks, skip), and an ffmpeg fallback for audio
 formats Symphonia cannot read. ffmpeg is not bundled: Windows offers a pinned,
 verified download (`managed-ffmpeg`). `media-open-and-play-ux` is archived.
 
-Remaining in `add-media-pane`: bitmap
-(PGS/VobSub) subtitles (6.2), hardware decoding (6.3) with its fallback test (6.4), the changelog/devlog entries
-at archive time (9.3), and Windows/macOS smoke tests (9.4).
+Remaining in `add-media-pane`: the changelog/devlog entries at archive time (9.3) and
+Windows/macOS smoke tests (9.4), including hardware decoding (Direct3D 11, VideoToolbox)
+and picture subtitles. Picture (PGS/VobSub) subtitles and hardware decoding with a
+software fallback have landed.
 
 Manual checks that block archiving other changes:
 
 - `live-watch`: Windows and macOS, including a mapped network drive.
 - `managed-ffmpeg`: the Windows download, play, Update and Reinstall.
-- `devices-section`: USB media and VeraCrypt volumes on Linux, macOS and Windows.
-- `release-notifications`: the installed Windows shortcut icon.
 
 Recent interaction improvements include rich native Markdown previews (nested lists,
 tasks, highlighted code and aligned tables), full-loaded-document selection/copy,
@@ -77,9 +76,8 @@ Automated coverage is in place; interactive confirmation of the latest preview a
 context-menu changes and installed Windows/macOS icon smoke checks remain open.
 
 `devices-section` is implemented with conditional Devices navigation, background
-mount detection, volume information and guarded removal. Real USB/VeraCrypt smoke
-checks on Linux, macOS and Windows remain open in its task list; the change is not
-archived.
+mount detection, volume information and guarded removal. It was smoke-tested with
+USB media and VeraCrypt on Linux and Windows (macOS untested) and is archived.
 
 `pane-preview`, `pane-arrange`, `thumbnails-and-open`, `current-folder-row` and `workspaces` are implemented, smoke-tested in a real window and archived (their specs live in `openspec/specs/`). Change 4 (`sftp-backend`) is implemented and archived; 4b (`smb-backend`, with Network discovery) is implemented and archived. Change 5's watcher implementation is complete; its remaining platform checks are listed above.
 

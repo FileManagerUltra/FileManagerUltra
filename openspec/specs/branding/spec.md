@@ -3,9 +3,7 @@
 ## Purpose
 
 Product identity lives once in `fm-brand`; a rename tool rewrites every occurrence and a check fails on stale or hard-coded names.
-
 ## Requirements
-
 ### Requirement: Product identity has one source
 All user-visible product identity — application name, slug, application id, organisation and executable name — SHALL live as constants in the `brand` crate; no other crate or app may hard-code them.
 
@@ -64,3 +62,22 @@ SHALL use the corresponding treatment, with editable sources owned by `fm-brand`
 - **THEN** it notifies the Windows shell to refresh cached icons
 - **AND** it does not restart Explorer, delete the global icon cache or remove user-managed shortcuts and taskbar pins
 - **AND** stale pinned copies may still require unpinning and re-pinning in Windows
+
+### Requirement: Windows executable icon
+Windows builds SHALL embed the branded ICO as an executable resource so
+Explorer and installer-created shortcuts use the application icon.
+
+#### Scenario: A Windows shortcut is installed
+- **WHEN** the installer creates a shortcut targeting the executable
+- **THEN** the shortcut uses the embedded application icon
+
+### Requirement: Linux development desktop identity
+The Linux window application ID SHALL match the branded desktop filename and
+StartupWMClass. A developer command SHALL register a per-user desktop launcher
+and icon without root privileges, respecting XDG_DATA_HOME and quoting the
+development binary path.
+
+#### Scenario: Running an uninstalled development build
+- **WHEN** a developer runs `cargo xtask desktop-install` and restarts the app
+- **THEN** the desktop can resolve the running window to its branded launcher and icon
+
