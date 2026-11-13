@@ -2017,6 +2017,7 @@ fn cover(ui: &mut Ui, pane: PaneId, image: Option<&Arc<fm_preview::ImageDoc>>, t
             ui.data_mut(|d| d.insert_temp(id, (image.clone(), texture.clone())));
             texture
         };
+    crate::frame_cache::touch::<(Arc<fm_preview::ImageDoc>, egui::TextureHandle)>(ui.ctx(), id);
     let scale = 72.0 / image.width.max(image.height).max(1) as f32;
     ui.add(
         egui::Image::from_texture(&texture).fit_to_exact_size(egui::vec2(

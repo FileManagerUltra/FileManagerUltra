@@ -595,6 +595,9 @@ impl eframe::App for App {
         } else if self.session.unsaved_prompt.is_some() {
             ctx.request_repaint();
         }
+        // Textures and pictures of panes that were not drawn this frame (closed workspaces
+        // and panes, hidden tabs) are released.
+        fm_ui::frame_cache::sweep(&ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
