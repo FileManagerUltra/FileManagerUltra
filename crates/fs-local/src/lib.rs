@@ -91,8 +91,10 @@ fn drive_entries(
 
 /// Volume labels by mount point (`C:\` → `Windows`), as the OS reports them.
 fn volume_labels() -> std::collections::HashMap<String, String> {
+    // An unreadable disk list just means no labels, as before sysinfo 0.40.
     sysinfo::Disks::new_with_refreshed_list()
-        .list()
+        .map(Vec::from)
+        .unwrap_or_default()
         .iter()
         .filter_map(|d| {
             let mount = d.mount_point().to_str()?.to_ascii_uppercase();
@@ -430,9 +432,11 @@ impl Vfs for LocalFs {
 
     fn space(&self, uri: &VfsUri) -> Result<Option<SpaceInfo>, FmError> {
         let path = self.path(uri)?;
-        let disks = sysinfo::Disks::new_with_refreshed_list();
+        let disks: Vec<sysinfo::Disk> = sysinfo::Disks::new_with_refreshed_list()
+            .map(Vec::from)
+            .unwrap_or_default();
         let mut best: Option<&sysinfo::Disk> = None;
-        for d in disks.list() {
+        for d in &disks {
             let mp = d.mount_point();
             if path.starts_with(mp) {
                 let better = match best {

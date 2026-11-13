@@ -271,13 +271,16 @@ mod linux {
         let root = all.iter().find(|m| m.point == "/").map(|m| m.dev.as_str());
         // sysinfo deliberately skips hard NFS/CIFS mounts to avoid statvfs hangs;
         // mountinfo still exposes them below, with unavailable capacity.
-        let disks = if capacity {
+        // An unreadable disk list leaves capacity unavailable, as before sysinfo 0.40.
+        let disks: Vec<sysinfo::Disk> = if capacity {
             sysinfo::Disks::new_with_refreshed_list_specifics(
                 sysinfo::DiskRefreshKind::nothing().with_storage(),
             )
         } else {
             sysinfo::Disks::new()
-        };
+        }
+        .map(Vec::from)
+        .unwrap_or_default();
         let labels: HashMap<_, _> = match std::fs::read_dir("/dev/disk/by-label") {
             Ok(entries) => entries
                 .filter_map(Result::ok)
@@ -295,7 +298,6 @@ mod linux {
                 return Err(error("Too many mounted volumes (limit 256)"));
             }
             let capacity = disks
-                .list()
                 .iter()
                 .find(|d| d.mount_point() == Path::new(&m.point) && d.total_space() > 0)
                 .map(|d| (d.total_space(), d.available_space()));
@@ -654,13 +656,17 @@ mod macos {
     }
 
     fn scan_impl(capacity: bool) -> Result<Vec<Device>, FmError> {
-        let disks = sysinfo::Disks::new_with_refreshed_list_specifics(if capacity {
-            sysinfo::DiskRefreshKind::nothing().with_storage()
-        } else {
-            sysinfo::DiskRefreshKind::nothing()
-        });
+        // An unreadable disk list means no devices, as before sysinfo 0.40.
+        let disks: Vec<sysinfo::Disk> =
+            sysinfo::Disks::new_with_refreshed_list_specifics(if capacity {
+                sysinfo::DiskRefreshKind::nothing().with_storage()
+            } else {
+                sysinfo::DiskRefreshKind::nothing()
+            })
+            .map(Vec::from)
+            .unwrap_or_default();
         let mut out = Vec::new();
-        for disk in disks.list().iter().filter(|d| {
+        for disk in disks.iter().filter(|d| {
             let path = d.mount_point();
             path != Path::new("/")
                 && path != Path::new("/Volumes")
