@@ -13,7 +13,7 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 
 Additional change, done and archived: `git-status-and-diff` (git status markers, Diff view in the Preview pane) — see `docs/architecture.md` §12a.
 
-**Latest release:** 0.2.0 (2026-11-12): the Media pane, Find Files redesign, Activity panel. Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
+**Latest release:** 0.2.2 (2026-11-13): SVG and camera RAW photos in Preview and thumbnails, photos and phone videos upright, picture subtitles, hardware video decoding, keyboard-accessible Preferences and memory fixes. 0.2.0 (2026-11-12) brought the Media pane, Find Files redesign and Activity panel. The next minor release (0.3.0) waits for signed and notarized installers. Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
 
 **Current focus:** see "Current focus" below: finish `add-media-pane`, and run the outstanding Windows/macOS manual checks that keep `live-watch` and `managed-ffmpeg` from being archived.
 

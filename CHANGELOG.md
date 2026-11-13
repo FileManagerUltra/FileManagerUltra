@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-13
+
 ### Added
 - Camera RAW photos (DNG, CR2, NEF, ARW, ORF, PEF and similar) are shown in Preview and as folder thumbnails, using the preview picture the camera stored inside them. Copy Image copies that picture.
 - Pictures in Preview have Rotate left and Rotate right buttons. Only the view turns; the file is not changed, and the next picture starts upright.
@@ -186,7 +188,8 @@ First public release (beta).
 
 - macOS install notes: clear the quarantine flag on the downloaded `.dmg` (`xattr -d com.apple.quarantine`), as the app is not yet signed or notarized.
 
-[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.2...v0.1.3

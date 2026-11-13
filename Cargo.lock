@@ -2122,7 +2122,7 @@ dependencies = [
 
 [[package]]
 name = "fm-app"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "eframe",
  "egui",
@@ -2144,11 +2144,11 @@ dependencies = [
 
 [[package]]
 name = "fm-brand"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "fm-discovery"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "fm-vfs",
  "if-addrs",
@@ -2159,14 +2159,14 @@ dependencies = [
 
 [[package]]
 name = "fm-dragout"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "x11rb 0.14.0",
 ]
 
 [[package]]
 name = "fm-engine"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "crossbeam-channel",
  "directories",
@@ -2204,7 +2204,7 @@ dependencies = [
 
 [[package]]
 name = "fm-fs-local"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "fm-vfs",
  "sysinfo",
@@ -2213,7 +2213,7 @@ dependencies = [
 
 [[package]]
 name = "fm-fs-sftp"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "fm-fs-sftp",
  "fm-vfs",
@@ -2226,7 +2226,7 @@ dependencies = [
 
 [[package]]
 name = "fm-fs-smb"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "fm-vfs",
  "secrecy",
@@ -2235,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "fm-git"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "gix",
  "similar",
@@ -2244,7 +2244,7 @@ dependencies = [
 
 [[package]]
 name = "fm-layout"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "fm-vfs",
  "serde",
@@ -2253,7 +2253,7 @@ dependencies = [
 
 [[package]]
 name = "fm-media"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "cpal",
  "fm-vfs",
@@ -2265,7 +2265,7 @@ dependencies = [
 
 [[package]]
 name = "fm-ops"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "fm-fs-local",
  "fm-testkit",
@@ -2276,7 +2276,7 @@ dependencies = [
 
 [[package]]
 name = "fm-preview"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "fast_image_resize",
  "flate2",
@@ -2298,7 +2298,7 @@ dependencies = [
 
 [[package]]
 name = "fm-term"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "crossbeam-channel",
  "fm-vfs",
@@ -2310,14 +2310,14 @@ dependencies = [
 
 [[package]]
 name = "fm-testkit"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "fm-vfs",
 ]
 
 [[package]]
 name = "fm-ui"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "egui",
  "egui_extras",
@@ -2339,7 +2339,7 @@ dependencies = [
 
 [[package]]
 name = "fm-vfs"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "proptest",
  "serde",
@@ -2347,7 +2347,7 @@ dependencies = [
 
 [[package]]
 name = "fm-wayland"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "raw-window-handle",
  "rustix 1.1.6",
@@ -2357,7 +2357,7 @@ dependencies = [
 
 [[package]]
 name = "fm-winout"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "fm-dragout",
  "windows",
@@ -9576,7 +9576,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "regex",
  "tempfile",
