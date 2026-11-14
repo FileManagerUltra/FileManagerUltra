@@ -35,3 +35,24 @@ Regression tests live in `crates/term/src/emulator.rs` and run with
 history eviction and cursor retention. On each bump, diff these files against
 the upstream release and rerun the terminal/engine/UI gates. Drop the patch when
 upstream provides compatible normal-buffer reflow.
+
+## egui_glow 0.37.0 (MIT OR Apache-2.0)
+
+Source: crates.io release 0.37.0 (egui commit 7c0b4040, `crates/egui_glow`), copied
+unchanged except `src/painter.rs`.
+
+The local change uploads a frame's geometry once instead of once per mesh. Upstream
+calls `glBufferData(STREAM_DRAW)` for every mesh of every frame; with NVIDIA's OpenGL
+driver on Windows and "Threaded optimization" on (the default), the driver kept about
+25 KB per drawn frame, so the app's commit size grew by gigabytes over a session (found
+with the diagnostic log, change `diagnostics-log`; turning the driver option off stopped
+it). `paint_primitives` now gathers all meshes into one vertex and one index buffer
+(indices rebased), uploads them with `glBufferSubData` into storage that only grows
+(`glBufferData` only when a frame needs more room), and draws each mesh as a range.
+`EGUI_GLOW_UPLOAD=per-mesh|frame|frame-subdata` selects upstream behaviour, one
+`glBufferData` per frame, or the default, for comparisons on a user's machine; the
+choice is logged at debug level (`geometry upload: …`).
+
+On each bump, diff `src/painter.rs` against the release, reapply, and check on Windows
+with an NVIDIA GPU that commit size stays flat while the window is visible. Offer the
+change upstream; drop the patch once egui_glow uploads geometry per frame.

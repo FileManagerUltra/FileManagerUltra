@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - About shows which build you are running, so test builds can be told apart.
 
 ### Fixed
-- Seeking or restarting a video keeps its picture buffer on the graphics card instead of making a new one each time. If you suspect a problem with this, you can turn it off in Preferences > Advanced > Troubleshooting > Reuse video texture.
+- Windows with an NVIDIA graphics card: the app's memory no longer grows while its window is visible (about 1 MB a second while playing video or moving the mouse over it, up to many gigabytes over a long session). Changing the driver's "Threaded optimization" setting is no longer needed.
+- Seeking or restarting a video keeps its picture buffer on the graphics card instead of making a new one each time.
 
 ## [0.2.2] - 2026-11-13
 
