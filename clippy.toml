@@ -5,3 +5,11 @@ allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-dbg-in-tests = true
 allow-indexing-slicing-in-tests = true
+
+# egui's spinner repaints every frame; `fm_ui::spinner::Spinner` paces itself.
+disallowed-methods = [
+    { path = "egui::Ui::spinner", reason = "repaints every frame; use fm_ui::spinner::Spinner" },
+]
+disallowed-types = [
+    { path = "egui::Spinner", reason = "repaints every frame; use fm_ui::spinner::Spinner" },
+]

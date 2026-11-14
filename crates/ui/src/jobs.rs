@@ -338,7 +338,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     ui.add(egui::Label::new(RichText::new(label).color(tokens.text)).truncate());
                     ui.horizontal(|ui| {
                         if *running {
-                            ui.spinner();
+                            ui.add(crate::spinner::Spinner::new());
                         }
                         // The status carries the current path: never let it widen the panel.
                         ui.add(

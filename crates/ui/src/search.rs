@@ -216,7 +216,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             ui.separator();
             ui.horizontal(|ui| {
                 if status.running {
-                    ui.spinner();
+                    ui.add(crate::spinner::Spinner::new());
                 }
                 ui.add(
                     egui::Label::new(

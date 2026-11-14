@@ -34,6 +34,7 @@ pub mod properties;
 pub mod remote;
 pub mod search;
 pub mod sftp_popup;
+pub mod spinner;
 pub mod subtitles;
 pub mod terminal;
 pub mod theme;

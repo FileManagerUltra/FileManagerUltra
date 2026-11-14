@@ -235,11 +235,11 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                         ui.painter().rect_filled(rect, 0.0, tokens.bg);
                         ui.put(
                             egui::Rect::from_center_size(rect.center(), vec2(24.0, 24.0)),
-                            egui::Spinner::new(),
+                            crate::spinner::Spinner::new(),
                         );
                         reserve_controls(ui, pane, avail.x);
                     } else {
-                        ui.centered_and_justified(|ui| ui.spinner());
+                        ui.centered_and_justified(|ui| ui.add(crate::spinner::Spinner::new()));
                     }
                     ui.ctx()
                         .request_repaint_after(std::time::Duration::from_millis(100));
@@ -2673,7 +2673,7 @@ fn dir_details(ui: &mut Ui, tokens: &Tokens, d: &DirDoc) {
     }
     if d.scanning {
         ui.horizontal(|ui| {
-            ui.spinner();
+            ui.add(crate::spinner::Spinner::new());
             crate::dialog_style::hint(ui, tokens, "Still scanning; totals so far");
         });
         ui.ctx()

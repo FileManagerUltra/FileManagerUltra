@@ -125,7 +125,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     }
                     _ => {
                         ui.horizontal(|ui| {
-                            ui.spinner();
+                            ui.add(crate::spinner::Spinner::new());
                             crate::dialog_style::hint(ui, tokens, "Reading folder…");
                         });
                         ui.ctx()

@@ -57,7 +57,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             ui.label(RichText::new(format!("Open \"{name}\" with:")).color(tokens.text));
             let Some((mime, list)) = &choices else {
                 ui.horizontal(|ui| {
-                    ui.spinner();
+                    ui.add(crate::spinner::Spinner::new());
                     crate::dialog_style::hint(ui, tokens, "Looking for applications…");
                 });
                 ui.ctx()
