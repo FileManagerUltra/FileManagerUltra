@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - About shows which build you are running, so test builds can be told apart.
 
 ### Fixed
-- Playing video, seeking and resizing the player use less memory on Windows: each video keeps one picture buffer on the graphics card instead of replacing it whenever the picture size changes or playback restarts. If you suspect a problem with this, you can turn it off in Preferences > Advanced > Troubleshooting > Reuse video texture.
+- Seeking or restarting a video keeps its picture buffer on the graphics card instead of making a new one each time. If you suspect a problem with this, you can turn it off in Preferences > Advanced > Troubleshooting > Reuse video texture.
 
 ## [0.2.2] - 2026-11-13
 

@@ -534,12 +534,7 @@ mod tests {
         v.set_hardware(false);
         assert!(v.player_is_idle(), "no frame yet, no decoder needed");
         // A paused video with a still frame decodes it again with the new settings.
-        v.frame = Some(Arc::new(Frame {
-            width: 2,
-            height: 2,
-            rgba: vec![0; 16],
-            seq: 0,
-        }));
+        v.frame = Some(Arc::new(Frame::new(2, 2, vec![0; 16], 0)));
         v.set_hardware(true);
         assert!(v.need_start, "switching decoding redoes the still frame");
         v.need_start = false;

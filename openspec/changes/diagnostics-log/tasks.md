@@ -8,4 +8,5 @@
 - [x] 1.6 Preferences › Advanced › Troubleshooting section
 - [x] 1.7 Tests: log off creates nothing; privacy (paths in params never logged); size cap and rate limit; malformed params; texture reuse across sizes and missed frames; preferences round-trip
 - [x] 1.8 CHANGELOG, devlog
+- [x] 1.10 Round 2 (after the first Windows logs): texture exactly frame-sized (grow-only sub-rect crept ~7 MB/min on NVIDIA OpenGL); counters for live frames and bytes, helper processes, thumbnails made/from disk/pending, preview renders, hidden Media playback
 - [ ] 1.9 Manual (Windows): play 1080p video with the log on, reuse on and off; compare memory columns

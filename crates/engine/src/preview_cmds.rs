@@ -533,6 +533,7 @@ impl Session {
         let Some(entry) = entries.first().cloned() else {
             return false;
         };
+        crate::diag::count(crate::diag::Counter::PreviewRenders);
         let refresh = slot.stale
             && slot.subjects.len() == entries.len()
             && slot

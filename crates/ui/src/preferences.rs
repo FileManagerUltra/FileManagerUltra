@@ -605,7 +605,7 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                     if ui
                         .checkbox(&mut reuse, "Reuse video texture")
                         .on_hover_text(
-                            "Keep one picture buffer per video instead of replacing it when the size changes. Turn off only to compare memory use",
+                            "Keep a video's picture buffer across seeks and restarts instead of making a new one. Turn off only to compare memory use",
                         )
                         .changed()
                     {

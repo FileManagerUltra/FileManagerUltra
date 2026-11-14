@@ -60,9 +60,15 @@ pub enum Counter {
     DecoderStarts,
     /// Commands dispatched.
     Commands,
+    /// Thumbnails made from the source file (decoding, ffmpeg).
+    ThumbsMade,
+    /// Thumbnails loaded from the disk cache.
+    ThumbsFromDisk,
+    /// Preview renders started.
+    PreviewRenders,
 }
 
-const COUNTERS: usize = 9;
+const COUNTERS: usize = 12;
 const COUNTER_NAMES: [&str; COUNTERS] = [
     "frames",
     "vframes",
@@ -73,6 +79,9 @@ const COUNTER_NAMES: [&str; COUNTERS] = [
     "vtex_evict",
     "dec_start",
     "cmds",
+    "thumb_made",
+    "thumb_disk",
+    "preview_renders",
 ];
 static COUNTS: [AtomicU64; COUNTERS] = [const { AtomicU64::new(0) }; COUNTERS];
 
@@ -91,6 +100,14 @@ pub struct UiSample {
     /// Size of the newest frame of each video on screen.
     pub videos: Vec<(u32, u32)>,
     pub texture_reuse: bool,
+    /// Decoded video frames alive anywhere, and their buffers' capacity in bytes.
+    pub live_frames: usize,
+    pub live_frame_bytes: u64,
+    pub thumbs_pending: usize,
+    /// ffmpeg/ffprobe helpers (probes, posters, thumbnails) running.
+    pub running_tools: usize,
+    /// The Media pane's video plays while no Media pane is on screen.
+    pub media_hidden_playing: bool,
 }
 
 enum Msg {
@@ -205,6 +222,13 @@ pub fn session_sample(
         live_players: fm_preview::player::live_players(),
         videos,
         texture_reuse: s.prefs.video_texture_reuse,
+        live_frames: fm_preview::player::live_frames().0,
+        live_frame_bytes: fm_preview::player::live_frames().1 as u64,
+        thumbs_pending: s.thumbs.pending(),
+        running_tools: fm_preview::video::running_tools(),
+        media_hidden_playing: s.media.playing
+            && s.media.video.is_some()
+            && s.media_pane().is_none(),
     }
 }
 
@@ -532,6 +556,18 @@ impl WriterState {
                 ui.pixels_per_point,
                 if ui.texture_reuse { "on" } else { "off" },
             ));
+            line.push_str(&format!(
+                " live_frames={} frame_mem={} thumbs_pending={} tools={} media_hidden={}",
+                ui.live_frames,
+                mib(ui.live_frame_bytes),
+                ui.thumbs_pending,
+                ui.running_tools,
+                if ui.media_hidden_playing {
+                    "playing"
+                } else {
+                    "no"
+                },
+            ));
             if !ui.videos.is_empty() {
                 let sizes: Vec<String> =
                     ui.videos.iter().map(|(w, h)| format!("{w}x{h}")).collect();
@@ -742,6 +778,9 @@ mod tests {
         assert!(text.contains(" frames=2"), "{text}");
         assert!(text.contains(" tex=7"), "{text}");
         assert!(text.contains(" video=1920x1080"), "{text}");
+        assert!(text.contains(" live_frames=0"), "{text}");
+        assert!(text.contains(" media_hidden=no"), "{text}");
+        assert!(text.contains(" thumb_made=0"), "{text}");
         assert!(text.trim_end().ends_with("log stopped"), "{text}");
         #[cfg(unix)]
         {

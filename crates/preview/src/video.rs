@@ -99,6 +99,21 @@ pub(crate) fn command(tool: &Path) -> Command {
     c
 }
 
+static RUNNING_TOOLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// ffmpeg/ffprobe helpers (probes, posters, thumbnails) running now (diagnostic log).
+pub fn running_tools() -> usize {
+    RUNNING_TOOLS.load(Ordering::Relaxed)
+}
+
+struct RunningTool;
+
+impl Drop for RunningTool {
+    fn drop(&mut self) {
+        RUNNING_TOOLS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// Run `cmd`, keep at most `max` bytes of stdout, and kill it after `timeout`.
 pub(crate) fn run(
     mut cmd: Command,
@@ -110,6 +125,8 @@ pub(crate) fn run(
         return None;
     }
     let mut child = cmd.spawn().ok()?;
+    RUNNING_TOOLS.fetch_add(1, Ordering::Relaxed);
+    let _running = RunningTool;
     let mut out = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();

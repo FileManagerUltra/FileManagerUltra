@@ -167,7 +167,11 @@ impl Inner {
             .as_ref()
             .zip(disk_key.as_deref())
             .and_then(|(c, k)| c.get(k));
+        if cached.is_some() {
+            crate::diag::count(crate::diag::Counter::ThumbsFromDisk);
+        }
         let thumb = cached.or_else(|| {
+            crate::diag::count(crate::diag::Counter::ThumbsMade);
             let made = catch_unwind(AssertUnwindSafe(|| {
                 make_as(&*job.vfs, &job.entry, job.key.3, job.kind)
             }))

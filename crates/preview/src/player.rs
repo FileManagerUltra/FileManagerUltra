@@ -5,7 +5,7 @@ mod pipe;
 
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -133,6 +133,44 @@ pub struct Frame {
     pub height: u32,
     pub rgba: Vec<u8>,
     pub seq: u64,
+    _live: LiveFrame,
+}
+
+static LIVE_FRAMES: AtomicUsize = AtomicUsize::new(0);
+static LIVE_FRAME_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+/// Counts frames alive in memory (diagnostic log) by their buffer's capacity.
+#[derive(Debug)]
+struct LiveFrame(usize);
+
+impl Drop for LiveFrame {
+    fn drop(&mut self) {
+        LIVE_FRAMES.fetch_sub(1, Ordering::Relaxed);
+        LIVE_FRAME_BYTES.fetch_sub(self.0, Ordering::Relaxed);
+    }
+}
+
+impl Frame {
+    pub fn new(width: u32, height: u32, rgba: Vec<u8>, seq: u64) -> Self {
+        let bytes = rgba.capacity();
+        LIVE_FRAMES.fetch_add(1, Ordering::Relaxed);
+        LIVE_FRAME_BYTES.fetch_add(bytes, Ordering::Relaxed);
+        Self {
+            width,
+            height,
+            rgba,
+            seq,
+            _live: LiveFrame(bytes),
+        }
+    }
+}
+
+/// `(frames, bytes)` of decoded video frames still in memory anywhere in the app.
+pub fn live_frames() -> (usize, usize) {
+    (
+        LIVE_FRAMES.load(Ordering::Relaxed),
+        LIVE_FRAME_BYTES.load(Ordering::Relaxed),
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -844,15 +882,7 @@ fn run(
                 }
                 let at = video.next_time(fps);
                 video.frames += 1;
-                next = Some((
-                    Arc::new(Frame {
-                        width,
-                        height,
-                        rgba,
-                        seq: sequence,
-                    }),
-                    at,
-                ));
+                next = Some((Arc::new(Frame::new(width, height, rgba, sequence)), at));
                 sequence += 1;
                 wall.get_or_insert_with(Instant::now);
             }

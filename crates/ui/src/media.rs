@@ -1730,14 +1730,12 @@ fn video(
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::CLICK);
     ui.painter().rect_filled(rect, 0.0, tokens.bg);
     if let Some(frame) = state.and_then(|video| video.frame.as_ref()) {
-        let video =
+        let texture =
             crate::preview::video_texture(ui.ctx(), Id::NULL.with(("media-video", pane)), frame);
         let scale = (width / frame.width.max(1) as f32).min(height / frame.height.max(1) as f32);
         let size = egui::vec2(frame.width as f32, frame.height as f32) * scale;
         let picture = egui::Rect::from_center_size(rect.center(), size);
-        egui::Image::from_texture(&video.texture)
-            .uv(video.uv)
-            .paint_at(ui, picture);
+        egui::Image::from_texture(&texture).paint_at(ui, picture);
         subtitle_overlay(ui, s, picture, tokens);
     } else if s.media.playing {
         ui.put(rect, egui::Label::new("Preparing video..."));

@@ -232,12 +232,12 @@ fn media_preview_controls(video: bool, in_media: bool, fullscreen: bool) {
                 .video
                 .as_mut()
                 .expect("video");
-            state.frame = Some(Arc::new(fm_preview::player::Frame {
-                width: 32,
-                height: 18,
-                rgba: vec![128; 32 * 18 * 4],
-                seq: 1,
-            }));
+            state.frame = Some(Arc::new(fm_preview::player::Frame::new(
+                32,
+                18,
+                vec![128; 32 * 18 * 4],
+                1,
+            )));
             state.hint = Some("Playing silently: no audio output device.".into());
         }
         if in_media {
@@ -1764,12 +1764,12 @@ fn preview_zoom_shortcuts_scale_each_renderer_without_changing_ui() {
                     .as_mut()
                     .expect("video state");
                 video.playing = false;
-                video.frame = Some(Arc::new(fm_preview::player::Frame {
-                    width: 32,
-                    height: 18,
-                    rgba: vec![128; 32 * 18 * 4],
-                    seq: 1,
-                }));
+                video.frame = Some(Arc::new(fm_preview::player::Frame::new(
+                    32,
+                    18,
+                    vec![128; 32 * 18 * 4],
+                    1,
+                )));
             }
         }
         let ctx = egui::Context::default();
