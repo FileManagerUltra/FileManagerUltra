@@ -123,11 +123,22 @@ pub fn is_hint_id(id: &str) -> bool {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WindowsRenderer {
-    /// wgpu on Direct3D 12 or Vulkan; OpenGL if it cannot start.
+    /// wgpu on Direct3D 12; OpenGL if it cannot start.
     #[default]
     Direct3d,
     /// OpenGL, as on Linux and macOS.
     Opengl,
+}
+
+/// What drew the window when the chosen [`WindowsRenderer`] could not start, remembered so
+/// the notice about it appears once, not at every start (change `windows-wgpu`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RendererFallback {
+    Direct3d,
+    Opengl,
+    /// Direct3D's software rasterizer: no graphics card could be used.
+    Software,
 }
 
 /// How file sizes are written.
@@ -226,6 +237,9 @@ pub struct Prefs {
     /// Windows only: what draws the window, from the next start.
     #[serde(default)]
     pub windows_renderer: WindowsRenderer,
+    /// The renderer used last start because `windows_renderer` failed; `None` when it worked.
+    #[serde(default)]
+    pub windows_renderer_fallback: Option<RendererFallback>,
     /// Seconds the audiobook skip-back and skip-forward buttons jump.
     #[serde(default = "default_skip_back")]
     pub media_skip_back_secs: u64,
@@ -590,6 +604,7 @@ impl Default for Prefs {
             media_autoplay_on_add: false,
             diagnostics_log: false,
             windows_renderer: WindowsRenderer::default(),
+            windows_renderer_fallback: None,
             media_skip_back_secs: default_skip_back(),
             media_skip_forward_secs: default_skip_forward(),
             media_open_audio: MediaOpenTarget::default(),
@@ -968,10 +983,16 @@ mod tests {
                 name: "Photos".into(),
                 uri: "/home/u/Photos".into(),
             }],
+            windows_renderer_fallback: Some(RendererFallback::Opengl),
             ..Prefs::default()
         };
         let text = toml::to_string(&prefs).expect("serialize");
         let parsed: toml::Table = toml::from_str(&text).expect("parse");
+        let back: Prefs = toml::from_str(&text).expect("round trip");
+        assert_eq!(
+            back.windows_renderer_fallback,
+            Some(RendererFallback::Opengl)
+        );
         let mut keys: Vec<String> = parsed.keys().cloned().collect();
         keys.sort();
         assert_eq!(
@@ -1025,6 +1046,7 @@ mod tests {
                 "window_geometry",
                 "window_maximized",
                 "windows_renderer",
+                "windows_renderer_fallback",
                 "zoom"
             ]
         );

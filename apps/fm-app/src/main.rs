@@ -760,22 +760,39 @@ fn main() -> eframe::Result {
     }
 
     let prefs = session.prefs.clone();
-    let first = renderer::first_choice(&prefs);
+    let attempts = renderer::attempts(&prefs);
+    let first = attempts
+        .first()
+        .copied()
+        .unwrap_or(renderer::Attempt::OpenGl);
     // The session moves into whichever attempt opens the window. A renderer that cannot
-    // start fails before that, so OpenGL is tried with the same session.
+    // start fails before that, so the next one is tried with the same session.
     let pending: Pending = Rc::new(RefCell::new(Some((session, config_dir))));
-    match run(native_options(&prefs, first), Rc::clone(&pending)) {
-        Err(err) if renderer::has_fallback(first) && pending.borrow().is_some() => {
-            eprintln!("Direct3D could not start ({err}); using OpenGL");
-            if let Some((session, _)) = pending.borrow_mut().as_mut() {
-                session.notice = Some(format!(
-                    "Direct3D could not start ({err}), so the window uses OpenGL."
-                ));
+    let mut failures: Vec<String> = Vec::new();
+    let mut result = Ok(());
+    for (i, &attempt) in attempts.iter().enumerate() {
+        let start = Start {
+            used: attempt,
+            first,
+            failures: failures.clone(),
+        };
+        result = run(native_options(&prefs, attempt), Rc::clone(&pending), start);
+        match &result {
+            Err(err) if pending.borrow().is_some() && i + 1 < attempts.len() => {
+                eprintln!("{attempt:?} could not start ({err}); trying the next renderer");
+                failures.push(err.to_string());
             }
-            run(native_options(&prefs, eframe::Renderer::Glow), pending)
+            _ => break,
         }
-        result => result,
     }
+    result
+}
+
+/// Which renderer opened the window, and why the ones before it did not.
+struct Start {
+    used: renderer::Attempt,
+    first: renderer::Attempt,
+    failures: Vec<String>,
 }
 
 /// The session and config folder waiting for the window to be created.
@@ -783,7 +800,7 @@ type Pending = Rc<RefCell<Option<(Session, Option<PathBuf>)>>>;
 
 fn native_options(
     prefs: &fm_engine::prefs::Prefs,
-    renderer: eframe::Renderer,
+    attempt: renderer::Attempt,
 ) -> eframe::NativeOptions {
     let mut viewport = egui::ViewportBuilder::default();
     if let Ok(icon) = eframe::icon_data::from_png_bytes(fm_brand::ICON_PNG) {
@@ -800,19 +817,35 @@ fn native_options(
         ..Default::default()
     };
     window::restore(&mut options, prefs);
-    renderer::configure(&mut options, renderer);
+    renderer::configure(&mut options, attempt);
     options
 }
 
-fn run(options: eframe::NativeOptions, pending: Pending) -> eframe::Result {
+fn run(options: eframe::NativeOptions, pending: Pending, start: Start) -> eframe::Result {
     eframe::run_native(
         fm_brand::APP_NAME,
         options,
         Box::new(move |cc| {
-            let (session, config_dir) = pending
+            let (mut session, config_dir) = pending
                 .borrow_mut()
                 .take()
                 .ok_or("the window was already created")?;
+            let before = session.prefs.windows_renderer_fallback;
+            if let Some(notice) = renderer::note_fallback(
+                &mut session.prefs,
+                start.used,
+                start.first,
+                &start.failures,
+            ) {
+                session.notice = Some(notice);
+            }
+            // Remembered right away, so the notice is not repeated after a crash.
+            if session.prefs.windows_renderer_fallback != before
+                && let Some(dir) = &config_dir
+                && let Err(err) = fm_engine::prefs::save(dir, &session.prefs)
+            {
+                eprintln!("failed to save preferences: {err}");
+            }
             Ok(Box::new(App::new(cc, session, config_dir)))
         }),
     )

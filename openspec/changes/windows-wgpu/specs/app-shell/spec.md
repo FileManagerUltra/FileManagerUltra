@@ -17,3 +17,8 @@ On Windows, Preferences › Advanced › Troubleshooting SHALL offer *Renderer*:
 #### Scenario: Direct3D unavailable
 - **WHEN** Direct3D 12 cannot start on the machine, or only offers a software adapter
 - **THEN** the window opens with OpenGL and a notice explains that Direct3D could not start
+- **AND** the notice is not repeated at later starts while the situation stays the same, though Direct3D is tried again each time
+
+#### Scenario: No usable graphics card
+- **WHEN** neither Direct3D 12 nor OpenGL can use a graphics card (for example a virtual machine without 3D acceleration)
+- **THEN** the window opens drawn by Direct3D's software rasterizer and a notice says drawing is slower
