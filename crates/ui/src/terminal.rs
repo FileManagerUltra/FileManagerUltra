@@ -151,7 +151,14 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let id = Id::NULL.with(("fm-terminal", pane));
     let response = ui.interact(rect, id, Sense::click_and_drag());
+    // This terminal's own text zoom scales its grid; the handle and banner keep the UI size.
+    let ui_tokens = *tokens;
+    let scale = s.layout.state(pane).map_or(1.0, |st| st.term_scale());
+    let mut scaled = *tokens;
+    scaled.term_font_size = tokens.term_font_size * scale;
+    let tokens = &scaled;
     let m = metrics(ui, tokens);
+    let handle_shown = ui.rect_contains_pointer(rect) || (scale - 1.0).abs() > 0.001;
 
     let cols = ((rect.width() - 2.0 * PAD) / m.cw).floor().max(2.0) as u16;
     let rows = ((rect.height() - 2.0 * PAD) / m.ch).floor().max(2.0) as u16;
@@ -209,13 +216,21 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused
         &m,
         &snap,
         focused && exited.is_none(),
+        if handle_shown {
+            ZOOM_HANDLE_HEIGHT
+        } else {
+            0.0
+        },
     );
     if exited.is_none() && s.pending_kind.is_none() {
         link_under_pointer(ui, s, pane, tokens, &response, rect, &m, &snap);
     }
+    if handle_shown {
+        zoom_handle(ui, s, pane, &ui_tokens, rect, scale);
+    }
 
     if let Some(code) = exited {
-        banner(ui, s, pane, tokens, rect, code);
+        banner(ui, s, pane, &ui_tokens, rect, code);
     }
 }
 
@@ -598,6 +613,7 @@ fn paint(
     m: &Metrics,
     snap: &Snapshot,
     focused: bool,
+    label_below: f32,
 ) {
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 0.0, tokens.term_bg);
@@ -701,12 +717,74 @@ fn paint(
     if snap.scrollback_offset > 0 {
         let label = format!("scrollback -{} (type to return)", snap.scrollback_offset);
         painter.text(
-            rect.right_top() + vec2(-PAD - 2.0, PAD),
+            rect.right_top() + vec2(-PAD - 2.0, PAD + label_below),
             Align2::RIGHT_TOP,
             label,
             tokens.term_font(),
             tokens.warning,
         );
+    }
+}
+
+/// Height reserved for the zoom handle in the terminal's top-right corner.
+const ZOOM_HANDLE_HEIGHT: f32 = 30.0;
+
+/// This terminal's zoom handle: − 100% + in the top-right corner, shown while the pointer is
+/// over the terminal and whenever its zoom is not 100%.
+fn zoom_handle(
+    ui: &mut Ui,
+    s: &mut Session,
+    pane: PaneId,
+    tokens: &Tokens,
+    rect: Rect,
+    scale: f32,
+) {
+    let area = Rect::from_min_max(
+        Pos2::new(rect.left(), rect.top() + 4.0),
+        Pos2::new(rect.right() - 4.0, rect.top() + ZOOM_HANDLE_HEIGHT),
+    );
+    let mut action = None;
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(area)
+            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        |ui| {
+            egui::Frame::new()
+                .fill(tokens.panel)
+                .stroke(egui::Stroke::new(1.0, tokens.border))
+                .corner_radius(tokens.corner_radius)
+                .inner_margin(egui::Margin::symmetric(4, 1))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    // Right to left: + first, so it reads − 100% +.
+                    if ui
+                        .add(egui::Button::new("+").small())
+                        .on_hover_text("Zoom terminal in (Ctrl+Shift+=)")
+                        .clicked()
+                    {
+                        action = Some("term.zoom.in");
+                    }
+                    let reset = ui
+                        .add(egui::Button::new(format!("{:.0}%", scale * 100.0)).small())
+                        .on_hover_text("Reset terminal zoom (Ctrl+Shift+0)");
+                    reset.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::Role::Button, true, "Reset terminal zoom")
+                    });
+                    if reset.clicked() {
+                        action = Some("term.zoom.reset");
+                    }
+                    if ui
+                        .add(egui::Button::new("−").small())
+                        .on_hover_text("Zoom terminal out (Ctrl+Shift+-)")
+                        .clicked()
+                    {
+                        action = Some("term.zoom.out");
+                    }
+                });
+        },
+    );
+    if let Some(id) = action {
+        s.dispatch_or_notice(id, &serde_json::json!({ "pane": pane }));
     }
 }
 
@@ -1213,6 +1291,45 @@ mod tests {
         );
         out.textures_delta.clear();
         s.clipboard_outbox
+    }
+
+    #[test]
+    fn the_zoom_handle_zooms_only_its_own_terminal() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let mut s = Session::new().expect("session");
+        let first = s.layout.focused();
+        s.layout.state_mut(first).expect("pane").kind = fm_layout::PaneKind::Terminal;
+        s.dispatch("pane.split.horizontal", &serde_json::Value::Null)
+            .expect("split");
+        let second = s.layout.focused();
+        s.layout.state_mut(second).expect("pane").kind = fm_layout::PaneKind::Terminal;
+        let tokens = Tokens::dark();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(400.0, 120.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    let scale = s.layout.state(first).map_or(1.0, |st| st.term_scale());
+                    let rect = ui.max_rect();
+                    zoom_handle(ui, s, first, &tokens, rect, scale);
+                },
+                s,
+            );
+        h.run();
+        h.get_by_label("Reset terminal zoom");
+        h.get_by_label("+").click();
+        h.run();
+        let scale = |h: &Harness<'_, Session>, pane| {
+            h.state().layout.state(pane).expect("pane").term_scale()
+        };
+        assert!((scale(&h, first) - 1.2).abs() < 1e-4);
+        assert_eq!(scale(&h, second), 1.0, "the other terminal keeps its zoom");
+        h.get_by_label("−").click();
+        h.get_by_label("−").click();
+        h.run();
+        assert!(scale(&h, first) < 1.0);
+        h.get_by_label("Reset terminal zoom").click();
+        h.run();
+        assert_eq!(scale(&h, first), 1.0);
     }
 
     #[test]

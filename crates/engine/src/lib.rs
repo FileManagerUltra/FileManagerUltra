@@ -91,6 +91,7 @@ pub mod subtitle_style;
 pub mod term_cmds;
 pub mod term_link_cmds;
 pub mod term_mouse_cmds;
+pub mod term_zoom_cmds;
 pub mod theme_cmds;
 pub mod thumb_cmds;
 pub mod thumbs;

@@ -57,6 +57,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(crate::preview_code_cmds::specs());
     specs.extend(crate::preview_open_cmds::specs());
     specs.extend(crate::preview_scale_cmds::specs());
+    specs.extend(crate::term_zoom_cmds::specs());
     specs.extend(crate::preview_rotate_cmds::specs());
     specs.extend(crate::preview_filter_cmds::specs());
     specs.extend(crate::preview_order_cmds::specs());

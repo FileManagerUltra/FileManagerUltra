@@ -46,6 +46,9 @@ pub const PREVIEW_SELECT_ALL: &str = "preview.text.select_all";
 pub const PREVIEW_COPY_TEXT: &str = "preview.text.copy";
 pub const PREVIEW_FIND: &str = "preview.find.open";
 pub const PREVIEW_SCALE_IN: &str = "preview.scale.in";
+pub const TERM_ZOOM_IN: &str = "term.zoom.in";
+pub const TERM_ZOOM_OUT: &str = "term.zoom.out";
+pub const TERM_ZOOM_RESET: &str = "term.zoom.reset";
 pub const PREVIEW_SCALE_OUT: &str = "preview.scale.out";
 pub const PREVIEW_SCALE_RESET: &str = "preview.scale.reset";
 pub const DIFF_NEXT: &str = "preview.diff.next";
@@ -1069,6 +1072,17 @@ fn consume_shortcuts_inner(
             } else {
                 id
             };
+            // A focused terminal zooms its own text with the interface zoom chords.
+            let id = if terminal {
+                match id {
+                    ZOOM_IN => TERM_ZOOM_IN,
+                    ZOOM_OUT => TERM_ZOOM_OUT,
+                    ZOOM_RESET => TERM_ZOOM_RESET,
+                    _ => id,
+                }
+            } else {
+                id
+            };
             if id == FILE_DELETE && !typing && session.focused_kind() == Some(PaneKind::Media) {
                 // The playlist owns the selection; it removes the selected rows next frame.
                 ctx.data_mut(|d| d.insert_temp(fm_ui::media::delete_request_id(), true));
@@ -1790,6 +1804,29 @@ mod tests {
         );
         assert!(logged[1].contains("(physical 1)"), "{logged:?}");
         assert!(logged.iter().all(|l| !l.contains("secret")));
+    }
+
+    #[test]
+    fn a_focused_terminal_zooms_its_own_text_with_the_zoom_chords() {
+        use egui::{Key, Modifiers};
+        let mut s = Session::new().expect("session");
+        let pane = s.layout.focused();
+        s.layout.state_mut(pane).expect("pane").kind = PaneKind::Terminal;
+        let global = s.prefs.zoom;
+        let ctx = egui::Context::default();
+        let ctrl_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        assert_eq!(chord(&ctx, &mut s, Key::Equals, ctrl_shift), [TERM_ZOOM_IN]);
+        assert!(s.layout.state(pane).expect("pane").term_scale() > 1.0);
+        assert_eq!(chord(&ctx, &mut s, Key::Minus, ctrl_shift), [TERM_ZOOM_OUT]);
+        chord(&ctx, &mut s, Key::Equals, ctrl_shift);
+        assert_eq!(
+            chord(&ctx, &mut s, Key::Num0, ctrl_shift),
+            [TERM_ZOOM_RESET]
+        );
+        assert_eq!(s.layout.state(pane).expect("pane").term_scale(), 1.0);
+        assert_eq!(s.prefs.zoom, global, "the interface zoom is untouched");
+        // Ctrl+= / Ctrl+- (no Shift) stay with the shell.
+        assert!(chord(&ctx, &mut s, Key::Minus, Modifiers::COMMAND).is_empty());
     }
 
     #[test]

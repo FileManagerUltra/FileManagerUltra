@@ -12,8 +12,8 @@ mod state;
 pub use node::{Axis, Edge, MAX_RATIO, MIN_RATIO, PaneNode};
 pub use state::{
     DEFAULT_COL_WIDTHS, DEFAULT_TREE_WIDTH, DiffMode, DiffSide, DiffState, Focus, History,
-    ListingState, MAX_COL_WIDTH, MIN_COL_WIDTH, MediaPaneState, PaneKind, PaneState, PlacesState,
-    PreviewSource, SortDir, SortKey, SortSpec, TreeState,
+    ListingState, MAX_COL_WIDTH, MAX_TERM_SCALE, MIN_COL_WIDTH, MIN_TERM_SCALE, MediaPaneState,
+    PaneKind, PaneState, PlacesState, PreviewSource, SortDir, SortKey, SortSpec, TreeState,
 };
 
 /// Stable id of a pane (leaf). Never reused within a layout.

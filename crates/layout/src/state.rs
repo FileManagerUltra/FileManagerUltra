@@ -606,6 +606,9 @@ pub struct PaneState {
     /// Media pane queue selection and scroll state.
     #[serde(default)]
     pub media: MediaPaneState,
+    /// Terminal panes: text zoom of this terminal, on top of the terminal font size.
+    #[serde(default = "default_term_scale")]
+    pub term_scale: f32,
 }
 
 /// View state for a Media pane; queue contents are owned by the session, not the layout.
@@ -725,6 +728,14 @@ fn default_col_widths() -> [f32; 3] {
     DEFAULT_COL_WIDTHS
 }
 
+fn default_term_scale() -> f32 {
+    1.0
+}
+
+/// Terminal text zoom bounds (same as Preview's).
+pub const MIN_TERM_SCALE: f32 = 0.5;
+pub const MAX_TERM_SCALE: f32 = 4.0;
+
 /// Default tree width in px.
 pub const DEFAULT_TREE_WIDTH: f32 = 220.0;
 /// Detail columns fit to content until manually resized.
@@ -753,11 +764,21 @@ impl PaneState {
             preview_source: PreviewSource::Follow,
             places: PlacesState::default(),
             media: MediaPaneState::default(),
+            term_scale: 1.0,
         };
         if pane.location != pane.tree.root {
             pane.reveal_location();
         }
         pane
+    }
+
+    /// This terminal's text zoom, bounded; a hostile or corrupt stored value reads as 100%.
+    pub fn term_scale(&self) -> f32 {
+        if self.term_scale.is_finite() {
+            self.term_scale.clamp(MIN_TERM_SCALE, MAX_TERM_SCALE)
+        } else {
+            1.0
+        }
     }
 
     /// Resize detail column `ix` (0 Size, 1 Modified, 2 Type); zero restores content

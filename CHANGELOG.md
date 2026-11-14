@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Each terminal has its own zoom: a small − 100% + handle in its top-right corner (shown when you point at the terminal), or Ctrl+Shift+= / Ctrl+Shift+- / Ctrl+Shift+0 while it has focus. Other terminals keep their size, and the zoom is saved with the workspace.
 - Ctrl+Tab and Ctrl+Shift+Tab switch between workspace tabs, also from a terminal. By default the first press returns to the tab you used before; keep Ctrl held and press Tab again to go further back. Preferences > Workspaces can switch to plain left-to-right order instead.
 - The status bar shows the playing time (elapsed / total) next to its media controls, so you can see where playback is with the Media pane closed or another workspace in front.
 - A diagnostic log for bug reports: turn on Preferences > Advanced > Troubleshooting > Write diagnostic log. Once a second it records the app's memory use (including graphics memory) and what it was doing, such as playing video or opening panes. It never records file names, folder names, server names or passwords. Open log folder (also in the Help menu) shows the logs; each session's log stops at 64 MiB, and the last 20 are kept.
