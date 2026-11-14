@@ -42,6 +42,21 @@ struct App {
     out_drag: dragout::OutDrag,
     /// MPRIS / SMTC / Now Playing (`media-integration`).
     media_controls: media_controls::MediaControls,
+    /// Why frames were drawn since the last diagnostic sample.
+    diag_frames: DiagFrames,
+}
+
+/// Per-second tally of why frames were drawn (diagnostic log only).
+#[derive(Default)]
+struct DiagFrames {
+    causes: std::collections::HashMap<String, u32>,
+    input: u32,
+    other: u32,
+}
+
+/// `crates/ui/src/media.rs` (or a registry path with `\`) → `media.rs`.
+fn short_source(file: &str) -> &str {
+    file.rsplit(['/', '\\']).next().unwrap_or(file)
 }
 
 impl App {
@@ -600,7 +615,7 @@ impl eframe::App for App {
         // Textures and pictures of panes that were not drawn this frame (closed workspaces
         // and panes, hidden tabs) are released.
         fm_ui::frame_cache::sweep(&ctx);
-        diagnostics_frame(&ctx, &self.session);
+        diagnostics_frame(&ctx, &self.session, &mut self.diag_frames);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -624,14 +639,39 @@ impl eframe::App for App {
 
 /// Diagnostic log bookkeeping once per frame (capability `diagnostics`); an atomic load
 /// while the log is off.
-fn diagnostics_frame(ctx: &egui::Context, session: &Session) {
+fn diagnostics_frame(ctx: &egui::Context, session: &Session, tally: &mut DiagFrames) {
     use fm_engine::diag;
     // The graphics stack reports its driver while the window opens; after that, debug
     // records are not needed unless the log is on.
     if ctx.cumulative_frame_nr() == 10 {
         diag::startup_done();
     }
+    if !diag::enabled() {
+        return;
+    }
     diag::count(diag::Counter::Frames);
+    // Causes of the repaint that produced this frame (egui keeps file:line of each request).
+    let causes = ctx.repaint_causes();
+    let input = ctx.input(|i| {
+        !i.events.is_empty() || i.pointer.is_moving() || i.smooth_scroll_delta != egui::Vec2::ZERO
+    });
+    if input {
+        tally.input += 1;
+    }
+    if causes.is_empty() && !input {
+        tally.other += 1;
+    }
+    for cause in causes.iter().take(16) {
+        let mut key = format!("{}:{}", short_source(cause.file), cause.line);
+        if !cause.reason.is_empty() {
+            key.push(' ');
+            key.extend(cause.reason.chars().take(40));
+        }
+        // Bounded: at most a few dozen distinct call sites exist.
+        if tally.causes.len() < 64 || tally.causes.contains_key(&key) {
+            *tally.causes.entry(key).or_insert(0) += 1;
+        }
+    }
     if diag::ui_sample_due() {
         let (textures, bytes) = {
             let manager = ctx.tex_manager();
@@ -639,12 +679,15 @@ fn diagnostics_frame(ctx: &egui::Context, session: &Session) {
             let bytes: usize = manager.allocated().map(|(_, meta)| meta.bytes_used()).sum();
             (manager.num_allocated(), bytes as u64)
         };
-        diag::send_ui_sample(diag::session_sample(
-            session,
-            textures,
-            bytes,
-            ctx.pixels_per_point(),
-        ));
+        let mut sample = diag::session_sample(session, textures, bytes, ctx.pixels_per_point());
+        let mut causes: Vec<(String, u32)> = tally.causes.drain().collect();
+        causes.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        causes.truncate(8);
+        sample.repaint_causes = causes;
+        sample.input_frames = std::mem::take(&mut tally.input);
+        sample.other_frames = std::mem::take(&mut tally.other);
+        sample.egui_entries = ctx.memory(|m| m.data.len());
+        diag::send_ui_sample(sample);
     }
 }
 
@@ -759,6 +802,7 @@ fn main() -> eframe::Result {
                 window: tracker,
                 out_drag: dragout::OutDrag::new(cc),
                 media_controls: media_controls::MediaControls::new(),
+                diag_frames: DiagFrames::default(),
             }))
         }),
     )
@@ -781,6 +825,16 @@ fn logo_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repaint_sources_are_shortened_to_the_file_name() {
+        assert_eq!(short_source("crates/ui/src/media.rs"), "media.rs");
+        assert_eq!(
+            short_source(r"C:\Users\runner\.cargo\registry\src\egui-0.37.0\src\context.rs"),
+            "context.rs"
+        );
+        assert_eq!(short_source("main.rs"), "main.rs");
+    }
 
     #[test]
     fn bin_name_matches_brand_executable() {

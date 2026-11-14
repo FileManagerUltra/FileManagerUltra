@@ -108,6 +108,17 @@ pub struct UiSample {
     pub running_tools: usize,
     /// The Media pane's video plays while no Media pane is on screen.
     pub media_hidden_playing: bool,
+    /// Panes per kind in the visible workspace.
+    pub pane_kinds: Vec<(&'static str, usize)>,
+    /// Frames in the last second that had input (pointer movement, keys, scrolling).
+    pub input_frames: u32,
+    /// Frames in the last second with neither input nor a requested repaint (window
+    /// system redraws: resize, expose, focus).
+    pub other_frames: u32,
+    /// What requested the repaints of the last second: `file:line` and how many frames.
+    pub repaint_causes: Vec<(String, u32)>,
+    /// Entries in egui's memory map (widget state, caches); growing means per-frame ids.
+    pub egui_entries: usize,
 }
 
 enum Msg {
@@ -229,7 +240,27 @@ pub fn session_sample(
         media_hidden_playing: s.media.playing
             && s.media.video.is_some()
             && s.media_pane().is_none(),
+        pane_kinds: pane_kinds(s),
+        input_frames: 0,
+        other_frames: 0,
+        repaint_causes: Vec::new(),
+        egui_entries: 0,
     }
+}
+
+fn pane_kinds(s: &crate::Session) -> Vec<(&'static str, usize)> {
+    let mut kinds: Vec<(&'static str, usize)> = Vec::new();
+    for pane in s.layout.panes() {
+        let Some(kind) = s.layout.state(pane).map(|st| st.kind) else {
+            continue;
+        };
+        let name = kind.label();
+        match kinds.iter_mut().find(|(k, _)| *k == name) {
+            Some((_, n)) => *n += 1,
+            None => kinds.push((name, 1)),
+        }
+    }
+    kinds
 }
 
 pub fn send_ui_sample(sample: UiSample) {
@@ -568,6 +599,26 @@ impl WriterState {
                     "no"
                 },
             ));
+            let kinds: Vec<String> = ui
+                .pane_kinds
+                .iter()
+                .map(|(k, n)| format!("{k}:{n}"))
+                .collect();
+            line.push_str(&format!(
+                " egui_entries={} pane_kinds={} input_frames={} other_frames={}",
+                ui.egui_entries,
+                kinds.join(","),
+                ui.input_frames,
+                ui.other_frames
+            ));
+            if !ui.repaint_causes.is_empty() {
+                let causes: Vec<String> = ui
+                    .repaint_causes
+                    .iter()
+                    .map(|(c, n)| format!("{c}x{n}"))
+                    .collect();
+                line.push_str(&format!(" repaint=[{}]", causes.join(", ")));
+            }
             if !ui.videos.is_empty() {
                 let sizes: Vec<String> =
                     ui.videos.iter().map(|(w, h)| format!("{w}x{h}")).collect();
@@ -766,6 +817,8 @@ mod tests {
             textures: 7,
             texture_reuse: true,
             videos: vec![(1920, 1080)],
+            input_frames: 3,
+            repaint_causes: vec![("media.rs:1762".into(), 58)],
             ..UiSample::default()
         });
         std::thread::sleep(Duration::from_millis(1300));
@@ -781,6 +834,8 @@ mod tests {
         assert!(text.contains(" live_frames=0"), "{text}");
         assert!(text.contains(" media_hidden=no"), "{text}");
         assert!(text.contains(" thumb_made=0"), "{text}");
+        assert!(text.contains(" repaint=[media.rs:1762x58]"), "{text}");
+        assert!(text.contains(" input_frames=3"), "{text}");
         assert!(text.trim_end().ends_with("log stopped"), "{text}");
         #[cfg(unix)]
         {
