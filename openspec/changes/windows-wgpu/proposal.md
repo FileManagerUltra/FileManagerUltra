@@ -4,7 +4,7 @@ On Windows with an NVIDIA GPU the app's memory grew by about 25 KB for every fra
 
 ## What Changes
 
-- **Windows draws with Direct3D 12** through egui's wgpu renderer (`eframe` feature `wgpu`, Windows only). wgpu is limited to Direct3D 12 and Vulkan so it never falls back to its own OpenGL backend; `WGPU_BACKEND` still overrides for troubleshooting. Linux and macOS keep OpenGL (design D6 of `scaffold-workspace` stays for them).
+- **Windows draws with Direct3D 12** through egui's wgpu renderer (`eframe` feature `wgpu`, Windows only). wgpu is limited to Direct3D 12 (not Vulkan, which stuttered when moving the window and used much more memory, nor wgpu's own OpenGL backend) and picks the dedicated GPU, never the software adapter; `WGPU_BACKEND` still overrides for troubleshooting. Linux and macOS keep OpenGL (design D6 of `scaffold-workspace` stays for them).
 - **Renderer preference** (Windows only): Preferences › Advanced › Troubleshooting › *Renderer*: Direct3D (default) or OpenGL, applied at the next start, with an "In use: …" line naming the backend and GPU. Stored as `windows_renderer` in `prefs.toml`.
 - **Fallback:** if Direct3D cannot start (no adapter, old driver, remote session), the window opens with OpenGL instead and a notice says so. eframe allows a second `run_native` after a failed one, so this happens in the same process.
 - **Video draws at its own frame rate:** the decoder wakes the UI when a new frame is ready, but only while a playing player was drawn in the previous frame (a hidden pane or a minimized window draws nothing). The UI's own playing timer drops from 16 ms to 250 ms and only moves the clock and seek bar. This halves the frames drawn for a 25 fps video and helps every renderer.

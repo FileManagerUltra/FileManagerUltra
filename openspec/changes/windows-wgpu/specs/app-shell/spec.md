@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Drawing does not grow memory
-Drawing frames SHALL NOT make the application's memory grow. On Windows the window SHALL be drawn with Direct3D 12 (or Vulkan) by default rather than OpenGL, because OpenGL drivers there (NVIDIA with "Threaded optimization") keep memory for every drawn frame.
+Drawing frames SHALL NOT make the application's memory grow. On Windows the window SHALL be drawn with Direct3D 12 by default rather than OpenGL, because OpenGL drivers there (NVIDIA with "Threaded optimization") keep memory for every drawn frame.
 
 #### Scenario: Window visible on Windows with an NVIDIA GPU
 - **WHEN** the application is visible for ten minutes with video playing or the pointer moving over it, with the driver's default settings
@@ -15,5 +15,5 @@ On Windows, Preferences › Advanced › Troubleshooting SHALL offer *Renderer*:
 - **THEN** the window is drawn with OpenGL and the row shows "In use: OpenGL"
 
 #### Scenario: Direct3D unavailable
-- **WHEN** Direct3D 12 and Vulkan cannot start on the machine
+- **WHEN** Direct3D 12 cannot start on the machine, or only offers a software adapter
 - **THEN** the window opens with OpenGL and a notice explains that Direct3D could not start
