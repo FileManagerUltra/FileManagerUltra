@@ -18,7 +18,7 @@ Workspace tabs are switched by `workspace.switch {n}` (Ctrl+1..9/0, a digit loop
 
 **D4: Preference.** `workspace_tab_order: recent | cycle` in `Prefs` (serde default `recent`), set through `prefs.set` and shown as a choice row in Preferences › Workspaces.
 
-**D5: Chord logging.** When the diagnostic log is on, `consume_shortcuts` notes the key presses of the frame that have Ctrl/Cmd/Alt held (before anything consumes them) and, after dispatching, logs each as `key: <mods>+<key>[ (physical <key>)] -> <ids>|unmatched`. Plain keys and text events are never looked at. The Ctrl+Shift+X fix waits for that log line from Windows.
+**D5: Chord logging.** When the diagnostic log is on, `consume_shortcuts` notes the frame's key presses with Ctrl/Cmd held (before anything consumes them) and, after dispatching, logs each as `key: <mods>+<key>[ (physical <key>)] -> <ids>|unmatched`. Chords that type characters are skipped (Ctrl+Alt is AltGr on Windows; Alt/Option-only types characters on macOS), and so is everything while a text field has focus: passwords must never reach the log. The Ctrl+Shift+X fix waits for that log line from Windows.
 
 ## Risks / Trade-offs
 

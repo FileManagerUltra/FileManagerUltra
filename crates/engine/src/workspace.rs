@@ -110,6 +110,16 @@ pub struct Workspaces {
     next_uid: u64,
     next_base: PaneId,
     changed: bool,
+    /// Tab uids by last use, most recent first (Ctrl+Tab in `recent` order).
+    recent: Vec<u64>,
+    /// A Ctrl+Tab walk in progress: the order it started from and where it is.
+    walk: Option<Walk>,
+}
+
+#[derive(Debug)]
+struct Walk {
+    order: Vec<u64>,
+    pos: usize,
 }
 
 /// What the unsaved-changes dialog is guarding.
@@ -157,7 +167,35 @@ impl Workspaces {
             next_uid: 2,
             next_base: PANE_RANGE,
             changed: false,
+            recent: vec![1],
+            walk: None,
         }
+    }
+
+    /// Whether a Ctrl+Tab walk is waiting for Ctrl to be released.
+    pub fn walking(&self) -> bool {
+        self.walk.is_some()
+    }
+
+    /// Tab uids for a `recent` walk: the active tab, then the others by last use, then those
+    /// never used in tab order.
+    fn walk_order(&self) -> Vec<u64> {
+        let active = self.tabs.get(self.active).map(|t| t.uid);
+        let mut order: Vec<u64> = active.into_iter().collect();
+        for uid in self.recent.iter().chain(self.tabs.iter().map(|t| &t.uid)) {
+            if !order.contains(uid) && self.tabs.iter().any(|t| t.uid == *uid) {
+                order.push(*uid);
+            }
+        }
+        order
+    }
+
+    /// `uid` was just used: it moves to the front; closed tabs drop out.
+    fn note_use(&mut self, uid: u64) {
+        self.recent.retain(|u| *u != uid);
+        self.recent.insert(0, uid);
+        let tabs = &self.tabs;
+        self.recent.retain(|u| tabs.iter().any(|t| t.uid == *u));
     }
 
     pub fn saved_for(&self, uid: u64) -> Option<&Saved> {
@@ -521,8 +559,18 @@ impl Session {
         self.workspaces.tabs.len() - 1
     }
 
-    /// Make tab `ix` the active one.
+    /// Make tab `ix` the active one and count it as used (ending a Ctrl+Tab walk first).
     fn activate(&mut self, ix: usize) -> Result<(), FmError> {
+        self.workspace_walk_end();
+        self.activate_tab(ix)?;
+        if let Some(uid) = self.workspaces.tabs.get(ix).map(|t| t.uid) {
+            self.workspaces.note_use(uid);
+        }
+        Ok(())
+    }
+
+    /// Swap tab `ix`'s layout in, without touching the recent order.
+    fn activate_tab(&mut self, ix: usize) -> Result<(), FmError> {
         let active = self.workspaces.active;
         if ix == active {
             return Ok(());
@@ -559,6 +607,64 @@ impl Session {
         self.activate(ix)
     }
 
+    /// `workspace.next` / `workspace.prev`: one step in the `workspace_tab_order` order.
+    /// In `recent` order, `hold` keeps the walk open until [`Self::workspace_walk_end`]
+    /// (Ctrl released); without it the step is committed at once.
+    pub fn workspace_step(&mut self, forward: bool, hold: bool) -> Result<(), FmError> {
+        let n = self.workspaces.tabs.len();
+        if n < 2 {
+            return Ok(());
+        }
+        if self.prefs.workspace_tab_order == crate::prefs::WorkspaceTabOrder::Cycle {
+            let active = self.workspaces.active.min(n - 1);
+            let ix = if forward {
+                (active + 1) % n
+            } else {
+                (active + n - 1) % n
+            };
+            return self.activate(ix);
+        }
+        if self.workspaces.walk.is_none() {
+            let order = self.workspaces.walk_order();
+            self.workspaces.walk = Some(Walk { order, pos: 0 });
+        }
+        let target = self.workspaces.walk.as_mut().and_then(|walk| {
+            let len = walk.order.len().max(1);
+            walk.pos = if forward {
+                (walk.pos + 1) % len
+            } else {
+                (walk.pos + len - 1) % len
+            };
+            walk.order.get(walk.pos).copied()
+        });
+        let ix = target.and_then(|uid| self.workspaces.tabs.iter().position(|t| t.uid == uid));
+        let result = match ix {
+            Some(ix) => self.activate_tab(ix),
+            // The tab closed during the walk: start over from the current order.
+            None => {
+                self.workspaces.walk = None;
+                Ok(())
+            }
+        };
+        if !hold {
+            self.workspace_walk_end();
+        }
+        result
+    }
+
+    /// End a Ctrl+Tab walk: the tab it reached becomes the most recently used.
+    pub fn workspace_walk_end(&mut self) {
+        if self.workspaces.walk.take().is_some()
+            && let Some(uid) = self
+                .workspaces
+                .tabs
+                .get(self.workspaces.active)
+                .map(|t| t.uid)
+        {
+            self.workspaces.note_use(uid);
+        }
+    }
+
     /// `workspace.switch` (0-based).
     pub fn workspace_switch(&mut self, ix: usize) -> Result<(), FmError> {
         if ix >= self.workspaces.tabs.len() {
@@ -593,6 +699,7 @@ impl Session {
         if ix >= self.workspaces.tabs.len() {
             return Err(FmError::NotFound(format!("workspace tab {}", ix + 1)));
         }
+        self.workspace_walk_end();
         self.sync_autosaved();
         let active = self.workspaces.active;
         if self.workspaces.tabs.len() == 1 {

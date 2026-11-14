@@ -69,8 +69,49 @@ fn flag_command(flag: Flag, params: &Params, s: &mut Session) -> Result<(), FmEr
     }
 }
 
+/// `hold` for `workspace.next` / `workspace.prev` (default false: commit at once).
+fn hold_param(params: &Params) -> Result<bool, FmError> {
+    match object(params)?.and_then(|m| m.get("hold")) {
+        None | Some(Params::Null) => Ok(false),
+        Some(v) => v
+            .as_bool()
+            .ok_or_else(|| FmError::InvalidParams("hold: bool".to_string())),
+    }
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        CommandSpec {
+            id: "workspace.next",
+            label: "Next Workspace",
+            menu: &["Workspace", "Next"],
+            shortcut: Some("Ctrl+Tab"),
+            params: "{hold?: bool (keep a recent-order walk open until workspace.walk_end)}",
+            enabled: |s| s.workspaces.tabs.len() > 1,
+            run: |s, p| s.workspace_step(true, hold_param(p)?),
+        },
+        CommandSpec {
+            id: "workspace.prev",
+            label: "Previous Workspace",
+            menu: &["Workspace", "Previous"],
+            shortcut: Some("Ctrl+Shift+Tab"),
+            params: "{hold?: bool (keep a recent-order walk open until workspace.walk_end)}",
+            enabled: |s| s.workspaces.tabs.len() > 1,
+            run: |s, p| s.workspace_step(false, hold_param(p)?),
+        },
+        CommandSpec {
+            id: "workspace.walk_end",
+            label: "Finish Switching Workspaces",
+            menu: &["Workspace", "Finish switching"],
+            shortcut: None,
+            params: "none",
+            enabled: |s| s.workspaces.walking(),
+            run: |s, p| {
+                object(p)?;
+                s.workspace_walk_end();
+                Ok(())
+            },
+        },
         CommandSpec {
             id: "workspace.new",
             label: "New Workspace",
@@ -420,6 +461,114 @@ mod tests {
             assert_eq!(s.workspaces.tabs.len(), 1, "{text}");
             assert_eq!(s.layout.panes().len(), 1);
             assert!(s.layout.state(s.layout.focused()).is_some());
+        }
+    }
+
+    /// `n` tabs (index 0 active afterwards), recent order as given (0-based, oldest first).
+    fn tabs_used(n: usize, used: &[usize]) -> Session {
+        let mut s = session();
+        for _ in 1..n {
+            run(&mut s, "workspace.new", Params::Null).expect("new");
+        }
+        for ix in used {
+            run(&mut s, "workspace.switch", json!({"n": ix + 1})).expect("switch");
+        }
+        s
+    }
+
+    #[test]
+    fn ctrl_tab_goes_back_and_forth_between_the_last_two_tabs() {
+        let mut s = tabs_used(4, &[2, 0]);
+        assert_eq!(s.workspaces.active, 0);
+        run(&mut s, "workspace.next", Params::Null).expect("next");
+        assert_eq!(s.workspaces.active, 2, "back to the tab used before");
+        run(&mut s, "workspace.next", Params::Null).expect("next");
+        assert_eq!(s.workspaces.active, 0, "and forth");
+        assert!(!s.workspaces.walking(), "no hold: committed at once");
+    }
+
+    #[test]
+    fn holding_ctrl_walks_further_back_and_release_commits() {
+        // Used 2, 4, 1 (1-based) = indices 1, 3, 0; index 0 is active.
+        let mut s = tabs_used(4, &[1, 3, 0]);
+        run(&mut s, "workspace.next", json!({"hold": true})).expect("next");
+        assert_eq!(s.workspaces.active, 3);
+        run(&mut s, "workspace.next", json!({"hold": true})).expect("next");
+        assert_eq!(s.workspaces.active, 1);
+        assert!(s.workspaces.walking());
+        run(&mut s, "workspace.prev", json!({"hold": true})).expect("prev");
+        assert_eq!(s.workspaces.active, 3, "Shift goes back one");
+        run(&mut s, "workspace.next", json!({"hold": true})).expect("next");
+        assert_eq!(s.workspaces.active, 1);
+        run(&mut s, "workspace.walk_end", Params::Null).expect("release");
+        assert!(!s.workspaces.walking());
+        // Recent order is now 2, 1, 4 (1-based): the next press returns to tab 1, then tab 4.
+        run(&mut s, "workspace.next", json!({"hold": true})).expect("next");
+        assert_eq!(s.workspaces.active, 0);
+        run(&mut s, "workspace.next", json!({"hold": true})).expect("next");
+        assert_eq!(s.workspaces.active, 3);
+        // Any other switch ends the walk, which counts as use.
+        run(&mut s, "workspace.switch", json!({"n": 3})).expect("click");
+        assert!(!s.workspaces.walking());
+        run(&mut s, "workspace.next", Params::Null).expect("next");
+        assert_eq!(s.workspaces.active, 3, "the walk's tab was used last");
+    }
+
+    #[test]
+    fn a_tab_closed_during_a_walk_is_skipped() {
+        let mut s = tabs_used(3, &[1, 2, 0]);
+        run(&mut s, "workspace.next", json!({"hold": true})).expect("next");
+        assert_eq!(s.workspaces.active, 2);
+        run(&mut s, "workspace.close", json!({"tab": 1})).expect("close");
+        assert!(!s.workspaces.walking(), "closing ends the walk");
+        assert_eq!(s.workspaces.tabs.len(), 2);
+        run(&mut s, "workspace.next", Params::Null).expect("next");
+        run(&mut s, "workspace.next", Params::Null).expect("next");
+        assert!(s.workspaces.active < 2);
+    }
+
+    #[test]
+    fn cycle_order_follows_the_tab_bar_and_wraps() {
+        let mut s = tabs_used(3, &[2]);
+        run(
+            &mut s,
+            "prefs.set",
+            json!({"key": "workspace_tab_order", "value": "cycle"}),
+        )
+        .expect("cycle");
+        run(&mut s, "workspace.next", json!({"hold": true})).expect("next");
+        assert_eq!(s.workspaces.active, 0, "wraps to the first");
+        assert!(!s.workspaces.walking(), "cycle has no walk");
+        run(&mut s, "workspace.prev", Params::Null).expect("prev");
+        assert_eq!(s.workspaces.active, 2, "wraps back to the last");
+        run(&mut s, "workspace.prev", Params::Null).expect("prev");
+        assert_eq!(s.workspaces.active, 1);
+    }
+
+    #[test]
+    fn one_tab_has_nothing_to_switch_to() {
+        let mut s = session();
+        assert!(!s.command_enabled("workspace.next"));
+        assert!(!s.command_enabled("workspace.walk_end"));
+        run(&mut s, "workspace.next", json!({"hold": true})).expect("no-op");
+        run(&mut s, "workspace.prev", Params::Null).expect("no-op");
+        assert_eq!(s.workspaces.active, 0);
+        assert!(!s.workspaces.walking());
+    }
+
+    #[test]
+    fn switching_commands_reject_malformed_params() {
+        let mut s = tabs_used(2, &[]);
+        for (id, params) in [
+            ("workspace.next", json!({"hold": 5})),
+            ("workspace.next", json!("x")),
+            ("workspace.prev", json!({"hold": "yes"})),
+            ("workspace.prev", json!([true])),
+            ("workspace.walk_end", json!([1])),
+        ] {
+            let before = s.workspaces.active;
+            assert!(run(&mut s, id, params.clone()).is_err(), "{id} {params}");
+            assert_eq!(s.workspaces.active, before);
         }
     }
 

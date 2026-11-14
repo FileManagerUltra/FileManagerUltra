@@ -8,17 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Ctrl+Tab and Ctrl+Shift+Tab switch between workspace tabs, also from a terminal. By default the first press returns to the tab you used before; keep Ctrl held and press Tab again to go further back. Preferences > Workspaces can switch to plain left-to-right order instead.
 - The status bar shows the playing time (elapsed / total) next to its media controls, so you can see where playback is with the Media pane closed or another workspace in front.
 - A diagnostic log for bug reports: turn on Preferences > Advanced > Troubleshooting > Write diagnostic log. Once a second it records the app's memory use (including graphics memory) and what it was doing, such as playing video or opening panes. It never records file names, folder names, server names or passwords. Open log folder (also in the Help menu) shows the logs; each session's log stops at 64 MiB, and the last 20 are kept.
 - About shows which build you are running, so test builds can be told apart.
 
 ### Changed
+- In a terminal, Ctrl+Shift+Tab now switches to the previous workspace tab instead of swapping panes; use the Panes menu to swap panes from a terminal.
 - Playing video redraws the window at the video's own frame rate instead of 60 times a second, and not at all while the player is hidden or the window is minimized, which saves power.
 - Thumbnails now keep at most 128 MiB in memory by default (was 192 MiB). Change it in Preferences > Advanced > Thumbnails if you browse very large picture folders.
 - Loading spinners (folder sizes, previews, searches, jobs) redraw about 15 times a second instead of at the screen's refresh rate, which saves power while something loads.
 - While idle the window no longer redraws several times every two seconds while checking for new drives; it redraws only when the check is done.
 
 ### Fixed
+- Ctrl+Shift+1 now switches to the first workspace tab, like Ctrl+Shift+2 to 9 already did, and Ctrl plus a digit works on keyboard layouts that need Shift for digits.
 - Windows: File > Open With… did not open; it now shows Windows' own "How do you want to open this file?" dialog.
 - Windows with an NVIDIA graphics card: the app's memory no longer grows while its window is visible (about 1 MB a second while playing video or moving the mouse over it, up to many gigabytes over a long session). The window is now drawn with Direct3D 12 instead of OpenGL, so changing the driver's "Threaded optimization" setting is no longer needed. If Direct3D cannot start (older or basic graphics cards), the app uses OpenGL and says so once; on a computer without a usable graphics card at all it still opens, drawing in software. Preferences > Advanced > Troubleshooting > Renderer switches between Direct3D and OpenGL (after a restart).
 - Seeking or restarting a video keeps its picture buffer on the graphics card instead of making a new one each time.

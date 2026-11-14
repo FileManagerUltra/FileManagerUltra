@@ -675,6 +675,71 @@ fn folder_menu_paste_uses_explicit_destination_not_listing_location() {
     assert!(fs.get_str("/src/a (2).txt").is_err());
 }
 
+/// Point the active tab's focused pane at `dir`, selecting `name` if given.
+fn show(s: &mut Session, dir: &str, name: Option<&str>) {
+    let pane = s.layout.state_mut(s.layout.focused()).expect("pane");
+    pane.location = uri(dir);
+    if let Some(name) = name {
+        pane.listing.select_only(Some(name), 0);
+    }
+}
+
+#[test]
+fn clipboard_works_across_workspace_tabs() {
+    let fs = MemFs::new();
+    fs.put_str("/src/a.txt", b"hello").expect("put");
+    fs.put_str("/src/b.txt", b"bye").expect("put");
+    fs.mkdirs_str("/dst").expect("dst");
+    fs.mkdirs_str("/dst2").expect("dst2");
+    let mut s = session_on(Arc::new(fs.clone()));
+
+    // Copy in tab 1, paste in tab 2: twice, since a copy stays on the clipboard.
+    show(&mut s, "/src", Some("a.txt"));
+    dispatch(&mut s, "file.clip_copy", Params::Null).expect("copy");
+    dispatch(&mut s, "workspace.new", Params::Null).expect("tab 2");
+    show(&mut s, "/dst", None);
+    assert!(
+        s.command_enabled("file.clip_paste"),
+        "paste offered in the other tab"
+    );
+    let os_text = fm_vfs::native_path("/src/a.txt", cfg!(windows)).expect("native");
+    dispatch(&mut s, "file.clip_paste", json!({"os_text": os_text})).expect("paste");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert_eq!(fs.get_str("/dst/a.txt").expect("copied"), b"hello");
+    show(&mut s, "/dst2", None);
+    dispatch(&mut s, "file.clip_paste", Params::Null).expect("paste again");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert_eq!(fs.get_str("/dst2/a.txt").expect("second copy"), b"hello");
+    show(&mut s, "/dst", None);
+    assert!(fs.get_str("/src/a.txt").is_ok(), "copy keeps the source");
+
+    // Cut in tab 1; opening and closing another tab and switching keep the clipboard.
+    dispatch(&mut s, "workspace.switch", json!({"n": 1})).expect("tab 1");
+    show(&mut s, "/src", Some("b.txt"));
+    dispatch(&mut s, "file.clip_cut", Params::Null).expect("cut");
+    dispatch(&mut s, "workspace.new", Params::Null).expect("tab 3");
+    dispatch(&mut s, "workspace.close", Params::Null).expect("close tab 3");
+    dispatch(&mut s, "workspace.switch", json!({"n": 2})).expect("tab 2");
+    assert!(s.clipboard.as_ref().is_some_and(|c| c.cut), "still the cut");
+    assert_eq!(
+        s.layout.state(s.layout.focused()).expect("pane").location,
+        uri("/dst"),
+        "tab 2 kept its folder"
+    );
+    dispatch(&mut s, "file.clip_paste", Params::Null).expect("paste the cut");
+    let id = only_job(&s.fileops);
+    assert_eq!(finish(&mut s, id), OpState::Finished);
+    assert_eq!(fs.get_str("/dst/b.txt").expect("moved"), b"bye");
+    assert!(
+        fs.get_str("/src/b.txt").is_err(),
+        "the cut removed the source"
+    );
+    assert!(s.clipboard.is_none(), "a cut is pasted once");
+    assert!(!s.command_enabled("file.clip_paste"));
+}
+
 #[test]
 fn opening_a_remote_file_shows_up_as_a_job() {
     let fs = MemFs::new();

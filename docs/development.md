@@ -205,8 +205,12 @@ context; check pane-local keys, aliases and focus-dependent meanings without
 changing settings or bindings.
 With Preview focused, Ctrl+0 (Cmd+0 on macOS) resets its zoom rather than
 switching to workspace 10; Ctrl+1..9 still switch tabs. In Files, Ctrl+0
-continues to select workspace 10. Dialogs, text fields and terminals keep their
-keyboard ownership.
+continues to select workspace 10. Ctrl+Shift+1..9 work the same as Ctrl+1..9
+(the digit key counts, not the character it types); Ctrl+Shift+0 is Zoom Reset.
+Ctrl+Tab / Ctrl+Shift+Tab switch workspace tabs, a focused terminal included,
+in most-recently-used order by default (hold Ctrl and press Tab again to go
+further back) or tab order (Preferences › Workspaces). Dialogs, text fields and
+terminals otherwise keep their keyboard ownership.
 Check proportional typography, left-aligned navigation and flat, divider-separated sections
 with aligned controls; the file listing keeps its existing typography. Connections separates SMB
 security, remote timing and a bordered trusted-host list with aligned Forget buttons.

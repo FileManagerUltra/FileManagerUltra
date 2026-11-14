@@ -459,6 +459,40 @@ pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
     ]
 }
 
+/// Ctrl/Cmd + a digit key, by the key rather than the character it types: Shift+1 types `!`,
+/// which egui reports as its own key, so Ctrl+Shift+1 did not match Ctrl+1 while Ctrl+Shift+2
+/// (no egui key for `@`) did; layouts that need Shift for digits (AZERTY) work the same way.
+/// Ctrl+Shift+0 is left alone: it is Zoom Reset. Returns (0-based tab, digit key) per press.
+fn take_digit_chords(ctx: &egui::Context) -> Vec<(usize, egui::Key)> {
+    use egui::Key::*;
+    const DIGITS: [egui::Key; 10] = [Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9, Num0];
+    ctx.input_mut(|input| {
+        let mut found = Vec::new();
+        input.events.retain(|event| {
+            let egui::Event::Key {
+                key,
+                physical_key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+            else {
+                return true;
+            };
+            let digit = physical_key.unwrap_or(*key);
+            let Some(ix) = DIGITS.iter().position(|d| *d == digit) else {
+                return true;
+            };
+            if !modifiers.command || modifiers.alt || (modifiers.shift && digit == Num0) {
+                return true;
+            }
+            found.push((ix, digit));
+            false
+        });
+        found
+    })
+}
+
 /// Ctrl/Cmd+C, X and V reach egui as clipboard events, never as key presses. Take them out of
 /// the frame's input and map them to the file-clipboard commands (paste carries the OS text).
 fn clipboard_events(ctx: &egui::Context) -> Vec<(&'static str, Option<String>)> {
@@ -910,6 +944,64 @@ pub fn consume_shortcuts(
     session: &mut Session,
     dialogs: &mut Dialogs,
 ) -> Vec<&'static str> {
+    let chords = if fm_engine::diag::enabled() {
+        logged_chords(ctx)
+    } else {
+        Vec::new()
+    };
+    let fired = consume_shortcuts_inner(ctx, session, dialogs);
+    for chord in chords {
+        fm_engine::diag::event("key", || {
+            let ran = if fired.is_empty() {
+                "unmatched".to_string()
+            } else {
+                fired.join(", ")
+            };
+            format!("{chord} -> {ran}")
+        });
+    }
+    fired
+}
+
+/// This frame's Ctrl/Cmd chords for the diagnostic log (capability `diagnostics`), e.g.
+/// `Ctrl+Shift+X (physical X)`. Never typed text: no plain or Shift-only keys, no Ctrl+Alt
+/// (AltGr types characters on Windows), no Alt-only (Option types characters on macOS), and
+/// nothing while a text field has focus.
+fn logged_chords(ctx: &egui::Context) -> Vec<String> {
+    if ctx.text_edit_focused() {
+        return Vec::new();
+    }
+    let mac = cfg!(target_os = "macos");
+    ctx.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|event| match event {
+                egui::Event::Key {
+                    key,
+                    physical_key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if (modifiers.command || modifiers.ctrl) && !modifiers.alt => {
+                    let mut text = egui::KeyboardShortcut::new(*modifiers, *key)
+                        .format(&egui::ModifierNames::NAMES, mac);
+                    if let Some(physical) = physical_key.filter(|p| p != key) {
+                        text.push_str(&format!(" (physical {})", physical.name()));
+                    }
+                    Some(text)
+                }
+                _ => None,
+            })
+            .take(8)
+            .collect()
+    })
+}
+
+fn consume_shortcuts_inner(
+    ctx: &egui::Context,
+    session: &mut Session,
+    dialogs: &mut Dialogs,
+) -> Vec<&'static str> {
     let mut fired = Vec::new();
     // File and bare-key shortcuts (Backspace, Tab) must not fire while a dialog or text field owns the keyboard.
     // The SFTP connect popup is a form too: Tab walks its fields instead of swapping panes.
@@ -922,6 +1014,7 @@ pub fn consume_shortcuts(
     // belong to the shell. Only Cmd/Ctrl+Shift chords (and macOS Cmd) stay app shortcuts.
     let terminal = !typing && session.focused_kind() == Some(PaneKind::Terminal);
     let files_focused = session.focused_kind().is_none_or(|k| k.is_files());
+    fired.extend(workspace_tab_keys(ctx, session, typing));
     for (id, shortcut) in table {
         if terminal && !terminal_shortcut(&shortcut) {
             continue;
@@ -1008,32 +1101,52 @@ pub fn consume_shortcuts(
         }
     }
     if !terminal && !typing && !dialogs.is_open() {
-        use egui::Key::*;
-        let digits = [Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9, Num0];
-        for (ix, key) in digits.into_iter().enumerate() {
-            let sc = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key);
-            if ctx.input_mut(|input| input.consume_shortcut(&sc)) {
-                if key == Num0 && session.focused_kind() == Some(PaneKind::Preview) {
-                    dispatch(session, dialogs, PREVIEW_SCALE_RESET);
-                    fired.push(PREVIEW_SCALE_RESET);
-                } else {
-                    session.dispatch_or_notice(
-                        "workspace.switch",
-                        &serde_json::json!({ "n": ix + 1 }),
-                    );
-                    fired.push("workspace.switch");
-                }
+        for (ix, key) in take_digit_chords(ctx) {
+            if key == egui::Key::Num0 && session.focused_kind() == Some(PaneKind::Preview) {
+                dispatch(session, dialogs, PREVIEW_SCALE_RESET);
+                fired.push(PREVIEW_SCALE_RESET);
+            } else {
+                session.dispatch_or_notice("workspace.switch", &serde_json::json!({ "n": ix + 1 }));
+                fired.push("workspace.switch");
             }
         }
     }
-    if terminal {
-        let swap = egui::KeyboardShortcut::new(
-            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-            egui::Key::Tab,
-        );
-        if ctx.input_mut(|input| input.consume_shortcut(&swap)) {
-            dispatch(session, dialogs, PANE_SWAP);
-            fired.push(PANE_SWAP);
+    fired
+}
+
+/// Ctrl+Tab / Ctrl+Shift+Tab switch workspace tabs everywhere, a focused terminal included
+/// (Ctrl, not Cmd, on macOS too, as in browsers); dialogs and text fields keep them
+/// (Preferences switches topics with them). A recent-order walk stays open while Ctrl is held
+/// and ends when it is released or the window loses focus.
+fn workspace_tab_keys(
+    ctx: &egui::Context,
+    session: &mut Session,
+    typing: bool,
+) -> Vec<&'static str> {
+    let mut fired = Vec::new();
+    if session.workspaces.walking() {
+        let (ctrl, focused) =
+            ctx.input(|i| (i.modifiers.ctrl, i.viewport().focused.unwrap_or(true)));
+        if !ctrl || !focused {
+            session.dispatch_or_notice("workspace.walk_end", &serde_json::Value::Null);
+            fired.push("workspace.walk_end");
+        }
+    }
+    if typing {
+        return fired;
+    }
+    // Shift first: the plain Ctrl pattern also matches Ctrl+Shift.
+    for (modifiers, id) in [
+        (
+            egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            "workspace.prev",
+        ),
+        (egui::Modifiers::CTRL, "workspace.next"),
+    ] {
+        let presses = ctx.input_mut(|i| i.count_and_consume_key(modifiers, egui::Key::Tab));
+        for _ in 0..presses {
+            session.dispatch_or_notice(id, &serde_json::json!({ "hold": true }));
+            fired.push(id);
         }
     }
     fired
@@ -1303,10 +1416,21 @@ mod tests {
         key: egui::Key,
         modifiers: egui::Modifiers,
     ) -> Vec<&'static str> {
+        typed_chord(ctx, session, key, key, modifiers)
+    }
+
+    /// A chord whose key types something else than the key's own name (Shift+1 = `!`).
+    fn typed_chord(
+        ctx: &egui::Context,
+        session: &mut Session,
+        key: egui::Key,
+        physical: egui::Key,
+        modifiers: egui::Modifiers,
+    ) -> Vec<&'static str> {
         let mut input = egui::RawInput::default();
         input.events.push(egui::Event::Key {
             key,
-            physical_key: Some(key),
+            physical_key: Some(physical),
             pressed: true,
             repeat: false,
             modifiers,
@@ -1392,6 +1516,45 @@ mod tests {
             assert_eq!(s.prefs.zoom, global);
         }
         assert_eq!(s.preview_slot(pane).expect("slot").scale, 1.0);
+    }
+
+    #[test]
+    fn ctrl_shift_digits_switch_tabs_by_the_key_not_the_character() {
+        use egui::{Key, Modifiers};
+        let mut s = Session::new().expect("session");
+        for _ in 1..4 {
+            s.dispatch("workspace.new", &Params::Null).expect("new tab");
+        }
+        let ctx = egui::Context::default();
+        let ctrl_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        // Shift+1 types `!`: egui reports Key::Exclamationmark, physical Num1.
+        assert_eq!(
+            typed_chord(&ctx, &mut s, Key::Exclamationmark, Key::Num1, ctrl_shift),
+            ["workspace.switch"]
+        );
+        assert_eq!(s.workspaces.active, 0);
+        assert_eq!(
+            typed_chord(&ctx, &mut s, Key::Num3, Key::Num3, ctrl_shift),
+            ["workspace.switch"]
+        );
+        assert_eq!(s.workspaces.active, 2);
+        // AZERTY: the 2 key types `é` without Shift; egui has no key for it.
+        assert_eq!(
+            typed_chord(&ctx, &mut s, Key::Num2, Key::Num2, Modifiers::COMMAND),
+            ["workspace.switch"]
+        );
+        assert_eq!(s.workspaces.active, 1);
+        assert!(
+            chord(&ctx, &mut s, Key::Num1, Modifiers::ALT | Modifiers::COMMAND).is_empty(),
+            "Alt (AltGr) chords are not tab shortcuts"
+        );
+        assert_eq!(s.workspaces.active, 1);
+        assert_eq!(
+            chord(&ctx, &mut s, Key::Num0, ctrl_shift),
+            [ZOOM_RESET],
+            "Ctrl+Shift+0 stays Zoom Reset"
+        );
+        assert_eq!(s.workspaces.active, 1);
     }
 
     #[test]
@@ -1520,8 +1683,123 @@ mod tests {
         assert!(copy.is_empty());
         let paste = chord(&ctx, &mut session, Key::V, ctrl_shift);
         assert!(paste.is_empty());
-        let swap = chord(&ctx, &mut session, Key::Tab, ctrl_shift);
-        assert_eq!(swap, vec![PANE_SWAP]);
+        // Ctrl+Tab switches workspaces from a terminal too; it no longer swaps panes.
+        let prev = chord(&ctx, &mut session, Key::Tab, ctrl_shift);
+        assert_eq!(prev, vec!["workspace.prev"]);
+        let next = chord(&ctx, &mut session, Key::Tab, ctrl);
+        assert_eq!(next, vec!["workspace.next"]);
+    }
+
+    /// One frame with Ctrl held (or not) and optional Tab presses.
+    fn ctrl_frame(
+        ctx: &egui::Context,
+        session: &mut Session,
+        ctrl_held: bool,
+        tabs: &[bool],
+    ) -> Vec<&'static str> {
+        let held = if ctrl_held {
+            egui::Modifiers::CTRL | egui::Modifiers::COMMAND
+        } else {
+            egui::Modifiers::NONE
+        };
+        let mut input = egui::RawInput::default();
+        input.events.push(egui::Event::ModifiersChanged(held));
+        for shift in tabs {
+            input.events.push(egui::Event::Key {
+                key: egui::Key::Tab,
+                physical_key: Some(egui::Key::Tab),
+                pressed: true,
+                repeat: false,
+                modifiers: if *shift {
+                    held | egui::Modifiers::SHIFT
+                } else {
+                    held
+                },
+            });
+        }
+        let mut fired = Vec::new();
+        let mut dialogs = Dialogs::default();
+        let mut out = ctx.run_ui(input, |ui| {
+            fired = consume_shortcuts(ui.ctx(), session, &mut dialogs);
+        });
+        out.textures_delta.clear();
+        fired
+    }
+
+    #[test]
+    fn ctrl_tab_walks_while_ctrl_is_held_and_commits_on_release() {
+        let mut s = Session::new().expect("session");
+        for _ in 1..4 {
+            s.dispatch("workspace.new", &Params::Null).expect("new tab");
+        }
+        // Used 2, 4, 1 (1-based); tab 1 active.
+        for n in [2, 4, 1] {
+            s.dispatch("workspace.switch", &serde_json::json!({ "n": n }))
+                .expect("switch");
+        }
+        let ctx = egui::Context::default();
+        assert_eq!(ctrl_frame(&ctx, &mut s, true, &[false]), ["workspace.next"]);
+        assert_eq!(s.workspaces.active, 3);
+        assert!(ctrl_frame(&ctx, &mut s, true, &[]).is_empty(), "still held");
+        assert!(s.workspaces.walking());
+        ctrl_frame(&ctx, &mut s, true, &[false, false, true]);
+        assert_eq!(s.workspaces.active, 1, "two on, one back");
+        assert_eq!(
+            ctrl_frame(&ctx, &mut s, false, &[]),
+            ["workspace.walk_end"],
+            "releasing Ctrl commits"
+        );
+        assert!(!s.workspaces.walking());
+        ctrl_frame(&ctx, &mut s, true, &[false]);
+        assert_eq!(s.workspaces.active, 0, "back to where the walk started");
+        ctrl_frame(&ctx, &mut s, false, &[]);
+    }
+
+    #[test]
+    fn the_diagnostic_log_names_shortcut_chords_but_never_typed_text() {
+        use egui::{Key, Modifiers};
+        let key = |key: Key, physical: Key, modifiers: Modifiers| egui::Event::Key {
+            key,
+            physical_key: Some(physical),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let ctrl = Modifiers::CTRL | Modifiers::COMMAND;
+        let input = egui::RawInput {
+            events: vec![
+                key(Key::X, Key::X, ctrl | Modifiers::SHIFT),
+                key(Key::Exclamationmark, Key::Num1, ctrl | Modifiers::SHIFT),
+                // Typing: plain, Shift, AltGr (Ctrl+Alt) and Option/Alt characters.
+                key(Key::A, Key::A, Modifiers::NONE),
+                key(Key::A, Key::A, Modifiers::SHIFT),
+                key(Key::Q, Key::Q, ctrl | Modifiers::ALT),
+                key(Key::E, Key::E, Modifiers::ALT),
+                egui::Event::Text("secret".into()),
+            ],
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        let mut logged = Vec::new();
+        let mut out = ctx.run_ui(input, |ui| logged = logged_chords(ui.ctx()));
+        out.textures_delta.clear();
+        assert_eq!(logged.len(), 2, "{logged:?}");
+        assert!(
+            logged[0].contains("Shift") && logged[0].ends_with('X'),
+            "{logged:?}"
+        );
+        assert!(logged[1].contains("(physical 1)"), "{logged:?}");
+        assert!(logged.iter().all(|l| !l.contains("secret")));
+    }
+
+    #[test]
+    fn dialogs_and_text_fields_keep_ctrl_tab() {
+        let mut s = Session::new().expect("session");
+        s.dispatch("workspace.new", &Params::Null).expect("new tab");
+        s.preferences_open = true;
+        let ctx = egui::Context::default();
+        assert!(ctrl_frame(&ctx, &mut s, true, &[false]).is_empty());
+        assert_eq!(s.workspaces.active, 1);
     }
 
     #[test]

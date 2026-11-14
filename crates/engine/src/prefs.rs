@@ -141,6 +141,17 @@ pub enum RendererFallback {
     Software,
 }
 
+/// The order Ctrl+Tab walks workspace tabs in (change `workspace-keys`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceTabOrder {
+    /// Most recently used first; holding Ctrl walks further back, releasing commits.
+    #[default]
+    Recent,
+    /// Tab-bar order, wrapping around.
+    Cycle,
+}
+
 /// How file sizes are written.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -240,6 +251,9 @@ pub struct Prefs {
     /// The renderer used last start because `windows_renderer` failed; `None` when it worked.
     #[serde(default)]
     pub windows_renderer_fallback: Option<RendererFallback>,
+    /// The order Ctrl+Tab / Ctrl+Shift+Tab switch workspace tabs in.
+    #[serde(default)]
+    pub workspace_tab_order: WorkspaceTabOrder,
     /// Seconds the audiobook skip-back and skip-forward buttons jump.
     #[serde(default = "default_skip_back")]
     pub media_skip_back_secs: u64,
@@ -607,6 +621,7 @@ impl Default for Prefs {
             diagnostics_log: false,
             windows_renderer: WindowsRenderer::default(),
             windows_renderer_fallback: None,
+            workspace_tab_order: WorkspaceTabOrder::default(),
             media_skip_back_secs: default_skip_back(),
             media_skip_forward_secs: default_skip_forward(),
             media_open_audio: MediaOpenTarget::default(),
@@ -1059,6 +1074,7 @@ mod tests {
                 "window_maximized",
                 "windows_renderer",
                 "windows_renderer_fallback",
+                "workspace_tab_order",
                 "zoom"
             ]
         );

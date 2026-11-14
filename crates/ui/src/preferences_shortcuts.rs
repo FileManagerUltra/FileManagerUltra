@@ -69,9 +69,12 @@ fn context(spec: &CommandSpec) -> &'static str {
             "Interface zoom; in Preview, scales the preview instead."
         }
         Group::Application => "Application shortcut.",
+        Group::Workspaces if spec.id == "workspace.next" || spec.id == "workspace.prev" => {
+            "Also in a terminal; dialogs and text fields keep it. Order: Preferences > Workspaces."
+        }
         Group::Workspaces => "Outside terminal input and text fields.",
         Group::Panes if spec.id == "pane.swap" => {
-            "Outside text fields; use Ctrl+Shift+Tab to leave a terminal."
+            "Outside text fields and terminals; from a terminal use the Panes menu."
         }
         Group::Panes => "Pane layout; dialogs and text fields may own the keyboard.",
         Group::Navigation | Group::Selection => "Focused Files pane, outside text fields.",
@@ -126,13 +129,7 @@ fn rows(s: &Session, mac: bool) -> Vec<Row> {
             Group::Workspaces,
             "Switch workspace",
             "Ctrl+1 through Ctrl+9 / Ctrl+0",
-            "Tabs 1-9 and 10; outside terminals and text fields. In Preview, Ctrl+0 resets zoom instead.",
-        ),
-        (
-            Group::Panes,
-            "Switch pane from a terminal",
-            "Ctrl+Shift+Tab",
-            "Plain Tab stays with the shell.",
+            "Tabs 1-9 and 10, with or without Shift; outside terminals and text fields. In Preview, Ctrl+0 resets zoom instead.",
         ),
         (
             Group::Navigation,
@@ -325,7 +322,11 @@ fn rows(s: &Session, mac: bool) -> Vec<Row> {
         });
     }
     for row in &mut rows {
-        if mac {
+        // Workspace Ctrl+Tab stays Control on macOS (Cmd+Tab is the system app switcher).
+        let control_tab = row.keys.ends_with("Tab") && row.group == Group::Workspaces;
+        if mac && control_tab {
+            row.keys = row.keys.replace("Ctrl+", "Control+");
+        } else if mac {
             row.keys = row.keys.replace("Ctrl+", "Cmd+");
             row.context = row.context.replace("Ctrl+", "Cmd+");
             if row.action == "Shell and terminal-program keys" {
@@ -429,6 +430,8 @@ mod tests {
         let s = Session::new().expect("session");
         let mac = rows(&s, true);
         assert!(mac.iter().any(|row| row.keys == "Cmd+Q"));
+        assert!(mac.iter().any(|row| row.keys == "Control+Tab"));
+        assert!(mac.iter().all(|row| !row.keys.contains("Cmd+Tab")));
         assert!(
             mac.iter()
                 .any(|row| row.keys == "Cmd+C" && row.group == Group::Terminal)

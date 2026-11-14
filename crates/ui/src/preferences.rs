@@ -994,6 +994,8 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
             );
         }
         Topic::Workspaces => {
+            section_heading(ui, tokens, "Switching");
+            tab_order_row(ui, s, tokens);
             section_heading(ui, tokens, "Saved workspaces");
             crate::workspaces::prefs_section(ui, s, tokens);
         }
@@ -1053,6 +1055,40 @@ fn cache_location(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
         s.dispatch_or_notice("preview.thumbs.clear_cache", &Params::Null);
     }
     ui.data_mut(|d| d.insert_temp(id, text));
+}
+
+/// The order Ctrl+Tab walks workspace tabs in (change `workspace-keys`).
+fn tab_order_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
+    use fm_engine::prefs::WorkspaceTabOrder;
+    if let Some(value) = choose(
+        ui,
+        tokens,
+        "workspace_tab_order",
+        "Ctrl+Tab order",
+        &[
+            ("Most recently used", WorkspaceTabOrder::Recent),
+            ("Tab order", WorkspaceTabOrder::Cycle),
+        ],
+        s.prefs.workspace_tab_order,
+    ) {
+        let value = match value {
+            WorkspaceTabOrder::Recent => "recent",
+            WorkspaceTabOrder::Cycle => "cycle",
+        };
+        set(s, "workspace_tab_order", json!(value));
+    }
+    crate::dialog_style::hint(
+        ui,
+        tokens,
+        match s.prefs.workspace_tab_order {
+            WorkspaceTabOrder::Recent => {
+                "Ctrl+Tab returns to the tab used before; keep Ctrl held and press Tab again to go further back."
+            }
+            WorkspaceTabOrder::Cycle => {
+                "Ctrl+Tab goes to the tab on the right, Ctrl+Shift+Tab to the left, wrapping around."
+            }
+        },
+    );
 }
 
 /// Default app or Media pane, separately for audio and video.
@@ -1485,6 +1521,25 @@ mod tests {
         assert_eq!(
             h.state().prefs.windows_renderer,
             fm_engine::prefs::WindowsRenderer::Opengl
+        );
+    }
+
+    #[test]
+    fn the_tab_order_row_switches_the_preference() {
+        let tokens = Tokens::dark();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(700.0, 200.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| tab_order_row(ui, s, &tokens),
+                Session::new().expect("session"),
+            );
+        h.run();
+        h.get_by_label("Most recently used");
+        h.get_by_label("Tab order").click();
+        h.run();
+        assert_eq!(
+            h.state().prefs.workspace_tab_order,
+            fm_engine::prefs::WorkspaceTabOrder::Cycle
         );
     }
 
