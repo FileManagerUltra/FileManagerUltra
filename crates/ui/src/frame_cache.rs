@@ -78,16 +78,21 @@ fn register<T: 'static + Clone + Send + Sync>(
 /// frame, after all panes are drawn.
 pub fn sweep(ctx: &Context) {
     ctx.data_mut(|data| {
-        let mut registry = data.get_temp::<Registry>(registry_id()).unwrap_or_default();
+        // Taken out and put back rather than cloned: this runs every frame.
+        let mut registry = data
+            .remove_temp::<Registry>(registry_id())
+            .unwrap_or_default();
         let current = registry.sweep;
-        let now = Instant::now();
+        // The clock is read only when a kept entry missed this frame.
+        let now = std::cell::OnceCell::new();
         let stale: Vec<(Id, Entry)> = registry
             .entries
             .iter()
             .filter(|(_, e)| {
                 e.used != current
-                    && e.kept
-                        .is_none_or(|(at, keep)| now.saturating_duration_since(at) >= keep)
+                    && e.kept.is_none_or(|(at, keep)| {
+                        now.get_or_init(Instant::now).saturating_duration_since(at) >= keep
+                    })
             })
             .map(|(id, e)| (*id, *e))
             .collect();

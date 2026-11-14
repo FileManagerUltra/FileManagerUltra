@@ -79,7 +79,6 @@ impl App {
             self.session.prefs.date_format,
         );
         fm_ui::listing::set_time_zone(&self.session.file_time_zone);
-        fm_ui::preview::set_video_texture_reuse(self.session.prefs.video_texture_reuse);
         let look = theme::Tokens::resolve_with(&self.session.prefs, dark);
         if (pref, dark) == self.applied && look == self.look {
             return;
@@ -679,15 +678,19 @@ fn diagnostics_frame(ctx: &egui::Context, session: &Session, tally: &mut DiagFra
             let bytes: usize = manager.allocated().map(|(_, meta)| meta.bytes_used()).sum();
             (manager.num_allocated(), bytes as u64)
         };
-        let mut sample = diag::session_sample(session, textures, bytes, ctx.pixels_per_point());
-        let mut causes: Vec<(String, u32)> = tally.causes.drain().collect();
-        causes.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        causes.truncate(8);
-        sample.repaint_causes = causes;
-        sample.input_frames = std::mem::take(&mut tally.input);
-        sample.other_frames = std::mem::take(&mut tally.other);
-        sample.egui_entries = ctx.memory(|m| m.data.len());
-        diag::send_ui_sample(sample);
+        let mut repaint_causes: Vec<(String, u32)> = tally.causes.drain().collect();
+        repaint_causes.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        repaint_causes.truncate(8);
+        let frame = diag::FrameStats {
+            textures,
+            texture_bytes: bytes,
+            pixels_per_point: ctx.pixels_per_point(),
+            egui_entries: ctx.memory(|m| m.data.len()),
+            input_frames: std::mem::take(&mut tally.input),
+            other_frames: std::mem::take(&mut tally.other),
+            repaint_causes,
+        };
+        diag::send_ui_sample(diag::session_sample(session, frame));
     }
 }
 

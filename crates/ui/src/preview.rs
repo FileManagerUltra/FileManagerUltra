@@ -1821,21 +1821,7 @@ fn poster_texture(
     Some(texture)
 }
 
-thread_local! {
-    static VIDEO_TEXTURE_REUSE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
-}
-
-/// Follow the `video_texture_reuse` preference (set by the app every frame, like
-/// [`crate::listing::set_display`]).
-pub fn set_video_texture_reuse(on: bool) {
-    VIDEO_TEXTURE_REUSE.with(|c| c.set(on));
-}
-
-fn video_texture_reuse() -> bool {
-    VIDEO_TEXTURE_REUSE.with(std::cell::Cell::get)
-}
-
-/// How long a reused video texture outlives frames that do not draw it (seek, restart).
+/// How long a video texture outlives frames that do not draw it (seek, decoder restart).
 const VIDEO_TEXTURE_KEEP: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn frame_image(frame: &fm_preview::player::Frame) -> egui::ColorImage {
@@ -1847,8 +1833,8 @@ fn frame_image(frame: &fm_preview::player::Frame) -> egui::ColorImage {
 
 /// The video picture's texture: one per picture, exactly the frame's size. Same-size frames
 /// overwrite it in place; a new size (another video, a resized pane) re-specifies it once.
-/// With `video_texture_reuse` on it also survives a few seconds without a frame (a seek or
-/// decoder restart); off, it is released at the first frame that does not draw it.
+/// It survives a few seconds without a frame (a seek or decoder restart), so those do not
+/// create a new texture either.
 pub(crate) fn video_texture(
     ctx: &egui::Context,
     id: Id,
@@ -1860,8 +1846,8 @@ pub(crate) fn video_texture(
     let size = [frame.width as usize, frame.height as usize];
     let texture = match cached {
         Some((old, texture)) if Arc::ptr_eq(&old, frame) => texture,
-        // Same size: overwrite the pixels in place. A full `set` re-specifies the texture, and
-        // drivers may free the old storage late (commit size grew ~8 MB per 1080p frame).
+        // Same size: overwrite the pixels in place. A full `set` re-specifies the texture every
+        // frame, which some drivers (NVIDIA OpenGL with threaded optimization) free late.
         Some((_, mut texture)) if texture.size() == size => {
             texture.set_partial([0, 0], frame_image(frame), egui::TextureOptions::LINEAR);
             diag::count(Counter::TexInPlace);
@@ -1892,15 +1878,10 @@ pub(crate) fn video_texture(
         }
     };
     ctx.data_mut(|d| d.insert_temp(id, (frame.clone(), texture.clone())));
-    let keep = if video_texture_reuse() {
-        VIDEO_TEXTURE_KEEP
-    } else {
-        std::time::Duration::ZERO
-    };
     crate::frame_cache::touch_kept::<(Arc<fm_preview::player::Frame>, egui::TextureHandle)>(
         ctx,
         id,
-        keep,
+        VIDEO_TEXTURE_KEEP,
         "video texture",
     );
     texture
@@ -3210,8 +3191,6 @@ mod tests {
                 seq,
             ))
         };
-        // The earlier upload path (`video_texture_reuse` off).
-        set_video_texture_reuse(false);
         let ctx = egui::Context::default();
         let id = Id::NULL.with("video-texture-test");
         // (pixels, size): a new texture only for the first frame and a size change.
@@ -3238,8 +3217,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reused_video_texture_survives_frames_without_a_picture() {
-        set_video_texture_reuse(true);
+    fn a_video_texture_survives_frames_without_a_picture() {
         let frame = |seq: u64, width: u32, height: u32| {
             Arc::new(fm_preview::player::Frame::new(
                 width,

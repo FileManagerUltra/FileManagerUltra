@@ -85,12 +85,27 @@ const COUNTER_NAMES: [&str; COUNTERS] = [
 ];
 static COUNTS: [AtomicU64; COUNTERS] = [const { AtomicU64::new(0) }; COUNTERS];
 
-/// What the UI thread knows, sent once per second ([`ui_sample_due`], [`send_ui_sample`]).
+/// What only the app's frame loop knows: egui's textures and memory, and why frames ran.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct UiSample {
+pub struct FrameStats {
     pub textures: usize,
     pub texture_bytes: u64,
     pub pixels_per_point: f32,
+    /// Entries in egui's memory map (widget state, caches); growing means per-frame ids.
+    pub egui_entries: usize,
+    /// Frames in the last second that had input (pointer movement, keys, scrolling).
+    pub input_frames: u32,
+    /// Frames in the last second with neither input nor a requested repaint (window
+    /// system redraws: resize, expose, focus).
+    pub other_frames: u32,
+    /// What requested the repaints of the last second: `file:line` and how many frames.
+    pub repaint_causes: Vec<(String, u32)>,
+}
+
+/// What the UI thread knows, sent once per second ([`ui_sample_due`], [`send_ui_sample`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UiSample {
+    pub frame: FrameStats,
     pub panes: usize,
     pub workspaces: usize,
     pub previews: usize,
@@ -99,7 +114,6 @@ pub struct UiSample {
     pub live_players: usize,
     /// Size of the newest frame of each video on screen.
     pub videos: Vec<(u32, u32)>,
-    pub texture_reuse: bool,
     /// Decoded video frames alive anywhere, and their buffers' capacity in bytes.
     pub live_frames: usize,
     pub live_frame_bytes: u64,
@@ -110,15 +124,6 @@ pub struct UiSample {
     pub media_hidden_playing: bool,
     /// Panes per kind in the visible workspace.
     pub pane_kinds: Vec<(&'static str, usize)>,
-    /// Frames in the last second that had input (pointer movement, keys, scrolling).
-    pub input_frames: u32,
-    /// Frames in the last second with neither input nor a requested repaint (window
-    /// system redraws: resize, expose, focus).
-    pub other_frames: u32,
-    /// What requested the repaints of the last second: `file:line` and how many frames.
-    pub repaint_causes: Vec<(String, u32)>,
-    /// Entries in egui's memory map (widget state, caches); growing means per-frame ids.
-    pub egui_entries: usize,
 }
 
 enum Msg {
@@ -204,13 +209,8 @@ pub fn ui_sample_due() -> bool {
             .is_ok()
 }
 
-/// Fill a [`UiSample`] from the session; the caller adds what only the UI knows.
-pub fn session_sample(
-    s: &crate::Session,
-    textures: usize,
-    texture_bytes: u64,
-    pixels_per_point: f32,
-) -> UiSample {
+/// A [`UiSample`]: `frame` from the frame loop, the rest read from the session.
+pub fn session_sample(s: &crate::Session, frame: FrameStats) -> UiSample {
     let mut videos: Vec<(u32, u32)> = s
         .previews
         .slots
@@ -221,10 +221,9 @@ pub fn session_sample(
     if let Some(f) = s.media.video.as_ref().and_then(|v| v.frame.as_ref()) {
         videos.push((f.width, f.height));
     }
+    let (live_frames, live_frame_bytes) = fm_preview::player::live_frames();
     UiSample {
-        textures,
-        texture_bytes,
-        pixels_per_point,
+        frame,
         panes: s.layout.panes().len(),
         workspaces: s.workspaces.tabs.len(),
         previews: s.previews.slots.len(),
@@ -232,19 +231,14 @@ pub fn session_sample(
         thumb_bytes: s.thumbs.memory_bytes() as u64,
         live_players: fm_preview::player::live_players(),
         videos,
-        texture_reuse: s.prefs.video_texture_reuse,
-        live_frames: fm_preview::player::live_frames().0,
-        live_frame_bytes: fm_preview::player::live_frames().1 as u64,
+        live_frames,
+        live_frame_bytes: live_frame_bytes as u64,
         thumbs_pending: s.thumbs.pending(),
         running_tools: fm_preview::video::running_tools(),
         media_hidden_playing: s.media.playing
             && s.media.video.is_some()
             && s.media_pane().is_none(),
         pane_kinds: pane_kinds(s),
-        input_frames: 0,
-        other_frames: 0,
-        repaint_causes: Vec::new(),
-        egui_entries: 0,
     }
 }
 
@@ -333,6 +327,8 @@ pub fn start(dir: &Path, header: Vec<String>) -> Result<PathBuf, FmError> {
 /// Stop writing; the file is flushed and closed. A no-op while not running.
 pub fn stop() {
     ENABLED.store(false, Ordering::Relaxed);
+    // No `log` record is formatted or even dispatched while the log is off.
+    log::set_max_level(log::LevelFilter::Off);
     let running = lock(&RUNNING).take();
     if let Some(mut running) = running {
         let _ = running.stop.try_send(());
@@ -377,10 +373,9 @@ pub fn header(prefs: &crate::prefs::Prefs) -> Vec<String> {
             build_commit()
         ),
         format!(
-            "settings: hardware_decoding={} ({}) video_texture_reuse={} zoom={}",
+            "settings: hardware_decoding={} ({}) zoom={}",
             prefs.media_hardware_decoding,
             fm_preview::player::HwAccel::for_platform().label(),
-            prefs.video_texture_reuse,
             prefs.zoom_factor(),
         ),
     ]
@@ -573,19 +568,21 @@ impl WriterState {
             }
             None => line.push_str(" mem=n/a"),
         }
-        if let Some(ui) = &self.ui {
+        // Each UI sample is printed once: a second without frames (minimized, idle) says so
+        // instead of repeating the last one.
+        if let Some(ui) = self.ui.take() {
+            let frame = &ui.frame;
             line.push_str(&format!(
-                " tex={} texmem={} players={} panes={} workspaces={} previews={} terms={} thumbs={} ppp={:.2} reuse={}",
-                ui.textures,
-                mib(ui.texture_bytes),
+                " tex={} texmem={} players={} panes={} workspaces={} previews={} terms={} thumbs={} ppp={:.2}",
+                frame.textures,
+                mib(frame.texture_bytes),
                 ui.live_players,
                 ui.panes,
                 ui.workspaces,
                 ui.previews,
                 ui.terminals,
                 mib(ui.thumb_bytes),
-                ui.pixels_per_point,
-                if ui.texture_reuse { "on" } else { "off" },
+                frame.pixels_per_point,
             ));
             line.push_str(&format!(
                 " live_frames={} frame_mem={} thumbs_pending={} tools={} media_hidden={}",
@@ -606,13 +603,13 @@ impl WriterState {
                 .collect();
             line.push_str(&format!(
                 " egui_entries={} pane_kinds={} input_frames={} other_frames={}",
-                ui.egui_entries,
+                frame.egui_entries,
                 kinds.join(","),
-                ui.input_frames,
-                ui.other_frames
+                frame.input_frames,
+                frame.other_frames
             ));
-            if !ui.repaint_causes.is_empty() {
-                let causes: Vec<String> = ui
+            if !frame.repaint_causes.is_empty() {
+                let causes: Vec<String> = frame
                     .repaint_causes
                     .iter()
                     .map(|(c, n)| format!("{c}x{n}"))
@@ -624,6 +621,8 @@ impl WriterState {
                     ui.videos.iter().map(|(w, h)| format!("{w}x{h}")).collect();
                 line.push_str(&format!(" video={}", sizes.join(",")));
             }
+        } else {
+            line.push_str(" ui=none");
         }
         for (i, name) in COUNTER_NAMES.iter().enumerate() {
             let now = COUNTS[i].load(Ordering::Relaxed);
@@ -758,10 +757,11 @@ pub fn install_log_sink() {
     }
 }
 
-/// Startup is over: while the log is off, stop paying for debug-level records.
+/// Startup is over (the renderer has reported its driver): while the log is off, the `log`
+/// macros everywhere return at their level check and nothing reaches the sink.
 pub fn startup_done() {
     if !enabled() {
-        log::set_max_level(log::LevelFilter::Warn);
+        log::set_max_level(log::LevelFilter::Off);
     }
 }
 
@@ -814,14 +814,17 @@ mod tests {
         count(Counter::Frames);
         count(Counter::Frames);
         send_ui_sample(UiSample {
-            textures: 7,
-            texture_reuse: true,
+            frame: FrameStats {
+                textures: 7,
+                input_frames: 3,
+                repaint_causes: vec![("media.rs:1762".into(), 58)],
+                ..FrameStats::default()
+            },
             videos: vec![(1920, 1080)],
-            input_frames: 3,
-            repaint_causes: vec![("media.rs:1762".into(), 58)],
             ..UiSample::default()
         });
-        std::thread::sleep(Duration::from_millis(1300));
+        // Two samples: the first shows the UI sample, the second has none (no frames ran).
+        std::thread::sleep(Duration::from_millis(2300));
         stop();
         assert!(!enabled());
         let text = std::fs::read_to_string(&path).expect("read");
@@ -836,6 +839,8 @@ mod tests {
         assert!(text.contains(" thumb_made=0"), "{text}");
         assert!(text.contains(" repaint=[media.rs:1762x58]"), "{text}");
         assert!(text.contains(" input_frames=3"), "{text}");
+        assert_eq!(text.matches(" tex=7").count(), 1, "printed once: {text}");
+        assert!(text.contains(" ui=none"), "{text}");
         assert!(text.trim_end().ends_with("log stopped"), "{text}");
         #[cfg(unix)]
         {

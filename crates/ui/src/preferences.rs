@@ -601,16 +601,6 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                             s.dispatch_or_notice("app.diagnostics.folder", &serde_json::Value::Null);
                         }
                     });
-                    let mut reuse = s.prefs.video_texture_reuse;
-                    if ui
-                        .checkbox(&mut reuse, "Reuse video texture")
-                        .on_hover_text(
-                            "Keep a video's picture buffer across seeks and restarts instead of making a new one. Turn off only to compare memory use",
-                        )
-                        .changed()
-                    {
-                        set(s, "video_texture_reuse", json!(reuse));
-                    }
                 },
             );
         }
@@ -1448,20 +1438,15 @@ mod tests {
     }
 
     #[test]
-    fn troubleshooting_offers_the_log_and_the_texture_switch() {
+    fn troubleshooting_offers_the_diagnostic_log() {
         let mut h = harness(Tokens::dark(), egui::vec2(1000.0, 700.0));
         h.get_by_label("Advanced").click();
         h.run();
         // Not clicked: turning the log on would write into this machine's data folder.
+        h.get_by_label("Write diagnostic log").scroll_to_me();
+        h.run();
         h.get_by_label("Write diagnostic log");
         h.get_by_label("Open log folder");
-        assert!(h.state().prefs.video_texture_reuse);
-        // The section is at the end of the page, below the fold.
-        h.get_by_label("Reuse video texture").scroll_to_me();
-        h.run();
-        h.get_by_label("Reuse video texture").click();
-        h.run();
-        assert!(!h.state().prefs.video_texture_reuse);
         assert!(!h.state().prefs.diagnostics_log);
     }
 
