@@ -35,3 +35,18 @@ Regression tests live in `crates/term/src/emulator.rs` and run with
 history eviction and cursor retention. On each bump, diff these files against
 the upstream release and rerun the terminal/engine/UI gates. Drop the patch when
 upstream provides compatible normal-buffer reflow.
+
+## egui-winit 0.37.0 (MIT OR Apache-2.0)
+
+Identical to crates.io except `src/lib.rs` (change `windows-wgpu`, design D3d): on Windows
+`WindowEvent::Moved` no longer asks for a repaint. With Direct3D's flip model a frame
+presented during a window move ties each step of the move to that frame, so dragging the
+window lagged behind the mouse; the window's contents do not change when it moves, and the
+position is read again at the next frame. `EGUI_WINIT_MOVE_REPAINT=1` restores upstream
+behaviour for comparison. Other platforms behave as upstream.
+
+The version must match eframe's: on every egui bump re-vendor the new release, re-apply
+the change (`diff -r` against crates.io shows it) or drop the patch once egui stops
+repainting on moves (or offers an option). The upstream macOS scroll-momentum module
+keeps its own `unsafe` (AppKit), as in the crates.io release.
+

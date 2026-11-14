@@ -105,7 +105,7 @@ one line.
 - By hand: `cargo update` moves `Cargo.lock` to the newest semver-compatible versions;
   `cargo update -p <crate>` updates one. A major bump means editing the version in the
   root `Cargo.toml`, then `cargo check`.
-- The vendored crates (`sspi`, `smb-transport`, `vt100`, patched in `[patch.crates-io]`)
+- The vendored crates (`sspi`, `smb-transport`, `vt100`, `egui-winit`, patched in `[patch.crates-io]`)
   are excluded from Dependabot: re-vendor and re-diff them as `vendor/FM-VENDORED.md`
   describes.
 

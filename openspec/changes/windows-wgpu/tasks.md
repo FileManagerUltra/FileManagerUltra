@@ -7,6 +7,7 @@
 - [x] 1.9 wgpu device asks for `MemoryHints::MemoryUsage` (small allocator blocks)
 - [x] 1.10 Thumbnail memory cache default 128 MiB (one constant for the pref default and the service cap); test
 - [x] 1.11 One queued frame (egui low-latency surface config) so dragging the window follows the mouse; `FM_PRESENT` override (mailbox, immediate) named in the renderer line; parse test
+- [x] 1.12 Vendored egui-winit: no repaint on `WindowEvent::Moved` on Windows (`EGUI_WINIT_MOVE_REPAINT=1` for upstream behaviour); dependabot ignore; FM-VENDORED entry
 - [x] 1.3 `main.rs`: run with the preferred renderer, retry with OpenGL and a notice if it fails to start
 - [x] 1.4 `windows_renderer` preference (`direct3d`/`opengl`) with the display prefs command; round-trip and malformed-value tests
 - [x] 1.5 Preferences › Advanced › Troubleshooting › Renderer row (Windows only) with "In use: …"; test

@@ -10,6 +10,10 @@ Drawing frames SHALL NOT make the application's memory grow. On Windows the wind
 ### Requirement: Renderer choice on Windows
 On Windows, Preferences › Advanced › Troubleshooting SHALL offer *Renderer*: Direct3D (default) or OpenGL, applied at the next start, and SHALL show which renderer and GPU are in use. If Direct3D cannot start, the application SHALL open with OpenGL instead and say so in a notice. Other platforms draw with OpenGL and do not show the choice.
 
+#### Scenario: Dragging the window with Direct3D
+- **WHEN** the user drags the window by its title bar on Windows with Direct3D
+- **THEN** the window follows the pointer as smoothly as with OpenGL, because moving the window does not redraw its contents
+
 #### Scenario: Choosing OpenGL
 - **WHEN** the user selects OpenGL and restarts the application
 - **THEN** the window is drawn with OpenGL and the row shows "In use: OpenGL"

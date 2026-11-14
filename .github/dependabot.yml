@@ -18,6 +18,7 @@ updates:
       - dependency-name: sspi
       - dependency-name: smb-transport
       - dependency-name: vt100
+      - dependency-name: egui-winit
 
   - package-ecosystem: github-actions
     directory: "/"
