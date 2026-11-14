@@ -14,6 +14,20 @@ const SLOW_SCAN_WARNING: Duration = Duration::from_secs(10);
 const MAX_DEVICES: usize = 256;
 type ScanResult = Result<Vec<Device>, FmError>;
 
+/// Wakes the UI when a scan finishes, so it need not poll while one runs.
+#[derive(Clone, Default)]
+struct ScanWaker(Option<std::sync::Arc<dyn Fn() + Send + Sync>>);
+
+impl std::fmt::Debug for ScanWaker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() {
+            "ScanWaker(set)"
+        } else {
+            "ScanWaker(none)"
+        })
+    }
+}
+
 /// What can safely detach this volume. Unknown virtual/encrypted mounts are browse-only.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Removal {
@@ -91,9 +105,16 @@ pub struct Devices {
     focused: bool,
     unavailable: Vec<VfsUri>,
     pub(crate) removal: Option<(crate::JobId, Device)>,
+    waker: ScanWaker,
 }
 
 impl Devices {
+    /// Called from the scan thread once its result is ready (the UI then calls
+    /// `Session::poll`, which applies it).
+    pub fn set_waker(&mut self, waker: impl Fn() + Send + Sync + 'static) {
+        self.waker = ScanWaker(Some(std::sync::Arc::new(waker)));
+    }
+
     pub fn entries(&self) -> &[Device] {
         &self.entries
     }
@@ -157,6 +178,7 @@ impl Devices {
             return Ok(());
         }
         let (tx, rx) = bounded(1);
+        let waker = self.waker.clone();
         std::thread::Builder::new()
             .name("devices-scan".into())
             .spawn(move || {
@@ -171,6 +193,9 @@ impl Devices {
                     }
                 });
                 let _ = tx.send(result);
+                if let Some(wake) = &waker.0 {
+                    wake();
+                }
             })
             .map_err(|e| FmError::backend("devices", format!("Cannot start volume scan: {e}")))?;
         self.pending = Some(rx);
@@ -570,6 +595,21 @@ mod tests {
                 .next_scan
                 .is_some_and(|next| next > Instant::now())
         );
+    }
+
+    #[test]
+    fn a_finished_scan_wakes_the_ui() {
+        let mut s = crate::Session::default();
+        let (woke_tx, woke_rx) = bounded(1);
+        s.volumes.set_waker(move || {
+            let _ = woke_tx.try_send(());
+        });
+        s.volumes.start(|| Ok(vec![device()])).expect("start");
+        woke_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("woken when the result is ready");
+        assert!(s.pump_devices(), "the result is there once woken");
+        assert_eq!(s.volumes.entries(), &[device()]);
     }
 
     #[test]

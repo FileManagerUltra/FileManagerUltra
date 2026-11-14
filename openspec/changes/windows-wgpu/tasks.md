@@ -18,6 +18,7 @@
 - [x] 2.1 Player frame waker, called after a due frame is published; test
 - [x] 2.2 Wake only while a playing player was drawn last frame; playing timer 250 ms; test
 - [x] 2.3 Loading spinners redraw about 15 times a second (`fm_ui::spinner`) instead of every frame; egui's spinner banned in `clippy.toml`; test
+- [x] 2.4 The device scan wakes the UI when it finishes (`Devices::set_waker`) instead of 100 ms polling while it runs; test
 
 ## 3. Docs and checks
 

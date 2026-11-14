@@ -419,8 +419,11 @@ impl eframe::App for App {
         });
         let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
         self.session.devices_tick(focused);
+        // A running scan wakes the UI when it is done (waker set in `App::new`); the second
+        // keeps the slow-scan warning on time. Polling every 100 ms drew ~5 frames every
+        // 2 s while idle, also while the window was being dragged.
         ctx.request_repaint_after(if self.session.volumes.scanning() {
-            std::time::Duration::from_millis(100)
+            std::time::Duration::from_secs(1)
         } else {
             fm_engine::devices::SCAN_INTERVAL
         });
@@ -871,7 +874,7 @@ fn run(options: eframe::NativeOptions, pending: Pending, start: Start) -> eframe
 impl App {
     fn new(
         cc: &eframe::CreationContext<'_>,
-        session: Session,
+        mut session: Session,
         config_dir: Option<PathBuf>,
     ) -> Self {
         fm_engine::diag::set_renderer(renderer::describe(cc));
@@ -884,6 +887,10 @@ impl App {
         set_egui_theme_preference(&cc.egui_ctx, theme_pref);
         let wake_ctx = cc.egui_ctx.clone();
         session.watch.set_waker(move || wake_ctx.request_repaint());
+        let scan_ctx = cc.egui_ctx.clone();
+        session
+            .volumes
+            .set_waker(move || scan_ctx.request_repaint());
         // Video is drawn when a frame is ready, not on a 16 ms timer, and only while a
         // player is on screen.
         let frame_ctx = cc.egui_ctx.clone();

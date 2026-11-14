@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Playing video redraws the window at the video's own frame rate instead of 60 times a second, and not at all while the player is hidden or the window is minimized, which saves power.
 - Thumbnails now keep at most 128 MiB in memory by default (was 192 MiB). Change it in Preferences > Advanced > Thumbnails if you browse very large picture folders.
 - Loading spinners (folder sizes, previews, searches, jobs) redraw about 15 times a second instead of at the screen's refresh rate, which saves power while something loads.
+- While idle the window no longer redraws several times every two seconds while checking for new drives; it redraws only when the check is done.
 
 ### Fixed
 - Windows with an NVIDIA graphics card: the app's memory no longer grows while its window is visible (about 1 MB a second while playing video or moving the mouse over it, up to many gigabytes over a long session). The window is now drawn with Direct3D 12 instead of OpenGL, so changing the driver's "Threaded optimization" setting is no longer needed. If Direct3D cannot start (older or basic graphics cards), the app uses OpenGL and says so once; on a computer without a usable graphics card at all it still opens, drawing in software. Preferences > Advanced > Troubleshooting > Renderer switches between Direct3D and OpenGL (after a restart).
