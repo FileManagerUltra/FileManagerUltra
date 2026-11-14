@@ -473,22 +473,49 @@ pub fn dialog() -> CommandSpec {
         run: |s, params| {
             let uri = target(s, object(params)?)?;
             let path = crate::open_cmds::local_path(&uri)?;
-            if cfg!(windows) {
-                // The system dialog lists and remembers applications itself.
-                let mut cmd = std::process::Command::new("rundll32.exe");
-                cmd.arg("shell32.dll,OpenAs_RunDLL").arg(&path);
-                cmd.spawn()
-                    .map_err(|e| FmError::backend("open", format!("cannot show Open With: {e}")))?;
-                return Ok(());
+            // The system dialog lists and remembers applications itself.
+            #[cfg(windows)]
+            {
+                system_open_with(&path)
             }
-            let catalog = s.app_catalog();
-            s.open_with = Some(OpenWith {
-                target: uri,
-                catalog,
-            });
-            Ok(())
+            #[cfg(not(windows))]
+            {
+                // `local_path` only checked that the file is local; the scan lists apps.
+                let _ = path;
+                let catalog = s.app_catalog();
+                s.open_with = Some(OpenWith {
+                    target: uri,
+                    catalog,
+                });
+                Ok(())
+            }
         },
     }
+}
+
+/// Windows' "How do you want to open this file?" dialog: `OpenWith.exe "<file>"`, what
+/// Explorer's "Choose another app" runs. Older Windows without it get `OpenAs_RunDLL`, which
+/// takes the rest of rundll32's command line as the path, so it must not be quoted (Rust
+/// quotes paths with spaces, and the dialog then silently did not appear).
+#[cfg(windows)]
+fn system_open_with(path: &std::path::Path) -> Result<(), FmError> {
+    use std::os::windows::process::CommandExt as _;
+    let system = std::env::var_os("SystemRoot")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"))
+        .join("System32");
+    let open_with = system.join("OpenWith.exe");
+    let spawned = if open_with.is_file() {
+        std::process::Command::new(open_with).arg(path).spawn()
+    } else {
+        std::process::Command::new(system.join("rundll32.exe"))
+            .arg("shell32.dll,OpenAs_RunDLL")
+            .raw_arg(path.as_os_str())
+            .spawn()
+    };
+    spawned
+        .map(drop)
+        .map_err(|e| FmError::backend("open", format!("cannot show Open With: {e}")))
 }
 
 /// `file.open_with` — open a local file with an application from the last scan.

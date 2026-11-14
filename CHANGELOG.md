@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - While idle the window no longer redraws several times every two seconds while checking for new drives; it redraws only when the check is done.
 
 ### Fixed
+- Windows: File > Open With… did not open; it now shows Windows' own "How do you want to open this file?" dialog.
 - Windows with an NVIDIA graphics card: the app's memory no longer grows while its window is visible (about 1 MB a second while playing video or moving the mouse over it, up to many gigabytes over a long session). The window is now drawn with Direct3D 12 instead of OpenGL, so changing the driver's "Threaded optimization" setting is no longer needed. If Direct3D cannot start (older or basic graphics cards), the app uses OpenGL and says so once; on a computer without a usable graphics card at all it still opens, drawing in software. Preferences > Advanced > Troubleshooting > Renderer switches between Direct3D and OpenGL (after a restart).
 - Seeking or restarting a video keeps its picture buffer on the graphics card instead of making a new one each time.
 
