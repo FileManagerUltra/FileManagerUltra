@@ -347,6 +347,8 @@ pub struct Prefs {
 
 pub const FONT_SIZE_RANGE: std::ops::RangeInclusive<f32> = 9.0..=24.0;
 pub const THUMB_MEMORY_RANGE: std::ops::RangeInclusive<u64> = 32..=2048;
+/// Default size of the in-memory thumbnail cache, in MiB.
+pub const THUMB_MEMORY_DEFAULT_MIB: u64 = 128;
 pub const THUMB_DISK_RANGE: std::ops::RangeInclusive<u64> = 32..=8192;
 pub const PREVIEW_TIME_RANGE: std::ops::RangeInclusive<u64> = 2..=120;
 
@@ -354,7 +356,7 @@ fn default_font_size() -> f32 {
     14.0
 }
 fn default_thumb_memory() -> u64 {
-    192
+    THUMB_MEMORY_DEFAULT_MIB
 }
 fn default_thumb_disk() -> u64 {
     256
@@ -963,6 +965,16 @@ mod tests {
         std::fs::write(&path, doc).expect("write");
         // Unknown fields are ignored; known fields fall back to defaults.
         assert_eq!(load(&path), Prefs::default());
+    }
+
+    #[test]
+    fn the_thumbnail_memory_cache_defaults_to_128_mib() {
+        assert_eq!(Prefs::default().thumb_memory_mib, 128);
+        assert_eq!(crate::thumbs::MEMORY_BYTES, 128 << 20);
+        assert!(THUMB_MEMORY_RANGE.contains(&THUMB_MEMORY_DEFAULT_MIB));
+        // A file without the key gets the default too.
+        let parsed: Prefs = toml::from_str("").expect("empty prefs");
+        assert_eq!(parsed.thumb_memory_mib, 128);
     }
 
     #[test]

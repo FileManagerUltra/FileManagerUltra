@@ -8,6 +8,7 @@ On Windows with an NVIDIA GPU the app's memory grew by about 25 KB for every fra
 - **Renderer preference** (Windows only): Preferences › Advanced › Troubleshooting › *Renderer*: Direct3D (default) or OpenGL, applied at the next start, with an "In use: …" line naming the backend and GPU. Stored as `windows_renderer` in `prefs.toml`.
 - **Fallback:** if Direct3D cannot start (no adapter, old driver, remote session), the window opens with OpenGL instead and a notice says so. eframe allows a second `run_native` after a failed one, so this happens in the same process.
 - **Video draws at its own frame rate:** the decoder wakes the UI when a new frame is ready, but only while a playing player was drawn in the previous frame (a hidden pane or a minimized window draws nothing). The UI's own playing timer drops from 16 ms to 250 ms and only moves the clock and seek bar. This halves the frames drawn for a 25 fps video and helps every renderer.
+- **Thumbnail memory cache default 192 → 128 MiB** (Windows logs showed it as the largest memory item the app controls; still configurable 32-2048 MiB).
 - The renderer in use is written in the diagnostic log header; the log also accepts wgpu's warnings.
 - The vendored egui_glow from the first attempt is removed.
 
@@ -16,6 +17,7 @@ On Windows with an NVIDIA GPU the app's memory grew by about 25 KB for every fra
 ### Modified Capabilities
 - `app-shell`: new requirements "Drawing does not grow memory" and "Renderer choice on Windows".
 - `media-pane`: new requirement "Video redraws at its frame rate".
+- `preview-thumbnails`: "Cache is bounded and regenerable" memory default 128 MiB.
 
 ## Impact
 

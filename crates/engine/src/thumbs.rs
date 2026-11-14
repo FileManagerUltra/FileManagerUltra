@@ -17,7 +17,7 @@ use fm_preview::thumbs::{DiskCache, Thumb, ThumbKind, classify, make_as};
 use fm_vfs::{Entry, Vfs, VfsUri};
 
 /// Decoded thumbnails kept in memory (least recently drawn go first).
-pub const MEMORY_BYTES: usize = 192 << 20;
+pub const MEMORY_BYTES: usize = (crate::prefs::THUMB_MEMORY_DEFAULT_MIB as usize) << 20;
 /// The disk cache is trimmed to this on first use.
 pub const DISK_BYTES: u64 = 256 << 20;
 const MAX_WORKERS: usize = 4;

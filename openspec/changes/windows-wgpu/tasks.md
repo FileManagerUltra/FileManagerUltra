@@ -5,6 +5,7 @@
 - [x] 1.7 First Windows test (2026-11-14): wgpu picked Vulkan (listed first); window moves stuttered and commit started ~400 MB vs ~105 MB on OpenGL, but stayed flat. Now Direct3D 12 only, with an adapter selector (dedicated GPU first, never WARP) that logs the adapter list
 - [x] 1.8 Fallback chain Direct3D → OpenGL → Direct3D software (WARP); `Prefs::windows_renderer_fallback` so the notice appears once per change; tests
 - [x] 1.9 wgpu device asks for `MemoryHints::MemoryUsage` (small allocator blocks)
+- [x] 1.10 Thumbnail memory cache default 128 MiB (one constant for the pref default and the service cap); test
 - [x] 1.3 `main.rs`: run with the preferred renderer, retry with OpenGL and a notice if it fails to start
 - [x] 1.4 `windows_renderer` preference (`direct3d`/`opengl`) with the display prefs command; round-trip and malformed-value tests
 - [x] 1.5 Preferences › Advanced › Troubleshooting › Renderer row (Windows only) with "In use: …"; test
