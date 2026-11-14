@@ -14,6 +14,8 @@ Only Windows with NVIDIA's threaded OpenGL driver is known to leak, but any Open
 
 **D3b: Memory hints.** egui-wgpu asks for `MemoryHints::Performance`, which makes wgpu's allocator reserve 128-256 MB device blocks and 64-128 MB host (system memory, counted in commit) blocks. The device descriptor is wrapped to ask for `MemoryUsage` (8-64 MB / 4-32 MB): a file manager's buffers and textures are small.
 
+**D3c: One queued frame.** egui-winit repaints on every `WindowEvent::Moved`, and eframe's wgpu default (`SurfaceConfig::HIGH_THROUGHPUT`) lets two frames queue behind vsync, so on Direct3D the window trailed the mouse while dragged (OpenGL felt smooth because NVIDIA's threaded driver never waited, which is the same queue that leaked). `configure` uses egui's low-latency setting: vsync, `desired_maximum_frame_latency: Some(1)`. The `FM_PRESENT` environment variable (`mailbox`, `immediate`) tries non-waiting present modes for troubleshooting; the renderer line in Preferences and the log names an override.
+
 **D4: Preference, not automatic switching.** Users who see a problem with Direct3D (drawing glitches, drivers) can pick OpenGL in Troubleshooting. The choice takes effect at the next start because the renderer cannot change under a running window.
 
 **D5: Frame-driven video redraws.** `fm_preview::player::set_frame_waker` installs one callback (a `OnceLock`) that decoder threads call after publishing a due frame, outside the snapshot lock. The app's callback calls `request_repaint` only if `fm_ui::media::video_on_screen(ctx)`: the frame number of the last frame that drew a playing player is kept in egui's temp data, and must be the previous frame. Playing players request a 250 ms repaint for the clock; audio-only playback needs no more.

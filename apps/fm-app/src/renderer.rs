@@ -101,6 +101,46 @@ pub fn configure(options: &mut eframe::NativeOptions, attempt: Attempt) {
                 ..base(adapter)
             });
         }
+        // egui repaints on every window move. eframe queues two frames and waits for the
+        // display's refresh before each, so the window trailed the mouse; one queued frame is
+        // egui's low-latency setting. `FM_PRESENT` tries other present modes.
+        options.wgpu_options.surface = eframe::egui_wgpu::SurfaceConfig {
+            present_mode: match Present::from_env() {
+                Present::Vsync => wgpu::PresentMode::AutoVsync,
+                Present::Mailbox => wgpu::PresentMode::Mailbox,
+                Present::Immediate => wgpu::PresentMode::AutoNoVsync,
+            },
+            desired_maximum_frame_latency: Some(1),
+        };
+    }
+}
+
+// Used by the Windows renderer; elsewhere only by tests.
+#[cfg_attr(not(windows), allow(dead_code))]
+/// How finished frames reach the screen with Direct3D.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Present {
+    /// Wait for the display's refresh (default).
+    Vsync,
+    /// Hand the frame over without waiting; the compositor shows the newest one.
+    Mailbox,
+    /// Without waiting, tearing allowed.
+    Immediate,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+impl Present {
+    /// Troubleshooting override from the `FM_PRESENT` environment variable.
+    fn from_env() -> Self {
+        Self::parse(std::env::var("FM_PRESENT").ok().as_deref())
+    }
+
+    fn parse(value: Option<&str>) -> Self {
+        match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("mailbox") => Self::Mailbox,
+            Some("immediate") => Self::Immediate,
+            _ => Self::Vsync,
+        }
     }
 }
 
@@ -115,8 +155,13 @@ pub fn describe(cc: &eframe::CreationContext<'_>) -> String {
         } else {
             ""
         };
+        let present = match Present::from_env() {
+            Present::Vsync => "",
+            Present::Mailbox => ", present mailbox",
+            Present::Immediate => ", present immediate",
+        };
         return format!(
-            "{} ({}{software})",
+            "{} ({}{software}{present})",
             windows::backend_name(info.backend),
             info.name.trim()
         );
@@ -282,6 +327,14 @@ mod tests {
         // The last attempt takes only the software rasterizer.
         assert!(rank(Api::Direct3d12, Device::Software, true).is_some());
         assert_eq!(rank(Api::Direct3d12, Device::Discrete, true), None);
+    }
+
+    #[test]
+    fn present_mode_waits_for_the_display_unless_overridden() {
+        assert_eq!(Present::parse(None), Present::Vsync);
+        assert_eq!(Present::parse(Some("bogus")), Present::Vsync);
+        assert_eq!(Present::parse(Some(" Mailbox ")), Present::Mailbox);
+        assert_eq!(Present::parse(Some("immediate")), Present::Immediate);
     }
 
     #[test]
