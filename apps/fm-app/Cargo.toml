@@ -25,6 +25,9 @@ serde_json.workspace = true
 fm-vfs.workspace = true
 eframe.workspace = true
 egui.workspace = true
+# eframe's own egui-winit (vendored, vendor/FM-VENDORED.md): its repaint-event counts go
+# into the diagnostic log.
+egui-winit = { version = "0.37", default-features = false }
 # Feature-only dependency: enables winit's Wayland title bar (see root Cargo.toml).
 winit.workspace = true
 souvlaki.workspace = true

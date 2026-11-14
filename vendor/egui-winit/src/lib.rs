@@ -353,6 +353,18 @@ impl State {
         window: &Window,
         event: &winit::event::WindowEvent,
     ) -> EventResponse {
+        let response = self.on_window_event_inner(window, event);
+        if response.repaint {
+            note_repaint_event(short_window_event_description(event));
+        }
+        response
+    }
+
+    fn on_window_event_inner(
+        &mut self,
+        window: &Window,
+        event: &winit::event::WindowEvent,
+    ) -> EventResponse {
         profiling::function_scope!(short_window_event_description(event));
 
         #[cfg(feature = "accesskit")]
@@ -853,6 +865,7 @@ impl State {
             x: delta.0 as f32,
             y: delta.1 as f32,
         }));
+        note_repaint_event("MouseMotion");
         true
     }
 
@@ -2691,4 +2704,29 @@ pub fn short_window_event_description(event: &winit::event::WindowEvent) -> &'st
 fn move_repaint_requested() -> bool {
     static REQUESTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *REQUESTED.get_or_init(|| std::env::var("EGUI_WINIT_MOVE_REPAINT").is_ok_and(|v| v.trim() == "1"))
+}
+
+/// Local patch (vendor/FM-VENDORED.md, diagnostics): window events that asked for a repaint,
+/// by kind, since the last [`take_repaint_events`].
+static REPAINT_EVENTS: std::sync::Mutex<Vec<(&'static str, u32)>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn note_repaint_event(kind: &'static str) {
+    if let Ok(mut events) = REPAINT_EVENTS.lock() {
+        if let Some(entry) = events.iter_mut().find(|(k, _)| *k == kind) {
+            entry.1 = entry.1.saturating_add(1);
+        } else if events.len() < 64 {
+            events.push((kind, 1));
+        }
+    }
+}
+
+/// Local patch (vendor/FM-VENDORED.md, diagnostics): the window events that asked for a
+/// repaint since the last call, by kind (`short_window_event_description`, or
+/// `MouseMotion` for raw mouse movement).
+pub fn take_repaint_events() -> Vec<(&'static str, u32)> {
+    REPAINT_EVENTS
+        .lock()
+        .map(|mut events| std::mem::take(&mut *events))
+        .unwrap_or_default()
 }

@@ -55,6 +55,8 @@ struct DiagFrames {
     causes: std::collections::HashMap<String, u32>,
     input: u32,
     other: u32,
+    /// The window's position at the previous frame (to count frames drawn while it moves).
+    position: Option<egui::Pos2>,
 }
 
 /// `crates/ui/src/media.rs` (or a registry path with `\`) → `media.rs`.
@@ -663,6 +665,21 @@ fn diagnostics_frame(ctx: &egui::Context, session: &Session, tally: &mut DiagFra
     if causes.is_empty() && !input {
         tally.other += 1;
     }
+    // Window events (from the vendored egui-winit) that asked for this frame, and frames in
+    // which the window had moved: what draws while the window is dragged.
+    for (kind, count) in egui_winit::take_repaint_events() {
+        let key = format!("event:{kind}");
+        if tally.causes.len() < 64 || tally.causes.contains_key(&key) {
+            *tally.causes.entry(key).or_insert(0) += count;
+        }
+    }
+    let position = ctx.input(|i| i.viewport().outer_rect).map(|r| r.min);
+    if position.is_some() && position != tally.position {
+        if tally.position.is_some() {
+            *tally.causes.entry("moved".to_string()).or_insert(0) += 1;
+        }
+        tally.position = position;
+    }
     for cause in causes.iter().take(16) {
         let mut key = format!("{}:{}", short_source(cause.file), cause.line);
         if !cause.reason.is_empty() {
@@ -683,7 +700,7 @@ fn diagnostics_frame(ctx: &egui::Context, session: &Session, tally: &mut DiagFra
         };
         let mut repaint_causes: Vec<(String, u32)> = tally.causes.drain().collect();
         repaint_causes.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        repaint_causes.truncate(8);
+        repaint_causes.truncate(12);
         let frame = diag::FrameStats {
             textures,
             texture_bytes: bytes,

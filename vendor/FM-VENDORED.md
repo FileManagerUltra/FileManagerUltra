@@ -45,6 +45,10 @@ window lagged behind the mouse; the window's contents do not change when it move
 position is read again at the next frame. `EGUI_WINIT_MOVE_REPAINT=1` restores upstream
 behaviour for comparison. Other platforms behave as upstream.
 
+Diagnostics (same file): `on_window_event` and `on_mouse_motion` count the events that
+asked for a repaint by kind; `take_repaint_events()` hands the counts to the app, which
+writes them into the diagnostic log's `repaint=[…]` column as `event:<kind>`.
+
 The version must match eframe's: on every egui bump re-vendor the new release, re-apply
 the change (`diff -r` against crates.io shows it) or drop the patch once egui stops
 repainting on moves (or offers an option). The upstream macOS scroll-momentum module
