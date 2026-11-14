@@ -2006,9 +2006,45 @@ pub fn indicator(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
     if button(ui, tokens, Icon::Prev, "Previous", on("media.prev"), false).clicked() {
         actions.push(("media.prev", Value::Null));
     }
+    // Laid out right to left: the time ends up left of the controls. A book shows its
+    // whole-book time, as the Media pane's clock does.
+    let book = s
+        .media
+        .book_view()
+        .and_then(|v| v.total.map(|total| (v.position, total)));
+    let (position, total) = book.map_or((s.media.position, s.media.duration()), |(p, t)| {
+        (p, Some(t))
+    });
+    ui.label(tokens.muted(time_readout(position, total)))
+        .on_hover_text("Playing time (elapsed / total)");
+    let minimized = ui.input(|i| i.viewport().minimized) == Some(true);
+    if s.media.playing && !minimized {
+        ui.ctx()
+            .request_repaint_after(next_second(position, s.media.speed));
+    }
     for (command, params) in actions {
         s.dispatch_or_notice(command, &params);
     }
+}
+
+/// The status bar's playing time: `elapsed / total`, or `elapsed` when the length is unknown.
+fn time_readout(position: f64, total: Option<f64>) -> String {
+    match total.filter(|t| t.is_finite() && *t > 0.0) {
+        Some(total) => format!("{} / {}", clock(position), clock(total)),
+        None => clock(position),
+    }
+}
+
+/// Time until the shown second changes at `speed`, so the readout costs one frame a second.
+fn next_second(position: f64, speed: f64) -> std::time::Duration {
+    let speed = if speed.is_finite() && speed > 0.0 {
+        speed
+    } else {
+        1.0
+    };
+    let left = 1.0 - position.max(0.0).fract();
+    // A little past the boundary, so the new second is already there when the frame runs.
+    std::time::Duration::from_secs_f64((left / speed + 0.01).clamp(0.02, 1.0))
 }
 
 fn cover(ui: &mut Ui, pane: PaneId, image: Option<&Arc<fm_preview::ImageDoc>>, tokens: &Tokens) {
@@ -2704,5 +2740,76 @@ mod tests {
             h.state().audio_owner,
             fm_engine::audio_owner::AudioOwner::None
         );
+    }
+
+    #[test]
+    fn status_bar_time_reads_elapsed_and_total() {
+        assert_eq!(time_readout(83.4, Some(296.0)), "1:23 / 4:56");
+        assert_eq!(time_readout(125.0, Some(3720.0)), "2:05 / 1:02:00");
+        assert_eq!(time_readout(83.0, None), "1:23", "length unknown");
+        assert_eq!(time_readout(83.0, Some(0.0)), "1:23");
+        assert_eq!(time_readout(83.0, Some(f64::NAN)), "1:23");
+    }
+
+    #[test]
+    fn status_bar_time_redraws_when_the_second_changes() {
+        let ms = |d: std::time::Duration| d.as_millis();
+        assert_eq!(ms(next_second(10.25, 1.0)), 760);
+        assert_eq!(ms(next_second(10.25, 2.0)), 385, "faster playback");
+        assert!(ms(next_second(10.999, 1.0)) >= 20, "never a busy loop");
+        assert!(ms(next_second(10.0, 0.0)) <= 1000, "bad speed falls back");
+        assert!(ms(next_second(-5.0, f64::NAN)) <= 1000);
+    }
+
+    #[test]
+    fn status_bar_time_costs_no_frames_while_paused() {
+        let delay = |playing: bool| {
+            let mut s = Session::new().expect("session");
+            s.media
+                .queue
+                .enqueue(fm_vfs::VfsUri::parse("/music/one.mp3").expect("uri"))
+                .expect("enqueue");
+            s.media.queue.select(0).expect("current");
+            s.media.position = 83.5;
+            s.media.playing = playing;
+            let ctx = egui::Context::default();
+            let mut last = std::time::Duration::MAX;
+            for _ in 0..4 {
+                let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    ui.horizontal(|ui| indicator(ui, &mut s, &Tokens::dark()));
+                });
+                out.textures_delta.clear();
+                last = out
+                    .viewport_output
+                    .get(&egui::ViewportId::ROOT)
+                    .map_or(std::time::Duration::MAX, |v| v.repaint_delay);
+            }
+            last
+        };
+        let playing = delay(true);
+        assert!(
+            playing > std::time::Duration::from_millis(400)
+                && playing <= std::time::Duration::from_secs(1),
+            "playing: once a second, got {playing:?}"
+        );
+        assert_eq!(delay(false), std::time::Duration::MAX, "paused: no redraws");
+    }
+
+    #[test]
+    fn status_bar_shows_the_playing_time() {
+        let mut s = Session::new().expect("session");
+        s.media
+            .queue
+            .enqueue(fm_vfs::VfsUri::parse("/music/one.mp3").expect("uri"))
+            .expect("enqueue");
+        s.media.queue.select(0).expect("current");
+        s.media.position = 83.0;
+        let h = Harness::builder().build_ui_state(
+            |ui, s| {
+                ui.horizontal(|ui| indicator(ui, s, &Tokens::dark()));
+            },
+            s,
+        );
+        h.get_by_label("1:23");
     }
 }

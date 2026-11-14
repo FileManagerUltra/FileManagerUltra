@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The status bar shows the playing time (elapsed / total) next to its media controls, so you can see where playback is with the Media pane closed or another workspace in front.
 - A diagnostic log for bug reports: turn on Preferences > Advanced > Troubleshooting > Write diagnostic log. Once a second it records the app's memory use (including graphics memory) and what it was doing, such as playing video or opening panes. It never records file names, folder names, server names or passwords. Open log folder (also in the Help menu) shows the logs; each session's log stops at 64 MiB, and the last 20 are kept.
 - About shows which build you are running, so test builds can be told apart.
 

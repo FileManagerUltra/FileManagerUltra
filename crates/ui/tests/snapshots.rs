@@ -129,6 +129,51 @@ fn media_audio_queue_dark_light() {
 }
 
 #[test]
+fn media_status_bar_time_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (name, tokens) in [("dark", Tokens::dark()), ("light", Tokens::light())] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = Session::new().expect("session");
+        session
+            .media
+            .queue
+            .enqueue(VfsUri::parse("/music/one.mp3").expect("uri"))
+            .expect("enqueue");
+        session.media.queue.select(0).expect("current");
+        session.media.position = 83.0;
+        session.media.info = Some(std::sync::Arc::new(fm_media::AudioInfo {
+            format: fm_media::AudioFormat::new(44_100, 2).expect("format"),
+            duration: Some(296.0),
+            tags: fm_media::AudioTags::default(),
+            encoder_delay: 0,
+            encoder_padding: 0,
+        }));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 48.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                egui::CentralPanel::default().show(ui, |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        fm_ui::media::indicator(ui, &mut session, &tokens);
+                    });
+                });
+            });
+        harness.run();
+        harness.snapshot(format!("media_status_bar_time_{name}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
 fn video_preview_controls() {
     media_preview_controls(true, false, false);
 }
