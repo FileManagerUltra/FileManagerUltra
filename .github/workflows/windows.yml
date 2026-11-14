@@ -4,7 +4,8 @@ name: windows
 # real video, subtitle and DVD tests run). Start it from the Actions tab or with
 # `gh workflow run windows.yml --ref <branch>`. For an installer to try by hand, run the
 # release workflow on the branch instead (`gh workflow run release.yml --ref <branch>`):
-# it builds all three platforms and publishes only from a tag.
+# it builds the Windows installer by default (`-f platforms=all|linux|macos` for others)
+# and publishes only from a tag.
 on:
   workflow_dispatch:
 

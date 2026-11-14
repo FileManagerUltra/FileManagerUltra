@@ -4,6 +4,12 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Installers to build (a tag push always builds all three)"
+        type: choice
+        options: [windows, linux, macos, all]
+        default: windows
 
 permissions:
   contents: write
@@ -12,16 +18,41 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Manual test builds pick their platforms (Windows by default) to save runner minutes;
+  # a tag push builds all three.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        env:
+          PLATFORMS: ${{ inputs.platforms || 'all' }}
+        run: |
+          all='[
+            {"name":"linux-x64","os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","formats":"deb,appimage"},
+            {"name":"windows-x64","os":"windows-latest","target":"x86_64-pc-windows-msvc","formats":"nsis"},
+            {"name":"macos-arm64","os":"macos-15","target":"aarch64-apple-darwin","formats":"dmg"}
+          ]'
+          if [ "$PLATFORMS" = all ] || [ "${GITHUB_REF#refs/tags/v}" != "$GITHUB_REF" ]; then
+            picked=$(jq -c . <<<"$all")
+          else
+            picked=$(jq -c --arg p "$PLATFORMS" '[.[] | select(.name | startswith($p))]' <<<"$all")
+          fi
+          if [ "$(jq length <<<"$picked")" -eq 0 ]; then
+            echo "No platform matches '$PLATFORMS'" >&2
+            exit 1
+          fi
+          echo "matrix=$picked" >> "$GITHUB_OUTPUT"
+
   package:
     name: package (${{ matrix.name }})
+    needs: plan
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { name: linux-x64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, formats: "deb,appimage" }
-          - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc, formats: "nsis" }
-          - { name: macos-arm64, os: macos-15, target: aarch64-apple-darwin, formats: "dmg" }
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
       - name: Tag must match the workspace version
