@@ -64,6 +64,7 @@ impl App {
             self.session.prefs.date_format,
         );
         fm_ui::listing::set_time_zone(&self.session.file_time_zone);
+        fm_ui::preview::set_video_texture_reuse(self.session.prefs.video_texture_reuse);
         let look = theme::Tokens::resolve_with(&self.session.prefs, dark);
         if (pref, dark) == self.applied && look == self.look {
             return;
@@ -584,6 +585,7 @@ impl eframe::App for App {
                     }
                     ui.heading(fm_brand::APP_NAME);
                     ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
+                    ui.label(format!("build {}", fm_engine::diag::build_commit()));
                     ui.label(fm_brand::ORG_NAME);
                 });
             });
@@ -598,6 +600,7 @@ impl eframe::App for App {
         // Textures and pictures of panes that were not drawn this frame (closed workspaces
         // and panes, hidden tabs) are released.
         fm_ui::frame_cache::sweep(&ctx);
+        diagnostics_frame(&ctx, &self.session);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -614,10 +617,40 @@ impl eframe::App for App {
         {
             eprintln!("failed to save preferences: {err}");
         }
+        // Flushes and closes the diagnostic log (a no-op while it is off).
+        fm_engine::diag::stop();
+    }
+}
+
+/// Diagnostic log bookkeeping once per frame (capability `diagnostics`); an atomic load
+/// while the log is off.
+fn diagnostics_frame(ctx: &egui::Context, session: &Session) {
+    use fm_engine::diag;
+    // The graphics stack reports its driver while the window opens; after that, debug
+    // records are not needed unless the log is on.
+    if ctx.cumulative_frame_nr() == 10 {
+        diag::startup_done();
+    }
+    diag::count(diag::Counter::Frames);
+    if diag::ui_sample_due() {
+        let (textures, bytes) = {
+            let manager = ctx.tex_manager();
+            let manager = manager.read();
+            let bytes: usize = manager.allocated().map(|(_, meta)| meta.bytes_used()).sum();
+            (manager.num_allocated(), bytes as u64)
+        };
+        diag::send_ui_sample(diag::session_sample(
+            session,
+            textures,
+            bytes,
+            ctx.pixels_per_point(),
+        ));
     }
 }
 
 fn main() -> eframe::Result {
+    // Before the window opens, so the renderer's driver lines can reach the diagnostic log.
+    fm_engine::diag::install_log_sink();
     let config_dir = fm_engine::prefs::default_config_dir();
     let prefs = config_dir
         .as_ref()
@@ -632,6 +665,11 @@ fn main() -> eframe::Result {
         }
     };
     session.prefs = prefs;
+    if let Err(err) = fm_engine::diag::apply(session.prefs.diagnostics_log, || {
+        fm_engine::diag::header(&session.prefs)
+    }) {
+        session.notice = Some(err.to_string());
+    }
     session.show_hidden = session.prefs.show_hidden;
     fm_engine::display_prefs_cmds::apply_runtime(&session.prefs, &session);
     if session.prefs.check_updates

@@ -177,6 +177,17 @@ pub struct Player {
 
 type Output = (Box<dyn AudioSink>, AudioProducer, Clock);
 
+/// Decoders still running (diagnostic log): started players whose worker has not finished.
+pub fn live_players() -> usize {
+    WORKERS.lock().map_or(0, |workers| {
+        workers
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|shared| shared.snapshot.lock().is_ok_and(|s| !s.done))
+            .count()
+    })
+}
+
 /// Called once during application shutdown, not from a rendering frame.
 /// Include cancelled/replaced players so their subprocesses cannot outlive a normal quit.
 pub fn shutdown() -> Result<(), FmError> {

@@ -14,6 +14,7 @@ pub const PREFERENCES: &str = "app.preferences";
 pub const QUIT: &str = "app.quit";
 pub const ABOUT: &str = "app.about";
 pub const CHECK_UPDATES: &str = "app.updates.check";
+pub const DIAGNOSTICS_FOLDER: &str = "app.diagnostics.folder";
 pub const THEME_DARK: &str = "view.theme.dark";
 pub const THEME_LIGHT: &str = "view.theme.light";
 pub const THEME_SYSTEM: &str = "view.theme.system";
@@ -120,6 +121,7 @@ pub fn all_ids() -> &'static [&'static str] {
         QUIT,
         ABOUT,
         CHECK_UPDATES,
+        DIAGNOSTICS_FOLDER,
         PREFERENCES,
         THEME_DARK,
         THEME_LIGHT,
@@ -882,6 +884,7 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
         });
         ui.menu_button("Help", |ui| {
             item(ui, session, dialogs, CHECK_UPDATES);
+            item(ui, session, dialogs, DIAGNOSTICS_FOLDER);
             item(ui, session, dialogs, ABOUT);
         });
     });

@@ -1670,7 +1670,11 @@ fn video_body(
                 None if !v.playing => m
                     .poster
                     .as_ref()
-                    .and_then(|poster| poster_texture(ui.ctx(), pane, p, poster)),
+                    .and_then(|poster| poster_texture(ui.ctx(), pane, p, poster))
+                    .map(|texture| VideoPicture {
+                        texture,
+                        uv: FULL_UV,
+                    }),
                 None => None,
             };
             let resp = paint_video_box(ui, tokens, boxed, size, picture, Sense::click());
@@ -1750,14 +1754,16 @@ fn paint_video_box(
     tokens: &Tokens,
     boxed: egui::Vec2,
     picture: egui::Vec2,
-    texture: Option<egui::TextureHandle>,
+    texture: Option<VideoPicture>,
     sense: Sense,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(boxed, sense);
     let at = egui::Rect::from_center_size(rect.center(), picture);
     match texture {
         Some(tex) => {
-            egui::Image::new((tex.id(), picture)).paint_at(ui, at);
+            egui::Image::new((tex.texture.id(), picture))
+                .uv(tex.uv)
+                .paint_at(ui, at);
         }
         None => {
             ui.painter().rect_filled(at, 0.0, tokens.bg);
@@ -1821,39 +1827,193 @@ fn poster_texture(
     Some(texture)
 }
 
+thread_local! {
+    static VIDEO_TEXTURE_REUSE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Follow the `video_texture_reuse` preference (set by the app every frame, like
+/// [`crate::listing::set_display`]).
+pub fn set_video_texture_reuse(on: bool) {
+    VIDEO_TEXTURE_REUSE.with(|c| c.set(on));
+}
+
+fn video_texture_reuse() -> bool {
+    VIDEO_TEXTURE_REUSE.with(std::cell::Cell::get)
+}
+
+/// A reused video texture grows in steps of this many pixels per side.
+const VIDEO_TEXTURE_STEP: usize = 256;
+/// How long a reused video texture outlives frames that do not draw it (seek, restart).
+const VIDEO_TEXTURE_KEEP: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The video picture's texture and the part of it the current frame covers.
+pub(crate) struct VideoPicture {
+    pub texture: egui::TextureHandle,
+    pub uv: egui::Rect,
+}
+
+const FULL_UV: egui::Rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+
 pub(crate) fn video_texture(
     ctx: &egui::Context,
     id: Id,
     frame: &Arc<fm_preview::player::Frame>,
+) -> VideoPicture {
+    if video_texture_reuse() {
+        reused_video_texture(ctx, id, frame)
+    } else {
+        VideoPicture {
+            texture: replaced_video_texture(ctx, id, frame),
+            uv: FULL_UV,
+        }
+    }
+}
+
+fn frame_image(frame: &fm_preview::player::Frame) -> egui::ColorImage {
+    egui::ColorImage::from_rgba_unmultiplied(
+        [frame.width as usize, frame.height as usize],
+        &frame.rgba,
+    )
+}
+
+/// The earlier upload path (`video_texture_reuse` off), kept for comparison.
+fn replaced_video_texture(
+    ctx: &egui::Context,
+    id: Id,
+    frame: &Arc<fm_preview::player::Frame>,
 ) -> egui::TextureHandle {
+    use fm_engine::diag::{self, Counter};
     let cached =
         ctx.data(|d| d.get_temp::<(Arc<fm_preview::player::Frame>, egui::TextureHandle)>(id));
-    let image = || {
-        egui::ColorImage::from_rgba_unmultiplied(
-            [frame.width as usize, frame.height as usize],
-            &frame.rgba,
-        )
-    };
+    let size = [frame.width as usize, frame.height as usize];
     let texture = match cached {
         Some((old, texture)) if Arc::ptr_eq(&old, frame) => texture,
-        // Same size: overwrite the pixels in place. A full `set` makes the renderer create a
-        // new GPU texture for every frame; on Windows (Direct3D 12) the old ones are released
-        // late, so the commit size grew by about 8 MB per 1080p frame.
-        Some((_, mut texture))
-            if texture.size() == [frame.width as usize, frame.height as usize] =>
-        {
-            texture.set_partial([0, 0], image(), egui::TextureOptions::LINEAR);
+        // Same size: overwrite the pixels in place. A full `set` re-specifies the texture, and
+        // drivers may free the old storage late (commit size grew ~8 MB per 1080p frame).
+        Some((_, mut texture)) if texture.size() == size => {
+            texture.set_partial([0, 0], frame_image(frame), egui::TextureOptions::LINEAR);
+            diag::count(Counter::TexInPlace);
             texture
         }
         Some((_, mut texture)) => {
-            texture.set(image(), egui::TextureOptions::LINEAR);
+            let old = texture.size();
+            texture.set(frame_image(frame), egui::TextureOptions::LINEAR);
+            diag::count(Counter::TexResized);
+            diag::event("texture", || {
+                format!(
+                    "video texture re-specified {}x{} -> {}x{}",
+                    old[0], old[1], size[0], size[1]
+                )
+            });
             texture
         }
-        None => ctx.load_texture("video-frame", image(), egui::TextureOptions::LINEAR),
+        None => {
+            diag::count(Counter::TexCreated);
+            diag::event("texture", || {
+                format!("video texture created {}x{}", size[0], size[1])
+            });
+            ctx.load_texture(
+                "video-frame",
+                frame_image(frame),
+                egui::TextureOptions::LINEAR,
+            )
+        }
     };
     ctx.data_mut(|d| d.insert_temp(id, (frame.clone(), texture.clone())));
-    crate::frame_cache::touch::<(Arc<fm_preview::player::Frame>, egui::TextureHandle)>(ctx, id);
+    crate::frame_cache::touch_kept::<(Arc<fm_preview::player::Frame>, egui::TextureHandle)>(
+        ctx,
+        id,
+        std::time::Duration::ZERO,
+        "video texture",
+    );
     texture
+}
+
+#[derive(Clone)]
+struct ReusedTexture {
+    frame: Arc<fm_preview::player::Frame>,
+    texture: egui::TextureHandle,
+    storage: [usize; 2],
+}
+
+fn storage_side(pixels: usize) -> usize {
+    pixels.max(1).div_ceil(VIDEO_TEXTURE_STEP) * VIDEO_TEXTURE_STEP
+}
+
+/// One texture per video picture whose storage only grows; every frame is written into its
+/// top-left corner in place, so the driver never re-allocates per frame or per resize.
+fn reused_video_texture(
+    ctx: &egui::Context,
+    id: Id,
+    frame: &Arc<fm_preview::player::Frame>,
+) -> VideoPicture {
+    use fm_engine::diag::{self, Counter};
+    let size = [frame.width as usize, frame.height as usize];
+    let blank = |storage: [usize; 2]| {
+        let bytes = vec![0u8; storage[0].saturating_mul(storage[1]).saturating_mul(4)];
+        egui::ColorImage::from_rgba_unmultiplied(storage, &bytes)
+    };
+    let cached = ctx.data(|d| d.get_temp::<ReusedTexture>(id));
+    let entry = match cached {
+        Some(c) if Arc::ptr_eq(&c.frame, frame) => c,
+        Some(mut c) if size[0] <= c.storage[0] && size[1] <= c.storage[1] => {
+            c.texture
+                .set_partial([0, 0], frame_image(frame), egui::TextureOptions::LINEAR);
+            diag::count(Counter::TexInPlace);
+            c.frame = frame.clone();
+            c
+        }
+        Some(mut c) => {
+            let storage = [
+                c.storage[0].max(storage_side(size[0])),
+                c.storage[1].max(storage_side(size[1])),
+            ];
+            diag::count(Counter::TexResized);
+            diag::event("texture", || {
+                format!(
+                    "video texture grown {}x{} -> {}x{} for a {}x{} frame",
+                    c.storage[0], c.storage[1], storage[0], storage[1], size[0], size[1]
+                )
+            });
+            c.texture.set(blank(storage), egui::TextureOptions::LINEAR);
+            c.texture
+                .set_partial([0, 0], frame_image(frame), egui::TextureOptions::LINEAR);
+            c.storage = storage;
+            c.frame = frame.clone();
+            c
+        }
+        None => {
+            let storage = [storage_side(size[0]), storage_side(size[1])];
+            diag::count(Counter::TexCreated);
+            diag::event("texture", || {
+                format!(
+                    "video texture created {}x{} for a {}x{} frame (reused)",
+                    storage[0], storage[1], size[0], size[1]
+                )
+            });
+            let mut texture =
+                ctx.load_texture("video-frame", blank(storage), egui::TextureOptions::LINEAR);
+            texture.set_partial([0, 0], frame_image(frame), egui::TextureOptions::LINEAR);
+            ReusedTexture {
+                frame: frame.clone(),
+                texture,
+                storage,
+            }
+        }
+    };
+    // Half a texel in from the frame's right and bottom edge: linear filtering never blends
+    // in the unused part of the storage.
+    let uv = egui::Rect::from_min_max(
+        egui::Pos2::ZERO,
+        egui::pos2(
+            ((size[0] as f32 - 0.5).max(0.5)) / entry.storage[0] as f32,
+            ((size[1] as f32 - 0.5).max(0.5)) / entry.storage[1] as f32,
+        ),
+    );
+    let texture = entry.texture.clone();
+    ctx.data_mut(|d| d.insert_temp(id, entry));
+    crate::frame_cache::touch_kept::<ReusedTexture>(ctx, id, VIDEO_TEXTURE_KEEP, "video texture");
+    VideoPicture { texture, uv }
 }
 
 fn video_controls(
@@ -3160,6 +3320,8 @@ mod tests {
                 seq,
             })
         };
+        // The earlier upload path (`video_texture_reuse` off).
+        set_video_texture_reuse(false);
         let ctx = egui::Context::default();
         let id = Id::NULL.with("video-texture-test");
         // (pixels, size): a new texture only for the first frame and a size change.
@@ -3183,6 +3345,89 @@ mod tests {
         let full: Vec<bool> = deltas.iter().map(|d| d.contains(&true)).collect();
         assert_eq!(full, [true, false, false, true, false], "{deltas:?}");
         assert!(deltas.iter().all(|d| d.len() <= 2), "{deltas:?}");
+    }
+
+    #[test]
+    fn a_reused_video_texture_only_grows_and_survives_frames_without_a_picture() {
+        set_video_texture_reuse(true);
+        let frame = |seq: u64, width: u32, height: u32| {
+            Arc::new(fm_preview::player::Frame {
+                width,
+                height,
+                rgba: vec![seq as u8; (width * height * 4) as usize],
+                seq,
+            })
+        };
+        let ctx = egui::Context::default();
+        let id = Id::NULL.with("reused-video-texture-test");
+        let sizes = [
+            (64, 36),
+            (64, 36),
+            (32, 18),
+            (200, 100),
+            (300, 300),
+            (64, 36),
+        ];
+        let mut full = Vec::new();
+        let mut uv = FULL_UV;
+        for (seq, (w, h)) in sizes.into_iter().enumerate() {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                uv = video_texture(ui.ctx(), id, &frame(seq as u64, w, h)).uv;
+                crate::frame_cache::sweep(ui.ctx());
+            });
+            let deltas: Vec<_> = out.textures_delta.set.values().flatten().collect();
+            full.push(deltas.iter().any(|d| d.pos.is_none()));
+            // Every new frame is written in place at the top-left corner.
+            assert!(
+                deltas.iter().any(|d| d.pos == Some([0, 0])),
+                "frame {seq} not uploaded in place"
+            );
+            out.textures_delta.clear();
+        }
+        // Storage 256x256 for the first frame, grown once to 512x512 for the 300x300 frame;
+        // smaller frames and size changes inside the storage never re-specify it.
+        assert_eq!(full, [true, false, false, false, true, false]);
+        let storage = ctx
+            .data(|d| d.get_temp::<ReusedTexture>(id))
+            .expect("cached")
+            .storage;
+        assert_eq!(storage, [512, 512]);
+        assert!((uv.max.x - 63.5 / 512.0).abs() < 1e-6, "{uv:?}");
+        assert!((uv.max.y - 35.5 / 512.0).abs() < 1e-6, "{uv:?}");
+        // A seek or restart: frames are drawn without the picture for a moment.
+        for _ in 0..10 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                crate::frame_cache::sweep(ui.ctx());
+            });
+            assert!(
+                out.textures_delta.free.is_empty(),
+                "texture freed during the gap"
+            );
+            out.textures_delta.clear();
+        }
+        assert!(ctx.data(|d| d.get_temp::<ReusedTexture>(id)).is_some());
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let _ = video_texture(ui.ctx(), id, &frame(99, 64, 36));
+        });
+        assert!(
+            out.textures_delta
+                .set
+                .values()
+                .flatten()
+                .all(|d| d.pos.is_some()),
+            "the same texture is used after the gap"
+        );
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn storage_sides_round_up_to_the_step() {
+        assert_eq!(storage_side(0), 256);
+        assert_eq!(storage_side(1), 256);
+        assert_eq!(storage_side(256), 256);
+        assert_eq!(storage_side(257), 512);
+        assert_eq!(storage_side(1920), 2048);
+        assert_eq!(storage_side(1080), 1280);
     }
 
     #[test]

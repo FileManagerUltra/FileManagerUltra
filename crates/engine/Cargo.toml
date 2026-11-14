@@ -34,6 +34,7 @@ memchr.workspace = true
 toml.workspace = true
 directories.workspace = true
 sysinfo.workspace = true
+log.workspace = true
 jiff.workspace = true
 regex.workspace = true
 tempfile.workspace = true

@@ -243,8 +243,25 @@ pub(crate) fn pump(v: &mut VideoState) -> bool {
             overlay: v.overlay,
         };
         match Player::start(&spec, v.gain.clone()) {
-            Ok(p) => v.player = Some(p),
+            Ok(p) => {
+                crate::diag::count(crate::diag::Counter::DecoderStarts);
+                crate::diag::event("decoder", || {
+                    format!(
+                        "start width={} source={}x{} from={:.1}s still={} hardware={} subtitles={} speed={}",
+                        spec.width,
+                        spec.info.width,
+                        spec.info.height,
+                        spec.from,
+                        spec.still,
+                        spec.hardware.map_or("off", |h| h.label()),
+                        spec.overlay.is_some(),
+                        spec.speed,
+                    )
+                });
+                v.player = Some(p);
+            }
             Err(err) => {
+                crate::diag::event("decoder", || "start failed".into());
                 v.playing = false;
                 v.error = Some(err.to_string());
                 changed = true;
@@ -257,6 +274,7 @@ pub(crate) fn pump(v: &mut VideoState) -> bool {
     if let Some(f) = player.latest()
         && !v.frame.as_ref().is_some_and(|old| Arc::ptr_eq(old, &f))
     {
+        crate::diag::count(crate::diag::Counter::VideoFrames);
         v.frame = Some(f);
         changed = true;
     }

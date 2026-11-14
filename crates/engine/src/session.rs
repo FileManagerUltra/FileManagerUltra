@@ -254,12 +254,19 @@ impl Session {
     /// *before* any command sees them; an unknown id is an error, not a crash.
     pub fn dispatch(&mut self, id: &str, params: &Params) -> Result<(), FmError> {
         validate_params(params)?;
-        let run = self
+        let spec = self
             .registry
             .get(id)
-            .ok_or_else(|| FmError::UnknownCommand(id.to_string()))?
-            .run;
-        run(self, params)
+            .ok_or_else(|| FmError::UnknownCommand(id.to_string()))?;
+        let (run, known_id) = (spec.run, spec.id);
+        crate::diag::count(crate::diag::Counter::Commands);
+        // Only the registered id is logged: never the parameters (paths, hosts, names).
+        let result = run(self, params);
+        crate::diag::event("cmd", || match &result {
+            Ok(()) => known_id.to_string(),
+            Err(_) => format!("{known_id} (failed)"),
+        });
+        result
     }
 
     /// Move a pending [`Session::notice`] into the message log; true when one was moved.

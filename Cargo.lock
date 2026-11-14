@@ -2186,6 +2186,7 @@ dependencies = [
  "fm-vfs",
  "image",
  "jiff",
+ "log",
  "memchr",
  "notify",
  "opener",

@@ -209,6 +209,13 @@ pub struct Prefs {
     /// Start playing the first added item when nothing is playing (never interrupts playback).
     #[serde(default)]
     pub media_autoplay_on_add: bool,
+    /// Write the diagnostic log (capability `diagnostics`); off by default.
+    #[serde(default)]
+    pub diagnostics_log: bool,
+    /// Video pictures keep one grow-only texture (`media-pane` "Video frames reuse one
+    /// texture"); off restores the earlier upload path for comparison.
+    #[serde(default = "default_true")]
+    pub video_texture_reuse: bool,
     /// Seconds the audiobook skip-back and skip-forward buttons jump.
     #[serde(default = "default_skip_back")]
     pub media_skip_back_secs: u64,
@@ -571,6 +578,8 @@ impl Default for Prefs {
             media_gapless: true,
             media_hardware_decoding: true,
             media_autoplay_on_add: false,
+            diagnostics_log: false,
+            video_texture_reuse: true,
             media_skip_back_secs: default_skip_back(),
             media_skip_forward_secs: default_skip_forward(),
             media_open_audio: MediaOpenTarget::default(),
@@ -964,6 +973,7 @@ mod tests {
                 "confirm_run",
                 "date_format",
                 "density",
+                "diagnostics_log",
                 "font_size",
                 "git_enabled",
                 "git_gutter",
@@ -1002,6 +1012,7 @@ mod tests {
                 "theme",
                 "thumb_disk_mib",
                 "thumb_memory_mib",
+                "video_texture_reuse",
                 "window_geometry",
                 "window_maximized",
                 "zoom"

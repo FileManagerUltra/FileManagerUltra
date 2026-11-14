@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A diagnostic log for bug reports: turn on Preferences > Advanced > Troubleshooting > Write diagnostic log. Once a second it records the app's memory use (including graphics memory) and what it was doing, such as playing video or opening panes. It never records file names, folder names, server names or passwords. Open log folder (also in the Help menu) shows the logs; each session's log stops at 64 MiB, and the last 20 are kept.
+- About shows which build you are running, so test builds can be told apart.
+
+### Fixed
+- Playing video, seeking and resizing the player use less memory on Windows: each video keeps one picture buffer on the graphics card instead of replacing it whenever the picture size changes or playback restarts. If you suspect a problem with this, you can turn it off in Preferences > Advanced > Troubleshooting > Reuse video texture.
+
 ## [0.2.2] - 2026-11-13
 
 ### Added

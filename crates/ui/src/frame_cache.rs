@@ -6,16 +6,28 @@
 //! again; the decoded data itself stays in the engine.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use egui::util::IdTypeMap;
 use egui::{Context, Id};
+use fm_engine::diag;
 
 type Remover = fn(&mut IdTypeMap, Id);
 
+#[derive(Clone, Copy)]
+struct Entry {
+    remove: Remover,
+    /// The sweep it was last used in.
+    used: u64,
+    /// When it was last used, and how long it outlives sweeps that did not use it.
+    kept: Option<(Instant, Duration)>,
+    /// Named entries are reported in the diagnostic log when released.
+    label: Option<&'static str>,
+}
+
 #[derive(Clone, Default)]
 struct Registry {
-    /// Cache entry → how to remove it, and the sweep it was last used in.
-    entries: HashMap<Id, (Remover, u64)>,
+    entries: HashMap<Id, Entry>,
     sweep: u64,
 }
 
@@ -29,10 +41,36 @@ fn remove<T: 'static + Clone + Send + Sync>(data: &mut IdTypeMap, id: Id) {
 
 /// Record that the temporary value of type `T` under `id` is in use this frame.
 pub(crate) fn touch<T: 'static + Clone + Send + Sync>(ctx: &Context, id: Id) {
+    register::<T>(ctx, id, None, None);
+}
+
+/// Like [`touch`], but the entry survives `keep` after its last use (a video picture across
+/// a seek or decoder restart, when no frame is drawn for a moment). `label` names it in the
+/// diagnostic log when it is released.
+pub(crate) fn touch_kept<T: 'static + Clone + Send + Sync>(
+    ctx: &Context,
+    id: Id,
+    keep: Duration,
+    label: &'static str,
+) {
+    register::<T>(ctx, id, Some(keep), Some(label));
+}
+
+fn register<T: 'static + Clone + Send + Sync>(
+    ctx: &Context,
+    id: Id,
+    keep: Option<Duration>,
+    label: Option<&'static str>,
+) {
     ctx.data_mut(|data| {
         let registry = data.get_temp_mut_or_default::<Registry>(registry_id());
-        let sweep = registry.sweep;
-        registry.entries.insert(id, (remove::<T> as Remover, sweep));
+        let entry = Entry {
+            remove: remove::<T>,
+            used: registry.sweep,
+            kept: keep.map(|keep| (Instant::now(), keep)),
+            label,
+        };
+        registry.entries.insert(id, entry);
     });
 }
 
@@ -42,15 +80,25 @@ pub fn sweep(ctx: &Context) {
     ctx.data_mut(|data| {
         let mut registry = data.get_temp::<Registry>(registry_id()).unwrap_or_default();
         let current = registry.sweep;
-        let stale: Vec<(Id, Remover)> = registry
+        let now = Instant::now();
+        let stale: Vec<(Id, Entry)> = registry
             .entries
             .iter()
-            .filter(|(_, (_, used))| *used != current)
-            .map(|(id, (remover, _))| (*id, *remover))
+            .filter(|(_, e)| {
+                e.used != current
+                    && e.kept
+                        .is_none_or(|(at, keep)| now.saturating_duration_since(at) >= keep)
+            })
+            .map(|(id, e)| (*id, *e))
             .collect();
-        for (id, remover) in stale {
-            remover(data, id);
+        for (id, entry) in stale {
+            (entry.remove)(data, id);
             registry.entries.remove(&id);
+            diag::count(diag::Counter::CacheEvicted);
+            if let Some(label) = entry.label {
+                diag::count(diag::Counter::VideoTexEvicted);
+                diag::event("texture", || format!("{label} released (not drawn)"));
+            }
         }
         registry.sweep = current.wrapping_add(1);
         data.insert_temp(registry_id(), registry);
@@ -94,5 +142,25 @@ mod tests {
         sweep(&ctx);
         assert_eq!(ctx.data(|d| d.get_temp::<u32>(a)), None);
         assert_eq!(live(&ctx), 0);
+    }
+
+    #[test]
+    fn kept_entries_survive_missed_frames_until_their_time_is_up() {
+        let ctx = Context::default();
+        let (kept, zero) = (Id::NULL.with("kept"), Id::NULL.with("zero"));
+        ctx.data_mut(|d| {
+            d.insert_temp(kept, 1u32);
+            d.insert_temp(zero, 2u32);
+        });
+        touch_kept::<u32>(&ctx, kept, Duration::from_secs(60), "test");
+        touch_kept::<u32>(&ctx, zero, Duration::ZERO, "test");
+        sweep(&ctx);
+        // Neither is drawn for a few frames: only the one without a grace period goes.
+        for _ in 0..5 {
+            sweep(&ctx);
+        }
+        assert_eq!(ctx.data(|d| d.get_temp::<u32>(kept)), Some(1));
+        assert_eq!(ctx.data(|d| d.get_temp::<u32>(zero)), None);
+        assert_eq!(live(&ctx), 1);
     }
 }

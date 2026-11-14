@@ -572,6 +572,47 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                     });
                 },
             );
+            section(
+                ui,
+                tokens,
+                "Troubleshooting",
+                Some(
+                    "The log records memory use and what the app does, never file names or passwords. Send it with a bug report.",
+                ),
+                |ui| {
+                    let mut log = s.prefs.diagnostics_log;
+                    ui.horizontal(|ui| {
+                        if ui
+                            .checkbox(&mut log, "Write diagnostic log")
+                            .on_hover_text(
+                                "One sample per second plus events, in the app's data folder. Up to 64 MiB per session, the last 20 sessions are kept",
+                            )
+                            .changed()
+                        {
+                            set(s, "diagnostics_log", json!(log));
+                        }
+                        let folder = s.command_enabled("app.diagnostics.folder");
+                        if ui
+                            .add_enabled(folder, egui::Button::new("Open log folder"))
+                            .on_hover_text("Show the diagnostic logs in a Files pane")
+                            .on_disabled_hover_text("No diagnostic log has been written yet")
+                            .clicked()
+                        {
+                            s.dispatch_or_notice("app.diagnostics.folder", &serde_json::Value::Null);
+                        }
+                    });
+                    let mut reuse = s.prefs.video_texture_reuse;
+                    if ui
+                        .checkbox(&mut reuse, "Reuse video texture")
+                        .on_hover_text(
+                            "Keep one picture buffer per video instead of replacing it when the size changes. Turn off only to compare memory use",
+                        )
+                        .changed()
+                    {
+                        set(s, "video_texture_reuse", json!(reuse));
+                    }
+                },
+            );
         }
         Topic::Media => {
             section(
@@ -1404,6 +1445,24 @@ mod tests {
         h.run();
         assert!(h.state().prefs.accent.is_none());
         crate::listing::set_display(SizeUnits::Binary, DateFormat::Iso);
+    }
+
+    #[test]
+    fn troubleshooting_offers_the_log_and_the_texture_switch() {
+        let mut h = harness(Tokens::dark(), egui::vec2(1000.0, 700.0));
+        h.get_by_label("Advanced").click();
+        h.run();
+        // Not clicked: turning the log on would write into this machine's data folder.
+        h.get_by_label("Write diagnostic log");
+        h.get_by_label("Open log folder");
+        assert!(h.state().prefs.video_texture_reuse);
+        // The section is at the end of the page, below the fold.
+        h.get_by_label("Reuse video texture").scroll_to_me();
+        h.run();
+        h.get_by_label("Reuse video texture").click();
+        h.run();
+        assert!(!h.state().prefs.video_texture_reuse);
+        assert!(!h.state().prefs.diagnostics_log);
     }
 
     #[test]

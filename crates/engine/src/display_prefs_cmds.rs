@@ -15,7 +15,7 @@ use crate::session::Session;
 const KEYS: &str = "accent (\"default\"|\"#rrggbb\"), density (compact|normal|comfortable), \
     font_size 9-24, terminal_font_size 9-24, terminal_scrollback_rows 5000-1000000, size_units (binary|decimal|bytes), \
     date_format (iso|isoseconds|us|eu), show_hidden, single_click_open, confirm_delete, \
-    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), media_hardware_decoding (bool), media_autoplay_on_add (bool), media_skip_back_secs 5-300, media_skip_forward_secs 5-300, thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
+    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), media_hardware_decoding (bool), media_autoplay_on_add (bool), diagnostics_log (bool), video_texture_reuse (bool), media_skip_back_secs 5-300, media_skip_forward_secs 5-300, thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
 
 fn bad(key: &str, expect: &str) -> FmError {
     FmError::InvalidParams(format!("{key} must be {expect}"))
@@ -112,6 +112,18 @@ pub fn set(s: &mut Session, key: &str, value: &Value) -> Result<(), FmError> {
             s.prefs.media_hardware_decoding = on;
         }
         "media_autoplay_on_add" => s.prefs.media_autoplay_on_add = boolean(key, value)?,
+        "diagnostics_log" => {
+            let on = boolean(key, value)?;
+            let mut prefs = s.prefs.clone();
+            prefs.diagnostics_log = on;
+            crate::diag::apply(on, || crate::diag::header(&prefs))?;
+            s.prefs.diagnostics_log = on;
+        }
+        "video_texture_reuse" => {
+            let on = boolean(key, value)?;
+            crate::diag::event("setting", || format!("video_texture_reuse={on}"));
+            s.prefs.video_texture_reuse = on;
+        }
         "media_skip_back_secs" => {
             s.prefs.media_skip_back_secs = ranged(key, value, &crate::prefs::SKIP_RANGE)?;
         }

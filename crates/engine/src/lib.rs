@@ -14,6 +14,8 @@ pub mod column_cmds;
 pub mod commands;
 pub mod devices;
 mod devices_cmds;
+pub mod diag;
+pub mod diag_cmds;
 pub mod diff_cmds;
 pub mod diff_compare_cmds;
 pub mod diff_find_cmds;

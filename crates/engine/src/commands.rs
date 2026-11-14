@@ -109,6 +109,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(crate::props_cmds::specs());
     specs.extend(crate::search_cmds::specs());
     specs.extend(crate::openwith_cmds::specs());
+    specs.extend(crate::diag_cmds::specs());
     specs
 }
 
