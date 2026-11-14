@@ -13,9 +13,12 @@
 mod dragout;
 mod media_controls;
 mod menu;
+mod renderer;
 mod window;
 
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use eframe::egui;
 
@@ -756,6 +759,32 @@ fn main() -> eframe::Result {
         }
     }
 
+    let prefs = session.prefs.clone();
+    let first = renderer::first_choice(&prefs);
+    // The session moves into whichever attempt opens the window. A renderer that cannot
+    // start fails before that, so OpenGL is tried with the same session.
+    let pending: Pending = Rc::new(RefCell::new(Some((session, config_dir))));
+    match run(native_options(&prefs, first), Rc::clone(&pending)) {
+        Err(err) if renderer::has_fallback(first) && pending.borrow().is_some() => {
+            eprintln!("Direct3D could not start ({err}); using OpenGL");
+            if let Some((session, _)) = pending.borrow_mut().as_mut() {
+                session.notice = Some(format!(
+                    "Direct3D could not start ({err}), so the window uses OpenGL."
+                ));
+            }
+            run(native_options(&prefs, eframe::Renderer::Glow), pending)
+        }
+        result => result,
+    }
+}
+
+/// The session and config folder waiting for the window to be created.
+type Pending = Rc<RefCell<Option<(Session, Option<PathBuf>)>>>;
+
+fn native_options(
+    prefs: &fm_engine::prefs::Prefs,
+    renderer: eframe::Renderer,
+) -> eframe::NativeOptions {
     let mut viewport = egui::ViewportBuilder::default();
     if let Ok(icon) = eframe::icon_data::from_png_bytes(fm_brand::ICON_PNG) {
         viewport = viewport.with_icon(icon);
@@ -770,45 +799,72 @@ fn main() -> eframe::Result {
         event_loop_builder: prefer_x11(),
         ..Default::default()
     };
-    window::restore(&mut options, &session.prefs);
+    window::restore(&mut options, prefs);
+    renderer::configure(&mut options, renderer);
+    options
+}
 
+fn run(options: eframe::NativeOptions, pending: Pending) -> eframe::Result {
     eframe::run_native(
         fm_brand::APP_NAME,
         options,
         Box::new(move |cc| {
-            let position = cc
-                .winit_window()
-                .and_then(|window| window::restore_native(window, &session.prefs));
-            let tracker = window::Tracker::new(position, &session.prefs);
-            // Seed the theme before the first frame; `sync_theme` keeps it current.
-            let theme_pref = session.prefs.theme;
-            set_egui_theme_preference(&cc.egui_ctx, theme_pref);
-            let wake_ctx = cc.egui_ctx.clone();
-            session.watch.set_waker(move || wake_ctx.request_repaint());
-            // Zoom is a command (View menu, shortcuts) persisted in prefs; egui's own keys
-            // would change it behind the preference's back.
-            cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
-            cc.egui_ctx.set_zoom_factor(session.prefs.zoom_factor());
-            let dark = cc.egui_ctx.theme() == egui::Theme::Dark;
-            let look = theme::Tokens::resolve_with(&session.prefs, dark);
-            theme::apply_to(&cc.egui_ctx, &look);
-            Ok(Box::new(App {
-                session,
-                config_dir,
-                applied: (theme_pref, dark),
-                look,
-                title_sent: false,
-                was_focused: true,
-                window_fullscreen_sent: false,
-                dialogs: fm_ui::dialogs::Dialogs::default(),
-                last_ws_tick: std::time::Instant::now(),
-                window: tracker,
-                out_drag: dragout::OutDrag::new(cc),
-                media_controls: media_controls::MediaControls::new(),
-                diag_frames: DiagFrames::default(),
-            }))
+            let (session, config_dir) = pending
+                .borrow_mut()
+                .take()
+                .ok_or("the window was already created")?;
+            Ok(Box::new(App::new(cc, session, config_dir)))
         }),
     )
+}
+
+impl App {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        session: Session,
+        config_dir: Option<PathBuf>,
+    ) -> Self {
+        fm_engine::diag::set_renderer(renderer::describe(cc));
+        let position = cc
+            .winit_window()
+            .and_then(|window| window::restore_native(window, &session.prefs));
+        let tracker = window::Tracker::new(position, &session.prefs);
+        // Seed the theme before the first frame; `sync_theme` keeps it current.
+        let theme_pref = session.prefs.theme;
+        set_egui_theme_preference(&cc.egui_ctx, theme_pref);
+        let wake_ctx = cc.egui_ctx.clone();
+        session.watch.set_waker(move || wake_ctx.request_repaint());
+        // Video is drawn when a frame is ready, not on a 16 ms timer, and only while a
+        // player is on screen.
+        let frame_ctx = cc.egui_ctx.clone();
+        fm_engine::video_cmds::set_frame_waker(move || {
+            if fm_ui::media::video_on_screen(&frame_ctx) {
+                frame_ctx.request_repaint();
+            }
+        });
+        // Zoom is a command (View menu, shortcuts) persisted in prefs; egui's own keys
+        // would change it behind the preference's back.
+        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
+        cc.egui_ctx.set_zoom_factor(session.prefs.zoom_factor());
+        let dark = cc.egui_ctx.theme() == egui::Theme::Dark;
+        let look = theme::Tokens::resolve_with(&session.prefs, dark);
+        theme::apply_to(&cc.egui_ctx, &look);
+        App {
+            session,
+            config_dir,
+            applied: (theme_pref, dark),
+            look,
+            title_sent: false,
+            was_focused: true,
+            window_fullscreen_sent: false,
+            dialogs: fm_ui::dialogs::Dialogs::default(),
+            last_ws_tick: std::time::Instant::now(),
+            window: tracker,
+            out_drag: dragout::OutDrag::new(cc),
+            media_controls: media_controls::MediaControls::new(),
+            diag_frames: DiagFrames::default(),
+        }
+    }
 }
 
 /// The brand logo as a texture, decoded once and kept in egui's memory.

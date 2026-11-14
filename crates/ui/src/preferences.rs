@@ -601,6 +601,9 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                             s.dispatch_or_notice("app.diagnostics.folder", &serde_json::Value::Null);
                         }
                     });
+                    if cfg!(windows) {
+                        renderer_row(ui, s, tokens);
+                    }
                 },
             );
         }
@@ -1053,6 +1056,35 @@ fn cache_location(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
 }
 
 /// Default app or Media pane, separately for audio and video.
+/// Windows: what draws the window (change `windows-wgpu`); applies at the next start.
+fn renderer_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
+    use fm_engine::prefs::WindowsRenderer;
+    ui.add_space(8.0);
+    if let Some(value) = choose(
+        ui,
+        tokens,
+        "windows_renderer",
+        "Renderer",
+        &[
+            ("Direct3D", WindowsRenderer::Direct3d),
+            ("OpenGL", WindowsRenderer::Opengl),
+        ],
+        s.prefs.windows_renderer,
+    ) {
+        let value = match value {
+            WindowsRenderer::Direct3d => "direct3d",
+            WindowsRenderer::Opengl => "opengl",
+        };
+        set(s, "windows_renderer", json!(value));
+    }
+    let in_use = fm_engine::diag::renderer().unwrap_or_else(|| "unknown".into());
+    crate::dialog_style::hint(
+        ui,
+        tokens,
+        format!("In use: {in_use}. A change applies the next time the app starts."),
+    );
+}
+
 fn media_open_choices(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
     use fm_engine::prefs::MediaOpenTarget;
     for (label, kind, current) in [
@@ -1435,6 +1467,25 @@ mod tests {
         h.run();
         assert!(h.state().prefs.accent.is_none());
         crate::listing::set_display(SizeUnits::Binary, DateFormat::Iso);
+    }
+
+    #[test]
+    fn the_windows_renderer_row_switches_the_preference() {
+        let tokens = Tokens::dark();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(700.0, 200.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| renderer_row(ui, s, &tokens),
+                Session::new().expect("session"),
+            );
+        h.run();
+        h.get_by_label("Direct3D");
+        h.get_by_label("OpenGL").click();
+        h.run();
+        assert_eq!(
+            h.state().prefs.windows_renderer,
+            fm_engine::prefs::WindowsRenderer::Opengl
+        );
     }
 
     #[test]

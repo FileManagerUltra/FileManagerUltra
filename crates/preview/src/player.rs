@@ -215,6 +215,21 @@ pub struct Player {
 
 type Output = (Box<dyn AudioSink>, AudioProducer, Clock);
 
+type Waker = Box<dyn Fn() + Send + Sync>;
+static FRAME_WAKER: std::sync::OnceLock<Waker> = std::sync::OnceLock::new();
+
+/// Called from decoder threads whenever a new frame is ready, so the UI draws once per video
+/// frame instead of polling. Set once at startup; later calls are ignored.
+pub fn set_frame_waker(waker: impl Fn() + Send + Sync + 'static) {
+    let _ = FRAME_WAKER.set(Box::new(waker));
+}
+
+fn wake_for_frame() {
+    if let Some(waker) = FRAME_WAKER.get() {
+        waker();
+    }
+}
+
 /// Decoders still running (diagnostic log): started players whose worker has not finished.
 pub fn live_players() -> usize {
     WORKERS.lock().map_or(0, |workers| {
@@ -911,6 +926,9 @@ fn run(
             }
             s.overlay
         };
+        if due {
+            wake_for_frame();
+        }
         if wanted != video.overlay
             && !spec.still
             && !video.pipe.ended()

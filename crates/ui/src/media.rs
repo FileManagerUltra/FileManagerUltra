@@ -1758,10 +1758,34 @@ fn video(
         }
     }
     if s.media.playing {
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_millis(16));
+        keep_playing(ui.ctx());
     }
     response
+}
+
+/// Redraw interval while something plays. Video frames wake the UI themselves (see
+/// [`video_on_screen`]), so it draws at the video's frame rate instead of 60 times a second;
+/// this only keeps the clock and seek bar moving.
+const PLAYING_TICK: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Where the frame number in which a playing player was last drawn is kept.
+fn player_drawn_id() -> egui::Id {
+    egui::Id::NULL.with("fm-playing-player-drawn")
+}
+
+/// Called each frame a playing player (Media pane or Preview) is drawn.
+pub(crate) fn keep_playing(ctx: &egui::Context) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(player_drawn_id(), frame));
+    ctx.request_repaint_after(PLAYING_TICK);
+}
+
+/// Whether a playing player was drawn in the last frame, so a newly decoded video frame is
+/// worth a redraw. A hidden pane or a minimized window draws nothing for it.
+pub fn video_on_screen(ctx: &egui::Context) -> bool {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<u64>(player_drawn_id()))
+        .is_some_and(|drawn| frame.saturating_sub(drawn) <= 1)
 }
 
 /// The player area (video, display, transport) laid out last frame.
@@ -2042,6 +2066,26 @@ pub(crate) use crate::player_controls::clock;
 mod tests {
     use super::*;
     use egui_kittest::{Harness, kittest::Queryable};
+
+    #[test]
+    fn video_frames_wake_the_ui_only_while_a_player_is_drawn() {
+        let ctx = egui::Context::default();
+        let pass = |playing: bool| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                if playing {
+                    keep_playing(ui.ctx());
+                }
+            });
+            output.textures_delta.clear();
+        };
+        pass(true);
+        assert!(video_on_screen(&ctx), "drawn last frame");
+        pass(false);
+        pass(false);
+        assert!(!video_on_screen(&ctx), "hidden: no wakes");
+        pass(true);
+        assert!(video_on_screen(&ctx));
+    }
 
     #[test]
     fn revealing_a_row_scrolls_only_when_it_is_not_fully_visible() {

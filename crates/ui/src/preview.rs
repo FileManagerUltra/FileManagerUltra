@@ -1698,8 +1698,7 @@ fn video_body(
         });
     remember_scroll(ui, &output);
     if v.playing {
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_millis(16));
+        crate::media::keep_playing(ui.ctx());
     }
 }
 

@@ -32,7 +32,7 @@ fm-media = { path = "crates/media" }
 fm-engine = { path = "crates/engine" }
 fm-ui = { path = "crates/ui" }
 
-# external — UI: eframe with the glow renderer (design D6: no wgpu in a file manager)
+# external — UI: eframe with the glow renderer; Windows adds wgpu in fm-app (change windows-wgpu)
 eframe = { version = "0.37", default-features = false, features = [
     "glow",
     "wayland",
@@ -162,7 +162,6 @@ opt-level = 3
 sspi = { path = "vendor/sspi" }
 smb-transport = { path = "vendor/smb-transport" }
 vt100 = { path = "vendor/vt100" }
-egui_glow = { path = "vendor/egui_glow" }
 
 # Fat LTO with one codegen unit: faster and smaller. Panics are caught on purpose
 # (see engine), so no panic=abort. opt-level stays 3 because decode speed matters most.

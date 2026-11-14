@@ -119,6 +119,17 @@ pub fn is_hint_id(id: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
 }
 
+/// What draws the window on Windows (change `windows-wgpu`); applies at the next start.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowsRenderer {
+    /// wgpu on Direct3D 12 or Vulkan; OpenGL if it cannot start.
+    #[default]
+    Direct3d,
+    /// OpenGL, as on Linux and macOS.
+    Opengl,
+}
+
 /// How file sizes are written.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -212,6 +223,9 @@ pub struct Prefs {
     /// Write the diagnostic log (capability `diagnostics`); off by default.
     #[serde(default)]
     pub diagnostics_log: bool,
+    /// Windows only: what draws the window, from the next start.
+    #[serde(default)]
+    pub windows_renderer: WindowsRenderer,
     /// Seconds the audiobook skip-back and skip-forward buttons jump.
     #[serde(default = "default_skip_back")]
     pub media_skip_back_secs: u64,
@@ -575,6 +589,7 @@ impl Default for Prefs {
             media_hardware_decoding: true,
             media_autoplay_on_add: false,
             diagnostics_log: false,
+            windows_renderer: WindowsRenderer::default(),
             media_skip_back_secs: default_skip_back(),
             media_skip_forward_secs: default_skip_forward(),
             media_open_audio: MediaOpenTarget::default(),
@@ -1009,6 +1024,7 @@ mod tests {
                 "thumb_memory_mib",
                 "window_geometry",
                 "window_maximized",
+                "windows_renderer",
                 "zoom"
             ]
         );

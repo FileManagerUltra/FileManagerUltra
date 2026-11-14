@@ -36,6 +36,8 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
 static STARTUP: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// What draws the window ("Direct3D 12 (…)", "OpenGL"), once the window exists.
+static RENDERER: Mutex<Option<String>> = Mutex::new(None);
 /// Milliseconds since [`epoch`] of the last UI sample.
 static LAST_UI_SAMPLE: AtomicU64 = AtomicU64::new(0);
 
@@ -356,6 +358,17 @@ pub fn apply(on: bool, header: impl FnOnce() -> Vec<String>) -> Result<(), FmErr
     Ok(())
 }
 
+/// Record what draws the window (called once the window exists); logged as an event.
+pub fn set_renderer(description: String) {
+    event("renderer", || description.clone());
+    *lock(&RENDERER) = Some(description);
+}
+
+/// What draws the window, once known.
+pub fn renderer() -> Option<String> {
+    lock(&RENDERER).clone()
+}
+
 /// The build commit of release-workflow builds (`GITHUB_SHA` at compile time), else "local".
 pub fn build_commit() -> &'static str {
     match option_env!("GITHUB_SHA") {
@@ -366,7 +379,7 @@ pub fn build_commit() -> &'static str {
 
 /// Version, build and the settings that change how video is decoded and drawn.
 pub fn header(prefs: &crate::prefs::Prefs) -> Vec<String> {
-    vec![
+    let mut lines = vec![
         format!(
             "version: {} build: {}",
             env!("CARGO_PKG_VERSION"),
@@ -378,7 +391,11 @@ pub fn header(prefs: &crate::prefs::Prefs) -> Vec<String> {
             fm_preview::player::HwAccel::for_platform().label(),
             prefs.zoom_factor(),
         ),
-    ]
+    ];
+    if let Some(renderer) = renderer() {
+        lines.push(format!("renderer: {renderer}"));
+    }
+    lines
 }
 
 fn system_lines() -> Vec<String> {
@@ -508,8 +525,16 @@ fn writer(file: std::fs::File, header: Vec<String>, rx: Receiver<Msg>, stop: Rec
             }
         }
     }
+    // What was queued before `stop()` still belongs in the log; nothing new can arrive
+    // because `stop()` has already taken the sender.
+    while let Ok(msg) = rx.try_recv() {
+        match msg {
+            Msg::Line(text) => state.event(&mut out, text),
+            Msg::Ui(sample) => state.ui = Some(sample),
+        }
+    }
     state.flush_repeat(&mut out);
-    out.line("log stopped");
+    out.line(&format!("log stopped{}", state.lost_events()));
     let _ = out.file.flush();
 }
 
@@ -636,18 +661,25 @@ impl WriterState {
                 + COUNTS[Counter::TexResized as usize].load(Ordering::Relaxed),
             COUNTS[Counter::DecoderStarts as usize].load(Ordering::Relaxed),
         ));
-        let dropped = DROPPED.load(Ordering::Relaxed);
-        if self.suppressed > 0 || dropped > self.dropped_seen {
-            line.push_str(&format!(
-                " events_suppressed={} queue_dropped={}",
-                self.suppressed,
-                dropped.saturating_sub(self.dropped_seen)
-            ));
-        }
-        self.dropped_seen = dropped;
+        line.push_str(&self.lost_events());
+        self.dropped_seen = DROPPED.load(Ordering::Relaxed);
         self.suppressed = 0;
         self.events_this_second = 0;
         out.line(&line);
+    }
+
+    /// " events_suppressed=… queue_dropped=…" when events were lost since the last sample.
+    fn lost_events(&self) -> String {
+        let dropped = DROPPED.load(Ordering::Relaxed);
+        if self.suppressed > 0 || dropped > self.dropped_seen {
+            format!(
+                " events_suppressed={} queue_dropped={}",
+                self.suppressed,
+                dropped.saturating_sub(self.dropped_seen)
+            )
+        } else {
+            String::new()
+        }
     }
 }
 
@@ -718,8 +750,9 @@ static SINK: Sink = Sink;
 fn accepted(target: &str, level: log::Level) -> bool {
     let crate_name = target.split("::").next().unwrap_or(target);
     match crate_name {
-        "egui_glow" => level <= log::Level::Debug,
-        "eframe" | "egui_winit" | "winit" | "glutin" | "glutin_winit" => level <= log::Level::Warn,
+        "egui_glow" | "egui_wgpu" => level <= log::Level::Debug,
+        "eframe" | "egui_winit" | "winit" | "glutin" | "glutin_winit" | "wgpu_core"
+        | "wgpu_hal" | "wgpu" => level <= log::Level::Warn,
         _ => false,
     }
 }
@@ -841,7 +874,12 @@ mod tests {
         assert!(text.contains(" input_frames=3"), "{text}");
         assert_eq!(text.matches(" tex=7").count(), 1, "printed once: {text}");
         assert!(text.contains(" ui=none"), "{text}");
-        assert!(text.trim_end().ends_with("log stopped"), "{text}");
+        assert!(
+            text.lines()
+                .last()
+                .is_some_and(|l| l.contains(" log stopped")),
+            "{text}"
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -874,7 +912,12 @@ mod tests {
         );
         stop();
         let text = std::fs::read_to_string(&path).expect("read");
-        assert!(text.contains("cmd: prefs.set"), "{text}");
+        // Tests running in parallel dispatch commands into the same global log and can use up
+        // its per-second event budget; the log then says so instead.
+        assert!(
+            text.contains("cmd: prefs.set") || text.contains("events_suppressed="),
+            "{text}"
+        );
         for leaked in [
             "SecretHolidayPhotos",
             "fileserver",
@@ -938,6 +981,9 @@ mod tests {
         use log::Level::{Debug, Info, Trace, Warn};
         assert!(accepted("egui_glow::painter", Debug));
         assert!(!accepted("egui_glow::painter", Trace));
+        assert!(accepted("egui_wgpu", Debug));
+        assert!(accepted("wgpu_hal::dx12", Warn));
+        assert!(!accepted("wgpu_core::device", Info));
         assert!(accepted("winit::platform", Warn));
         assert!(!accepted("winit::platform", Info));
         for target in [

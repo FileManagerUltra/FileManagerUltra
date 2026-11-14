@@ -11,8 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A diagnostic log for bug reports: turn on Preferences > Advanced > Troubleshooting > Write diagnostic log. Once a second it records the app's memory use (including graphics memory) and what it was doing, such as playing video or opening panes. It never records file names, folder names, server names or passwords. Open log folder (also in the Help menu) shows the logs; each session's log stops at 64 MiB, and the last 20 are kept.
 - About shows which build you are running, so test builds can be told apart.
 
+### Changed
+- Playing video redraws the window at the video's own frame rate instead of 60 times a second, and not at all while the player is hidden or the window is minimized, which saves power.
+
 ### Fixed
-- Windows with an NVIDIA graphics card: the app's memory no longer grows while its window is visible (about 1 MB a second while playing video or moving the mouse over it, up to many gigabytes over a long session). Changing the driver's "Threaded optimization" setting is no longer needed.
+- Windows with an NVIDIA graphics card: the app's memory no longer grows while its window is visible (about 1 MB a second while playing video or moving the mouse over it, up to many gigabytes over a long session). The window is now drawn with Direct3D 12 instead of OpenGL, so changing the driver's "Threaded optimization" setting is no longer needed. If Direct3D cannot start, the app uses OpenGL and says so; Preferences > Advanced > Troubleshooting > Renderer switches between the two (after a restart).
 - Seeking or restarting a video keeps its picture buffer on the graphics card instead of making a new one each time.
 
 ## [0.2.2] - 2026-11-13

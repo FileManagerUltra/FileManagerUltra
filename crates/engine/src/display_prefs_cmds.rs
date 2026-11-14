@@ -15,7 +15,7 @@ use crate::session::Session;
 const KEYS: &str = "accent (\"default\"|\"#rrggbb\"), density (compact|normal|comfortable), \
     font_size 9-24, terminal_font_size 9-24, terminal_scrollback_rows 5000-1000000, size_units (binary|decimal|bytes), \
     date_format (iso|isoseconds|us|eu), show_hidden, single_click_open, confirm_delete, \
-    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), media_hardware_decoding (bool), media_autoplay_on_add (bool), diagnostics_log (bool), media_skip_back_secs 5-300, media_skip_forward_secs 5-300, thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
+    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), media_hardware_decoding (bool), media_autoplay_on_add (bool), diagnostics_log (bool), windows_renderer (direct3d|opengl), media_skip_back_secs 5-300, media_skip_forward_secs 5-300, thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
 
 fn bad(key: &str, expect: &str) -> FmError {
     FmError::InvalidParams(format!("{key} must be {expect}"))
@@ -118,6 +118,12 @@ pub fn set(s: &mut Session, key: &str, value: &Value) -> Result<(), FmError> {
             prefs.diagnostics_log = on;
             crate::diag::apply(on, || crate::diag::header(&prefs))?;
             s.prefs.diagnostics_log = on;
+        }
+        "windows_renderer" => {
+            s.prefs.windows_renderer = match choice(key, value, &["direct3d", "opengl"])? {
+                "opengl" => crate::prefs::WindowsRenderer::Opengl,
+                _ => crate::prefs::WindowsRenderer::Direct3d,
+            };
         }
         "media_skip_back_secs" => {
             s.prefs.media_skip_back_secs = ranged(key, value, &crate::prefs::SKIP_RANGE)?;
@@ -260,6 +266,12 @@ mod tests {
             s.prefs.media_hardware_decoding,
             "hardware decoding is on by default"
         );
+        use crate::prefs::WindowsRenderer;
+        assert_eq!(s.prefs.windows_renderer, WindowsRenderer::Direct3d);
+        set_via(&mut s, "windows_renderer", json!("opengl")).expect("opengl");
+        assert_eq!(s.prefs.windows_renderer, WindowsRenderer::Opengl);
+        set_via(&mut s, "windows_renderer", json!("direct3d")).expect("direct3d");
+        assert_eq!(s.prefs.windows_renderer, WindowsRenderer::Direct3d);
         set_via(&mut s, "media_hardware_decoding", json!(false)).expect("hardware off");
         assert!(!s.prefs.media_hardware_decoding);
         set_via(&mut s, "media_hardware_decoding", json!(true)).expect("hardware on");
@@ -315,6 +327,8 @@ mod tests {
             ("show_hidden", json!("yes")),
             ("confirm_run", json!(2)),
             ("media_hardware_decoding", json!("on")),
+            ("windows_renderer", json!("vulkan")),
+            ("windows_renderer", json!(true)),
             ("media_hardware_decoding", json!(null)),
             ("thumb_memory_mib", json!(1)),
             ("thumb_disk_mib", json!(-1)),

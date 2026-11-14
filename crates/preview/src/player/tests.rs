@@ -970,3 +970,22 @@ fn a_damaged_end_of_file_finishes_in_software_without_a_log_line() {
         );
     }
 }
+
+#[test]
+fn every_shown_video_frame_wakes_the_ui() {
+    let Some((_dir, spec)) = clip(false) else {
+        return;
+    };
+    static WAKES: AtomicU64 = AtomicU64::new(0);
+    set_frame_waker(|| {
+        WAKES.fetch_add(1, Ordering::Relaxed);
+    });
+    let before = WAKES.load(Ordering::Relaxed);
+    let player = Player::start(&spec, Gain::default()).expect("player");
+    wait(|| player.position() > 0.3 || player.finished());
+    assert!(player.error().is_none(), "{:?}", player.error());
+    assert!(
+        WAKES.load(Ordering::Relaxed) > before,
+        "a decoded frame must wake the UI"
+    );
+}

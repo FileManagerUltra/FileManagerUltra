@@ -633,6 +633,11 @@ Dark mode is a v1 feature, not a later polish pass: **every widget is built agai
 | Trash | XDG (`trash` crate) | `~/.Trash` (`trash`) | Recycle Bin (`trash`) |
 | Watch | inotify | FSEvents | ReadDirectoryChangesW |
 | Packaging | `.deb`, AppImage | `.dmg` (signed/notarized) | `.msi` / portable zip |
+| Renderer | OpenGL (glow) | OpenGL (glow) | Direct3D 12 via wgpu (Vulkan allowed), OpenGL by preference or as fallback |
+
+**Renderer (`windows-wgpu`).** Linux and macOS draw with egui's glow renderer. Windows draws with wgpu limited to Direct3D 12/Vulkan, because NVIDIA's threaded OpenGL driver kept memory for every drawn frame. `fm-app/src/renderer.rs` picks the renderer from `Prefs::windows_renderer`; if wgpu fails to start, `main` runs the same `Session` again with glow and sets a notice (eframe permits a second `run_native`). The renderer in use (`renderer::describe`) is shown in Preferences and written to the diagnostic log header.
+
+**Frame-driven video.** Decoder threads call the waker set with `video_cmds::set_frame_waker` after publishing a frame; the app's waker requests a repaint only when `fm_ui::media::video_on_screen` says a playing player was drawn in the previous frame. Playing players otherwise redraw every 250 ms.
 
 Winit/egui have no Wayland-native **window-wide** file drop in some setups; external drops fall back to "paste from clipboard" (documented in `docs/development.md`), internal pane-to-pane DnD is unaffected (it never leaves the app).
 

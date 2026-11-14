@@ -26,6 +26,11 @@ const WIDTH_STEP: u32 = 64;
 /// Within this many seconds of the end, Play starts over.
 const END_SLACK: f64 = 0.25;
 
+/// Call `waker` (from decoder threads) whenever a video frame is ready to be drawn.
+pub fn set_frame_waker(waker: impl Fn() + Send + Sync + 'static) {
+    fm_preview::player::set_frame_waker(waker);
+}
+
 /// Wait for decoder cleanup only after the UI event loop is leaving.
 pub fn shutdown_players() -> Result<(), FmError> {
     fm_preview::player::shutdown()
