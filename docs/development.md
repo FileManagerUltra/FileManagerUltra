@@ -332,12 +332,17 @@ Needs a real OpenSSH server (e.g. `sudo systemctl start sshd`, or `docker run -p
 
 ## Config files
 
-Preferences live in the platform config directory for the brand slug
-(`fm_brand::APP_SLUG`), file `prefs.toml`:
+Preferences live in the platform config directory named `fm_brand::APP_DIR_NAME`
+(the slug on Linux and macOS, the product name on Windows), file `prefs.toml`:
 
-- Linux: `~/.config/<slug>/prefs.toml`
-- macOS: `~/Library/Application Support/<slug>/prefs.toml`
-- Windows: `%APPDATA%\<slug>\prefs.toml`
+- Linux: `~/.config/filemanagerultra/prefs.toml`
+- macOS: `~/Library/Application Support/filemanagerultra/prefs.toml`
+- Windows: `%APPDATA%\FileManagerUltra\config\prefs.toml`
+
+On Windows the cache (thumbnails) and data (managed ffmpeg) folders are in
+`%LOCALAPPDATA%\FileManagerUltra\`, the folder the installer also uses, so both
+`AppData` folders carry the same name. Folders created by earlier versions as
+`filemanagerultra` are renamed at startup (`prefs::fix_app_dir_case`).
 
 The file is created `0600` (directory `0700`) on Unix and contains **only**
 non-secret settings (theme, window state, last directory).

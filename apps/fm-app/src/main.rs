@@ -718,6 +718,9 @@ fn diagnostics_frame(ctx: &egui::Context, session: &Session, tally: &mut DiagFra
 }
 
 fn main() -> eframe::Result {
+    // Windows: folders made by earlier versions with the lowercase slug get the product name,
+    // matching the installer's folder, before anything in them is read.
+    fm_engine::prefs::fix_app_dir_case();
     // Before the window opens, so the renderer's driver lines can reach the diagnostic log.
     fm_engine::diag::install_log_sink();
     let config_dir = fm_engine::prefs::default_config_dir();

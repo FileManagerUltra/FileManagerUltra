@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Thumbnails now keep at most 128 MiB in memory by default (was 192 MiB). Change it in Preferences > Advanced > Thumbnails if you browse very large picture folders.
 - Loading spinners (folder sizes, previews, searches, jobs) redraw about 15 times a second instead of at the screen's refresh rate, which saves power while something loads.
 - While idle the window no longer redraws several times every two seconds while checking for new drives; it redraws only when the check is done.
+- Windows: the app's settings folder in `AppData\Roaming` is now called `FileManagerUltra`, the same as its folder in `AppData\Local`. An existing `filemanagerultra` folder is renamed when the app starts; your settings, workspaces and playlists stay.
 
 ### Fixed
 - Show in Folder (from Find Files or the playlist) no longer fails in a workspace without a Files pane, such as one holding only a terminal; it opens a Files pane beside it.

@@ -721,17 +721,73 @@ pub const PREFS_FILE: &str = "prefs.toml";
 /// Hard cap on the prefs file; larger files are ignored (defaults win).
 pub const MAX_PREFS_BYTES: u64 = 10 * 1024 * 1024;
 
+/// The app's own folders, named [`fm_brand::APP_DIR_NAME`]. Every config, cache and data
+/// path comes from here so the folders always carry the same name.
+pub fn project_dirs() -> Option<directories::ProjectDirs> {
+    directories::ProjectDirs::from("", "", fm_brand::APP_DIR_NAME)
+}
+
 /// Platform config directory: `~/.config/<slug>/` (Linux),
-/// `~/Library/Application Support/<slug>/` (macOS), `%APPDATA%\<slug>\` (Windows).
+/// `~/Library/Application Support/<slug>/` (macOS),
+/// `%APPDATA%\<product name>\config\` (Windows).
 pub fn default_config_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", fm_brand::APP_SLUG)
-        .map(|dirs| dirs.config_dir().to_path_buf())
+    project_dirs().map(|dirs| dirs.config_dir().to_path_buf())
 }
 
 /// Platform cache directory for regenerable data (thumbnails).
 pub fn default_cache_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", fm_brand::APP_SLUG)
-        .map(|dirs| dirs.cache_dir().to_path_buf())
+    project_dirs().map(|dirs| dirs.cache_dir().to_path_buf())
+}
+
+/// Give the app's folders their exact name where they exist with other capitals: Windows
+/// keeps the capitals a folder was created with (earlier versions used the lowercase slug,
+/// the installer uses the product name). Best effort, at startup, before anything is read;
+/// returns the folders renamed. A no-op outside Windows, where names are case-sensitive.
+pub fn fix_app_dir_case() -> Vec<PathBuf> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    let Some(dirs) = project_dirs() else {
+        return Vec::new();
+    };
+    let mut roots: Vec<PathBuf> = [dirs.config_dir(), dirs.cache_dir(), dirs.data_local_dir()]
+        .iter()
+        .filter_map(|dir| dir.parent().map(Path::to_path_buf))
+        .collect();
+    roots.dedup();
+    roots
+        .into_iter()
+        .filter(|root| fix_dir_case(root).unwrap_or(false))
+        .collect()
+}
+
+/// Rename the folder in `root`'s parent whose name equals `root`'s name ignoring ASCII case
+/// to exactly `root`. Nothing happens when the exact name exists or no such folder exists.
+fn fix_dir_case(root: &Path) -> std::io::Result<bool> {
+    let (Some(parent), Some(want)) = (root.parent(), root.file_name()) else {
+        return Ok(false);
+    };
+    let Some(want) = want.to_str() else {
+        return Ok(false);
+    };
+    let mut other = None;
+    for entry in std::fs::read_dir(parent)?.take(100_000) {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name == want {
+            return Ok(false);
+        }
+        if name.eq_ignore_ascii_case(want) && entry.file_type().is_ok_and(|t| t.is_dir()) {
+            other = Some(entry.path());
+        }
+    }
+    match other {
+        Some(from) => std::fs::rename(from, root).map(|()| true),
+        None => Ok(false),
+    }
 }
 
 /// Load preferences from `path`. Missing, unreadable, corrupt or oversized files
@@ -1317,8 +1373,55 @@ mod tests {
         let dir = default_config_dir().expect("config dir on this platform");
         assert!(dir.is_absolute(), "{dir:?} should be absolute");
         assert!(
-            dir.to_string_lossy().contains(fm_brand::APP_SLUG),
-            "{dir:?} should be scoped to the brand slug"
+            dir.to_string_lossy().contains(fm_brand::APP_DIR_NAME),
+            "{dir:?} should be scoped to the app folder name"
         );
+    }
+
+    #[test]
+    fn every_app_folder_carries_the_same_name() {
+        let dirs = project_dirs().expect("dirs");
+        for dir in [dirs.config_dir(), dirs.cache_dir(), dirs.data_local_dir()] {
+            assert!(
+                dir.components()
+                    .any(|c| c.as_os_str() == std::ffi::OsStr::new(fm_brand::APP_DIR_NAME)),
+                "{dir:?}"
+            );
+        }
+        assert_eq!(
+            fm_brand::APP_DIR_NAME,
+            if cfg!(windows) {
+                fm_brand::APP_NAME
+            } else {
+                fm_brand::APP_SLUG
+            }
+        );
+        if !cfg!(windows) {
+            assert!(fix_app_dir_case().is_empty(), "a no-op outside Windows");
+        }
+    }
+
+    #[test]
+    fn a_folder_with_other_capitals_gets_the_exact_name_and_keeps_its_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Earlier versions' lowercase folder, and the product-name folder it should become.
+        let old = tmp.path().join(fm_brand::APP_SLUG);
+        std::fs::create_dir_all(old.join("config")).expect("mkdir");
+        std::fs::write(old.join("config").join("prefs.toml"), "theme = \"dark\"\n").expect("write");
+        let want = tmp.path().join(fm_brand::APP_NAME);
+        assert!(fix_dir_case(&want).expect("rename"));
+        let names: Vec<String> = std::fs::read_dir(tmp.path())
+            .expect("read")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, [fm_brand::APP_NAME]);
+        assert!(want.join("config").join("prefs.toml").is_file());
+        // Already exact, or nothing there: untouched.
+        assert!(!fix_dir_case(&want).expect("again"));
+        assert!(!fix_dir_case(&tmp.path().join("Other")).expect("absent"));
+        // A file with that name is not a folder to rename.
+        std::fs::write(tmp.path().join("other"), "x").expect("file");
+        assert!(!fix_dir_case(&tmp.path().join("OTHER")).expect("file"));
     }
 }

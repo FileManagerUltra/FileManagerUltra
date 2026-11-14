@@ -11,6 +11,12 @@ pub const APP_NAME: &str = "FileManagerUltra";
 /// Lowercase slug used for file names, directory names and app-id components.
 pub const APP_SLUG: &str = "filemanagerultra";
 
+/// Name of the app's own config, cache and data folders. On Windows it is the product name,
+/// the same as the folder the installer creates in `%LOCALAPPDATA%`, so the folders in
+/// `AppData\Roaming` and `AppData\Local` read the same. Elsewhere it is the slug (XDG
+/// convention on Linux; macOS keeps its existing folders).
+pub const APP_DIR_NAME: &str = if cfg!(windows) { APP_NAME } else { APP_SLUG };
+
 /// Reverse-DNS application id (desktop entry `StartupWMClass`, bundle identifier).
 pub const APP_ID: &str = "io.filemanagerultra.app";
 

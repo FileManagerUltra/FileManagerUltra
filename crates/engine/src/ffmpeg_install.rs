@@ -55,8 +55,7 @@ pub fn pin() -> Option<&'static Pin> {
 
 /// Where downloaded tools live: `<local data dir>/tools` (never the roaming profile; the files are large).
 pub fn tools_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", fm_brand::APP_SLUG)
-        .map(|dirs| dirs.data_local_dir().join("tools"))
+    crate::prefs::project_dirs().map(|dirs| dirs.data_local_dir().join("tools"))
 }
 
 #[derive(Serialize, Deserialize)]
