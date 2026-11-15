@@ -190,7 +190,10 @@ fn extract(archive: std::fs::File, pin: &Pin, dir: &Path) -> Result<Vec<Extracte
         if entry.is_dir() || is_symlink {
             continue;
         }
-        let Some(name) = member_name(entry.name(), pin) else {
+        // A name that does not decode cannot be one of the pinned tool paths: skip it like
+        // any other file we do not need.
+        let name = entry.name().ok().and_then(|raw| member_name(&raw, pin));
+        let Some(name) = name else {
             continue;
         };
         if found.iter().any(|f| f.name == name) {
