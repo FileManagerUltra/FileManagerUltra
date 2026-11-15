@@ -128,7 +128,7 @@ regex = "1"
 # external — dev only
 proptest = "1"
 tempfile = "3"
-sha2 = "0.10"
+sha2 = "0.11"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [workspace.lints.rust]
