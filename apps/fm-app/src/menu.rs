@@ -699,7 +699,7 @@ fn places_menu(ui: &mut egui::Ui, session: &mut Session) {
                 .clicked()
             {
                 session.dispatch_or_notice(
-                    "nav.open",
+                    "place.open",
                     &serde_json::json!({ "uri": place.uri.to_string() }),
                 );
                 ui.close();

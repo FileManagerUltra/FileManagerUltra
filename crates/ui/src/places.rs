@@ -407,8 +407,10 @@ fn row(
         let bookmarked = s.is_bookmarked(&place.uri);
         response.context_menu(|ui| {
             if ui.button("Open").clicked() {
-                let _ = s.layout.focus_pane(pane);
-                s.dispatch_or_notice("nav.open", &json!({ "uri": place.uri.to_string() }));
+                s.dispatch_or_notice(
+                    "place.open",
+                    &json!({ "uri": place.uri.to_string(), "pane": pane }),
+                );
                 ui.close();
             }
             if ui

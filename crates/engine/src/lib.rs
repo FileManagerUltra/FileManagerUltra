@@ -61,6 +61,7 @@ pub mod openwith_cmds;
 pub mod pane_cmds;
 pub mod pane_kind_cmds;
 pub mod pane_scale_cmds;
+pub mod place_cmds;
 pub mod places_cmds;
 pub mod prefs;
 pub mod prefs_cmds;

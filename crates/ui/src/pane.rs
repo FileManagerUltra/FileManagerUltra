@@ -160,8 +160,13 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     Layout::top_down(Align::Min),
                     |ui| {
                         ui.set_min_size(ui.available_size());
+                        // Places open through `place.open`: a remote one gets a pane of its
+                        // own kind, so this pane keeps its tree.
                         if let Some(target) = crate::places::show(ui, s, pane, tokens) {
-                            open = Some(target);
+                            s.dispatch_or_notice(
+                                "place.open",
+                                &serde_json::json!({"uri": target.to_string(), "pane": pane}),
+                            );
                         }
                         if let Some(target) = tree::show(ui, s, pane, tokens) {
                             open = Some(target);
