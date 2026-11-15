@@ -52,6 +52,8 @@ pub struct TermSession {
     status: Status,
     reader: Option<JoinHandle<()>>,
     dialect: Dialect,
+    /// The folder the shell started in, or was last sent to (`note_cwd`).
+    known_dir: Option<String>,
 }
 
 impl TermSession {
@@ -143,6 +145,7 @@ impl TermSession {
             status: Status::Running,
             reader: Some(reader),
             dialect,
+            known_dir: cwd.map(str::to_string),
         })
     }
 
@@ -233,6 +236,25 @@ impl TermSession {
 
     pub fn process_id(&self) -> Option<u32> {
         self.child.process_id()
+    }
+
+    /// The shell's current folder: its real working directory where the OS shows it
+    /// without FFI (Linux), else the folder it started in or was last sent to.
+    pub fn cwd(&self) -> Option<String> {
+        #[cfg(target_os = "linux")]
+        if let Some(dir) = self
+            .process_id()
+            .and_then(|pid| std::fs::read_link(format!("/proc/{pid}/cwd")).ok())
+            .and_then(|path| path.to_str().map(str::to_string))
+        {
+            return Some(dir);
+        }
+        self.known_dir.clone()
+    }
+
+    /// Remember that the app sent the shell to `dir` (`cd` to another pane's folder).
+    pub fn note_cwd(&mut self, dir: &str) {
+        self.known_dir = Some(dir.to_string());
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
@@ -331,6 +353,23 @@ mod tests {
         s.write(b"stty size\r").expect("write");
         assert!(wait_for(&mut s, "10 33"));
         assert_eq!(s.snapshot().cols, 33);
+    }
+
+    #[test]
+    fn the_current_folder_follows_the_shell() {
+        let Some(mut s) = spawn() else { return };
+        assert!(s.cwd().is_some_and(|d| d.ends_with("tmp")), "{:?}", s.cwd());
+        if cfg!(target_os = "linux") {
+            let dir = tempfile::tempdir().expect("tmp");
+            let path = dir.path().to_str().expect("utf8").to_string();
+            s.write(format!("cd '{path}' && echo moved-$((40+2))\r").as_bytes())
+                .expect("write");
+            assert!(wait_for(&mut s, "moved-42"));
+            assert_eq!(s.cwd().as_deref(), Some(path.as_str()));
+        } else {
+            s.note_cwd("/elsewhere");
+            assert_eq!(s.cwd().as_deref(), Some("/elsewhere"));
+        }
     }
 
     #[test]

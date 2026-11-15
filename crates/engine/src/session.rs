@@ -86,6 +86,8 @@ pub struct Session {
     pub path_edit: Option<crate::goto_cmds::PathEdit>,
     /// Visited locations this session, most recent first (feeds path suggestions).
     pub path_history: Vec<VfsUri>,
+    /// The last focused Files pane's local folder, in any workspace (new terminals).
+    pub last_files_dir: Option<VfsUri>,
     /// One shell per Terminal pane (capability `terminal-pane`).
     pub terminals: HashMap<PaneId, fm_term::TermSession>,
     /// Current terminal text selection; cleared on scroll/resize.
@@ -195,6 +197,7 @@ impl Default for Session {
             show_link_targets: true,
             path_edit: None,
             path_history: Vec::new(),
+            last_files_dir: None,
             terminals: HashMap::new(),
             terminal_selection: None,
             previews: Default::default(),
@@ -429,6 +432,7 @@ impl Session {
         self.normalize_sftp_panes();
         self.remote_tick();
         changed |= self.refresh_previews();
+        self.note_files_dir();
         changed |= self.media_tick();
         changed |= self.media_store_tick();
         changed |= self.media_playlist_tick();

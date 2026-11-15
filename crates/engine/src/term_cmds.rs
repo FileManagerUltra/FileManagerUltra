@@ -62,26 +62,51 @@ impl Session {
         self.terminals.get(&pane).map(TermSession::snapshot)
     }
 
-    /// Start the pane's shell if it has none: in the last active Files pane's folder when local,
-    /// else the pane's own folder, otherwise the home directory.
+    /// Where a pane is working: a Files pane's local folder, or a terminal's current folder.
+    pub fn pane_dir(&self, pane: PaneId) -> Option<String> {
+        let state = self.layout.state(pane)?;
+        if state.kind == PaneKind::Terminal {
+            return self
+                .terminals
+                .get(&pane)
+                .and_then(TermSession::cwd)
+                .filter(|d| std::path::Path::new(d).is_dir());
+        }
+        state
+            .kind
+            .is_files()
+            .then(|| local_dir(&state.location))
+            .flatten()
+    }
+
+    /// Start the pane's shell if it has none, in the first local folder of: the active pane
+    /// (a pane being switched to Terminal counts as the Files pane it was), the pane active
+    /// before it (a split's source terminal), the last Files folder in any workspace, home.
+    /// A terminal pane's stored location is stale and never used.
     pub fn ensure_terminal(&mut self, pane: PaneId) -> Result<(), FmError> {
         if self.terminals.contains_key(&pane) {
             return Ok(());
         }
-        let own = self
-            .layout
-            .state(pane)
-            .map(|p| p.location.clone())
-            .ok_or_else(|| FmError::NotFound(format!("pane {pane}")))?;
-        // Prefer the last active file pane's folder, then the pane's own, then home.
-        let last_files = self
-            .layout
-            .focus
-            .last_files
-            .and_then(|id| self.layout.state(id))
-            .filter(|p| p.kind.is_files())
-            .and_then(|p| local_dir(&p.location));
-        let cwd = last_files.or_else(|| local_dir(&own)).or_else(home_dir);
+        if self.layout.state(pane).is_none() {
+            return Err(FmError::NotFound(format!("pane {pane}")));
+        }
+        let (focused, previous) = (self.layout.focus.focused, self.layout.focus.previous);
+        let candidate = |s: &Self, id: PaneId| {
+            let switching = id == pane && s.pane_kind(id).is_some_and(PaneKind::is_files);
+            (id != pane || switching).then(|| s.pane_dir(id)).flatten()
+        };
+        let cwd = candidate(self, focused)
+            .or_else(|| previous.and_then(|id| candidate(self, id)))
+            .or_else(|| self.last_files_dir.as_ref().and_then(local_dir))
+            .or_else(home_dir);
+        self.ensure_terminal_in(pane, cwd)
+    }
+
+    /// Start the pane's shell in `cwd` (the shell's default folder when `None`).
+    fn ensure_terminal_in(&mut self, pane: PaneId, cwd: Option<String>) -> Result<(), FmError> {
+        if self.terminals.contains_key(&pane) {
+            return Ok(());
+        }
         let session = TermSession::spawn_with_scrollback(
             self.prefs.terminal_shell.to_term(),
             cwd.as_deref(),
@@ -91,6 +116,17 @@ impl Session {
         )?;
         self.terminals.insert(pane, session);
         Ok(())
+    }
+
+    /// Remember the focused Files pane's local folder for new terminals in any workspace.
+    pub(crate) fn note_files_dir(&mut self) {
+        let focused = self.layout.focused();
+        if let Some(state) = self.layout.state(focused).filter(|st| st.kind.is_files())
+            && state.location.local_path().is_some()
+            && self.last_files_dir.as_ref() != Some(&state.location)
+        {
+            self.last_files_dir = Some(state.location.clone());
+        }
     }
 
     /// Resize the pane's pty to the cells the UI can show.
@@ -372,7 +408,9 @@ pub fn cd_here() -> CommandSpec {
                 .ok_or(FmError::Unsupported("no local folder in another pane"))?;
             let term = live_terminal(s, pane)?;
             let bytes = fm_term::cd_command(term.dialect(), &dir)?;
-            term.write(&bytes)
+            term.write(&bytes)?;
+            term.note_cwd(&dir);
+            Ok(())
         },
     }
 }
@@ -420,8 +458,13 @@ pub fn restart() -> CommandSpec {
                 }
                 return Err(FmError::Unsupported("pane is not a terminal"));
             }
+            // The new shell starts where the old one was.
+            let cwd = s.pane_dir(pane);
             s.drop_terminal(pane);
-            s.ensure_terminal(pane)
+            match cwd {
+                Some(dir) => s.ensure_terminal_in(pane, Some(dir)),
+                None => s.ensure_terminal(pane),
+            }
         },
     }
 }
@@ -485,5 +528,124 @@ mod paste_tests {
         let out = sanitize_paste("\x1b[2\x1b[201~01~\nrm -rf ~\n");
         assert!(!out.contains('\x1b'));
         assert_eq!(sanitize_paste("a\tb\r\nc"), "a\tb\r\nc");
+    }
+}
+
+#[cfg(test)]
+mod start_folder_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn dir_uri(dir: &std::path::Path) -> VfsUri {
+        VfsUri::parse(dir.to_str().expect("utf8")).expect("uri")
+    }
+
+    fn canon(dir: &std::path::Path) -> String {
+        dir.canonicalize()
+            .expect("canonical")
+            .to_str()
+            .expect("utf8")
+            .to_string()
+    }
+
+    fn started_in(s: &Session, pane: PaneId) -> Option<String> {
+        s.terminal(pane).and_then(TermSession::cwd).map(|d| {
+            std::path::Path::new(&d)
+                .canonicalize()
+                .map_or(d, |p| p.to_string_lossy().into_owned())
+        })
+    }
+
+    /// One pane at `dir`, switched to Terminal: the shell starts there.
+    fn terminal_at(dir: &std::path::Path) -> Option<(Session, PaneId)> {
+        let mut s = Session::new().expect("session");
+        let pane = s.layout.focused();
+        s.layout.state_mut(pane).expect("pane").location = dir_uri(dir);
+        s.dispatch("pane.kind.set", &serde_json::json!({"kind": "terminal"}))
+            .ok()?;
+        Some((s, pane))
+    }
+
+    #[test]
+    fn a_files_pane_switched_to_terminal_starts_in_its_folder() {
+        let a = tempfile::tempdir().expect("tmp");
+        let Some((s, pane)) = terminal_at(a.path()) else {
+            return;
+        };
+        assert_eq!(started_in(&s, pane), Some(canon(a.path())));
+    }
+
+    #[test]
+    fn a_split_terminal_starts_where_its_source_terminal_is_not_its_stale_location() {
+        let (a, b) = (
+            tempfile::tempdir().expect("a"),
+            tempfile::tempdir().expect("b"),
+        );
+        let Some((mut s, source)) = terminal_at(a.path()) else {
+            return;
+        };
+        let expected = if cfg!(target_os = "linux") {
+            // The shell moves on; the pane's stored location stays at `a`.
+            let path = canon(b.path());
+            let term = s.terminals.get_mut(&source).expect("terminal");
+            term.write(format!("cd '{path}'\r").as_bytes()).expect("cd");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while started_in(&s, source).as_deref() != Some(path.as_str()) {
+                assert!(Instant::now() < deadline, "shell never moved");
+                s.poll();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            path
+        } else {
+            canon(a.path())
+        };
+        s.dispatch("pane.split.horizontal", &Params::Null)
+            .expect("split");
+        let new = s.layout.focused();
+        assert_ne!(new, source);
+        s.ensure_terminal(new).expect("start");
+        assert_eq!(started_in(&s, new), Some(expected));
+    }
+
+    #[test]
+    fn with_no_pane_to_follow_the_last_files_folder_of_any_workspace_is_used() {
+        let (stale, last) = (
+            tempfile::tempdir().expect("a"),
+            tempfile::tempdir().expect("b"),
+        );
+        let mut s = Session::new().expect("session");
+        let pane = s.layout.focused();
+        {
+            let st = s.layout.state_mut(pane).expect("pane");
+            st.kind = PaneKind::Terminal;
+            st.location = dir_uri(stale.path());
+        }
+        s.layout.focus.previous = None;
+        s.last_files_dir = Some(dir_uri(last.path()));
+        if s.ensure_terminal(pane).is_err() {
+            return;
+        }
+        assert_eq!(started_in(&s, pane), Some(canon(last.path())));
+    }
+
+    #[test]
+    fn the_last_files_folder_follows_the_focused_files_pane() {
+        let a = tempfile::tempdir().expect("a");
+        let mut s = Session::new().expect("session");
+        let pane = s.layout.focused();
+        s.layout.state_mut(pane).expect("pane").location = dir_uri(a.path());
+        s.poll();
+        assert_eq!(s.last_files_dir, Some(dir_uri(a.path())));
+    }
+
+    #[test]
+    fn restart_keeps_the_folder() {
+        let a = tempfile::tempdir().expect("a");
+        let Some((mut s, pane)) = terminal_at(a.path()) else {
+            return;
+        };
+        let before = started_in(&s, pane);
+        s.dispatch("term.restart", &Params::Null).expect("restart");
+        assert_eq!(started_in(&s, pane), before);
     }
 }
