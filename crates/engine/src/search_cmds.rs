@@ -669,12 +669,16 @@ pub fn start_cmd() -> CommandSpec {
         label: "Search",
         menu: &["File", "Find Files…", "Search"],
         shortcut: None,
-        params: "name|content: string (at least one), root?: uri, hidden?: bool",
+        params: "name|content: string (at least one), root?: path as shown or typed (absolute), hidden?: bool",
         enabled: |s| s.search.is_some() || focused_dir(s).is_some(),
         run: |s, params| {
             let map = object(params)?;
             let root = match map.and_then(|m| m.get("root")) {
-                Some(v) => Some(parse_uri(v)?),
+                Some(v) => Some(
+                    v.as_str()
+                        .ok_or_else(|| FmError::InvalidParams("root must be a string".into()))
+                        .and_then(|text| s.resolve_absolute(text))?,
+                ),
                 None => s
                     .search
                     .as_ref()
@@ -1279,6 +1283,30 @@ mod tests {
         s.dispatch("file.reveal", &json!({"uri": file.as_str()}))
             .expect("reveal");
         assert_eq!(s.layout.panes().len(), 2);
+    }
+
+    #[test]
+    fn the_folder_accepts_typed_forms_and_rejects_relative_text() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let shown = tmp.path().to_str().expect("utf8").to_string();
+        let mut s = Session::new().expect("session");
+        s.dispatch("search.start", &json!({"root": shown, "name": "x"}))
+            .expect("native path");
+        let root = s.search.as_ref().and_then(|x| x.query.root.clone());
+        assert_eq!(
+            root.as_ref().map(|r| r.local_path_string()),
+            Some(Some(shown))
+        );
+        s.dispatch("search.start", &json!({"root": "~", "name": "x"}))
+            .expect("home");
+        for bad in ["Documents", "a/b", ""] {
+            assert!(
+                s.dispatch("search.start", &json!({"root": bad, "name": "x"}))
+                    .is_err(),
+                "{bad}"
+            );
+        }
+        s.dispatch("search.close", &Params::Null).expect("close");
     }
 
     #[test]

@@ -695,7 +695,7 @@ fn places_menu(ui: &mut egui::Ui, session: &mut Session) {
             }
             if ui
                 .button(&place.name)
-                .on_hover_text(place.uri.to_string())
+                .on_hover_text(fm_engine::item_cmds::display_path(&place.uri))
                 .clicked()
             {
                 session.dispatch_or_notice(

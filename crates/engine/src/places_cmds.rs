@@ -80,9 +80,16 @@ impl Session {
     pub fn places(&self) -> Vec<Place> {
         let mut out = self.standard_places.0.clone();
         out.extend(self.prefs.bookmarks.iter().filter_map(|b| {
+            let uri = VfsUri::parse(&b.uri).ok()?;
+            // Bookmarks made before names used the display form were named by their raw uri.
+            let name = if b.name == b.uri || b.name == uri.as_str() {
+                default_name(&uri)
+            } else {
+                b.name.clone()
+            };
             Some(Place {
-                name: b.name.clone(),
-                uri: VfsUri::parse(&b.uri).ok()?,
+                name,
+                uri,
                 bookmark: true,
                 kind: PlaceKind::Bookmark,
             })
@@ -284,6 +291,45 @@ pub fn specs() -> Vec<CommandSpec> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_name_that_is_still_the_raw_address_shows_the_default_name() {
+        let mut s = Session::new().expect("session");
+        s.prefs.bookmarks = vec![
+            Bookmark {
+                name: "smb://192.168.0.50/".into(),
+                uri: "smb://192.168.0.50/".into(),
+            },
+            Bookmark {
+                name: "NAS".into(),
+                uri: "smb://nas/media".into(),
+            },
+        ];
+        let names: Vec<String> = s
+            .places()
+            .into_iter()
+            .filter(|p| p.bookmark)
+            .map(|p| p.name)
+            .collect();
+        let server = if cfg!(windows) {
+            r"\\192.168.0.50"
+        } else {
+            "smb://192.168.0.50/"
+        };
+        assert_eq!(names, [server, "NAS"]);
+        // The saved entry is not rewritten.
+        assert_eq!(s.prefs.bookmarks[0].name, "smb://192.168.0.50/");
+    }
+
+    #[test]
+    fn a_share_bookmark_is_named_after_the_share() {
+        let mut s = Session::new().expect("session");
+        s.prefs.bookmarks.clear();
+        s.dispatch("bookmark.add", &json!({ "uri": "smb://nas/media" }))
+            .expect("add");
+        assert_eq!(s.prefs.bookmarks[0].name, "media");
+        assert_eq!(s.prefs.bookmarks[0].uri, "smb://nas/media");
+    }
 
     #[test]
     fn move_to_an_index_reorders_and_bad_params_fail() {

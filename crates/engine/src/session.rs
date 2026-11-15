@@ -85,7 +85,7 @@ pub struct Session {
     /// The pane location being edited (`nav.goto`), with its suggestions.
     pub path_edit: Option<crate::goto_cmds::PathEdit>,
     /// Visited locations this session, most recent first (feeds path suggestions).
-    pub path_history: Vec<String>,
+    pub path_history: Vec<VfsUri>,
     /// One shell per Terminal pane (capability `terminal-pane`).
     pub terminals: HashMap<PaneId, fm_term::TermSession>,
     /// Current terminal text selection; cleared on scroll/resize.

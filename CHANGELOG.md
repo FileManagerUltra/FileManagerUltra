@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Paths are shown the way your system writes them, everywhere: on Windows `C:\Users\you`, `\\server\share\folder` and This PC instead of `file:///C:/…`, on Linux and macOS `/home/you`. This covers the location bar, recent locations, Find Files (including Search everywhere), bookmark names, tooltips, Properties, Copy Path and the Copy/Move destination. SFTP folders always read `sftp://user@host/folder`. Any path the app shows can be typed or pasted back; on Windows a `\\server\share` path uses the app's own connection to that server when one is open.
+
+### Fixed
+- Opening a bookmark (or another saved location) on an SMB share that isn't connected now asks you to sign in and then opens it, instead of failing with "no backend registered for this location".
+- Bookmarks of a whole server are no longer named by their raw address (`smb://192.168.0.50/`).
+
 ## [0.2.3] - 2026-11-15
 
 ### Added

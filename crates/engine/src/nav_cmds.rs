@@ -67,7 +67,7 @@ pub fn open() -> CommandSpec {
                     "This volume is disconnected or being removed",
                 ));
             }
-            if s.needs_sftp_login_to(&to, true) {
+            if s.needs_sftp_login_to(&to, true) || s.needs_login_to(&to, true) {
                 return Ok(());
             }
             // No backend → error before committing the location (no ghost "loading").
@@ -229,6 +229,20 @@ mod tests {
             assert!(Instant::now() < deadline, "read never ready");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn opening_an_unconnected_smb_location_signs_in_instead_of_failing() {
+        let (mut s, _mem, home) = mem_session();
+        let share = VfsUri::parse("smb://192.168.0.50/media").expect("uri");
+        (open().run)(&mut s, &Params::String(share.as_str())).expect("open signs in");
+        let prompt = s.remote.login_prompt.as_ref().expect("login prompt");
+        assert_eq!(prompt.host, "192.168.0.50");
+        assert_eq!(prompt.uri, share);
+        assert!(prompt.navigate, "lands on the share once connected");
+        // The pane stays where it was until the connection lands.
+        assert_eq!(s.layout.state(1).expect("pane").location, home);
+        assert!(s.notice.is_none());
     }
 
     #[test]

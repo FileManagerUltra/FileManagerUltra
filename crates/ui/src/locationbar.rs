@@ -21,19 +21,11 @@ pub fn is_editing(s: &Session, pane: PaneId) -> bool {
 
 /// The path as a header label. Clicking it starts editing.
 pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused: bool) {
-    let Some(path) = s.layout.state(pane).map(|p| {
-        let loc = &p.location;
-        if loc.scheme() == fm_vfs::Scheme::File {
-            fm_engine::item_cmds::display_path(loc)
-        } else if matches!(
-            loc.scheme(),
-            fm_vfs::Scheme::Network | fm_vfs::Scheme::Servers
-        ) {
-            loc.to_string()
-        } else {
-            format!("{}:{}", loc.authority(), loc.path_str())
-        }
-    }) else {
+    let Some(path) = s
+        .layout
+        .state(pane)
+        .map(|p| fm_engine::item_cmds::display_path(&p.location))
+    else {
         return;
     };
     let text = RichText::new(&path).font(tokens.font());

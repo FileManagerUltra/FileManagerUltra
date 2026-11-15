@@ -1046,7 +1046,7 @@ fn multi_grid(
                             ui.add(
                                 egui::Label::new(RichText::new(&entry.name).strong()).truncate(),
                             )
-                            .on_hover_text(entry.uri.to_string());
+                            .on_hover_text(fm_engine::item_cmds::display_path(&entry.uri));
                             ui.separator();
                             ui.allocate_ui(vec2(ui.available_width(), 240.0 * scale), |ui| {
                                 ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
@@ -3091,7 +3091,7 @@ fn log_row(
                 .halign(egui::Align::LEFT)
                 .selectable(false),
             )
-            .on_hover_text(source.uri.to_string());
+            .on_hover_text(fm_engine::item_cmds::display_path(&source.uri));
         }
         if line == 0 && extra > 0 {
             if ui

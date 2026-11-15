@@ -508,9 +508,68 @@ pub fn native_path(path: &str, windows: bool) -> Option<String> {
     Some(format!("\\\\{}", rest.replace('/', "\\")))
 }
 
+/// How `uri` is shown to the user on an OS (`windows`), one form per location:
+/// local paths in OS form (`C:\x`, `\\server\share`, `/home/x`), in-app SMB as UNC
+/// (`\\host\share\dir`) on Windows when it names no user or port (UNC cannot), every
+/// other location as its uri. The Windows drive list (`file:///`) comes back as `/`; the
+/// engine labels it.
+pub fn display_form(uri: &VfsUri, windows: bool) -> String {
+    match uri.scheme {
+        Scheme::File if uri.authority.is_local() => {
+            native_path(&uri.path, windows).unwrap_or_else(|| uri.path.clone())
+        }
+        Scheme::Smb if windows && uri.authority.user.is_none() && uri.authority.port.is_none() => {
+            let rest = uri.path.trim_start_matches('/').replace('/', "\\");
+            if rest.is_empty() {
+                format!("\\\\{}", uri.authority.host)
+            } else {
+                format!("\\\\{}\\{rest}", uri.authority.host)
+            }
+        }
+        _ => uri.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_forms_follow_the_os() {
+        let form = |s: &str, windows: bool| display_form(&VfsUri::parse(s).expect(s), windows);
+        // Local.
+        assert_eq!(form("file:///C:/Users/alice", true), "C:\\Users\\alice");
+        assert_eq!(form("file:///C:", true), "C:\\");
+        assert_eq!(form("file:///", true), "/");
+        assert_eq!(
+            form("file:////server/share/x", true),
+            "\\\\server\\share\\x"
+        );
+        assert_eq!(form("file:///home/alice", false), "/home/alice");
+        assert_eq!(form("file:///", false), "/");
+        // In-app SMB.
+        assert_eq!(
+            form("smb://192.168.0.50/media/Movies", true),
+            "\\\\192.168.0.50\\media\\Movies"
+        );
+        assert_eq!(form("smb://192.168.0.50/", true), "\\\\192.168.0.50");
+        assert_eq!(form("smb://nas/media", false), "smb://nas/media");
+        assert_eq!(form("smb://alice@nas/media", true), "smb://alice@nas/media");
+        assert_eq!(form("smb://nas:1445/media", true), "smb://nas:1445/media");
+        // SFTP and virtual folders keep their uri on every OS.
+        for windows in [true, false] {
+            assert_eq!(
+                form("sftp://bob@host/srv/www", windows),
+                "sftp://bob@host/srv/www"
+            );
+            assert_eq!(
+                form("sftp://bob@host:2222/", windows),
+                "sftp://bob@host:2222/"
+            );
+            assert_eq!(form("network:///", windows), "network:///");
+            assert_eq!(form("servers:///", windows), "servers:///");
+        }
+    }
 
     #[test]
     fn native_paths_map_drives_unc_and_the_drive_list() {

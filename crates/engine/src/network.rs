@@ -282,6 +282,17 @@ impl Session {
     /// A read of `uri` found no backend. For a user-less `smb://` host this signs in: with a
     /// remembered login straight away, otherwise through the popup. `true` when handled.
     pub(crate) fn needs_login(&mut self, uri: &VfsUri) -> bool {
+        let navigate = self
+            .layout
+            .state(self.layout.focused())
+            .is_some_and(|st| st.location == *uri);
+        self.needs_login_to(uri, navigate)
+    }
+
+    /// [`Self::needs_login`] with the landing choice made by the caller: `navigate` opens
+    /// `uri` in the focused pane once connected (`nav.open` keeps the pane where it is until
+    /// then, as for SFTP).
+    pub(crate) fn needs_login_to(&mut self, uri: &VfsUri, navigate: bool) -> bool {
         let auth = uri.authority();
         if uri.scheme() != Scheme::Smb || self.backends.get_for(uri).is_some() {
             return false;
@@ -294,10 +305,6 @@ impl Session {
         {
             return true;
         }
-        let navigate = self
-            .layout
-            .state(self.layout.focused())
-            .is_some_and(|st| st.location == *uri);
         if auth.user.is_none()
             && let Some(params) =
                 self.remote

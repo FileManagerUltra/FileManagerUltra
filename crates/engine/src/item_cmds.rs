@@ -1,24 +1,21 @@
 //! Item commands: Copy Path, Copy Name and Duplicate for the focused selection.
 
 use fm_ops::ConflictPolicy;
-use fm_vfs::{FmError, Scheme, VfsUri};
+use fm_vfs::{FmError, VfsUri};
 
 use crate::file_cmds::{focused_dir, focused_selection, object, parse_sources};
 use crate::fileops::OpRequest;
 use crate::registry::{CommandSpec, Params};
 use crate::session::Session;
 
-/// What the user would type to reach `uri`: a plain path for local items (`C:\x` on
-/// Windows), the full uri for remote ones.
+/// How `uri` is shown everywhere in the app and what the user would type to reach it:
+/// the OS form for the platform (`C:\x`, `\\nas\share` and This PC on Windows), see
+/// [`fm_vfs::display_form`].
 pub fn display_path(uri: &VfsUri) -> String {
-    if uri.scheme() != Scheme::File {
-        return uri.to_string();
-    }
     if uri.is_drive_list() {
         return "This PC".to_string();
     }
-    uri.local_path_string()
-        .unwrap_or_else(|| uri.path_str().to_string())
+    fm_vfs::display_form(uri, cfg!(windows))
 }
 
 /// The selection, or the folder itself when nothing is selected.

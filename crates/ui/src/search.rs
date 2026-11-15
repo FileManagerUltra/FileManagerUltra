@@ -39,7 +39,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         return;
     }
     let status = search.status();
-    let engine_root = search.query.root.as_ref().map(|u| u.to_string());
+    let engine_root = search.query.root.as_ref().map(display_path);
     let mut draft = ctx
         .data_mut(|d| d.get_temp::<Draft>(draft_id()))
         .unwrap_or_else(|| Draft {
@@ -349,7 +349,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             .search
             .as_ref()
             .and_then(|x| x.query.root.as_ref())
-            .map(|u| u.to_string());
+            .map(display_path);
     }
     if let Some((id, params)) = command.filter(|_| open) {
         s.dispatch_or_notice(id, &params);

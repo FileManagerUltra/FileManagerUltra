@@ -103,7 +103,7 @@ pub fn subtitle_dialog(s: &Session) -> Dialog {
         .and_then(VfsUri::parent)
         .filter(|dir| dir.local_path().is_some())
         .map(|dir| {
-            let mut text = dir.to_string();
+            let mut text = fm_engine::item_cmds::display_path(&dir);
             if !text.ends_with(['/', '\\']) {
                 text.push(std::path::MAIN_SEPARATOR);
             }
@@ -133,14 +133,14 @@ pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
             })
             .unwrap_or_else(fm_engine::workspace::home_location);
         let path = if save {
-            dir.join("queue.m3u8").ok()?.to_string()
+            fm_engine::item_cmds::display_path(&dir.join("queue.m3u8").ok()?)
         } else {
             file_cmds::focused_selection(s)
                 .first()
                 .filter(|uri| {
                     fm_engine::media_playlist_cmds::validate_path(&uri.to_string(), false).is_ok()
                 })
-                .map(VfsUri::to_string)
+                .map(fm_engine::item_cmds::display_path)
                 .unwrap_or_default()
         };
         return Some(Dialog::Playlist { save, path });
@@ -193,7 +193,7 @@ pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
                     "file.move"
                 },
                 sources: selection,
-                dest: dir.to_string(),
+                dest: fm_engine::item_cmds::display_path(&dir),
             })
         }
         _ => None,
@@ -409,7 +409,10 @@ impl Dialogs {
                 sources,
                 dest,
             } => {
-                let valid = VfsUri::parse(dest).is_ok();
+                // Typed like the location bar: `\\nas\share` on Windows means the app's
+                // connection when there is one, `This PC`/`D:`/`~` work.
+                let resolved = s.resolve_absolute(dest);
+                let valid = resolved.is_ok();
                 let verdict = if valid {
                     Ok(())
                 } else {
@@ -421,9 +424,13 @@ impl Dialogs {
                     "Move to"
                 };
                 let (go, cancel) = name_dialog(ctx, tokens, title, dest, &verdict, focus, false);
-                if !cancel && !esc && (go || enter) && valid {
+                if !cancel
+                    && !esc
+                    && (go || enter)
+                    && let Ok(to) = resolved
+                {
                     let list: Vec<String> = sources.iter().map(|u| u.to_string()).collect();
-                    s.dispatch_or_notice(command, &json!({"sources": list, "dest": dest.as_str()}));
+                    s.dispatch_or_notice(command, &json!({"sources": list, "dest": to.as_str()}));
                     false
                 } else {
                     !(cancel || esc)

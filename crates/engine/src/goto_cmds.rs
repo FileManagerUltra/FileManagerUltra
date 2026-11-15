@@ -6,6 +6,7 @@ use fm_layout::PaneId;
 use fm_vfs::{FmError, Scheme, VfsUri};
 
 use crate::file_cmds::object;
+use crate::item_cmds::display_path;
 use crate::registry::{CommandSpec, Params};
 use crate::session::Session;
 
@@ -116,7 +117,20 @@ fn windows_shortcut(text: &str, windows: bool) -> Option<VfsUri> {
     }
 }
 
+/// [`resolve_with`] for this OS, with no in-app SMB connection (tests and pure callers).
 pub fn resolve(base: &VfsUri, text: &str) -> Result<VfsUri, FmError> {
+    resolve_with(base, text, cfg!(windows), &|_| false)
+}
+
+/// Resolve typed text on an OS (`windows`). `smb_connected(host)` says whether the app has
+/// its own SMB connection to `host`: on Windows a `\\host\share` path then means that
+/// connection (it is how such a location is shown), otherwise Windows' own access.
+pub fn resolve_with(
+    base: &VfsUri,
+    text: &str,
+    windows: bool,
+    smb_connected: &dyn Fn(&str) -> bool,
+) -> Result<VfsUri, FmError> {
     let text = text.trim();
     if text.is_empty() || text.len() > MAX_EDIT_BYTES {
         return Err(FmError::invalid_uri("empty or oversized path"));
@@ -129,12 +143,15 @@ pub fn resolve(base: &VfsUri, text: &str) -> Result<VfsUri, FmError> {
     } else {
         text
     };
-    if let Some(uri) = windows_shortcut(text, cfg!(windows)) {
+    if let Some(uri) = windows_shortcut(text, windows) {
         return Ok(uri);
     }
-    // Windows already reaches `\\server\share` natively; elsewhere (and when typed into a
-    // network pane) it opens the in-app SMB connection.
-    if (!cfg!(windows) || matches!(base.scheme(), Scheme::Smb | Scheme::Network))
+    // Elsewhere `\\server\share` opens the in-app SMB connection. Windows reaches it
+    // natively, unless the app is connected to that server or the pane is a network one.
+    let in_app = |host: &str| {
+        !windows || matches!(base.scheme(), Scheme::Smb | Scheme::Network) || smb_connected(host)
+    };
+    if unc_host(text).is_none_or(in_app)
         && let Some(uri) = unc_to_smb(text)?
     {
         return Ok(uri);
@@ -151,6 +168,15 @@ pub fn resolve(base: &VfsUri, text: &str) -> Result<VfsUri, FmError> {
         };
     }
     Ok(cur)
+}
+
+/// The server of a UNC path (`\\host\share` → `host`); `None` for other text.
+fn unc_host(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix("\\\\")?;
+    if rest.starts_with(['?', '.']) {
+        return None;
+    }
+    rest.split('\\').find(|s| !s.is_empty())
 }
 
 /// `\\host\share\dir` as `smb://host/share/dir`; `None` when `text` is not a UNC path.
@@ -181,31 +207,67 @@ fn split_typed(text: &str) -> (&str, &str) {
     }
 }
 
-/// The separator the editor puts after a folder: `\` for local Windows paths, so the text
-/// stays one style (`C:\Users\Documents\`), `/` everywhere else.
+/// The separator the editor puts after a folder: the one the folder's display form uses, so
+/// the text stays one style (`C:\Users\Documents\`, `\\nas\media\` on Windows), `/`
+/// for uris and POSIX paths.
 fn sep_of(uri: &VfsUri) -> char {
-    if cfg!(windows) && uri.scheme() == Scheme::File && !uri.is_drive_list() {
+    let shown = display_path(uri);
+    if !shown.contains("://") && shown.contains('\\') {
         '\\'
     } else {
         '/'
     }
 }
 
-fn display_of(uri: &VfsUri) -> String {
-    if uri.scheme() == Scheme::File {
-        crate::item_cmds::display_path(uri)
-    } else {
-        uri.as_str()
-    }
-}
-
 impl Session {
     /// Remember a visited location (most recent first, no duplicates, capped).
     pub fn note_visit(&mut self, uri: &VfsUri) {
-        let shown = display_of(uri);
-        self.path_history.retain(|p| p != &shown);
-        self.path_history.insert(0, shown);
+        self.path_history.retain(|p| p != uri);
+        self.path_history.insert(0, uri.clone());
         self.path_history.truncate(MAX_HISTORY);
+    }
+
+    /// Whether the app has its own SMB connection to `host` (no user, default port).
+    fn smb_connected(&self, host: &str) -> bool {
+        VfsUri::parse(&format!("smb://{host}/"))
+            .is_ok_and(|uri| self.backends.get_for(&uri).is_some())
+    }
+
+    /// Turn typed text into a location, relative to `base`: every display form comes back to
+    /// the location it is shown for (see [`resolve_with`]).
+    pub fn resolve_typed(&self, base: &VfsUri, text: &str) -> Result<VfsUri, FmError> {
+        resolve_with(base, text, cfg!(windows), &|host| self.smb_connected(host))
+    }
+
+    /// [`Self::resolve_typed`] for fields that take a whole location (the Find Files folder):
+    /// relative text is an error instead of being joined to a folder.
+    pub fn resolve_absolute(&self, text: &str) -> Result<VfsUri, FmError> {
+        let text = text.trim();
+        let absolute = text == "~"
+            || text.starts_with("~/")
+            || text.starts_with("~\\")
+            || is_anchored(text)
+            || windows_shortcut(text, cfg!(windows)).is_some();
+        if !absolute {
+            return Err(FmError::InvalidParams(format!(
+                "“{text}” is not a full path; type it from the drive or root"
+            )));
+        }
+        self.resolve_typed(&VfsUri::root_file(), text)
+    }
+
+    /// Like [`Self::resolve_typed`], but text that is exactly a recent location as shown
+    /// returns that location, whatever is connected now.
+    fn resolve_committed(&self, base: &VfsUri, text: &str) -> Result<VfsUri, FmError> {
+        let trimmed = text.trim().trim_end_matches(is_sep);
+        let recent = self.path_history.iter().find(|uri| {
+            let shown = display_path(uri);
+            !trimmed.is_empty() && shown.trim_end_matches(is_sep) == trimmed
+        });
+        match recent {
+            Some(uri) => Ok(uri.clone()),
+            None => self.resolve_typed(base, text),
+        }
     }
 
     /// Recompute the suggestions for the open path edit when its text changed or the
@@ -244,7 +306,7 @@ impl Session {
             let dir = if dir_text.is_empty() {
                 Ok(base.clone())
             } else {
-                resolve(base, dir_text)
+                self.resolve_typed(base, dir_text)
             };
             if let Ok(dir) = dir {
                 match self.dirs.state(&dir).entries() {
@@ -283,10 +345,11 @@ impl Session {
         }
         let lower = text.to_lowercase();
         let mut taken = 0;
-        for shown in &self.path_history {
+        for uri in &self.path_history {
             if taken >= MAX_HISTORY_SUGGESTIONS {
                 break;
             }
+            let shown = display_path(uri);
             let hay = shown.to_lowercase();
             let matches = lower.is_empty() || hay.contains(&lower);
             let dup = out
@@ -294,7 +357,7 @@ impl Session {
                 .any(|s| s.text.trim_end_matches(is_sep) == shown.as_str());
             if matches && !dup && shown.as_str() != text.trim_end_matches(is_sep) {
                 out.push(Suggestion {
-                    text: shown.clone(),
+                    text: shown,
                     kind: SuggestionKind::History,
                 });
                 taken += 1;
@@ -338,7 +401,7 @@ pub fn goto() -> CommandSpec {
                 .state(pane)
                 .map(|p| p.location.clone())
                 .ok_or_else(|| FmError::NotFound("focused pane".to_string()))?;
-            let loc = display_of(&location);
+            let loc = display_path(&location);
             let text = if loc.ends_with(is_sep) {
                 loc
             } else {
@@ -371,7 +434,7 @@ pub fn commit() -> CommandSpec {
                 .state(s.layout.focused())
                 .map(|p| p.location.clone())
                 .ok_or_else(|| FmError::NotFound("focused pane".to_string()))?;
-            let target = resolve(&base, &raw)?;
+            let target = s.resolve_committed(&base, &raw)?;
             // A typed `sftp://` or `smb://` address with no connection yet asks in the sign-in popup.
             if matches!(target.scheme(), Scheme::Smb | Scheme::Sftp)
                 && s.backends.require(&target).is_err()
@@ -388,7 +451,7 @@ pub fn commit() -> CommandSpec {
                 s.path_edit = None;
                 return Ok(());
             }
-            s.dispatch("nav.open", &Params::String(display_of(&target)))?;
+            s.dispatch("nav.open", &Params::String(target.as_str()))?;
             s.path_edit = None;
             Ok(())
         },
@@ -515,6 +578,97 @@ mod tests {
     }
 
     #[test]
+    fn windows_unc_uses_the_app_connection_only_when_there_is_one() {
+        let local = VfsUri::parse(r"C:\Users\alice").expect("uri");
+        let none = |_: &str| false;
+        let nas = |host: &str| host == "nas";
+        let go = |base: &VfsUri, text: &str, connected: &dyn Fn(&str) -> bool| {
+            resolve_with(base, text, true, connected)
+                .expect(text)
+                .as_str()
+        };
+        assert_eq!(
+            go(&local, r"\\nas\media\Movies", &nas),
+            "smb://nas/media/Movies"
+        );
+        assert_eq!(go(&local, r"\\nas", &nas), "smb://nas/");
+        // Not connected: Windows' own access, as before (also for `..`, which it normalizes).
+        assert_eq!(go(&local, r"\\nas\media", &none), "file:///nas/media");
+        assert_eq!(go(&local, r"\\other\public", &nas), "file:///other/public");
+        assert_eq!(go(&local, r"\\nas\a\..\x", &none), "file:///nas/x");
+        // A network pane keeps meaning the app's connection.
+        let smb = VfsUri::parse("smb://nas/media").expect("uri");
+        assert_eq!(go(&smb, r"\\fileserver\x", &none), "smb://fileserver/x");
+        // Windows shortcuts.
+        assert_eq!(go(&local, "This PC", &none), "file:///");
+        assert_eq!(go(&local, "D:", &none), "file:///D:");
+    }
+
+    #[test]
+    fn every_display_form_resolves_back_to_its_location() {
+        let base = VfsUri::parse("/").expect("uri");
+        let all = |_: &str| true;
+        for (windows, uris) in [
+            (
+                true,
+                &[
+                    "file:///C:/Users/alice",
+                    "file:///C:",
+                    "file:///",
+                    "smb://nas/media/Movies",
+                    "smb://192.168.0.50/",
+                    "smb://alice@nas/media",
+                    "smb://nas:1445/media",
+                    "sftp://bob@host/srv/www",
+                    "sftp://bob@host:2222/",
+                ][..],
+            ),
+            (
+                false,
+                &[
+                    "file:///home/alice",
+                    "file:///",
+                    "smb://nas/media/Movies",
+                    "smb://alice@nas/media",
+                    "sftp://bob@host/srv/www",
+                ][..],
+            ),
+        ] {
+            for raw in uris {
+                let uri = VfsUri::parse(raw).expect(raw);
+                let shown = if windows && uri.as_str() == "file:///" {
+                    "This PC".to_string()
+                } else {
+                    fm_vfs::display_form(&uri, windows)
+                };
+                let back = resolve_with(&base, &shown, windows, &all).expect(&shown);
+                assert_eq!(back, uri, "{shown} (windows: {windows})");
+            }
+        }
+    }
+
+    #[test]
+    fn a_recent_location_commits_to_where_it_was_recorded() {
+        let (mut s, _home) = session();
+        let share = VfsUri::parse("smb://nas/media").expect("uri");
+        s.note_visit(&share);
+        let base = s
+            .layout
+            .state(s.layout.focused())
+            .expect("pane")
+            .location
+            .clone();
+        let shown = display_path(&share);
+        assert_eq!(s.resolve_committed(&base, &shown).expect("recent"), share);
+        // The same text with a trailing separator, as a suggestion leaves it.
+        let with_sep = format!("{shown}{}", sep_of(&share));
+        assert_eq!(
+            s.resolve_committed(&base, &with_sep).expect("recent"),
+            share
+        );
+    }
+
+    #[test]
     fn goto_opens_an_edit_on_the_focused_pane_with_the_current_path() {
         let (mut s, _home) = session();
         s.dispatch("nav.goto", &Params::Null).expect("goto");
@@ -591,10 +745,7 @@ mod tests {
         s.note_visit(&docs);
         s.note_visit(&home);
         s.note_visit(&docs);
-        assert_eq!(
-            s.path_history,
-            vec![native("/home/alice/Documents"), native("/home/alice")]
-        );
+        assert_eq!(s.path_history, vec![docs.clone(), home.clone()]);
         s.path_edit = Some(PathEdit::new(s.layout.focused(), native("/home/alice/")));
         settle(&mut s);
         let history: Vec<_> = s
@@ -658,10 +809,7 @@ mod tests {
             s.layout.state(s.layout.focused()).expect("pane").location,
             docs
         );
-        assert_eq!(
-            s.path_history.first().map(String::as_str),
-            Some(native("/home/alice/Documents").as_str())
-        );
+        assert_eq!(s.path_history.first(), Some(&docs));
 
         s.dispatch("nav.goto", &Params::Null).expect("goto");
         assert!(
