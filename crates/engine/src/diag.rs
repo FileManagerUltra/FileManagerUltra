@@ -856,7 +856,17 @@ mod tests {
             ..UiSample::default()
         });
         // Two samples: the first shows the UI sample, the second has none (no frames ran).
-        std::thread::sleep(Duration::from_millis(2300));
+        // Wait for the second one instead of a fixed time: on a busy machine (Windows CI)
+        // the first memory reading alone can take half a second. Samples are flushed as
+        // they are written.
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        while !std::fs::read_to_string(&path).is_ok_and(|t| t.contains(" ui=none")) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no second sample within 15 s"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
         stop();
         assert!(!enabled());
         let text = std::fs::read_to_string(&path).expect("read");
