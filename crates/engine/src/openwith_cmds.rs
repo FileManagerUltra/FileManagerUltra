@@ -9,7 +9,9 @@
 //! scan, expands the `Exec` line without a shell and starts the program detached.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(not(windows))]
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use fm_vfs::{FmError, VfsUri};
@@ -18,8 +20,11 @@ use crate::file_cmds::{focused_selection, object, parse_uri};
 use crate::registry::{CommandSpec, Params};
 use crate::session::Session;
 
-/// Most applications kept from a scan; largest file read while scanning.
+/// Most applications kept from a scan; largest file read while scanning. Windows uses the
+/// system dialog instead, so the scan is not built there.
+#[cfg(not(windows))]
 const MAX_APPS: usize = 2_000;
+#[cfg(not(windows))]
 const MAX_SCAN_FILE: u64 = 4 * 1024 * 1024;
 const MAX_ARGS: usize = 256;
 
@@ -223,6 +228,7 @@ pub fn expand_exec(exec: &str, path: &str) -> Result<Vec<String>, FmError> {
     Ok(args)
 }
 
+#[cfg(not(windows))]
 fn read_small(path: &Path) -> Option<String> {
     let meta = std::fs::metadata(path).ok()?;
     if meta.len() > MAX_SCAN_FILE {
@@ -231,6 +237,7 @@ fn read_small(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+#[cfg(not(windows))]
 fn data_dirs() -> Vec<PathBuf> {
     let home = directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf());
     let mut dirs = Vec::new();
@@ -256,6 +263,7 @@ fn data_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+#[cfg(not(windows))]
 fn scan_apps_dir(
     dir: &Path,
     prefix: &str,
@@ -338,6 +346,7 @@ pub fn parse_mimeapps(text: &str, into: &mut HashMap<String, Vec<String>>) {
     }
 }
 
+#[cfg(not(windows))]
 fn scan() -> AppCatalog {
     let mut catalog = AppCatalog::default();
     if cfg!(target_os = "macos") {
@@ -425,6 +434,7 @@ fn launch(app: &App, path: &Path) -> Result<(), FmError> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 impl Session {
     fn app_catalog(&mut self) -> Arc<Mutex<Option<Arc<AppCatalog>>>> {
         if let Some(c) = &self.app_catalog {
@@ -660,6 +670,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn scanning_this_machine_is_total() {
         let catalog = scan();
         assert!(catalog.apps.len() <= MAX_APPS);
