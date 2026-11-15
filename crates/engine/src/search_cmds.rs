@@ -479,16 +479,27 @@ fn os_hidden(child: &std::fs::DirEntry) -> bool {
     }
 }
 
+/// Whether a folder has files to walk (Find Files, Properties sizes): local folders, SFTP
+/// servers and SMB shares do. SFTP and SMB walk on a thread of their own, never a job lane,
+/// so a hung server blocks only that walk. The Network and Servers folders and an SMB
+/// server root list servers or shares, not files.
+pub(crate) fn searchable(uri: &VfsUri) -> Result<(), FmError> {
+    match uri.scheme() {
+        Scheme::File | Scheme::Sftp => Ok(()),
+        Scheme::Smb if uri.share().is_some() => Ok(()),
+        Scheme::Smb => Err(FmError::Unsupported("Open a share to search it")),
+        Scheme::Network | Scheme::Servers => {
+            Err(FmError::Unsupported("Open a share or server to search it"))
+        }
+    }
+}
+
 fn start(s: &mut Session, query: SearchQuery) -> Result<(), FmError> {
     let root = query
         .root
         .clone()
         .ok_or_else(|| FmError::InvalidParams("no folder to search".to_string()))?;
-    if !matches!(root.scheme(), Scheme::File | Scheme::Sftp) {
-        return Err(FmError::Unsupported(
-            "Find Files works in local folders and on SFTP servers",
-        ));
-    }
+    searchable(&root)?;
     let vfs = s.backends.require(&root)?;
     let name = match query.name.trim() {
         "" => None,
@@ -1178,6 +1189,64 @@ mod tests {
         (0..search.status().found)
             .filter_map(|i| search.result(i).map(|e| e.name))
             .collect()
+    }
+
+    /// A session with an in-memory SMB server `nas` holding share `media`.
+    fn smb_session() -> (Session, VfsUri) {
+        let share = VfsUri::parse("smb://nas/media").expect("uri");
+        let fs = fm_testkit::MemFs::new().with_scheme(Scheme::Smb);
+        let at = |rel: &str| {
+            rel.split('/')
+                .try_fold(share.clone(), |uri, name| uri.join(name))
+                .expect("uri")
+        };
+        fs.mkdirs(&at("Movies/2024")).expect("dirs");
+        fs.put_file(&at("Movies/2024/trip.mkv"), b"video")
+            .expect("file");
+        fs.put_file(&at("Movies/notes.txt"), b"the NEEDLE is here")
+            .expect("file");
+        fs.put_file(&at("readme.txt"), b"nothing").expect("file");
+        let mut s = Session::new().expect("session");
+        s.backends
+            .register_at(share.authority(), std::sync::Arc::new(fs));
+        (s, share)
+    }
+
+    #[test]
+    fn an_smb_share_is_searched_by_name_and_content() {
+        let (mut s, share) = smb_session();
+        s.dispatch(
+            "search.start",
+            &json!({"root": share.as_str(), "name": "*.mkv"}),
+        )
+        .expect("start");
+        assert_eq!(names_after(&s), ["trip.mkv"]);
+        s.dispatch(
+            "search.start",
+            &json!({"root": share.as_str(), "content": "needle"}),
+        )
+        .expect("start");
+        assert_eq!(names_after(&s), ["notes.txt"]);
+        s.dispatch("search.close", &Params::Null).expect("close");
+    }
+
+    #[test]
+    fn places_without_files_are_refused_with_what_to_open() {
+        let (mut s, _share) = smb_session();
+        for (root, hint) in [
+            ("smb://nas/", "Open a share to search it"),
+            ("network:///", "Open a share or server to search it"),
+            ("servers:///", "Open a share or server to search it"),
+        ] {
+            let err = s
+                .dispatch("search.start", &json!({"root": root, "name": "x"}))
+                .expect_err(root);
+            assert!(err.to_string().contains(hint), "{root}: {err}");
+            assert!(
+                !s.search.as_ref().is_some_and(|x| x.status().running),
+                "{root}: no search runs"
+            );
+        }
     }
 
     #[test]

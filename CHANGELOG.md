@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Find Files now searches network shares (SMB), by name and by content, like SFTP servers and local folders. Properties now shows the size and number of items of folders on network shares too. In the Network folder or on a server that lists its shares, Find Files tells you to open a share first.
+
 ### Changed
 - Paths are shown the way your system writes them, everywhere: on Windows `C:\Users\you`, `\\server\share\folder` and This PC instead of `file:///C:/…`, on Linux and macOS `/home/you`. This covers the location bar, recent locations, Find Files (including Search everywhere), bookmark names, tooltips, Properties, Copy Path and the Copy/Move destination. SFTP folders always read `sftp://user@host/folder`. Any path the app shows can be typed or pasted back; on Windows a `\\server\share` path uses the app's own connection to that server when one is open.
 

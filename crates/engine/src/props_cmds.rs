@@ -8,7 +8,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use fm_vfs::{Entry, EntryKind, FmError, Scheme, Vfs, VfsUri};
+use fm_vfs::{Entry, EntryKind, FmError, Vfs, VfsUri};
 
 use crate::file_cmds::{focused_dir, focused_selection, object, parse_sources};
 use crate::fileops::OpRequest;
@@ -151,10 +151,11 @@ fn walk(
 fn start(s: &mut Session, items: Vec<VfsUri>) -> Result<(), FmError> {
     let shared = Arc::new(Mutex::new(PropsInfo::default()));
     let cancel = Arc::new(AtomicBool::new(false));
-    // SMB handles stay on the SMB lane; there the dialog shows the cached listing only.
+    // Local, SFTP and SMB-share folders are walked on this thread (never a job lane); the
+    // Network/Servers folders and an SMB server root show the cached listing only.
     let walkable: Vec<(Arc<dyn Vfs>, VfsUri)> = items
         .iter()
-        .filter(|u| matches!(u.scheme(), Scheme::File | Scheme::Sftp))
+        .filter(|u| crate::search_cmds::searchable(u).is_ok())
         .filter_map(|u| s.backends.get_for(u).map(|vfs| (vfs, u.clone())))
         .collect();
     if walkable.len() < items.len() {
@@ -336,6 +337,32 @@ mod tests {
         s.dispatch("file.properties.close", &Params::Null)
             .expect("close");
         assert!(s.properties.is_none());
+    }
+
+    #[test]
+    fn a_folder_on_an_smb_share_is_counted() {
+        let share = VfsUri::parse("smb://nas/media").expect("uri");
+        let fs = fm_testkit::MemFs::new().with_scheme(fm_vfs::Scheme::Smb);
+        let movies = share.join("Movies").expect("uri");
+        fs.mkdirs(&movies.join("2024").expect("uri")).expect("dirs");
+        let a = movies
+            .join("2024")
+            .and_then(|d| d.join("a.mkv"))
+            .expect("uri");
+        fs.put_file(&a, &[0u8; 40]).expect("file");
+        fs.put_file(&movies.join("b.mkv").expect("uri"), &[0u8; 2])
+            .expect("file");
+        let mut s = Session::new().expect("session");
+        s.backends
+            .register_at(share.authority(), std::sync::Arc::new(fs));
+        s.dispatch("file.properties", &json!({"sources": [movies.as_str()]}))
+            .expect("open");
+        settle(&mut s, |s| {
+            s.properties.as_ref().is_some_and(|p| p.info().done)
+        });
+        let info = s.properties.as_ref().expect("open").info();
+        assert_eq!((info.dirs, info.files, info.bytes), (2, 2, 42));
+        assert_eq!(info.note, None, "no \"not counted\" note");
     }
 
     #[cfg(unix)]
