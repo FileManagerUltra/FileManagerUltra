@@ -267,8 +267,7 @@ pub fn send_ui_sample(sample: UiSample) {
 
 /// `<data dir>/diagnostics`, next to the managed tools.
 pub fn default_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", fm_brand::APP_SLUG)
-        .map(|dirs| dirs.data_local_dir().join("diagnostics"))
+    crate::prefs::project_dirs().map(|dirs| dirs.data_local_dir().join("diagnostics"))
 }
 
 /// Whether the log folder exists: a log was written this session or before. The folder is
