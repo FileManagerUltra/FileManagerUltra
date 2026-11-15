@@ -23,11 +23,15 @@ The walker SHALL NOT follow symlinks, SHALL stop at 10 000 results or depth 64, 
 - **AND** the search ends once 10 000 results are found
 
 ### Requirement: Results lead back to the file
-Double-clicking a file result SHALL open it with its default application; Show in Folder (`file.reveal {uri}`) SHALL navigate a Files pane to the parent and select the item; Copy Path SHALL copy its path.
+Double-clicking a file result SHALL open it with its default application; Show in Folder (`file.reveal {uri}`) SHALL navigate a Files pane to the parent and select the item, opening a new Files pane beside the focused pane when the workspace has none; Copy Path SHALL copy its path.
 
 #### Scenario: Show in Folder
 - **WHEN** the user chooses Show in Folder on a result
 - **THEN** a Files pane navigates to the parent folder and selects the item
+
+#### Scenario: Show in Folder without a Files pane
+- **WHEN** the workspace holds only a terminal and the user chooses Show in Folder on a result
+- **THEN** a new Files pane opens beside the terminal at the parent folder with the item selected, and the terminal stays
 
 ### Requirement: Searches run in the background like jobs
 A running search SHALL be minimisable to the Activity panel (`search.minimize`), where it shows its query, matches found and folders searched, with buttons to show the window again (`search.restore`) and to stop it. The status bar's job text SHALL include a running search. Minimising SHALL NOT stop or slow the search.

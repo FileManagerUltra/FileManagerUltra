@@ -101,7 +101,7 @@ DVD-Video disc images (`.iso`) on a local disk SHALL play their main title (the 
 - **THEN** a playlist folder "Movie" holds VTS_01_1 and VTS_01_2 in that order, without the menus
 
 ### Requirement: Jump from the playlist to the file
-The context menu of a playlist row SHALL offer "Show in folder", which opens the row's folder in a Files pane (the focused one if it is a Files pane, otherwise the first) with the file selected and scrolled into view, and gives that pane focus; playback SHALL continue. The context menu of a playlist folder SHALL offer "Go to folder on disk", which opens the folder it was made from in a Files pane; for a folder made in the playlist the entry SHALL be disabled. Both dispatch `media.reveal`; without a Files pane, or for a row or folder that does not exist, it SHALL fail with a message and change nothing.
+The context menu of a playlist row SHALL offer "Show in folder", which opens the row's folder in a Files pane (the focused one if it is a Files pane, otherwise the first) with the file selected and scrolled into view, and gives that pane focus; playback SHALL continue. The context menu of a playlist folder SHALL offer "Go to folder on disk", which opens the folder it was made from in a Files pane; for a folder made in the playlist the entry SHALL be disabled. Both dispatch `media.reveal`; without a Files pane they SHALL open a new one beside the focused pane, and for a row or folder that does not exist they SHALL fail with a message and change nothing.
 
 #### Scenario: Show a row's file
 - **WHEN** the user right-clicks the playlist row of `/music/Album/Song.mp3` and picks Show in folder

@@ -850,7 +850,8 @@ pub fn reveal() -> CommandSpec {
 }
 
 /// Open `folder` in a Files pane (the search's origin, the focused pane or the first Files
-/// pane), focus it and, with `select`, select and scroll to that item.
+/// pane; with none, a new one split off the focused pane), focus it and, with `select`,
+/// select and scroll to that item.
 pub(crate) fn show_in_files(
     s: &mut Session,
     folder: VfsUri,
@@ -858,14 +859,27 @@ pub(crate) fn show_in_files(
 ) -> Result<(), FmError> {
     s.backends.require(&folder)?;
     let is_files = |s: &Session, p: PaneId| s.layout.state(p).is_some_and(|x| x.kind.is_files());
-    let pane = s
+    let existing = s
         .search
         .as_ref()
         .map(|x| x.origin)
         .filter(|p| is_files(s, *p))
         .or_else(|| Some(s.layout.focused()).filter(|p| is_files(s, *p)))
-        .or_else(|| s.layout.panes().into_iter().find(|p| is_files(s, *p)))
-        .ok_or_else(|| FmError::NotFound("a Files pane".to_string()))?;
+        .or_else(|| s.layout.panes().into_iter().find(|p| is_files(s, *p)));
+    let pane = match existing {
+        Some(pane) => pane,
+        None => {
+            // Only terminals, previews or media here: open a fresh Files pane beside the
+            // focused one instead of failing.
+            let pane = s
+                .layout
+                .split(s.layout.focused(), fm_layout::Axis::Horizontal, 0.5)?;
+            if let Some(state) = s.layout.state_mut(pane) {
+                *state = fm_layout::PaneState::new_rooted(folder.clone(), folder.root());
+            }
+            pane
+        }
+    };
     s.layout.focus_pane(pane)?;
     if let Some(state) = s.layout.state_mut(pane) {
         if state.location != folder {
@@ -1234,6 +1248,37 @@ mod tests {
         let state = s.layout.state(pane).expect("pane");
         assert_eq!(Some(&state.location), file.parent().as_ref());
         assert_eq!(state.listing.reveal.as_deref(), Some("x.txt"));
+    }
+
+    #[test]
+    fn reveal_without_a_files_pane_opens_one() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join("x.txt"), b"x").expect("w");
+        let file = VfsUri::parse(tmp.path().join("x.txt").to_str().expect("utf8")).expect("uri");
+        let mut s = Session::new().expect("session");
+        let term = s.layout.focused();
+        s.layout.state_mut(term).expect("pane").kind = fm_layout::PaneKind::Terminal;
+        assert_eq!(s.layout.panes().len(), 1);
+
+        s.dispatch("file.reveal", &json!({"uri": file.as_str()}))
+            .expect("reveal");
+
+        assert_eq!(s.layout.panes().len(), 2);
+        assert_eq!(
+            s.layout.state(term).map(|x| x.kind),
+            Some(fm_layout::PaneKind::Terminal)
+        );
+        let pane = s.layout.focused();
+        assert_ne!(pane, term);
+        let state = s.layout.state(pane).expect("pane");
+        assert!(state.kind.is_files());
+        assert_eq!(Some(&state.location), file.parent().as_ref());
+        assert_eq!(state.listing.reveal.as_deref(), Some("x.txt"));
+
+        // A second reveal reuses the new pane rather than splitting again.
+        s.dispatch("file.reveal", &json!({"uri": file.as_str()}))
+            .expect("reveal");
+        assert_eq!(s.layout.panes().len(), 2);
     }
 
     #[test]
