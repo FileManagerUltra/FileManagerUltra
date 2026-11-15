@@ -13,7 +13,7 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 
 Additional change, done and archived: `git-status-and-diff` (git status markers, Diff view in the Preview pane) — see `docs/architecture.md` §12a.
 
-**Latest release:** 0.2.2 (2026-11-13): SVG and camera RAW photos in Preview and thumbnails, photos and phone videos upright, picture subtitles, hardware video decoding, keyboard-accessible Preferences and memory fixes. 0.2.0 (2026-11-12) brought the Media pane, Find Files redesign and Activity panel. The next minor release (0.3.0) waits for signed and notarized installers. Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
+**Latest release:** 0.2.3 (2026-11-15): per-pane and per-terminal zoom, Ctrl+Tab workspace switching, playing time in the status bar, a diagnostic log, and on Windows Direct3D 12 drawing (fixes the NVIDIA memory growth) and a consistently named settings folder. 0.2.2 (2026-11-13) brought SVG and camera RAW photos in Preview and thumbnails, photos and phone videos upright, picture subtitles, hardware video decoding, keyboard-accessible Preferences and memory fixes. 0.2.0 (2026-11-12) brought the Media pane, Find Files redesign and Activity panel. The next minor release (0.3.0) waits for signed and notarized installers. Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
 
 **Current focus:** see "Current focus" below: finish `add-media-pane`, and run the outstanding Windows/macOS manual checks that keep `live-watch` and `managed-ffmpeg` from being archived.
 

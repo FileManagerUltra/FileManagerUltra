@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-15
+
 ### Added
 - Every pane has its own zoom: click the zoom button (a magnifying glass with a plus) next to the pane type in the pane's header for zoom in, the percentage (click to reset) and zoom out. Files, Network, SFTP, Trash and Media panes get larger or smaller text and rows (in the Media pane the player buttons, seek bar and playlist too); other panes and the rest of the window keep their size, and the zoom is saved with the workspace. While a pane is zoomed, its button shows the percentage. The button works from the keyboard too (Tab to it, Enter to open, Escape to close), has large click targets and is labelled for screen readers.
 - Each terminal has its own zoom (the header zoom button, or Ctrl+Shift+= / Ctrl+Shift+- / Ctrl+Shift+0 while it has focus); other terminals keep their size.
@@ -211,7 +213,8 @@ First public release (beta).
 
 - macOS install notes: clear the quarantine flag on the downloaded `.dmg` (`xattr -d com.apple.quarantine`), as the app is not yet signed or notarized.
 
-[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.1.3...v0.2.0
