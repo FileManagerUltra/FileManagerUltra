@@ -8,7 +8,6 @@ version = "0.2.3"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/filemanagerultra/filemanagerultra"
-homepage = "https://github.com/filemanagerultra/filemanagerultra"
 rust-version = "1.95"
 
 [workspace.dependencies]
