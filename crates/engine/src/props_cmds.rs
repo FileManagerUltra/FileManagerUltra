@@ -35,11 +35,15 @@ pub struct PropsInfo {
     pub truncated: bool,
     /// Why there is no folder count (e.g. SMB), or a stat error.
     pub note: Option<String>,
+    /// Free and total space where a single item lives, as its backend reports it.
+    pub space: Option<fm_vfs::SpaceInfo>,
 }
 
 #[derive(Debug)]
 pub struct Properties {
     pub items: Vec<VfsUri>,
+    /// The single item is the root of this volume: shown as a drive, not walked.
+    pub volume: Option<crate::devices::Volume>,
     shared: Arc<Mutex<PropsInfo>>,
     cancel: Arc<AtomicBool>,
 }
@@ -151,6 +155,31 @@ fn walk(
 fn start(s: &mut Session, items: Vec<VfsUri>) -> Result<(), FmError> {
     let shared = Arc::new(Mutex::new(PropsInfo::default()));
     let cancel = Arc::new(AtomicBool::new(false));
+    // A drive (volume root) shows its used and free space; walking it could take minutes.
+    let volume = match items.as_slice() {
+        [one] => s.volumes.volume_root(one),
+        _ => None,
+    };
+    if let Some(v) = &volume {
+        let mut info = lock(&shared);
+        info.bytes = v
+            .total
+            .zip(v.free)
+            .map_or(0, |(total, free)| total.saturating_sub(free));
+        info.space = v
+            .total
+            .zip(v.free)
+            .map(|(total, available)| fm_vfs::SpaceInfo { total, available });
+        info.done = true;
+        drop(info);
+        s.properties = Some(Properties {
+            items,
+            volume,
+            shared,
+            cancel,
+        });
+        return Ok(());
+    }
     // Local, SFTP and SMB-share folders are walked on this thread (never a job lane); the
     // Network/Servers folders and an SMB server root show the cached listing only.
     let walkable: Vec<(Arc<dyn Vfs>, VfsUri)> = items
@@ -169,6 +198,11 @@ fn start(s: &mut Session, items: Vec<VfsUri>) -> Result<(), FmError> {
         std::thread::Builder::new()
             .name("fm-props".into())
             .spawn(move || {
+                // Free space where the item lives (local drive, SFTP or SMB server).
+                if single && let Some((vfs, uri)) = walkable.first() {
+                    let space = vfs.space(uri).ok().flatten();
+                    lock(&thread_shared).space = space;
+                }
                 for (vfs, uri) in walkable {
                     if thread_cancel.load(Ordering::Relaxed) {
                         break;
@@ -181,6 +215,7 @@ fn start(s: &mut Session, items: Vec<VfsUri>) -> Result<(), FmError> {
     }
     s.properties = Some(Properties {
         items,
+        volume: None,
         shared,
         cancel,
     });
@@ -337,6 +372,62 @@ mod tests {
         s.dispatch("file.properties.close", &Params::Null)
             .expect("close");
         assert!(s.properties.is_none());
+    }
+
+    #[test]
+    fn a_volume_root_shows_its_space_and_is_not_walked() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join("x.bin"), [0u8; 100]).expect("w");
+        let mount = VfsUri::parse(tmp.path().to_str().expect("utf8")).expect("uri");
+        let mut s = Session::new().expect("session");
+        s.volumes.set_local_volumes(vec![crate::devices::Volume {
+            name: "Data (D:)".into(),
+            mount: mount.clone(),
+            filesystem: "NTFS".into(),
+            total: Some(2000),
+            free: Some(1200),
+        }]);
+        s.dispatch("file.properties", &json!({"sources": [mount.as_str()]}))
+            .expect("open");
+        let props = s.properties.as_ref().expect("open");
+        assert_eq!(
+            props.volume.as_ref().map(|v| v.name.as_str()),
+            Some("Data (D:)")
+        );
+        let info = props.info();
+        assert!(info.done, "nothing to wait for");
+        assert_eq!((info.files, info.dirs), (0, 0), "not walked");
+        assert_eq!(info.bytes, 800, "size is the used space");
+        assert_eq!(
+            info.space.map(|sp| (sp.total, sp.available)),
+            Some((2000, 1200))
+        );
+        // Inside the volume it is a normal folder again.
+        let inner = mount.join("x.bin").expect("uri");
+        s.dispatch("file.properties", &json!({"sources": [inner.as_str()]}))
+            .expect("open");
+        assert!(s.properties.as_ref().expect("open").volume.is_none());
+    }
+
+    #[test]
+    fn a_single_item_reports_the_free_space_where_it_lives() {
+        let share = VfsUri::parse("smb://nas/media").expect("uri");
+        let fs = fm_testkit::MemFs::new().with_scheme(fm_vfs::Scheme::Smb);
+        let file = share.join("a.mkv").expect("uri");
+        fs.put_file(&file, b"x").expect("file");
+        let mut s = Session::new().expect("session");
+        s.backends
+            .register_at(share.authority(), std::sync::Arc::new(fs));
+        s.dispatch("file.properties", &json!({"sources": [file.as_str()]}))
+            .expect("open");
+        settle(&mut s, |s| {
+            s.properties.as_ref().is_some_and(|p| p.info().done)
+        });
+        let space = s.properties.as_ref().expect("open").info().space;
+        assert_eq!(
+            space.map(|sp| (sp.total, sp.available)),
+            Some((1 << 40, 1 << 39))
+        );
     }
 
     #[test]

@@ -49,7 +49,13 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         return;
     };
     let items = props.items.clone();
+    let volume = props.volume.clone();
     let info = props.info();
+    // The drive a single item is on, for the free-space line (cached; no I/O here).
+    let on_volume = match items.as_slice() {
+        [one] if volume.is_none() => s.volumes.volume_for(one).map(|v| v.name),
+        _ => None,
+    };
     let entry = s.properties_entry();
     let key = items
         .iter()
@@ -114,9 +120,42 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     if info.bytes >= 1024 {
                         size.push_str(&format!(" ({} bytes)", group_digits(info.bytes)));
                     }
-                    row(ui, "Size", size);
+                    if let Some(v) = &volume {
+                        // A drive: its own size is the used space; nothing was counted.
+                        row(ui, "Drive", fm_engine::devices::display_label(&v.name));
+                        if !v.filesystem.is_empty() {
+                            row(
+                                ui,
+                                "Filesystem",
+                                fm_engine::devices::display_label(&v.filesystem),
+                            );
+                        }
+                        if let Some(total) = v.total {
+                            row(ui, "Capacity", human_size(total));
+                        }
+                        row(ui, "Used", size);
+                        if let Some(free) = v.free {
+                            row(ui, "Free", human_size(free));
+                        }
+                    } else {
+                        row(ui, "Size", size);
+                        if let Some(space) = info.space {
+                            let mut free = format!(
+                                "{} free of {}",
+                                human_size(space.available),
+                                human_size(space.total)
+                            );
+                            if let Some(name) = &on_volume {
+                                free.push_str(&format!(
+                                    " on {}",
+                                    fm_engine::devices::display_label(name)
+                                ));
+                            }
+                            row(ui, "Free space", free);
+                        }
+                    }
                     let is_single_file = info.dirs == 0 && info.files == 1;
-                    if !is_single_file {
+                    if volume.is_none() && !is_single_file {
                         row(
                             ui,
                             "Contains",
@@ -136,6 +175,17 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                         ui.end_row();
                     }
                 });
+            if let Some((free, total)) = volume
+                .as_ref()
+                .and_then(|v| v.free.zip(v.total))
+                .filter(|(_, total)| *total > 0)
+            {
+                let used = total.saturating_sub(free);
+                ui.add(
+                    egui::ProgressBar::new((used as f64 / total as f64) as f32)
+                        .text(format!("{} used", human_size(used))),
+                );
+            }
             if let Some(note) = &info.note {
                 ui.label(RichText::new(note).color(tokens.warning));
             }

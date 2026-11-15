@@ -1156,7 +1156,7 @@ fn entry_row_ui(
         } else {
             format!("{}{slash}", entry.name)
         }
-    } else if entry.is_dir() {
+    } else if entry.is_dir() && !entry.uri.is_drive_root() {
         format!("{}/", entry.display_name())
     } else {
         entry.display_name().to_string()

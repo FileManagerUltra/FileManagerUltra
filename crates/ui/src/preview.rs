@@ -246,18 +246,19 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                 }
                 Body::Static(p) if matches!(&**p, Preview::Dir(_)) => {
                     if let Preview::Dir(d) = &**p {
+                        // Inside a listed device: that device. Otherwise only a folder that is
+                        // itself a volume root (a drive, `/`, a mount point) gets the card.
                         let volume = slot.subject.as_ref().and_then(|entry| {
-                            s.volumes
-                                .entries()
-                                .iter()
-                                .filter(|device| device.mount.is_same_or_descendant_of(&entry.uri))
-                                .max_by_key(|device| device.mount.to_string().len())
+                            match s.volumes.device_for(&entry.uri) {
+                                Some(device) => Some((device.volume(), removal_hint(device))),
+                                None => s.volumes.volume_root(&entry.uri).map(|v| (v, None)),
+                            }
                         });
                         if slot.thumbs {
                             if let Some(volume) = volume {
                                 ui.push_id(("pv-volume", pane), |ui| {
                                     ui.collapsing("Volume information", |ui| {
-                                        volume_card(ui, tokens, volume)
+                                        volume_card(ui, tokens, &volume.0, volume.1.as_deref())
                                     });
                                 });
                             }
@@ -278,8 +279,8 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             );
                         } else {
                             scrolled(ui, pane, "dir", |ui| {
-                                if let Some(volume) = volume {
-                                    volume_card(ui, tokens, volume);
+                                if let Some((volume, hint)) = &volume {
+                                    volume_card(ui, tokens, volume, hint.as_deref());
                                 }
                                 dir_card(ui, tokens, d);
                             });
@@ -1488,8 +1489,21 @@ fn information(ui: &mut Ui, tokens: &Tokens, title: &str, body: impl FnOnce(&mut
     });
 }
 
-fn volume_card(ui: &mut Ui, tokens: &Tokens, device: &fm_engine::devices::Device) {
-    use fm_engine::devices::{Removal, display_label};
+/// Why a listed device cannot be removed from the app, shown under its volume card.
+fn removal_hint(device: &fm_engine::devices::Device) -> Option<String> {
+    match &device.removal {
+        fm_engine::devices::Removal::Unsupported(reason) => Some(reason.clone()),
+        _ => None,
+    }
+}
+
+fn volume_card(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    device: &fm_engine::devices::Volume,
+    removal: Option<&str>,
+) {
+    use fm_engine::devices::display_label;
     let size =
         |bytes: Option<u64>| bytes.map_or_else(|| "Unavailable".into(), crate::listing::human_size);
     information(ui, tokens, "Volume", |ui| {
@@ -1517,7 +1531,7 @@ fn volume_card(ui: &mut Ui, tokens: &Tokens, device: &fm_engine::devices::Device
                     .text(format!("{} used", crate::listing::human_size(used))),
             );
         }
-        if let Removal::Unsupported(reason) = &device.removal {
+        if let Some(reason) = removal {
             crate::dialog_style::hint(ui, tokens, reason);
         }
     });
@@ -2630,7 +2644,17 @@ fn dir_details(ui: &mut Ui, tokens: &Tokens, d: &DirDoc) {
                         vec2(name_width, tokens.font_size + 4.0),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
-                            ui.add(egui::Label::new(format!("{name}/")).truncate())
+                            // Drives in This PC read `C:`, not `C:/`.
+                            let drive = d
+                                .items
+                                .iter()
+                                .any(|e| &e.name == name && e.uri.is_drive_root());
+                            let shown = if drive {
+                                name.to_string()
+                            } else {
+                                format!("{name}/")
+                            };
+                            ui.add(egui::Label::new(shown).truncate())
                                 .on_hover_text(name);
                         },
                     );

@@ -419,6 +419,7 @@ impl Session {
         changed |= self.pump_updates();
         changed |= self.ffmpeg.poll();
         changed |= self.pump_devices();
+        changed |= self.pump_local_volumes();
         changed |= self.pump_remote_lost();
         changed |= self.pump_trash();
         changed |= self.pump_image_clip();

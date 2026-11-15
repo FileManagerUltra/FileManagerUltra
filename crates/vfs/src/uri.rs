@@ -314,6 +314,19 @@ impl VfsUri {
         cfg!(windows) && self.is_local_root()
     }
 
+    /// A Windows drive root (`file:///C:`), one of the drives This PC lists.
+    pub fn is_drive_root(&self) -> bool {
+        self.is_drive_root_on(cfg!(windows))
+    }
+
+    /// [`Self::is_drive_root`] for an OS (`windows`), so both can be tested anywhere.
+    pub fn is_drive_root_on(&self, windows: bool) -> bool {
+        windows
+            && self.scheme == Scheme::File
+            && self.authority.is_local()
+            && matches!(self.path.as_bytes(), [b'/', d, b':'] if d.is_ascii_alphabetic())
+    }
+
     fn is_local_root(&self) -> bool {
         self.scheme == Scheme::File && self.authority.is_local() && self.path == "/"
     }
@@ -533,6 +546,21 @@ pub fn display_form(uri: &VfsUri, windows: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drive_roots_are_the_children_of_this_pc_on_windows_only() {
+        let root = |s: &str, windows: bool| VfsUri::parse(s).expect(s).is_drive_root_on(windows);
+        assert!(root("file:///C:", true));
+        assert!(root(r"D:\", true));
+        assert!(!root("file:///C:/Users", true));
+        assert!(!root("file:///", true));
+        assert!(!root("file:///CC:", true));
+        assert!(!root("smb://nas/C:", true));
+        assert!(
+            !root("file:///C:", false),
+            "a folder named C: on Linux is a folder"
+        );
+    }
 
     #[test]
     fn display_forms_follow_the_os() {

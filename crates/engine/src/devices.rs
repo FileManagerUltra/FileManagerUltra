@@ -12,6 +12,8 @@ pub const SCAN_INTERVAL: Duration = Duration::from_secs(2);
 pub const IDLE_SCAN_INTERVAL: Duration = Duration::from_secs(10);
 const SLOW_SCAN_WARNING: Duration = Duration::from_secs(10);
 const MAX_DEVICES: usize = 256;
+/// How often the list of every local volume (drive details) is refreshed.
+pub const LOCAL_SCAN_INTERVAL: Duration = Duration::from_secs(10);
 type ScanResult = Result<Vec<Device>, FmError>;
 
 /// Wakes the UI when a scan finishes, so it need not poll while one runs.
@@ -77,6 +79,28 @@ impl std::fmt::Debug for Device {
     }
 }
 
+/// A volume's details for Preview and Properties: a listed device or any local volume.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Volume {
+    pub name: String,
+    pub mount: VfsUri,
+    pub filesystem: String,
+    pub total: Option<u64>,
+    pub free: Option<u64>,
+}
+
+impl Device {
+    pub fn volume(&self) -> Volume {
+        Volume {
+            name: self.name.clone(),
+            mount: self.mount.clone(),
+            filesystem: self.filesystem.clone(),
+            total: self.total,
+            free: self.free,
+        }
+    }
+}
+
 /// Display-only text. Raw OS identities and operation arguments are never sanitised.
 pub(crate) fn display_text(text: &str) -> String {
     fm_vfs::redact::redact(text)
@@ -106,6 +130,10 @@ pub struct Devices {
     unavailable: Vec<VfsUri>,
     pub(crate) removal: Option<(crate::JobId, Device)>,
     waker: ScanWaker,
+    /// Every local volume (system drive included), refreshed on its own thread.
+    local: Vec<Volume>,
+    local_pending: Option<Receiver<Vec<Volume>>>,
+    local_next: Option<Instant>,
 }
 
 impl Devices {
@@ -117,6 +145,91 @@ impl Devices {
 
     pub fn entries(&self) -> &[Device] {
         &self.entries
+    }
+
+    /// Every local volume from the last background refresh.
+    pub fn local_volumes(&self) -> &[Volume] {
+        &self.local
+    }
+
+    /// Replace the local volume list. Public for injected providers and UI fixtures.
+    pub fn set_local_volumes(&mut self, mut volumes: Vec<Volume>) {
+        volumes.truncate(MAX_DEVICES);
+        self.local = volumes;
+    }
+
+    /// The listed device closest around `uri` (nested mounts: the innermost).
+    pub fn device_for(&self, uri: &VfsUri) -> Option<&Device> {
+        self.entries
+            .iter()
+            .filter(|device| device.mount.is_same_or_descendant_of(uri))
+            .max_by_key(|device| device.mount.path_str().len())
+    }
+
+    /// The volume mounted exactly at `uri` (a drive root, `/`, a mount point): a listed
+    /// device first, else a local volume.
+    pub fn volume_root(&self, uri: &VfsUri) -> Option<Volume> {
+        self.entries
+            .iter()
+            .find(|device| device.mount == *uri)
+            .map(Device::volume)
+            .or_else(|| self.local.iter().find(|v| v.mount == *uri).cloned())
+    }
+
+    /// The volume `uri` is on: the closest listed device, else the closest local volume.
+    pub fn volume_for(&self, uri: &VfsUri) -> Option<Volume> {
+        self.device_for(uri).map(Device::volume).or_else(|| {
+            self.local
+                .iter()
+                .filter(|v| v.mount.is_same_or_descendant_of(uri))
+                .max_by_key(|v| v.mount.path_str().len())
+                .cloned()
+        })
+    }
+
+    /// Refresh the local volume list on its own thread (one at a time), so a slow volume
+    /// query never delays Devices discovery.
+    fn start_local_scan(
+        &mut self,
+        work: impl FnOnce() -> Vec<Volume> + Send + 'static,
+    ) -> Result<(), FmError> {
+        if self.local_pending.is_some() {
+            return Ok(());
+        }
+        let (tx, rx) = bounded(1);
+        let waker = self.waker.clone();
+        std::thread::Builder::new()
+            .name("volumes-scan".into())
+            .spawn(move || {
+                let _ = tx.send(work());
+                if let Some(wake) = &waker.0 {
+                    wake();
+                }
+            })
+            .map_err(|e| FmError::backend("devices", format!("Cannot start volume scan: {e}")))?;
+        self.local_pending = Some(rx);
+        Ok(())
+    }
+
+    /// Apply a finished local volume refresh; `true` when the list changed.
+    fn pump_local(&mut self) -> bool {
+        let Some(rx) = &self.local_pending else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(mut volumes) => {
+                self.local_pending = None;
+                volumes.truncate(MAX_DEVICES);
+                let changed = self.local != volumes;
+                self.local = volumes;
+                changed
+            }
+            Err(TryRecvError::Empty) => false,
+            Err(TryRecvError::Disconnected) => {
+                self.local_pending = None;
+                false
+            }
+        }
     }
 
     pub fn scanning(&self) -> bool {
@@ -248,6 +361,14 @@ impl crate::Session {
         } else {
             IDLE_SCAN_INTERVAL
         };
+        if self.volumes.local_pending.is_none()
+            && self.volumes.local_next.is_none_or(|next| now >= next)
+        {
+            if let Err(error) = self.volumes.start_local_scan(platform::local_volumes) {
+                self.notice = Some(error.to_string());
+            }
+            self.volumes.local_next = Some(now + LOCAL_SCAN_INTERVAL);
+        }
         if !self.volumes.scanning()
             && !self.volumes.removing()
             && self.volumes.next_scan.is_none_or(|next| now >= next)
@@ -257,6 +378,11 @@ impl crate::Session {
             }
             self.volumes.next_scan = Some(now + interval);
         }
+    }
+
+    /// Apply a finished refresh of the local volume list.
+    pub(crate) fn pump_local_volumes(&mut self) -> bool {
+        self.volumes.pump_local()
     }
 
     pub(crate) fn pump_devices(&mut self) -> bool {
@@ -419,6 +545,71 @@ mod tests {
             identity: "mount-42".into(),
             removal: Removal::Eject,
         }
+    }
+
+    fn volume(mount: &str, name: &str) -> Volume {
+        Volume {
+            name: name.into(),
+            mount: VfsUri::parse(mount).expect("uri"),
+            filesystem: "ext4".into(),
+            total: Some(100),
+            free: Some(40),
+        }
+    }
+
+    #[test]
+    fn volumes_are_found_by_root_and_by_containing_folder() {
+        let mut state = Devices::default();
+        state.replace(vec![device()]);
+        state.set_local_volumes(vec![
+            volume("/", "root"),
+            volume("/home", "home"),
+            volume("/media/usb", "usb as seen by the OS"),
+        ]);
+        let uri = |s: &str| VfsUri::parse(s).expect("uri");
+        let name = |v: Option<Volume>| v.map(|v| v.name);
+        // Roots only for `volume_root`.
+        assert_eq!(name(state.volume_root(&uri("/home"))), Some("home".into()));
+        assert_eq!(name(state.volume_root(&uri("/home/alice"))), None);
+        // The innermost containing volume for `volume_for`.
+        assert_eq!(
+            name(state.volume_for(&uri("/home/alice"))),
+            Some("home".into())
+        );
+        assert_eq!(name(state.volume_for(&uri("/etc"))), Some("root".into()));
+        // A listed device wins over the local volume at the same place.
+        assert_eq!(
+            name(state.volume_root(&uri("/media/usb"))),
+            Some("USB".into())
+        );
+        assert_eq!(
+            name(state.volume_for(&uri("/media/usb/x"))),
+            Some("USB".into())
+        );
+        assert_eq!(
+            state
+                .device_for(&uri("/media/usb/x"))
+                .map(|d| d.identity.as_str()),
+            Some("mount-42")
+        );
+        assert!(state.device_for(&uri("/home")).is_none());
+    }
+
+    #[test]
+    fn the_local_volume_list_refreshes_on_its_own_thread() {
+        let mut s = crate::Session::default();
+        s.volumes
+            .start_local_scan(|| vec![volume("/", "root")])
+            .expect("start");
+        // A second start while one runs is ignored.
+        s.volumes.start_local_scan(Vec::new).expect("dedup");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !s.pump_local_volumes() {
+            assert!(Instant::now() < deadline, "scan never landed");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(s.volumes.local_volumes().len(), 1);
+        assert!(s.volumes.local_pending.is_none());
     }
 
     #[test]

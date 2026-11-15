@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use fm_vfs::{FmError, VfsUri};
 
-use super::{Device, Removal, display_text};
+use super::{Device, Removal, Volume, display_text};
 
 fn error(message: impl Into<String>) -> FmError {
     FmError::backend("devices", message)
@@ -114,6 +114,70 @@ fn device(
         identity,
         removal,
     })
+}
+
+/// Every local volume the OS reports (system drive included), for drive details in Preview
+/// and Properties. Separate from the Devices scan, which lists removable and user-mounted
+/// volumes only. An unreadable disk list is just an empty one.
+pub(super) fn local_volumes() -> Vec<Volume> {
+    let disks: Vec<sysinfo::Disk> = sysinfo::Disks::new_with_refreshed_list_specifics(
+        sysinfo::DiskRefreshKind::nothing().with_storage(),
+    )
+    .map(Vec::from)
+    .unwrap_or_default();
+    disks
+        .iter()
+        .filter_map(|disk| {
+            let mount = disk.mount_point().to_str()?;
+            let uri = VfsUri::parse(mount).ok()?;
+            let label = disk.name().to_string_lossy();
+            Some(Volume {
+                name: volume_name(&label, mount, cfg!(windows)),
+                mount: uri,
+                filesystem: display_text(&disk.file_system().to_string_lossy()),
+                total: Some(disk.total_space()).filter(|t| *t > 0),
+                free: Some(disk.available_space()),
+            })
+        })
+        .take(super::MAX_DEVICES)
+        .collect()
+}
+
+/// How a volume is named: on Windows as Explorer does (`Data (D:)`, `Local Disk (C:)`),
+/// elsewhere its label or device name, else its mount point.
+fn volume_name(label: &str, mount: &str, windows: bool) -> String {
+    let label = display_text(label.trim());
+    if windows {
+        let drive = mount.trim_end_matches(['\\', '/']);
+        if drive.len() == 2 && drive.ends_with(':') {
+            let label = if label.is_empty() {
+                "Local Disk".to_string()
+            } else {
+                label
+            };
+            return format!("{label} ({})", drive.to_ascii_uppercase());
+        }
+    }
+    if label.is_empty() {
+        display_text(mount)
+    } else {
+        label
+    }
+}
+
+#[cfg(test)]
+mod volume_tests {
+    use super::volume_name;
+
+    #[test]
+    fn volumes_are_named_like_the_os_does() {
+        assert_eq!(volume_name("Data", "D:\\", true), "Data (D:)");
+        assert_eq!(volume_name("", "c:\\", true), "Local Disk (C:)");
+        assert_eq!(volume_name("  ", "C:\\", true), "Local Disk (C:)");
+        assert_eq!(volume_name("Share", "\\\\nas\\media", true), "Share");
+        assert_eq!(volume_name("/dev/nvme0n1p2", "/", false), "/dev/nvme0n1p2");
+        assert_eq!(volume_name("", "/mnt/data", false), "/mnt/data");
+    }
 }
 
 #[cfg(target_os = "linux")]
