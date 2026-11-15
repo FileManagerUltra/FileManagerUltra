@@ -72,6 +72,9 @@ pub struct Tokens {
     pub font_size: f32,
     /// Terminal text size.
     pub term_font_size: f32,
+    /// Zoom of the pane being drawn (1.0 outside zoomed panes); fixed-size widgets such as
+    /// icon buttons multiply their size by it. Set by [`Tokens::scaled`].
+    pub zoom: f32,
     /// Terminal default background / foreground / cursor / selection.
     pub term_bg: Color32,
     pub term_fg: Color32,
@@ -127,6 +130,7 @@ impl Tokens {
             border_width: 1.0,
             font_size: 14.0,
             term_font_size: 14.0,
+            zoom: 1.0,
             term_bg: Color32::from_rgb(0x0f, 0x11, 0x14),
             term_fg: Color32::from_rgb(0xd7, 0xda, 0xde),
             term_cursor: Color32::from_rgb(0x5c, 0xb2, 0xff),
@@ -194,6 +198,7 @@ impl Tokens {
             border_width: 1.0,
             font_size: 14.0,
             term_font_size: 14.0,
+            zoom: 1.0,
             term_bg: Color32::from_rgb(0xff, 0xff, 0xff),
             term_fg: Color32::from_rgb(0x1b, 0x1e, 0x23),
             term_cursor: Color32::from_rgb(0x0b, 0x62, 0xd6),
@@ -355,6 +360,18 @@ impl Tokens {
         FontId::monospace(self.font_size)
     }
 
+    /// These tokens for a pane zoomed by `factor`: text, row height and spacing grow or
+    /// shrink together; colours, borders and corners stay. The terminal font is left alone
+    /// (terminals have their own zoom).
+    pub fn scaled(&self, factor: f32) -> Self {
+        let mut t = *self;
+        t.font_size = (self.font_size * factor).max(4.0);
+        t.row_height = (self.row_height * factor).round().max(8.0);
+        t.padding = (self.padding * factor).max(1.0);
+        t.zoom = self.zoom * factor;
+        t
+    }
+
     /// Muted text helper for status bars and hints.
     pub fn muted(&self, text: impl Into<String>) -> RichText {
         RichText::new(text.into())
@@ -457,6 +474,27 @@ pub fn apply_to(ctx: &Context, tokens: &Tokens) {
     });
 }
 
+/// Smallest pointer target, in points (WCAG 2.2 SC 2.5.8 Target Size (Minimum): 24×24 CSS px).
+pub const MIN_TARGET: f32 = 24.0;
+
+/// Scale one Ui's text styles and spacing by `factor` (a zoomed pane). Only that Ui and its
+/// children change; the context style and the other panes keep theirs.
+pub fn scale_style(style: &mut egui::Style, factor: f32) {
+    for font in style.text_styles.values_mut() {
+        font.size = (font.size * factor).max(4.0);
+    }
+    let spacing = &mut style.spacing;
+    spacing.item_spacing *= factor;
+    spacing.button_padding *= factor;
+    spacing.interact_size *= factor;
+    spacing.icon_width *= factor;
+    spacing.icon_width_inner *= factor;
+    spacing.icon_spacing *= factor;
+    spacing.indent *= factor;
+    spacing.combo_width *= factor;
+    spacing.text_edit_width *= factor;
+}
+
 /// Accent presets offered in Preferences: label and `#rrggbb`.
 pub const ACCENT_PRESETS: [(&str, &str); 7] = [
     ("Blue", "#5cb2ff"),
@@ -536,6 +574,38 @@ mod tests {
         assert_eq!(blend(a, b, 1.0), b);
         assert_eq!(blend(a, b, 0.5), Color32::from_rgb(100, 50, 25));
         assert_eq!(blend(a, b, 2.0), b, "clamped");
+    }
+
+    /// The pane header's zoom button: icon and percentage in `text` on the header (`panel`) or
+    /// its hover fill, zoomed outline and focus ring in `accent_text` (WCAG 2.2: 1.4.3 text
+    /// 4.5:1, 1.4.11 non-text 3:1), for both themes and any accent.
+    #[test]
+    fn the_header_zoom_button_has_wcag_contrast_for_every_accent() {
+        let mut all = vec![Tokens::dark(), Tokens::light()];
+        for theme in [ThemePreference::Light, ThemePreference::Dark] {
+            for r in [0, 64, 128, 192, 255] {
+                for g in [0, 64, 128, 192, 255] {
+                    for b in [0, 64, 128, 192, 255] {
+                        let prefs = fm_engine::Prefs {
+                            theme,
+                            accent: Some(format!("#{r:02x}{g:02x}{b:02x}")),
+                            ..Default::default()
+                        };
+                        all.push(Tokens::resolve_with(&prefs, false));
+                    }
+                }
+            }
+        }
+        for t in all {
+            for surface in [t.panel, t.hover_bg] {
+                assert!(contrast(t.text, surface) >= 4.5, "text on {surface:?}");
+                assert!(
+                    contrast(t.accent_text, surface) >= 3.0,
+                    "outline on {surface:?} (accent {:?})",
+                    t.accent
+                );
+            }
+        }
     }
 
     #[test]
@@ -705,6 +775,7 @@ mod tests {
                 border_width,
                 font_size,
                 term_font_size,
+                zoom,
                 term_bg,
                 term_fg,
                 term_cursor,
@@ -748,6 +819,7 @@ mod tests {
             }
             assert!(row_height > 0.0 && padding > 0.0 && font_size > 0.0);
             assert!(term_font_size > 0.0);
+            assert_eq!(zoom, 1.0);
             assert!(corner_radius >= 0.0 && border_width > 0.0);
             let _ = dark;
             assert!(ansi.iter().all(|c| c.a() == 255));

@@ -36,6 +36,8 @@ pub(crate) enum Icon {
     /// Picture previews: turn a quarter counter-clockwise or clockwise.
     RotateLeft,
     RotateRight,
+    /// Pane header: a magnifier with a plus, opening the pane's zoom controls.
+    Zoom,
 }
 
 pub(crate) const BUTTON: egui::Vec2 = vec2(28.0, 26.0);
@@ -50,7 +52,15 @@ pub(crate) fn button(
     enabled: bool,
     active: bool,
 ) -> Response {
-    sized_button(ui, tokens, icon, label, enabled, active, BUTTON)
+    sized_button(
+        ui,
+        tokens,
+        icon,
+        label,
+        enabled,
+        active,
+        BUTTON * tokens.zoom,
+    )
 }
 
 /// `button` with a custom hit area, e.g. to fit inside a single text row.
@@ -92,13 +102,68 @@ pub(crate) fn sized_button(
                 egui::StrokeKind::Inside,
             );
         }
-        draw(painter, icon, rect.center(), color);
+        draw_scaled(painter, icon, rect.center(), color, tokens.zoom);
     }
     response.on_hover_text(label)
 }
 
+/// Collects an icon's shapes so they can be scaled around the icon's centre before painting
+/// (icons are designed at one size; a zoomed pane draws them larger).
+#[derive(Default)]
+struct Pen {
+    shapes: std::cell::RefCell<Vec<Shape>>,
+}
+
+impl Pen {
+    fn add(&self, shape: impl Into<Shape>) {
+        self.shapes.borrow_mut().push(shape.into());
+    }
+
+    fn line_segment(&self, points: [Pos2; 2], stroke: impl Into<Stroke>) {
+        self.add(Shape::line_segment(points, stroke));
+    }
+
+    fn circle_stroke(&self, center: Pos2, radius: f32, stroke: impl Into<Stroke>) {
+        self.add(Shape::circle_stroke(center, radius, stroke));
+    }
+
+    fn circle_filled(&self, center: Pos2, radius: f32, color: Color32) {
+        self.add(Shape::circle_filled(center, radius, color));
+    }
+
+    fn rect_filled(&self, rect: Rect, radius: f32, color: Color32) {
+        self.add(Shape::rect_filled(rect, radius, color));
+    }
+
+    /// Paint the shapes, scaled by `scale` around `center`.
+    fn paint(self, painter: &egui::Painter, center: Pos2, scale: f32) {
+        let mut shapes = self.shapes.into_inner();
+        if (scale - 1.0).abs() > f32::EPSILON && scale.is_finite() && scale > 0.0 {
+            let around = egui::emath::TSTransform::from_translation(center.to_vec2())
+                * egui::emath::TSTransform::from_scaling(scale)
+                * egui::emath::TSTransform::from_translation(-center.to_vec2());
+            for shape in &mut shapes {
+                shape.transform(around);
+            }
+        }
+        painter.extend(shapes);
+    }
+}
+
 /// A closed padlock about 10x13 px, centred on `c`; `hole` is the body colour behind the keyhole.
-pub(crate) fn paint_lock(painter: &egui::Painter, c: Pos2, color: Color32, hole: Color32) {
+pub(crate) fn paint_lock(
+    painter: &egui::Painter,
+    c: Pos2,
+    color: Color32,
+    hole: Color32,
+    scale: f32,
+) {
+    let pen = Pen::default();
+    lock_on(&pen, c, color, hole);
+    pen.paint(painter, c, scale);
+}
+
+fn lock_on(painter: &Pen, c: Pos2, color: Color32, hole: Color32) {
     let body = Rect::from_min_max(pos2(c.x - 5.0, c.y - 1.0), pos2(c.x + 5.0, c.y + 6.0));
     let radius = 3.2;
     let top = c.y - 1.0;
@@ -122,11 +187,11 @@ pub(crate) fn paint_lock(painter: &egui::Painter, c: Pos2, color: Color32, hole:
     );
 }
 
-fn tri(painter: &egui::Painter, points: [Pos2; 3], color: Color32) {
+fn tri(painter: &Pen, points: [Pos2; 3], color: Color32) {
     painter.add(Shape::convex_polygon(points.to_vec(), color, Stroke::NONE));
 }
 
-fn right_tri(painter: &egui::Painter, left: f32, mid_y: f32, w: f32, h: f32, color: Color32) {
+fn right_tri(painter: &Pen, left: f32, mid_y: f32, w: f32, h: f32, color: Color32) {
     tri(
         painter,
         [
@@ -138,7 +203,7 @@ fn right_tri(painter: &egui::Painter, left: f32, mid_y: f32, w: f32, h: f32, col
     );
 }
 
-fn left_tri(painter: &egui::Painter, right: f32, mid_y: f32, w: f32, h: f32, color: Color32) {
+fn left_tri(painter: &Pen, right: f32, mid_y: f32, w: f32, h: f32, color: Color32) {
     tri(
         painter,
         [
@@ -150,11 +215,11 @@ fn left_tri(painter: &egui::Painter, right: f32, mid_y: f32, w: f32, h: f32, col
     );
 }
 
-fn bar_rect(painter: &egui::Painter, x: f32, y: f32, w: f32, h: f32, color: Color32) {
+fn bar_rect(painter: &Pen, x: f32, y: f32, w: f32, h: f32, color: Color32) {
     painter.rect_filled(Rect::from_min_size(Pos2::new(x, y), vec2(w, h)), 0.0, color);
 }
 
-fn arrow_head(painter: &egui::Painter, tip: Pos2, dir: f32, color: Color32) {
+fn arrow_head(painter: &Pen, tip: Pos2, dir: f32, color: Color32) {
     tri(
         painter,
         [
@@ -168,7 +233,7 @@ fn arrow_head(painter: &egui::Painter, tip: Pos2, dir: f32, color: Color32) {
 
 /// A circular arrow (three quarters of a circle open at the top) whose head points
 /// clockwise, or counter-clockwise when mirrored.
-fn turn_arrow(painter: &egui::Painter, c: Pos2, clockwise: bool, stroke: Stroke) {
+fn turn_arrow(painter: &Pen, c: Pos2, clockwise: bool, stroke: Stroke) {
     let radius = 5.5;
     let side = if clockwise { 1.0 } else { -1.0 };
     // Screen angles grow clockwise (y points down); mirroring flips x.
@@ -196,9 +261,44 @@ fn turn_arrow(painter: &egui::Painter, c: Pos2, clockwise: bool, stroke: Stroke)
     );
 }
 
-fn draw(painter: &egui::Painter, icon: Icon, c: Pos2, color: Color32) {
+/// Draw `icon` at its design size (about 16 px), centred on `c`.
+pub(crate) fn draw(painter: &egui::Painter, icon: Icon, c: Pos2, color: Color32) {
+    draw_scaled(painter, icon, c, color, 1.0);
+}
+
+/// Draw `icon` centred on `c`, `scale` times its design size (a zoomed pane), lines included.
+pub(crate) fn draw_scaled(
+    painter: &egui::Painter,
+    icon: Icon,
+    c: Pos2,
+    color: Color32,
+    scale: f32,
+) {
+    let pen = Pen::default();
+    draw_on(&pen, icon, c, color);
+    pen.paint(painter, c, scale);
+}
+
+fn draw_on(painter: &Pen, icon: Icon, c: Pos2, color: Color32) {
     let stroke = Stroke::new(1.6, color);
     match icon {
+        Icon::Zoom => {
+            // A magnifying glass with a plus in the lens (zoom, not search).
+            let lens = pos2(c.x - 1.5, c.y - 1.5);
+            painter.circle_stroke(lens, 5.5, stroke);
+            painter.line_segment(
+                [pos2(lens.x - 2.8, lens.y), pos2(lens.x + 2.8, lens.y)],
+                stroke,
+            );
+            painter.line_segment(
+                [pos2(lens.x, lens.y - 2.8), pos2(lens.x, lens.y + 2.8)],
+                stroke,
+            );
+            painter.line_segment(
+                [pos2(c.x + 2.6, c.y + 2.6), pos2(c.x + 6.5, c.y + 6.5)],
+                Stroke::new(2.2, color),
+            );
+        }
         Icon::RotateLeft => turn_arrow(painter, c, false, stroke),
         Icon::RotateRight => turn_arrow(painter, c, true, stroke),
         Icon::Play => right_tri(painter, c.x - 4.0, c.y, 9.0, 11.0, color),
@@ -421,7 +521,9 @@ pub(crate) fn bar(
     } else {
         Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(vec2(width.max(24.0), 16.0), sense);
+    // Thickness and knob follow the pane's zoom; callers scale fixed widths themselves.
+    let z = tokens.zoom;
+    let (rect, response) = ui.allocate_exact_size(vec2(width.max(24.0 * z), 16.0 * z), sense);
     let fraction = fraction.clamp(0.0, 1.0);
     response.widget_info(|| {
         WidgetInfo::slider(
@@ -430,9 +532,9 @@ pub(crate) fn bar(
             format!("{label} {value_text}"),
         )
     });
-    let track = Rect::from_center_size(rect.center(), vec2(rect.width(), 4.0));
+    let track = Rect::from_center_size(rect.center(), vec2(rect.width(), 4.0 * z));
     let painter = ui.painter();
-    painter.rect_filled(track, 2.0, tokens.border);
+    painter.rect_filled(track, 2.0 * z, tokens.border);
     let filled = Rect::from_min_max(
         track.min,
         Pos2::new(track.min.x + track.width() * fraction, track.max.y),
@@ -445,13 +547,13 @@ pub(crate) fn bar(
             tokens.text_muted.gamma_multiply(0.4),
         )
     };
-    painter.rect_filled(filled, 2.0, fill);
+    painter.rect_filled(filled, 2.0 * z, fill);
     if enabled {
         let x = track.min.x + track.width() * fraction;
         let big = response.hovered() || response.dragged();
         painter.circle_filled(
             Pos2::new(x, rect.center().y),
-            if big { 6.0 } else { 4.5 },
+            if big { 6.0 * z } else { 4.5 * z },
             knob,
         );
     }
@@ -475,7 +577,14 @@ pub(crate) fn paint_row_mark(
     c: Pos2,
     mark: fm_engine::media_book::RowMark,
     color: Color32,
+    scale: f32,
 ) {
+    let pen = Pen::default();
+    row_mark_on(&pen, c, mark, color);
+    pen.paint(painter, c, scale);
+}
+
+fn row_mark_on(painter: &Pen, c: Pos2, mark: fm_engine::media_book::RowMark, color: Color32) {
     use fm_engine::media_book::RowMark;
     match mark {
         RowMark::Resume(_) => {

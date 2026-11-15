@@ -10,7 +10,7 @@ use crate::{
 pub const MIN_SCALE: f32 = 0.5;
 pub const MAX_SCALE: f32 = 4.0;
 
-fn change(s: &mut Session, params: &Params, mode: i8) -> Result<(), FmError> {
+pub(crate) fn change(s: &mut Session, params: &Params, mode: i8) -> Result<(), FmError> {
     if !params.is_null() {
         let object = params
             .as_object()

@@ -41,7 +41,7 @@ fn focused_terminal(s: &Session) -> bool {
     terminal_pane(s, &Params::Null).is_ok()
 }
 
-fn change(s: &mut Session, params: &Params, mode: i8) -> Result<(), FmError> {
+pub(crate) fn change(s: &mut Session, params: &Params, mode: i8) -> Result<(), FmError> {
     let pane = terminal_pane(s, params)?;
     let state = s
         .layout

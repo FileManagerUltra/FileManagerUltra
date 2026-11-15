@@ -609,6 +609,10 @@ pub struct PaneState {
     /// Terminal panes: text zoom of this terminal, on top of the terminal font size.
     #[serde(default = "default_term_scale")]
     pub term_scale: f32,
+    /// Files, Trash, Network and Media panes: zoom of this pane's text, rows and spacing, on
+    /// top of the interface zoom. (Terminal and Preview panes keep their own zoom.)
+    #[serde(default = "default_term_scale")]
+    pub view_scale: f32,
 }
 
 /// View state for a Media pane; queue contents are owned by the session, not the layout.
@@ -765,6 +769,7 @@ impl PaneState {
             places: PlacesState::default(),
             media: MediaPaneState::default(),
             term_scale: 1.0,
+            view_scale: 1.0,
         };
         if pane.location != pane.tree.root {
             pane.reveal_location();
@@ -776,6 +781,15 @@ impl PaneState {
     pub fn term_scale(&self) -> f32 {
         if self.term_scale.is_finite() {
             self.term_scale.clamp(MIN_TERM_SCALE, MAX_TERM_SCALE)
+        } else {
+            1.0
+        }
+    }
+
+    /// This pane's zoom (Files, Trash, Network, Media), bounded like [`Self::term_scale`].
+    pub fn view_scale(&self) -> f32 {
+        if self.view_scale.is_finite() {
+            self.view_scale.clamp(MIN_TERM_SCALE, MAX_TERM_SCALE)
         } else {
             1.0
         }
@@ -961,6 +975,32 @@ mod tests {
         p.listing.filter = Some("x".into());
         assert!(p.go_forward());
         assert_eq!(p.listing.filter, None);
+    }
+
+    #[test]
+    fn pane_zoom_round_trips_defaults_to_100_and_reads_bounded() {
+        let mut p = PaneState::new(VfsUri::parse("/d").expect("uri"));
+        assert_eq!(p.view_scale(), 1.0);
+        p.view_scale = 1.44;
+        let json = serde_json::to_string(&p).expect("ser");
+        let back: PaneState = serde_json::from_str(&json).expect("de");
+        assert_eq!(back.view_scale(), 1.44);
+        let mut v = serde_json::to_value(&p).expect("value");
+        if let Some(o) = v.as_object_mut() {
+            o.remove("view_scale");
+        }
+        let legacy: PaneState = serde_json::from_value(v).expect("legacy");
+        assert_eq!(legacy.view_scale(), 1.0);
+        for (stored, read) in [
+            (f32::NAN, 1.0),
+            (f32::INFINITY, 1.0),
+            (100.0, MAX_TERM_SCALE),
+            (0.0, MIN_TERM_SCALE),
+            (-3.0, MIN_TERM_SCALE),
+        ] {
+            p.view_scale = stored;
+            assert_eq!(p.view_scale(), read, "stored {stored}");
+        }
     }
 
     #[test]

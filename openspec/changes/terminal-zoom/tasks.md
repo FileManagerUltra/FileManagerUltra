@@ -8,3 +8,15 @@
 ## 2. Finish
 
 - [x] 2.1 CHANGELOG, devlog; clippy, tests, layers, brand-check, fmt
+
+## 3. Zoom in the pane header (all pane types)
+
+- [x] 3.1 `PaneState::view_scale` (serde default 1.0, bounded reader); layout test (round trip, legacy, corrupt values)
+- [x] 3.2 `pane.scale.in/out/reset {pane?}` in `pane_scale_cmds.rs`, routing Terminal/Preview to their own zoom; `pane_scale()` for the header; tests (every kind, bounds, routing, bad params)
+- [x] 3.3 Header magnifier (painted `Icon::Zoom`) left of the pane type, vertical popup + / % / −, highlighted when not 100%; floating terminal handle and Preview toolbar − % + removed
+- [x] 3.4 Files/Network/SFTP/Trash/Media bodies drawn with `Tokens::scaled` + `scale_style`; UI tests (header for every kind, larger text at 200%), snapshot `pane_zoom_popup_{dark,light}`, refreshed header snapshots
+- [x] 3.5 CHANGELOG, devlog, docs/development.md; clippy, tests, layers, brand-check, fmt
+- [x] 3.6 Icon: magnifier with a plus (zoom, not search)
+- [x] 3.7 WCAG 2.2 AA (and no layout shift: fixed-width button, icon fixed at the right): percentage shown as text while zoomed + outline (1.4.1); 24×24 targets, header row ≥24 (2.5.8); contrast test for every accent (1.4.3/1.4.11); names "Zoom"/"Zoom, N%", "Zoom … in/out", expanded state (1.1.1/2.5.3/4.1.2); keyboard test Enter/Tab/Space/Escape with focus return (2.1.1/2.4.3)
+- [x] 3.9 Media pane zoom includes the player: `Tokens::zoom`, icon buttons sized and icons drawn scaled (`Pen` + `Shape::transform`), seek/volume bars, clock/title, cover, playlist offsets, lock and row marks; test (buttons ×2, mutation-checked), snapshot `media_zoomed_{dark,light}`
+- [ ] 3.8 Manual: screen reader check (Orca on Linux, Narrator on Windows, VoiceOver on macOS) of the zoom button and popup

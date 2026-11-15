@@ -40,7 +40,7 @@ pub(crate) fn volume(
     if let Some(change) = bar(
         ui,
         tokens,
-        72.0,
+        72.0 * tokens.zoom,
         shown / 100.0,
         true,
         "Volume",
@@ -137,7 +137,7 @@ pub(crate) fn player_row(
                         clock(player.position),
                         clock(player.duration)
                     ))
-                    .size(16.0)
+                    .size(16.0 * tokens.zoom)
                     .monospace(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -146,7 +146,7 @@ pub(crate) fn player_row(
                     if let Some(change) = bar(
                         ui,
                         tokens,
-                        96.0,
+                        96.0 * tokens.zoom,
                         shown / 100.0,
                         true,
                         "Volume",

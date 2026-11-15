@@ -495,29 +495,7 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
                 actions.push(("preview.find.open", json!({})));
             }
         }
-        if ui
-            .button("−")
-            .on_hover_text("Zoom preview out (Ctrl+-)")
-            .clicked()
-        {
-            actions.push(("preview.scale.out", json!({})));
-        }
-        let reset = ui
-            .button(format!("{:.0}%", slot.scale * 100.0))
-            .on_hover_text("Reset preview zoom (Ctrl+0)");
-        reset.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::Button, true, "Reset preview zoom")
-        });
-        if reset.clicked() {
-            actions.push(("preview.scale.reset", json!({})));
-        }
-        if ui
-            .button("+")
-            .on_hover_text("Zoom preview in (Ctrl+=)")
-            .clicked()
-        {
-            actions.push(("preview.scale.in", json!({})));
-        }
+        // The preview's zoom (− 100% +) is in the pane header.
         if slot.updates_available && ui.button("Reload")
             .on_hover_text("Selected files changed. Reload their preview while keeping filters and source order.")
             .clicked()

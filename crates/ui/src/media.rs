@@ -204,8 +204,12 @@ fn display(
                 }
                 ui.vertical(|ui| {
                     ui.add(
-                        egui::Label::new(egui::RichText::new(title_of(media)).strong().size(15.0))
-                            .truncate(),
+                        egui::Label::new(
+                            egui::RichText::new(title_of(media))
+                                .strong()
+                                .size(15.0 * tokens.zoom),
+                        )
+                        .truncate(),
                     );
                     if let Some(info) = &media.info {
                         let line = [&info.tags.artist, &info.tags.album]
@@ -226,7 +230,7 @@ fn display(
                         ui.label(
                             egui::RichText::new(clock(book.map_or(media.position, |b| b.0)))
                                 .monospace()
-                                .size(22.0)
+                                .size(22.0 * tokens.zoom)
                                 .color(tokens.accent_text),
                         );
                         ui.label(tokens.muted(format!(
@@ -732,8 +736,8 @@ fn playlist(
                 {
                     let (y, from) = match zone {
                         DropZone::Refused => (rect.top(), rect.left()),
-                        DropZone::Before => (rect.top(), rect.left() + 20.0),
-                        DropZone::After => (rect.bottom(), rect.left() + 20.0),
+                        DropZone::Before => (rect.top(), rect.left() + 20.0 * tokens.zoom),
+                        DropZone::After => (rect.bottom(), rect.left() + 20.0 * tokens.zoom),
                         DropZone::AfterFolder => (rect.bottom(), rect.left()),
                     };
                     ui.ctx()
@@ -761,20 +765,22 @@ fn playlist(
                     tokens.text
                 };
                 let mid = rect.center().y;
+                // Offsets follow the pane's zoom, like the text.
+                let z = tokens.zoom;
                 if is_current {
-                    let x = rect.left() + 8.0 + if grouped { 18.0 } else { 0.0 };
+                    let x = rect.left() + (8.0 + if grouped { 18.0 } else { 0.0 }) * z;
                     painter.add(egui::Shape::convex_polygon(
                         vec![
-                            egui::pos2(x - 3.0, mid - 4.5),
-                            egui::pos2(x - 3.0, mid + 4.5),
-                            egui::pos2(x + 4.0, mid),
+                            egui::pos2(x - 3.0 * z, mid - 4.5 * z),
+                            egui::pos2(x - 3.0 * z, mid + 4.5 * z),
+                            egui::pos2(x + 4.0 * z, mid),
                         ],
                         color,
                         egui::Stroke::NONE,
                     ));
                 }
                 if !is_current && let Some(mark) = s.media.row_mark(index) {
-                    let x = rect.left() + 8.0 + if grouped { 18.0 } else { 0.0 } + 11.0;
+                    let x = rect.left() + (8.0 + if grouped { 18.0 } else { 0.0 } + 11.0) * z;
                     let tip = match mark {
                         fm_engine::media_book::RowMark::Resume(at) => {
                             format!("Resumes at {}", clock(at))
@@ -787,11 +793,12 @@ fn playlist(
                         egui::pos2(x, mid),
                         mark,
                         tokens.accent_text,
+                        tokens.zoom,
                     );
                     ui.interact(
                         egui::Rect::from_center_size(
                             egui::pos2(x, mid),
-                            egui::vec2(12.0, rect.height()),
+                            egui::vec2(12.0 * z, rect.height()),
                         ),
                         Id::NULL.with(("media-row-mark", index)),
                         egui::Sense::hover(),
@@ -803,14 +810,14 @@ fn playlist(
                     .iter()
                     .find(|g| index >= g.start && index < g.start + g.len)
                 {
-                    Some(g) if grouped => (18.0, index - g.start + 1),
+                    Some(g) if grouped => (18.0 * z, index - g.start + 1),
                     _ => (0.0, numbers.get(row_at).copied().unwrap_or(index + 1)),
                 };
                 if grouped {
                     // A tree guide from under the folder arrow, ending in a tick at the last file.
                     let gap = ui.spacing().item_spacing.y / 2.0;
                     let stroke = egui::Stroke::new(1.0, tokens.text_muted);
-                    let x = rect.left() + 10.0;
+                    let x = rect.left() + 10.0 * z;
                     let bottom = if last_in_folder {
                         mid
                     } else {
@@ -818,12 +825,12 @@ fn playlist(
                     };
                     painter.vline(x, (rect.top() - gap)..=bottom, stroke);
                     if last_in_folder {
-                        painter.hline(x..=x + 9.0, mid, stroke);
+                        painter.hline(x..=x + 9.0 * z, mid, stroke);
                     }
                 }
                 painter.text(
                     egui::pos2(
-                        rect.left() + 16.0 + GUTTER + indent + digits as f32 * 8.0,
+                        rect.left() + (16.0 + GUTTER + digits as f32 * 8.0) * z + indent,
                         mid,
                     ),
                     egui::Align2::RIGHT_CENTER,
@@ -831,7 +838,7 @@ fn playlist(
                     font.clone(),
                     tokens.text_muted,
                 );
-                let text_x = rect.left() + 24.0 + GUTTER + indent + digits as f32 * 8.0;
+                let text_x = rect.left() + (24.0 + GUTTER + digits as f32 * 8.0) * z + indent;
                 painter.with_clip_rect(rect.with_min_x(text_x)).text(
                     egui::pos2(text_x, mid),
                     egui::Align2::LEFT_CENTER,
@@ -1311,19 +1318,21 @@ fn group_header(
     } else {
         tokens.text
     };
-    let (x, mid) = (rect.left() + 10.0, rect.center().y);
-    let text_x = rect.left() + 24.0 + GUTTER + digits as f32 * 8.0;
+    // Offsets follow the pane's zoom, like the text.
+    let z = tokens.zoom;
+    let (x, mid) = (rect.left() + 10.0 * z, rect.center().y);
+    let text_x = rect.left() + (24.0 + GUTTER + digits as f32 * 8.0) * z;
     let points = if collapsed {
         vec![
-            egui::pos2(x - 3.0, mid - 4.5),
-            egui::pos2(x - 3.0, mid + 4.5),
-            egui::pos2(x + 4.0, mid),
+            egui::pos2(x - 3.0 * z, mid - 4.5 * z),
+            egui::pos2(x - 3.0 * z, mid + 4.5 * z),
+            egui::pos2(x + 4.0 * z, mid),
         ]
     } else {
         vec![
-            egui::pos2(x - 4.5, mid - 3.0),
-            egui::pos2(x + 4.5, mid - 3.0),
-            egui::pos2(x, mid + 4.0),
+            egui::pos2(x - 4.5 * z, mid - 3.0 * z),
+            egui::pos2(x + 4.5 * z, mid - 3.0 * z),
+            egui::pos2(x, mid + 4.0 * z),
         ]
     };
     painter.add(egui::Shape::convex_polygon(
@@ -1332,7 +1341,7 @@ fn group_header(
         egui::Stroke::NONE,
     ));
     painter.text(
-        egui::pos2(rect.left() + 16.0 + GUTTER + digits as f32 * 8.0, mid),
+        egui::pos2(rect.left() + (16.0 + GUTTER + digits as f32 * 8.0) * z, mid),
         egui::Align2::RIGHT_CENTER,
         format!("{number}."),
         egui::TextStyle::Body.resolve(ui.style()),
@@ -1372,10 +1381,10 @@ fn group_header(
         );
     }
     if group.locked {
-        let at = egui::pos2(x + 17.0, mid);
-        crate::media_icons::paint_lock(ui.painter(), at, tokens.text, tokens.panel);
+        let at = egui::pos2(x + 17.0 * z, mid);
+        crate::media_icons::paint_lock(ui.painter(), at, tokens.text, tokens.panel, tokens.zoom);
         ui.interact(
-            egui::Rect::from_center_size(at, egui::vec2(16.0, rect.height())),
+            egui::Rect::from_center_size(at, egui::vec2(16.0 * z, rect.height())),
             Id::NULL.with(("media-group-lock", group.id)),
             egui::Sense::hover(),
         )
@@ -2051,7 +2060,7 @@ fn cover(ui: &mut Ui, pane: PaneId, image: Option<&Arc<fm_preview::ImageDoc>>, t
     let id = Id::NULL.with(("media-cover", pane));
     let Some(image) = image else {
         ui.data_mut(|d| d.remove::<(Arc<fm_preview::ImageDoc>, egui::TextureHandle)>(id));
-        ui.allocate_ui(egui::vec2(72.0, 72.0), |ui| {
+        ui.allocate_ui(egui::vec2(72.0, 72.0) * tokens.zoom, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.label(tokens.muted("Audio"));
             });
@@ -2078,7 +2087,7 @@ fn cover(ui: &mut Ui, pane: PaneId, image: Option<&Arc<fm_preview::ImageDoc>>, t
             texture
         };
     crate::frame_cache::touch::<(Arc<fm_preview::ImageDoc>, egui::TextureHandle)>(ui.ctx(), id);
-    let scale = 72.0 / image.width.max(image.height).max(1) as f32;
+    let scale = 72.0 * tokens.zoom / image.width.max(image.height).max(1) as f32;
     ui.add(
         egui::Image::from_texture(&texture).fit_to_exact_size(egui::vec2(
             image.width as f32 * scale,
@@ -2197,6 +2206,53 @@ mod tests {
                 },
                 s,
             )
+    }
+
+    /// The Media pane drawn through the pane chrome at `zoom`: the transport buttons and the seek
+    /// bar grow with the pane zoom.
+    #[test]
+    fn zooming_the_media_pane_zooms_its_player_controls() {
+        let sizes = |zoom: f32| {
+            let mut s = Session::new().expect("session");
+            s.dispatch("media.enqueue", &json!({"uris": ["/music/one.mp3"]}))
+                .expect("enqueue");
+            let pane = s.media_pane().expect("media");
+            s.layout.state_mut(pane).expect("pane").view_scale = zoom;
+            let tokens = Tokens::dark();
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(900.0, 700.0))
+                .build_ui_state(
+                    move |ui, s: &mut Session| {
+                        crate::theme::apply_to(ui.ctx(), &tokens);
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            let _ = crate::pane::show(ui, s, pane, &tokens);
+                        });
+                    },
+                    s,
+                );
+            h.run_steps(2);
+            ["Previous", "Play", "Stop", "Next", "Seek"].map(|label| {
+                let node = if label == "Seek" {
+                    h.get_by_label_contains("Seek ")
+                } else {
+                    h.get_by_label(label)
+                };
+                node.rect().size()
+            })
+        };
+        let (normal, zoomed) = (sizes(1.0), sizes(2.0));
+        for (label, (a, b)) in ["Previous", "Play", "Stop", "Next", "Seek"]
+            .iter()
+            .zip(normal.iter().zip(zoomed.iter()))
+        {
+            assert!(
+                (b.y - 2.0 * a.y).abs() < 1.0,
+                "{label}: {a:?} at 100%, {b:?} at 200%"
+            );
+            if *label != "Seek" {
+                assert!((b.x - 2.0 * a.x).abs() < 1.0, "{label}: {a:?} -> {b:?}");
+            }
+        }
     }
 
     #[test]

@@ -398,7 +398,7 @@ pane: columns retain readable widths and scroll horizontally, never justify lett
 or stagger rows. Select/copy includes tasks, nested blocks and tab-separated cells.
 Links, raw HTML and image descriptions remain inert, with no external loads.
 
-Preview-only zoom: use its `- / percentage / +` controls or focus it and press
+Preview-only zoom: use the zoom button in the pane header (+ / percentage / −) or focus it and press
 Ctrl+= / Ctrl+- / Ctrl+0 (Cmd on macOS; Shift zoom chords also target a focused
 Preview). Verify text/Markdown, raw/pretty, logs, image Fit/Actual, hex, metadata,
 folder summaries/thumbnails, mixed selections and video. Content scales between
@@ -445,9 +445,19 @@ in the field affect only the query; copying document text must not include searc
 chrome. Escape/Close hides Find. Switch files/raw-pretty modes while searching
 and check that stale highlights disappear and counts update.
 
-Find and zoom controls should share the source/title toolbar row, with the
-filename truncated and controls in View options when the pane is narrow.
-Logs should show Filter and zoom controls, never a duplicate Find button.
+Find should share the source/title toolbar row, with the filename truncated and
+controls in View options when the pane is narrow (zoom is in the pane header).
+Logs should show the Filter control, never a duplicate Find button.
+
+Pane zoom: every pane header has a zoom button (magnifier with a plus) left of
+the pane type. Click it for + / percentage / − stacked vertically; a click
+outside or Escape closes it. Zoom a Files pane (text and rows grow, the header
+and other panes do not), a Trash, Network and Media pane, a terminal (same value
+as Ctrl+Shift+=) and a Preview (same as Ctrl+=). While zoomed the button shows
+the percentage. Keyboard: Tab to the button, Enter opens, Tab to +, Space zooms,
+Escape closes and focus is back on the button. With a screen reader (Orca,
+Narrator, VoiceOver) the button reads "Zoom" / "Zoom, 120%" and collapsed or
+expanded. Reopen the workspace and check the zoom was kept.
 
 In logs, Ctrl+F opens the existing filter panel and focuses record search;
 Escape hides it without clearing filters. Images, videos, binary/folder previews

@@ -63,13 +63,18 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     .inner_margin(egui::Margin::symmetric(tokens.padding as i8, 2))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+                        // Tall enough for the zoom button's 24 px minimum target.
+                        let row = egui::vec2(
+                            ui.available_width(),
+                            ui.spacing().interact_size.y.max(crate::theme::MIN_TARGET),
+                        );
                         ui.allocate_ui_with_layout(
                             row,
                             Layout::right_to_left(Align::Center),
                             |ui| {
                                 close_button(ui, s, pane);
                                 kind_menu(ui, s, pane, kind);
+                                zoom_control(ui, s, pane, kind, tokens);
                                 if kind == PaneKind::Sftp && ui.button("Connect…").clicked() {
                                     s.dispatch_or_notice(
                                         "remote.connect.dialog",
@@ -111,6 +116,19 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
             }
             ui.separator();
 
+            // Terminal and Preview panes scale their own content; the rest are drawn with
+            // text, rows and spacing scaled by the pane's zoom.
+            let zoomed;
+            let tokens = match s.layout.state(pane).map(|st| st.view_scale()) {
+                Some(scale)
+                    if scale != 1.0 && !matches!(kind, PaneKind::Terminal | PaneKind::Preview) =>
+                {
+                    crate::theme::scale_style(ui.style_mut(), scale);
+                    zoomed = tokens.scaled(scale);
+                    &zoomed
+                }
+                _ => tokens,
+            };
             if kind.is_files() {
                 crate::remote::stale_banner(ui, s, pane, tokens);
             }
@@ -220,6 +238,165 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         let _ = s.layout.focus_pane(pane);
     }
     open
+}
+
+/// A magnifier with a plus, left of the pane type; it opens this pane's zoom controls stacked
+/// vertically (zoom in, the percentage which resets, zoom out). `pane.scale.*` routes Terminal
+/// and Preview panes to their own zoom.
+///
+/// Accessibility (WCAG 2.2): a zoomed pane shows its percentage as text on the button, not only
+/// a colour (1.4.1); the button and the popup's buttons are at least 24×24 (2.5.8); outline and
+/// focus ring use `accent_text`, which is ≥4.5:1 on the panel for every accent (1.4.11); the
+/// button reports whether the popup is open (4.1.2); Tab/Enter/Space open and operate it and
+/// Escape closes it and returns focus to the button (2.1.1, 2.4.3).
+fn zoom_control(ui: &mut Ui, s: &mut Session, pane: PaneId, kind: PaneKind, tokens: &Tokens) {
+    use crate::theme::MIN_TARGET;
+    let Some(scale) = fm_engine::pane_scale_cmds::pane_scale(s, pane) else {
+        return;
+    };
+    let (keys_in, keys_out, keys_reset) = match kind {
+        PaneKind::Terminal => (" (Ctrl+Shift+=)", " (Ctrl+Shift+-)", " (Ctrl+Shift+0)"),
+        PaneKind::Preview => (" (Ctrl+=)", " (Ctrl+-)", " (Ctrl+0)"),
+        _ => ("", "", ""),
+    };
+    let what = match kind {
+        PaneKind::Terminal => "terminal",
+        PaneKind::Preview => "preview",
+        _ => "pane",
+    };
+    let percent = format!("{:.0}%", scale * 100.0);
+    let zoomed = (scale - 1.0).abs() > 0.001;
+    let button = zoom_button(ui, tokens, &percent, zoomed);
+    let popup_id = egui::Popup::default_response_id(&button);
+    let ctx = ui.ctx().clone();
+    let open = egui::Popup::is_id_open(&ctx, popup_id);
+    ctx.accesskit_node_builder(button.id, |node| node.set_expanded(open));
+    let escape = open && ui.input(|i| i.key_pressed(egui::Key::Escape));
+    let mut action = None;
+    egui::Popup::from_toggle_button_response(&button)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_min_width(MIN_TARGET * 2.5);
+            ui.vertical_centered_justified(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                let size = egui::vec2(MIN_TARGET * 2.5, MIN_TARGET);
+                let item = |ui: &mut Ui, text: &str, name: String, hint: String| {
+                    let response = ui
+                        .add(egui::Button::new(text).min_size(size))
+                        .on_hover_text(hint);
+                    response
+                        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
+                    response.clicked()
+                };
+                if item(
+                    ui,
+                    "+",
+                    format!("Zoom {what} in"),
+                    format!("Zoom {what} in{keys_in}"),
+                ) {
+                    action = Some("pane.scale.in");
+                }
+                if item(
+                    ui,
+                    &percent,
+                    format!("Reset {what} zoom ({percent})"),
+                    format!("Reset {what} zoom to 100%{keys_reset}"),
+                ) {
+                    action = Some("pane.scale.reset");
+                }
+                if item(
+                    ui,
+                    "−",
+                    format!("Zoom {what} out"),
+                    format!("Zoom {what} out{keys_out}"),
+                ) {
+                    action = Some("pane.scale.out");
+                }
+            });
+        });
+    if escape {
+        // The popup closed on Escape (egui handles that); keep the keyboard on the button.
+        button.request_focus();
+    }
+    if let Some(id) = action {
+        s.dispatch_or_notice(id, &serde_json::json!({ "pane": pane }));
+    }
+}
+
+/// The header's zoom button: the magnifier, plus the percentage while the pane is zoomed.
+fn zoom_button(ui: &mut Ui, tokens: &Tokens, percent: &str, zoomed: bool) -> egui::Response {
+    use crate::theme::MIN_TARGET;
+    const ICON: f32 = 18.0;
+    /// Space between the percentage and the lens.
+    const GAP: f32 = 6.0;
+    let pad = 3.0;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let galley = zoomed.then(|| {
+        ui.painter()
+            .layout_no_wrap(percent.to_string(), font.clone(), tokens.text)
+    });
+    // Always as wide as the widest percentage ("400%"), shown or not: the button, the header
+    // beside it and the popup below it never move when the zoom changes (no layout shift).
+    let widest = ui
+        .painter()
+        .layout_no_wrap("400%".to_string(), font, tokens.text)
+        .size()
+        .x;
+    let size = egui::vec2(
+        (pad + widest + GAP + ICON + pad).max(MIN_TARGET),
+        ui.spacing().interact_size.y.max(MIN_TARGET),
+    );
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let name = if zoomed {
+        format!("Zoom, {percent}")
+    } else {
+        "Zoom".to_string()
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if response.hovered() {
+            painter.rect_filled(rect, tokens.corner_radius, tokens.hover_bg);
+        }
+        if zoomed {
+            painter.rect_stroke(
+                rect,
+                tokens.corner_radius,
+                egui::Stroke::new(1.0, tokens.accent_text),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if response.has_focus() {
+            painter.rect_stroke(
+                rect,
+                tokens.corner_radius,
+                egui::Stroke::new(2.0, tokens.accent_text),
+                egui::StrokeKind::Inside,
+            );
+        }
+        // The icon keeps its place at the right, next to the pane type; the percentage is
+        // right-aligned against it, so only its digits change.
+        let icon_center = egui::pos2(rect.right() - pad - ICON / 2.0, rect.center().y);
+        crate::media_icons::draw(
+            painter,
+            crate::media_icons::Icon::Zoom,
+            icon_center,
+            tokens.text,
+        );
+        if let Some(galley) = galley {
+            let pos = egui::pos2(
+                rect.right() - pad - ICON - GAP - galley.size().x,
+                rect.center().y - galley.size().y / 2.0,
+            );
+            painter.galley(pos, galley, tokens.text);
+        }
+    }
+    let hint = if zoomed {
+        format!("Zoom: {percent}")
+    } else {
+        "Zoom".to_string()
+    };
+    response.on_hover_text(hint)
 }
 
 /// `×` in the header; dispatches `pane.close` for this pane. Hidden on the last pane.
@@ -417,6 +594,220 @@ mod tests {
                 s.notice
             );
         }
+    }
+
+    #[test]
+    fn the_header_zoom_zooms_only_its_own_pane_for_every_kind() {
+        use egui_kittest::kittest::Queryable;
+        for tokens in [Tokens::dark(), Tokens::light()] {
+            for kind in PaneKind::ALL {
+                let mut s = ready_session();
+                s.registry = fm_engine::Registry::from_specs(fm_engine::commands::specs())
+                    .expect("registry");
+                let other = s
+                    .layout
+                    .split(1, fm_layout::Axis::Horizontal, 0.5)
+                    .expect("split");
+                s.layout.state_mut(1).expect("pane").kind = kind;
+                let mut harness = egui_kittest::Harness::builder()
+                    .with_size(egui::vec2(640.0, 480.0))
+                    .build_ui_state(
+                        move |ui, s: &mut Session| {
+                            crate::theme::apply_to(ui.ctx(), &tokens);
+                            let _ = show(ui, s, 1, &tokens);
+                        },
+                        s,
+                    );
+                harness.run_steps(2);
+                let scale = |h: &egui_kittest::Harness<'_, Session>, pane| {
+                    fm_engine::pane_scale_cmds::pane_scale(h.state(), pane).expect("pane")
+                };
+                let what = match kind {
+                    PaneKind::Terminal => "terminal",
+                    PaneKind::Preview => "preview",
+                    _ => "pane",
+                };
+                let (zoom_in, zoom_out) = (format!("Zoom {what} in"), format!("Zoom {what} out"));
+                let reset = |percent: &str| format!("Reset {what} zoom ({percent})");
+                assert!(
+                    harness.query_by_label(&zoom_in).is_none(),
+                    "{kind:?}: the controls stay hidden until the magnifier is clicked"
+                );
+                let magnifier = harness.get_by_label("Zoom").rect();
+                let picker = harness.get_by_label(&format!("{}   ", kind.label())).rect();
+                assert!(
+                    magnifier.right() <= picker.left()
+                        && (magnifier.center().y - picker.center().y).abs() < 2.0,
+                    "{kind:?}: the magnifier sits left of the pane type"
+                );
+                let min = crate::theme::MIN_TARGET;
+                assert!(
+                    magnifier.width() >= min && magnifier.height() >= min,
+                    "{kind:?}: 24x24 target, got {magnifier:?}"
+                );
+                harness.get_by_label("Zoom").click();
+                harness.run_steps(2);
+                let (plus, middle, minus) = (
+                    harness.get_by_label(&zoom_in).rect(),
+                    harness.get_by_label(&reset("100%")).rect(),
+                    harness.get_by_label(&zoom_out).rect(),
+                );
+                assert!(
+                    plus.bottom() <= middle.top() && middle.bottom() <= minus.top(),
+                    "{kind:?}: + above the percentage above −"
+                );
+                for r in [plus, middle, minus] {
+                    assert!(r.width() >= min && r.height() >= min, "{kind:?}: {r:?}");
+                }
+                harness.get_by_label(&zoom_in).click();
+                harness.run_steps(2);
+                assert!((scale(&harness, 1) - 1.2).abs() < 1e-4, "{kind:?}");
+                // No layout shift: showing the percentage moves neither the button nor the popup.
+                assert_eq!(
+                    harness.get_by_label("Zoom, 120%").rect(),
+                    magnifier,
+                    "{kind:?}"
+                );
+                assert_eq!(harness.get_by_label(&zoom_in).rect(), plus, "{kind:?}");
+                assert_eq!(scale(&harness, other), 1.0, "{kind:?}: other pane");
+                // Zoomed: the percentage is on the button itself, not only a colour.
+                harness.get_by_label("Zoom, 120%");
+                for _ in 0..2 {
+                    harness.get_by_label(&zoom_out).click();
+                    harness.run_steps(2);
+                }
+                assert!(scale(&harness, 1) < 1.0, "{kind:?}");
+                let shown = format!("{:.0}%", scale(&harness, 1) * 100.0);
+                let label = format!("Zoom, {shown}");
+                assert_eq!(
+                    harness.get_by_label(&label).rect(),
+                    magnifier,
+                    "{kind:?}: {shown}"
+                );
+                assert_eq!(
+                    harness.get_by_label(&zoom_in).rect(),
+                    plus,
+                    "{kind:?}: {shown}"
+                );
+                harness.get_by_label(&reset(&shown)).click();
+                harness.run_steps(2);
+                assert_eq!(scale(&harness, 1), 1.0, "{kind:?}");
+                harness.get_by_label("Zoom");
+            }
+        }
+    }
+
+    #[test]
+    fn the_header_zoom_works_from_the_keyboard() {
+        use egui_kittest::kittest::{NodeT, Queryable};
+        let tokens = Tokens::dark();
+        let mut s = ready_session();
+        s.registry =
+            fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(640.0, 480.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    crate::theme::apply_to(ui.ctx(), &tokens);
+                    let _ = show(ui, s, 1, &tokens);
+                },
+                s,
+            );
+        harness.run_steps(2);
+        let scale = |h: &egui_kittest::Harness<'_, Session>| {
+            fm_engine::pane_scale_cmds::pane_scale(h.state(), 1).expect("pane")
+        };
+        harness.get_by_label("Zoom").focus();
+        harness.run_steps(2);
+        assert!(harness.get_by_label("Zoom").is_focused());
+        assert_eq!(
+            harness
+                .get_by_label("Zoom")
+                .accesskit_node()
+                .data()
+                .is_expanded(),
+            Some(false)
+        );
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert!(
+            harness.query_by_label("Zoom pane in").is_some(),
+            "Enter opens it"
+        );
+        assert_eq!(
+            harness
+                .get_by_label("Zoom")
+                .accesskit_node()
+                .data()
+                .is_expanded(),
+            Some(true)
+        );
+        // Tab moves from the button into the popup: zoom in comes first.
+        harness.key_press(egui::Key::Tab);
+        harness.run_steps(2);
+        assert!(harness.get_by_label("Zoom pane in").is_focused());
+        harness.key_press(egui::Key::Space);
+        harness.run_steps(2);
+        assert!((scale(&harness) - 1.2).abs() < 1e-4, "Space zooms in");
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        assert!(
+            harness.query_by_label("Zoom pane in").is_none(),
+            "Escape closes it"
+        );
+        assert!(
+            harness.get_by_label("Zoom, 120%").is_focused(),
+            "focus returns to the button"
+        );
+    }
+
+    #[test]
+    fn a_zoomed_files_pane_draws_larger_text() {
+        fn text_height(shape: &egui::Shape, wanted: &str) -> Option<f32> {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text() == wanted => {
+                    Some(text.galley.size().y)
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| text_height(s, wanted)),
+                _ => None,
+            }
+        }
+        let tokens = Tokens::dark();
+        let height = |zoom: f32| {
+            let mut s = ready_session();
+            s.layout.state_mut(1).expect("pane").view_scale = zoom;
+            let ctx = egui::Context::default();
+            crate::theme::apply_to(&ctx, &tokens);
+            let mut found = None;
+            for _ in 0..2 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(800.0, 600.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            let _ = show(ui, &mut s, 1, &tokens);
+                        });
+                    },
+                );
+                output.textures_delta.clear();
+                found = output
+                    .shapes
+                    .iter()
+                    .find_map(|c| text_height(&c.shape, "f.txt"));
+            }
+            found.expect("f.txt drawn")
+        };
+        let normal = height(1.0);
+        let zoomed = height(2.0);
+        assert!(
+            zoomed > normal * 1.6,
+            "row text {normal} at 100%, {zoomed} at 200%"
+        );
     }
 
     #[test]

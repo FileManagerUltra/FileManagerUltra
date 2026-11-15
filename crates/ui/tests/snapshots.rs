@@ -128,6 +128,55 @@ fn media_audio_queue_dark_light() {
     }
 }
 
+/// The Media pane at 144% pane zoom: player buttons, seek bar, cover, clock and playlist rows
+/// (numbers, folder header, lock, current-track mark) all scale together.
+#[test]
+fn media_zoomed_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (name, tokens) in [("dark", Tokens::dark()), ("light", Tokens::light())] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = Session::new().expect("session");
+        session.dispatch("media.enqueue", &serde_json::json!({
+            "uris": ["/music/First track.mp3", "/music/Second track.flac", "/music/Third track.ogg"]
+        })).expect("enqueue");
+        session.media.reveal = None;
+        let pane = session.media_pane().expect("media");
+        session.media.queue.select(0).expect("current");
+        session
+            .media
+            .queue
+            .group_range(0, 2, "Album", None)
+            .expect("folder");
+        let album = session.media.queue.groups()[0].id;
+        session
+            .media
+            .queue
+            .set_group_locked(album, true)
+            .expect("lock");
+        session.layout.state_mut(pane).expect("pane").view_scale = 1.44;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(760.0, 560.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let _ = pane::show(ui, &mut session, pane, &tokens);
+                });
+            });
+        harness.run();
+        harness.snapshot(format!("media_zoomed_{name}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
 #[test]
 fn media_status_bar_time_dark_light() {
     let _gpu = lock_gpu();
@@ -482,6 +531,37 @@ fn one_pane_empty_dark_light() {
             }
             None => return,
         }
+    }
+}
+
+/// A zoomed Files pane (144%) with its header zoom controls open below the magnifier.
+#[test]
+fn pane_zoom_popup_dark_light() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let mut session = fixture_session();
+        session.layout.state_mut(1).expect("pane").view_scale = 1.44;
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            ui.ctx().set_theme(if tokens.dark {
+                egui::Theme::Dark
+            } else {
+                egui::Theme::Light
+            });
+            let _ = pane::show(ui, &mut session, 1, &tokens);
+        });
+        harness.set_size(egui::vec2(640.0, 400.0));
+        harness.run();
+        harness.get_by_label("Zoom, 144%").click();
+        harness.run();
+        harness.get_by_label("Reset pane zoom (144%)");
+        harness.snapshot(format!("pane_zoom_popup_{theme}"));
+        results.extend_harness(&mut harness);
     }
 }
 
@@ -2911,10 +2991,9 @@ fn preview_toolbar_keeps_controls_on_one_row_and_logs_have_only_filter() {
                     assert!((filter.center().y - source.center().y).abs() < 2.0);
                     assert!(harness.query_by_label("Find").is_none());
                 }
+                // The zoom (− 100% +) moved to the pane header.
+                assert!(harness.query_by_label("Reset preview zoom").is_none());
                 if width == 1000.0 {
-                    let zoom = harness.get_by_label("Reset preview zoom").rect();
-                    assert!((zoom.center().y - source.center().y).abs() < 2.0);
-                    assert!(zoom.right() <= width);
                     if !log {
                         let find = harness.get_by_label("Find").rect();
                         assert!((find.center().y - source.center().y).abs() < 2.0);
@@ -2923,18 +3002,18 @@ fn preview_toolbar_keeps_controls_on_one_row_and_logs_have_only_filter() {
                         harness.get_by_label("Find in preview");
                     }
                 } else {
-                    let menu = harness.get_by_label("View options").rect();
-                    assert!((menu.center().y - source.center().y).abs() < 2.0);
-                    assert!(
-                        menu.right() <= width,
-                        "overflow stays within narrow toolbar"
-                    );
-                    assert!(harness.query_by_label("Reset preview zoom").is_none());
-                    harness.get_by_label("View options").click();
-                    harness.run();
-                    harness.get_by_label("Reset preview zoom").click();
-                    harness.run();
-                    assert_eq!(harness.state().preview_slot(pane).expect("slot").scale, 1.0);
+                    // Narrow toolbars fold into "View options" when they do not fit.
+                    if let Some(menu) = harness.query_by_label("View options") {
+                        let menu = menu.rect();
+                        assert!((menu.center().y - source.center().y).abs() < 2.0);
+                        assert!(
+                            menu.right() <= width,
+                            "overflow stays within narrow toolbar"
+                        );
+                        harness.get_by_label("View options").click();
+                        harness.run();
+                        assert!(harness.query_by_label("Reset preview zoom").is_none());
+                    }
                     if log {
                         assert!(harness.query_by_label("Find").is_none());
                     } else {
@@ -2943,6 +3022,8 @@ fn preview_toolbar_keeps_controls_on_one_row_and_logs_have_only_filter() {
                             harness.get_by_label("View options").click();
                             harness.run();
                         }
+                        let find = harness.get_by_label("Find").rect();
+                        assert!(find.right() <= width, "Find stays within the toolbar");
                         harness.get_by_label("Find").click();
                         harness.run();
                         harness.get_by_label("Find in preview");
@@ -3839,13 +3920,10 @@ fn volume_preview_dark_light() {
             h.get_by_label("Folder summary");
             let before = h.get_by_label("Folder summary").rect().height();
             let global = h.state().prefs.zoom;
-            if h.query_by_label("+").is_none() {
-                h.get_by_label("View options").click();
-                h.run();
-            }
-            h.get_by_label("+").click();
-            h.run();
-            h.key_press(egui::Key::Escape);
+            // The zoom control is in the pane header, not drawn by the preview itself.
+            h.state_mut()
+                .dispatch("preview.scale.in", &serde_json::json!({"pane": pane}))
+                .expect("zoom");
             h.run();
             assert!(h.get_by_label("Folder summary").rect().height() > before * 1.1);
             assert_eq!(h.state().prefs.zoom, global);
@@ -3853,13 +3931,9 @@ fn volume_preview_dark_light() {
                 .dispatch("preview.thumbs.toggle", &serde_json::json!({"pane": pane}))
                 .expect("thumbnails");
             h.run();
-            if h.query_by_label("+").is_none() {
-                h.get_by_label("View options").click();
-                h.run();
-            }
-            h.get_by_label("+").click();
-            h.run();
-            h.key_press(egui::Key::Escape);
+            h.state_mut()
+                .dispatch("preview.scale.in", &serde_json::json!({"pane": pane}))
+                .expect("zoom");
             h.run();
             assert!(h.state().preview_slot(pane).expect("slot").scale > 1.4);
             assert_eq!(h.state().prefs.zoom, global);
