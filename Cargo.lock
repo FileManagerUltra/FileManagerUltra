@@ -4780,6 +4780,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "merman-elk-layered"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f261eaea69f2c0054ea56d4c5fc4be63677f2c8b99edece33ad61344e168110f"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "merman-export"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4793,6 +4802,16 @@ dependencies = [
  "ttf-parser",
  "unicase",
  "usvg 0.47.0",
+]
+
+[[package]]
+name = "merman-layout-elk"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "642faf8a3bbd9102b8b540c275e25590c43111854006f630dd0998df7847c325"
+dependencies = [
+ "merman-elk-layered",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4841,6 +4860,7 @@ dependencies = [
  "kurbo",
  "libm",
  "memchr",
+ "merman-layout-elk",
  "merman-markup",
  "merman-model",
  "merman-theme-contract",

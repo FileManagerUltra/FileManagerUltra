@@ -793,6 +793,41 @@ mod tests {
         assert_eq!(huge.width, d.thumb.width + 2 * MAX_PAD);
     }
 
+    /// The ELK layout is the slow part for big graphs: a dense graph with nested groups that
+    /// merman still accepts is laid out well within the deadline.
+    #[test]
+    fn large_graphs_are_laid_out_within_the_deadline() {
+        let mut source = String::from("flowchart TB\n");
+        for g in 0..10 {
+            source.push_str(&format!("subgraph G{g}[\"Group {g}\"]\n"));
+        }
+        for n in 0..150 {
+            source.push_str(&format!(
+                "N{n}[\"Node {n}\"] -->|e{n}| N{}\n",
+                (n * 7 + 3) % 150
+            ));
+        }
+        for _ in 0..10 {
+            source.push_str("end\n");
+        }
+        let started = std::time::Instant::now();
+        let drawn = draw(&source).expect("a large but allowed graph is drawn");
+        let took = started.elapsed();
+        assert!(took < DEADLINE, "took {took:?}");
+        assert!(drawn.natural.0 > 1000.0);
+        // Larger graphs are refused by merman's limits before layout runs.
+        let mut huge = String::from("flowchart TB\n");
+        for n in 0..300 {
+            huge.push_str(&format!(
+                "N{n}[\"Node {n}\"] -->|e{n}| N{}\n",
+                (n * 7 + 3) % 300
+            ));
+        }
+        let started = std::time::Instant::now();
+        assert!(draw(&huge).is_err());
+        assert!(started.elapsed() < DEADLINE, "refused quickly");
+    }
+
     #[test]
     fn a_cancelled_render_reports_cancelled() {
         let cancel = Cancel::default();

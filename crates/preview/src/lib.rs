@@ -14,6 +14,7 @@ pub mod image_prev;
 pub mod log;
 pub mod markdown;
 pub mod mermaid;
+pub mod notices;
 pub mod platform;
 pub mod player;
 pub mod raw_prev;

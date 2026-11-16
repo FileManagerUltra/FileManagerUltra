@@ -615,6 +615,8 @@ impl eframe::App for App {
                     ui.label(format!("build {}", fm_engine::diag::build_commit()));
                     ui.label(fm_brand::ORG_NAME);
                 });
+                ui.add_space(12.0);
+                fm_ui::about::third_party(ui, &tokens);
             });
             self.session.about_open = open;
         }

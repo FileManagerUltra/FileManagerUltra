@@ -585,7 +585,9 @@ impl Tokens {
     pub fn mermaid_palette(&self) -> fm_preview::mermaid::Palette {
         let background = self.panel;
         let node_fill = self.hover_bg;
-        let cluster_fill = self.bg;
+        // Groups are told apart by their border; a fill of their own would leave edge labels
+        // (drawn on `label_background`) as loose boxes inside them.
+        let cluster_fill = background;
         let line = readable(self.text_muted, self.text, background, 3.0);
         let line = readable(line, self.text, cluster_fill, 3.0);
         let cluster_border = readable(self.border, line, cluster_fill, 3.0);

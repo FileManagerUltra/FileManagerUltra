@@ -97,7 +97,7 @@ pulldown-cmark = { version = "0.12", default-features = false }
 fast_image_resize = "6"
 resvg = { version = "0.49", default-features = false, features = ["text", "system-fonts"] }
 # Mermaid diagrams in Markdown (change markdown-mermaid): pure Rust, only behind fm_preview::mermaid.
-merman = { version = "=0.10.0", default-features = false, features = ["svg", "native-fonts", "diagram-flowchart", "diagram-sequence", "diagram-class", "diagram-state", "diagram-er", "diagram-gantt", "diagram-pie", "diagram-journey", "diagram-timeline", "diagram-git-graph", "diagram-mindmap"] }
+merman = { version = "=0.10.0", default-features = false, features = ["svg", "native-fonts", "layout-elk", "diagram-flowchart", "diagram-sequence", "diagram-class", "diagram-state", "diagram-er", "diagram-gantt", "diagram-pie", "diagram-journey", "diagram-timeline", "diagram-git-graph", "diagram-mindmap"] }
 merman-export = { version = "=0.10.0", default-features = false, features = ["native-fonts"] }
 plist = "1"
 

@@ -155,4 +155,4 @@ cargo xtask ci           # everything CI runs, locally
 
 ## License
 
-Apache License 2.0, see [LICENSE](LICENSE). Logo source: `packaging/logo.svg`. Bundled Atkinson Hyperlegible fonts use the [SIL Open Font License](crates/preview/assets/fonts/OFL.txt).
+Apache License 2.0, see [LICENSE](LICENSE). Logo source: `packaging/logo.svg`. Bundled Atkinson Hyperlegible fonts use the [SIL Open Font License](crates/preview/assets/fonts/OFL.txt). Mermaid diagrams are laid out with a Rust port of Eclipse ELK under the [Eclipse Public License 2.0](crates/preview/licenses/EPL-2.0.txt); see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
