@@ -66,7 +66,7 @@ fn group(spec: &CommandSpec) -> Group {
 fn context(spec: &CommandSpec) -> &'static str {
     match group(spec) {
         Group::Application if spec.id.starts_with("view.zoom.") => {
-            "Interface zoom; in Preview, scales the preview instead."
+            "Interface zoom, in every pane. A pane's own zoom is the zoom button in its header."
         }
         Group::Application => "Application shortcut.",
         Group::Workspaces if spec.id == "workspace.next" || spec.id == "workspace.prev" => {
@@ -262,12 +262,6 @@ fn rows(s: &Session, mac: bool) -> Vec<Row> {
             "Clear preview text selection",
             "Escape",
             "Preview body when Find is closed.",
-        ),
-        (
-            Group::Preview,
-            "Zoom preview using interface zoom keys",
-            "Ctrl+Shift++ / Ctrl+Shift+= / Ctrl+Shift+- / Ctrl+Shift+0",
-            "Focused Preview; otherwise these change interface zoom.",
         ),
         (
             Group::Terminal,

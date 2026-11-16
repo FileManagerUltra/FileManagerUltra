@@ -1,5 +1,17 @@
 ## MODIFIED Requirements
 
+### Requirement: Preview zoom reset takes precedence over workspace switching
+Ctrl+0 (Cmd+0 on macOS) SHALL reset only the focused Preview's zoom when no dialog or
+text field owns the keyboard. It SHALL NOT switch
+workspaces or change interface zoom. Ctrl+Shift+0 SHALL reset the interface zoom,
+as in every other pane. Outside Preview, Ctrl+0 SHALL retain workspace 10
+selection; terminal input and text fields SHALL keep their existing ownership.
+
+#### Scenario: Reset zoom from Preview
+- **WHEN** Preview is focused with no dialog or text field owning the keyboard and the user presses Ctrl+0
+- **THEN** only that Preview's zoom resets
+- **AND** the workspace and interface zoom do not change
+
 ### Requirement: Preview has pane-local Find
 `Ctrl+F`, the Preview menu and a toolbar Find button (non-log views) SHALL open/focus Find in the
 focused Preview, without opening the Files-pane filter. Text, structured text
@@ -58,8 +70,8 @@ file within the same pane. Images SHALL retain Fit/Actual modes; choosing either
 SHALL reset additional magnification. Zoom SHALL NOT increase file/decode limits.
 
 A focused Preview SHALL accept Ctrl/Cmd+= (or +), Ctrl/Cmd+- and Ctrl/Cmd+0.
-Existing Ctrl/Cmd+Shift zoom shortcuts SHALL target preview magnification when
-a Preview owns the keyboard; elsewhere they retain application-wide behavior.
+A shortcut SHALL do the same in every pane: Ctrl/Cmd+Shift+= (or +), Ctrl/Cmd+Shift+-
+and Ctrl/Cmd+Shift+0 SHALL keep changing the interface zoom while a Preview has focus.
 Dialogs, popups and focused text fields SHALL retain keyboard ownership.
 Commands SHALL reject malformed parameters and invalid explicit panes.
 
@@ -68,3 +80,7 @@ Commands SHALL reject malformed parameters and invalid explicit panes.
 - **THEN** its body changes size while the toolbar, Files panes, other previews,
   global zoom preference and egui zoom factor remain unchanged
 - **AND** minimum/maximum scales are enforced and bad parameters return an error
+
+#### Scenario: Interface zoom keys from a Preview
+- **WHEN** a Preview has focus and the user presses Ctrl+Shift+=
+- **THEN** the whole application zooms in one step, as from any other pane, and the Preview's own zoom is unchanged

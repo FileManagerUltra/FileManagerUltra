@@ -46,9 +46,6 @@ pub const PREVIEW_SELECT_ALL: &str = "preview.text.select_all";
 pub const PREVIEW_COPY_TEXT: &str = "preview.text.copy";
 pub const PREVIEW_FIND: &str = "preview.find.open";
 pub const PREVIEW_SCALE_IN: &str = "preview.scale.in";
-pub const TERM_ZOOM_IN: &str = "term.zoom.in";
-pub const TERM_ZOOM_OUT: &str = "term.zoom.out";
-pub const TERM_ZOOM_RESET: &str = "term.zoom.reset";
 pub const PREVIEW_SCALE_OUT: &str = "preview.scale.out";
 pub const PREVIEW_SCALE_RESET: &str = "preview.scale.reset";
 pub const DIFF_NEXT: &str = "preview.diff.next";
@@ -1059,25 +1056,13 @@ fn consume_shortcuts_inner(
             } else {
                 id
             };
+            // The interface zoom chords (Ctrl+Shift+= / - / 0) zoom the whole app in every
+            // pane; a pane's own zoom is its header's zoom button.
             let id = if !typing && session.focused_kind() == Some(PaneKind::Preview) {
                 match id {
-                    ZOOM_IN => PREVIEW_SCALE_IN,
-                    ZOOM_OUT => PREVIEW_SCALE_OUT,
-                    ZOOM_RESET => PREVIEW_SCALE_RESET,
                     // A diff borrows the F7 pair for change navigation (as in IDE diff viewers).
                     FILE_MKDIR if session.command_enabled(DIFF_NEXT) => DIFF_NEXT,
                     FILE_NEWFILE if session.command_enabled(DIFF_PREV) => DIFF_PREV,
-                    _ => id,
-                }
-            } else {
-                id
-            };
-            // A focused terminal zooms its own text with the interface zoom chords.
-            let id = if terminal {
-                match id {
-                    ZOOM_IN => TERM_ZOOM_IN,
-                    ZOOM_OUT => TERM_ZOOM_OUT,
-                    ZOOM_RESET => TERM_ZOOM_RESET,
                     _ => id,
                 }
             } else {
@@ -1506,30 +1491,46 @@ mod tests {
         );
     }
 
+    /// Ctrl+Shift+= / - / 0 are the interface zoom in every pane (shortcuts are predictable).
     #[test]
-    fn focused_preview_zoom_chords_never_change_global_zoom() {
-        let mut s = Session::new().expect("session");
-        let pane = s.layout.focused();
-        s.layout.state_mut(pane).expect("pane").kind = PaneKind::Preview;
-        let global = s.prefs.zoom;
-        let ctx = egui::Context::default();
-        for (key, id) in [
-            (egui::Key::Plus, PREVIEW_SCALE_IN),
-            (egui::Key::Minus, PREVIEW_SCALE_OUT),
-            (egui::Key::Num0, PREVIEW_SCALE_RESET),
-        ] {
+    fn interface_zoom_chords_zoom_the_app_in_every_pane() {
+        use egui::{Key, Modifiers};
+        let ctrl_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        for kind in [PaneKind::Files, PaneKind::Preview, PaneKind::Terminal] {
+            let mut s = Session::new().expect("session");
+            let pane = s.layout.focused();
+            s.layout.state_mut(pane).expect("pane").kind = kind;
+            let start = s.prefs.zoom;
+            let ctx = egui::Context::default();
             assert_eq!(
-                chord(
-                    &ctx,
-                    &mut s,
-                    key,
-                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
-                ),
-                [id]
+                chord(&ctx, &mut s, Key::Equals, ctrl_shift),
+                [ZOOM_IN],
+                "{kind:?}"
             );
-            assert_eq!(s.prefs.zoom, global);
+            assert!(s.prefs.zoom > start, "{kind:?}: the app zooms in");
+            assert_eq!(
+                chord(&ctx, &mut s, Key::Plus, ctrl_shift),
+                [ZOOM_IN],
+                "{kind:?}"
+            );
+            assert_eq!(
+                chord(&ctx, &mut s, Key::Minus, ctrl_shift),
+                [ZOOM_OUT],
+                "{kind:?}"
+            );
+            assert_eq!(
+                chord(&ctx, &mut s, Key::Num0, ctrl_shift),
+                [ZOOM_RESET],
+                "{kind:?}"
+            );
+            let state = s.layout.state(pane).expect("pane");
+            assert_eq!(state.term_scale(), 1.0, "{kind:?}: terminal zoom untouched");
+            if kind == PaneKind::Preview {
+                // No slot means the Preview was never zoomed (100%).
+                let scale = s.preview_slot(pane).map_or(1.0, |p| p.scale);
+                assert_eq!(scale, 1.0, "the Preview's own zoom is untouched");
+            }
         }
-        assert_eq!(s.preview_slot(pane).expect("slot").scale, 1.0);
     }
 
     #[test]
@@ -1804,29 +1805,6 @@ mod tests {
         );
         assert!(logged[1].contains("(physical 1)"), "{logged:?}");
         assert!(logged.iter().all(|l| !l.contains("secret")));
-    }
-
-    #[test]
-    fn a_focused_terminal_zooms_its_own_text_with_the_zoom_chords() {
-        use egui::{Key, Modifiers};
-        let mut s = Session::new().expect("session");
-        let pane = s.layout.focused();
-        s.layout.state_mut(pane).expect("pane").kind = PaneKind::Terminal;
-        let global = s.prefs.zoom;
-        let ctx = egui::Context::default();
-        let ctrl_shift = Modifiers::COMMAND | Modifiers::SHIFT;
-        assert_eq!(chord(&ctx, &mut s, Key::Equals, ctrl_shift), [TERM_ZOOM_IN]);
-        assert!(s.layout.state(pane).expect("pane").term_scale() > 1.0);
-        assert_eq!(chord(&ctx, &mut s, Key::Minus, ctrl_shift), [TERM_ZOOM_OUT]);
-        chord(&ctx, &mut s, Key::Equals, ctrl_shift);
-        assert_eq!(
-            chord(&ctx, &mut s, Key::Num0, ctrl_shift),
-            [TERM_ZOOM_RESET]
-        );
-        assert_eq!(s.layout.state(pane).expect("pane").term_scale(), 1.0);
-        assert_eq!(s.prefs.zoom, global, "the interface zoom is untouched");
-        // Ctrl+= / Ctrl+- (no Shift) stay with the shell.
-        assert!(chord(&ctx, &mut s, Key::Minus, Modifiers::COMMAND).is_empty());
     }
 
     #[test]

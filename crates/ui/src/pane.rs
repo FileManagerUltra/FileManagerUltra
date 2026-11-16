@@ -260,7 +260,6 @@ fn zoom_control(ui: &mut Ui, s: &mut Session, pane: PaneId, kind: PaneKind, toke
         return;
     };
     let (keys_in, keys_out, keys_reset) = match kind {
-        PaneKind::Terminal => (" (Ctrl+Shift+=)", " (Ctrl+Shift+-)", " (Ctrl+Shift+0)"),
         PaneKind::Preview => (" (Ctrl+=)", " (Ctrl+-)", " (Ctrl+0)"),
         _ => ("", "", ""),
     };

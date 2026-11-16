@@ -13,10 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Find Files now searches network shares (SMB), by name and by content, like SFTP servers and local folders. Properties now shows the size and number of items of folders on network shares too. In the Network folder or on a server that lists its shares, Find Files tells you to open a share first.
 
 ### Changed
+- Ctrl+Shift+= / Ctrl+Shift+- / Ctrl+Shift+0 now always zoom the whole app, also when a terminal or Preview has focus, so the keys do the same everywhere. To zoom only one terminal or Preview, use the zoom button in its header (a Preview also keeps Ctrl+= / Ctrl+- / Ctrl+0).
 - Drives in This PC are shown as Windows writes them (`C:`, `Data (D:)`), without a trailing slash.
 - Paths are shown the way your system writes them, everywhere: on Windows `C:\Users\you`, `\\server\share\folder` and This PC instead of `file:///C:/…`, on Linux and macOS `/home/you`. This covers the location bar, recent locations, Find Files (including Search everywhere), bookmark names, tooltips, Properties, Copy Path and the Copy/Move destination. SFTP folders always read `sftp://user@host/folder`. Any path the app shows can be typed or pasted back; on Windows a `\\server\share` path uses the app's own connection to that server when one is open.
 
 ### Fixed
+- Clicking the folder path in a pane's location bar starts editing it. Before, only a click beside the text worked.
 - A new terminal starts where you were working: splitting a terminal opens the new one in that terminal's folder (on Linux even after a `cd`), otherwise it uses the active pane's folder or the last folder you used in any workspace, instead of an old folder the pane once showed. Restart Shell keeps the folder.
 - Opening a bookmark (or another saved location) on an SMB share that isn't connected now asks you to sign in and then opens it, instead of failing with "no backend registered for this location".
 - Bookmarks of a whole server are no longer named by their raw address (`smb://192.168.0.50/`).

@@ -457,8 +457,9 @@ Logs should show the Filter control, never a duplicate Find button.
 Pane zoom: every pane header has a zoom button (magnifier with a plus) left of
 the pane type. Click it for + / percentage / − stacked vertically; a click
 outside or Escape closes it. Zoom a Files pane (text and rows grow, the header
-and other panes do not), a Trash, Network and Media pane, a terminal (same value
-as Ctrl+Shift+=) and a Preview (same as Ctrl+=). While zoomed the button shows
+and other panes do not), a Trash, Network and Media pane, a terminal and a
+Preview (same as Ctrl+=). Ctrl+Shift+= / - / 0 zoom the whole app in every pane,
+a terminal or Preview included. While zoomed the button shows
 the percentage. Keyboard: Tab to the button, Enter opens, Tab to +, Space zooms,
 Escape closes and focus is back on the button. With a screen reader (Orca,
 Narrator, VoiceOver) the button reads "Zoom" / "Zoom, 120%" and collapsed or

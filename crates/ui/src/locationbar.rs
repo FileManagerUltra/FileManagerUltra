@@ -41,7 +41,9 @@ pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, f
         egui::UiBuilder::new()
             .max_rect(rect)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        |ui| ui.add(egui::Label::new(text).truncate()),
+        // Not selectable: a selectable label takes clicks and drags for text selection,
+        // so a click on the path itself would never start editing.
+        |ui| ui.add(egui::Label::new(text).truncate().selectable(false)),
     );
     let response = response.on_hover_text(format!("{path}\nClick or Ctrl+L to type a path"));
     if response.hovered() {
@@ -296,5 +298,40 @@ mod tests {
                 out.textures_delta.clear();
             }
         }
+    }
+
+    /// Clicking on the path text itself (not only the space beside it) starts editing.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn clicking_the_path_text_starts_editing() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        let s = Session::new().expect("session");
+        let pane = s.layout.focused();
+        let path = s
+            .layout
+            .state(pane)
+            .map(|p| fm_engine::item_cmds::display_path(&p.location))
+            .expect("pane path");
+        let tokens = Tokens::dark();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(600.0, 60.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    crate::theme::apply_to(ui.ctx(), &tokens);
+                    if !is_editing(s, pane) {
+                        ui.horizontal(|ui| show_label(ui, s, pane, &tokens, true));
+                    }
+                },
+                s,
+            );
+        let on_text = h.get_by_label(&path).rect().center();
+        h.hover_at(on_text);
+        h.run();
+        h.drag_at(on_text);
+        h.run();
+        h.drop_at(on_text);
+        h.run();
+        assert!(is_editing(h.state(), pane), "a click on the text edits");
     }
 }

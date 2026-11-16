@@ -4,6 +4,7 @@
 - [x] 1.2 `term.zoom.in/out/reset {pane?}` in `term_zoom_cmds.rs`; tests (pane-local, bounds, prefs untouched, bad params, corrupt stored value)
 - [x] 1.3 Terminal draws its grid with the scaled font; handle in the top-right corner (hover or not 100%), scrollback label below it; UI test clicking the handle
 - [x] 1.4 Ctrl+Shift+= / - / 0 map to terminal zoom while a terminal has focus; test; shortcuts reference rows
+- [x] 1.5 Reverted 1.4 (user, 2026-11-16: a shortcut must do the same everywhere): Ctrl+Shift+= / - / 0 are the interface zoom in every pane, Terminal and Preview included; `term.zoom.*` lose their shortcuts; Preview keeps Ctrl+= / - / 0; test `interface_zoom_chords_zoom_the_app_in_every_pane`; shortcuts reference, header tooltips, docs
 
 ## 2. Finish
 
