@@ -194,10 +194,19 @@ fn decode_formats_generated_by_ffmpeg() {
             "{codec}"
         );
         let mut total = 0;
+        let mut first = None;
         while let Some(packet) = decoder.next_packet().expect("decode packet") {
+            first.get_or_insert(packet.position);
             total += packet.samples.len();
         }
         assert!(total >= 10_000, "{codec}: {total}");
+        // Encoder delay is dropped, not shown as time before zero (MP3 timestamps start
+        // negative in Symphonia 0.6).
+        assert_eq!(first, Some(0.0), "{codec}: first sample at time zero");
+        // Gapless formats give back exactly the frames that went in.
+        if codec != "aac" {
+            assert_eq!(total, 12_000, "{codec}: no priming or padding frames");
+        }
     }
 }
 

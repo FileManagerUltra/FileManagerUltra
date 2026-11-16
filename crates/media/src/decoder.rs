@@ -4,14 +4,18 @@ use std::path::Path;
 
 use fm_vfs::FmError;
 use symphonia::core::{
-    audio::SampleBuffer,
-    codecs::{CODEC_TYPE_AAC, CODEC_TYPE_ALAC, Decoder, DecoderOptions},
+    codecs::CodecParameters,
+    codecs::audio::{
+        AudioCodecParameters, AudioDecoder as CodecDecoder, AudioDecoderOptions,
+        well_known::{CODEC_ID_AAC, CODEC_ID_ALAC},
+    },
+    common::Limit,
     errors::Error,
-    formats::{FormatOptions, FormatReader, SeekMode, SeekTo},
+    formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType, probe::Hint},
     io::MediaSourceStream,
-    meta::{Limit, MetadataOptions, MetadataRevision, StandardTagKey, Value},
-    probe::Hint,
-    units::{Time, TimeBase},
+    meta::{MetadataOptions, MetadataRevision, RawValue, StandardTag, Tag, Visual},
+    packet::Packet,
+    units::{Time, TimeBase, Timestamp},
 };
 
 use crate::AudioFormat;
@@ -37,29 +41,59 @@ pub struct AudioTags {
     pub cover: Option<CoverArt>,
 }
 
+/// Tags of a metadata revision: the whole file's, then each track's.
+fn revision_tags(metadata: &MetadataRevision) -> impl Iterator<Item = &Tag> {
+    metadata
+        .media
+        .tags
+        .iter()
+        .chain(
+            metadata
+                .per_track
+                .iter()
+                .flat_map(|t| t.metadata.tags.iter()),
+        )
+        .take(256)
+}
+
+fn revision_visuals(metadata: &MetadataRevision) -> impl Iterator<Item = &Visual> {
+    metadata
+        .media
+        .visuals
+        .iter()
+        .chain(
+            metadata
+                .per_track
+                .iter()
+                .flat_map(|t| t.metadata.visuals.iter()),
+        )
+        .take(16)
+}
+
 impl AudioTags {
     fn read(&mut self, metadata: &MetadataRevision) {
-        for tag in metadata.tags().iter().take(256) {
-            let dst = match tag.std_key {
-                Some(StandardTagKey::TrackTitle) => &mut self.title,
-                Some(StandardTagKey::Artist) => &mut self.artist,
-                Some(StandardTagKey::Album) => &mut self.album,
-                Some(StandardTagKey::Genre) => &mut self.genre,
+        for tag in revision_tags(metadata) {
+            let (dst, value) = match &tag.std {
+                Some(StandardTag::TrackTitle(value)) => (&mut self.title, value),
+                Some(StandardTag::Artist(value)) => (&mut self.artist, value),
+                Some(StandardTag::Album(value)) => (&mut self.album, value),
+                Some(StandardTag::Genre(value)) => (&mut self.genre, value),
                 _ => continue,
             };
-            if let Value::String(value) = &tag.value {
-                *dst = Some(value.chars().take(MAX_TAG_CHARS).collect());
-            }
+            *dst = Some(value.chars().take(MAX_TAG_CHARS).collect());
         }
         if self.cover.is_none()
-            && let Some(visual) = metadata
-                .visuals()
-                .iter()
-                .take(16)
+            && let Some(visual) = revision_visuals(metadata)
                 .find(|v| !v.data.is_empty() && v.data.len() <= MAX_COVER_BYTES)
         {
             self.cover = Some(CoverArt {
-                media_type: visual.media_type.chars().take(128).collect(),
+                media_type: visual
+                    .media_type
+                    .as_deref()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(128)
+                    .collect(),
                 bytes: visual.data.to_vec(),
             });
         }
@@ -106,13 +140,10 @@ fn parse_smpb(value: &str) -> Option<Trim> {
 }
 
 fn read_smpb(metadata: &MetadataRevision) -> Option<Trim> {
-    metadata
-        .tags()
-        .iter()
-        .take(256)
-        .find(|tag| tag.key.ends_with("iTunSMPB"))
-        .and_then(|tag| match &tag.value {
-            Value::String(value) => parse_smpb(value.get(..value.len().min(512))?),
+    revision_tags(metadata)
+        .find(|tag| tag.raw.key.ends_with("iTunSMPB"))
+        .and_then(|tag| match &tag.raw.value {
+            RawValue::String(value) => parse_smpb(value.get(..value.len().min(512))?),
             _ => None,
         })
 }
@@ -179,7 +210,7 @@ impl AudioDecoder {
 
 struct SymphoniaDecoder {
     reader: Box<dyn FormatReader>,
-    decoder: Box<dyn Decoder>,
+    decoder: Box<dyn CodecDecoder>,
     track: u32,
     time_base: TimeBase,
     info: AudioInfo,
@@ -201,81 +232,77 @@ impl SymphoniaDecoder {
             hint.with_extension(extension);
         }
         let stream = MediaSourceStream::new(Box::new(file), Default::default());
-        let mut probed = symphonia::default::get_probe()
-            .format(
-                &hint,
-                stream,
-                &FormatOptions {
-                    enable_gapless: true,
-                    ..Default::default()
-                },
-                &MetadataOptions {
-                    limit_metadata_bytes: Limit::Maximum(MAX_METADATA_BYTES),
-                    limit_visual_bytes: Limit::Maximum(MAX_COVER_BYTES),
-                },
-            )
+        let metadata_options = MetadataOptions::default()
+            .limit_tag_bytes(Limit::Maximum(MAX_METADATA_BYTES))
+            .limit_visual_bytes(Limit::Maximum(MAX_COVER_BYTES));
+        // Gapless trimming is always on in Symphonia 0.6 (format readers mark the trim,
+        // decoders drop it).
+        let mut reader = symphonia::default::get_probe()
+            .probe(&hint, stream, FormatOptions::default(), metadata_options)
             .map_err(|e| crate::error(format!("Cannot recognize audio file: {e}")))?;
+        // Revisions in reading order (trailing tags, leading tags, then the container's own);
+        // later ones win, as before.
         let mut tags = AudioTags::default();
         let mut smpb = None;
-        if let Some(metadata) = probed.metadata.get()
-            && let Some(revision) = metadata.current()
         {
-            tags.read(revision);
-            smpb = read_smpb(revision);
-        }
-        let mut reader = probed.format;
-        if let Some(metadata) = reader.metadata().current() {
-            tags.read(metadata);
-            smpb = smpb.or_else(|| read_smpb(metadata));
+            let mut metadata = reader.metadata();
+            for _ in 0..64 {
+                if let Some(revision) = metadata.current() {
+                    tags.read(revision);
+                    smpb = read_smpb(revision).or(smpb);
+                }
+                if metadata.pop().is_none() {
+                    break;
+                }
+            }
         }
         let track = reader
-            .default_track()
+            .default_track(TrackType::Audio)
             .ok_or_else(|| crate::error("No audio track in file"))?;
-        let params = &track.codec_params;
+        let Some(CodecParameters::Audio(params)) = &track.codec_params else {
+            return Err(crate::error("No audio track in file"));
+        };
         let declared_rate = params.sample_rate;
-        let declared_time_base = params.time_base;
-        let declared_frames = params.n_frames;
-        let declared_delay = params.delay.unwrap_or(0);
-        let declared_padding = params.padding.unwrap_or(0);
+        let declared_time_base = track.time_base;
+        let declared_duration = track.duration;
+        let declared_frames = track.num_frames;
+        let declared_delay = track.delay.unwrap_or(0);
+        let declared_padding = track.padding.unwrap_or(0);
         // Symphonia trims MP3 and Vorbis itself; AAC and ALAC rely on the iTunSMPB tag.
-        let trim = smpb.filter(|_| matches!(params.codec, CODEC_TYPE_AAC | CODEC_TYPE_ALAC));
+        let trim = smpb.filter(|_| matches!(params.codec, CODEC_ID_AAC | CODEC_ID_ALAC));
         let params = &repair_aac_config(params.clone());
+        let mut options = AudioDecoderOptions::default();
+        options.gapless = true;
+        options.verify = true;
         let mut decoder = symphonia::default::get_codecs()
-            .make(params, &DecoderOptions { verify: true })
+            .make_audio_decoder(params, &options)
             .map_err(|e| crate::error(format!("Cannot initialize audio decoder: {e}")))?;
         let track = track.id;
         // Some containers leave channel/rate information to the first audio packet.
         let packet = loop {
-            let packet = reader
-                .next_packet()
-                .map_err(|e| crate::error(format!("Cannot read initial audio packet: {e}")))?;
-            if packet.track_id() == track {
-                break packet;
+            match reader.next_packet() {
+                Ok(Some(packet)) if packet.track_id == track => break packet,
+                Ok(Some(_)) => continue,
+                Ok(None) => return Err(crate::error("Audio file contains no audio packets")),
+                Err(e) => {
+                    return Err(crate::error(format!(
+                        "Cannot read initial audio packet: {e}"
+                    )));
+                }
             }
         };
-        if packet.data.len() > 8 * 1024 * 1024 {
-            return Err(crate::error("Encoded audio packet exceeds the size limit"));
-        }
-        let decoded = decoder
-            .decode(&packet)
+        let (format, initial) = decode_packet(decoder.as_mut(), &packet, None)
             .map_err(|e| crate::error(format!("Cannot decode initial audio packet: {e}")))?;
-        let spec = *decoded.spec();
-        let format = AudioFormat::new(spec.rate, spec.channels.count())?;
-        if decoded.capacity() > MAX_BLOCK_FRAMES {
-            return Err(crate::error("Decoded audio packet is too large"));
-        }
-        let mut initial = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-        initial.copy_interleaved_ref(decoded);
-        if initial.samples().iter().any(|s| !s.is_finite()) {
-            return Err(crate::error("Decoder returned non-finite audio samples"));
-        }
-        let time_base =
-            declared_time_base.unwrap_or(TimeBase::new(1, declared_rate.unwrap_or(spec.rate)));
+        let time_base = declared_time_base
+            .or_else(|| TimeBase::try_from_recip(declared_rate.unwrap_or(format.rate())))
+            .ok_or_else(|| crate::error("Audio track has no usable time base"))?;
         let duration = match trim {
             Some(trim) => Some(trim.valid as f64 / f64::from(format.rate())),
-            None => declared_frames.map(|n| seconds(time_base.calc_time(n))),
+            None => declared_duration
+                .map(|d| ticks_to_seconds(time_base, d.get() as f64))
+                .or_else(|| declared_frames.map(|n| n as f64 / f64::from(format.rate()))),
         };
-        let first_position = seconds(time_base.calc_time(packet.ts()));
+        let first_position = presented_at(time_base, &packet);
         let decoded_end = first_position
             + initial.len() as f64 / format.channels() as f64 / f64::from(format.rate());
         let mut this = Self {
@@ -296,7 +323,7 @@ impl SymphoniaDecoder {
             decoded_end,
             trim,
         };
-        this.pending = match this.trimmed(first_position, initial.samples().to_vec()) {
+        this.pending = match this.trimmed(first_position, initial) {
             Trimmed::Keep(packet) => Some(packet),
             Trimmed::Before | Trimmed::After => None,
         };
@@ -329,7 +356,8 @@ impl SymphoniaDecoder {
             .seek(
                 SeekMode::Accurate,
                 SeekTo::Time {
-                    time: Time::from(position),
+                    time: Time::try_from_secs_f64(position)
+                        .ok_or_else(|| crate::error("Seek position out of range"))?,
                     track_id: Some(self.track),
                 },
             )
@@ -347,43 +375,20 @@ impl SymphoniaDecoder {
         }
         loop {
             let packet = match self.reader.next_packet() {
-                Ok(packet) => packet,
+                Ok(Some(packet)) => packet,
+                Ok(None) => return self.ended(),
                 Err(Error::IoError(err)) if err.kind() == ErrorKind::UnexpectedEof => {
-                    if !self.decoded_any {
-                        return Err(crate::error("Audio file contains no complete samples"));
-                    }
-                    if self.info.duration.is_some_and(|duration| {
-                        self.decoded_end - self.delay_seconds() + 0.1 < duration
-                    }) {
-                        return Err(crate::error(
-                            "Audio file ended before its declared duration",
-                        ));
-                    }
-                    return Ok(None);
+                    return self.ended();
                 }
                 Err(err) => return Err(crate::error(format!("Cannot read audio packet: {err}"))),
             };
-            if packet.track_id() != self.track {
+            if packet.track_id != self.track {
                 continue;
             }
-            if packet.data.len() > 8 * 1024 * 1024 {
-                return Err(crate::error("Encoded audio packet exceeds the size limit"));
-            }
-            let decoded = self
-                .decoder
-                .decode(&packet)
-                .map_err(|e| crate::error(format!("Cannot decode audio packet: {e}")))?;
-            let spec = *decoded.spec();
-            let format = AudioFormat::new(spec.rate, spec.channels.count())?;
-            if format != self.info.format || decoded.capacity() > MAX_BLOCK_FRAMES {
-                return Err(crate::error(
-                    "Audio format changed or decoded packet is too large",
-                ));
-            }
-            let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-            buffer.copy_interleaved_ref(decoded);
+            let (format, buffer) =
+                decode_packet(self.decoder.as_mut(), &packet, Some(self.info.format))?;
             self.decoded_any |= !buffer.is_empty();
-            let mut position = seconds(self.time_base.calc_time(packet.ts()));
+            let mut position = presented_at(self.time_base, &packet);
             self.decoded_end = position
                 + buffer.len() as f64 / format.channels() as f64 / f64::from(format.rate());
             let skip = self.seek_target.map_or(0, |target| {
@@ -396,13 +401,9 @@ impl SymphoniaDecoder {
             self.seek_target = None;
             position += skip as f64 / f64::from(format.rate());
             let samples = buffer
-                .samples()
                 .get(skip * format.channels()..)
                 .ok_or_else(|| crate::error("Invalid decoded audio offset"))?
                 .to_vec();
-            if samples.iter().any(|s| !s.is_finite()) {
-                return Err(crate::error("Decoder returned non-finite audio samples"));
-            }
             match self.trimmed(position, samples) {
                 Trimmed::Keep(packet) => return Ok(Some(packet)),
                 Trimmed::Before => continue,
@@ -410,6 +411,56 @@ impl SymphoniaDecoder {
             }
         }
     }
+}
+
+impl SymphoniaDecoder {
+    /// End of stream: fine once every declared second has been decoded.
+    fn ended(&self) -> Result<Option<DecodedAudio>, FmError> {
+        if !self.decoded_any {
+            return Err(crate::error("Audio file contains no complete samples"));
+        }
+        if self
+            .info
+            .duration
+            .is_some_and(|duration| self.decoded_end - self.delay_seconds() + 0.1 < duration)
+        {
+            return Err(crate::error(
+                "Audio file ended before its declared duration",
+            ));
+        }
+        Ok(None)
+    }
+}
+
+/// Decode one packet to interleaved f32 with every bound checked: encoded size, decoded
+/// frames, a fixed format (when `expected` is given) and finite samples.
+fn decode_packet(
+    decoder: &mut dyn CodecDecoder,
+    packet: &Packet,
+    expected: Option<AudioFormat>,
+) -> Result<(AudioFormat, Vec<f32>), FmError> {
+    if packet.data.len() > 8 * 1024 * 1024 {
+        return Err(crate::error("Encoded audio packet exceeds the size limit"));
+    }
+    let decoded = decoder
+        .decode(packet)
+        .map_err(|e| crate::error(format!("Cannot decode audio packet: {e}")))?;
+    let spec = decoded.spec();
+    let format = AudioFormat::new(spec.rate(), spec.channels().count())?;
+    if decoded.frames() > MAX_BLOCK_FRAMES {
+        return Err(crate::error("Decoded audio packet is too large"));
+    }
+    if expected.is_some_and(|expected| expected != format) {
+        return Err(crate::error(
+            "Audio format changed in the middle of the file",
+        ));
+    }
+    let mut samples = Vec::with_capacity(decoded.samples_interleaved());
+    decoded.copy_to_vec_interleaved(&mut samples);
+    if samples.iter().any(|s: &f32| !s.is_finite()) {
+        return Err(crate::error("Decoder returned non-finite audio samples"));
+    }
+    Ok((format, samples))
 }
 
 fn trim_window(
@@ -443,16 +494,22 @@ fn trim_window(
     })
 }
 
-fn seconds(time: Time) -> f64 {
-    time.seconds as f64 + time.frac
+/// When the packet's first decoded sample plays. `pts` counts from the first decoded frame,
+/// encoder delay included (negative for MP3), and the decoder drops `trim_start` of them.
+fn presented_at(time_base: TimeBase, packet: &Packet) -> f64 {
+    let ts: Timestamp = packet.pts.saturating_add(packet.trim_start);
+    ticks_to_seconds(time_base, ts.get() as f64)
+}
+
+/// Exact for sample-rate time bases (Symphonia's `Time` rounds to whole nanoseconds).
+fn ticks_to_seconds(time_base: TimeBase, ticks: f64) -> f64 {
+    ticks * f64::from(time_base.numer.get()) / f64::from(time_base.denom.get())
 }
 
 /// Some audiobook encoders write a 2-byte AAC config with the "depends on core coder" flag
 /// set but no delay field. ffmpeg ignores it; Symphonia would fail with "end of bitstream".
-fn repair_aac_config(
-    mut params: symphonia::core::codecs::CodecParameters,
-) -> symphonia::core::codecs::CodecParameters {
-    if params.codec == CODEC_TYPE_AAC
+fn repair_aac_config(mut params: AudioCodecParameters) -> AudioCodecParameters {
+    if params.codec == CODEC_ID_AAC
         && let Some(config) = params.extra_data.as_mut()
         && config.len() == 2
     {
@@ -466,11 +523,10 @@ mod tests {
     #![allow(clippy::expect_used)]
     use super::*;
 
-    fn visual(bytes: usize, media_type: String) -> symphonia::core::meta::Visual {
-        symphonia::core::meta::Visual {
-            media_type,
+    fn visual(bytes: usize, media_type: String) -> Visual {
+        Visual {
+            media_type: Some(media_type),
             dimensions: None,
-            bits_per_pixel: None,
             color_mode: None,
             usage: None,
             tags: Vec::new(),
@@ -480,17 +536,24 @@ mod tests {
 
     #[test]
     fn hostile_tags_and_cover_art_are_capped_before_use() {
-        use symphonia::core::meta::{MetadataBuilder, Tag};
-        let mut builder = MetadataBuilder::new();
-        builder.add_tag(Tag::new(
-            Some(StandardTagKey::TrackTitle),
+        use std::sync::Arc;
+        use symphonia::core::meta::{METADATA_ID_NULL, MetadataBuilder, MetadataInfo};
+        let info = MetadataInfo {
+            metadata: METADATA_ID_NULL,
+            short_name: "test",
+            long_name: "test",
+        };
+        let long = Arc::new("x".repeat(MAX_TAG_CHARS * 10));
+        let mut builder = MetadataBuilder::new(info);
+        builder.add_tag(Tag::new_from_parts(
             "TIT2",
-            Value::String("x".repeat(MAX_TAG_CHARS * 10)),
+            RawValue::String(Arc::clone(&long)),
+            Some(StandardTag::TrackTitle(long)),
         ));
         // An oversized picture is skipped; the next one that fits is used.
         builder.add_visual(visual(MAX_COVER_BYTES + 1, "image/png".into()));
         builder.add_visual(visual(16, "i".repeat(10_000)));
-        let metadata = builder.metadata();
+        let metadata = builder.build();
         let mut tags = AudioTags::default();
         tags.read(&metadata);
         assert_eq!(
@@ -501,10 +564,10 @@ mod tests {
         assert_eq!(cover.bytes.len(), 16);
         assert_eq!(cover.media_type.chars().count(), 128);
 
-        let mut only_huge = MetadataBuilder::new();
+        let mut only_huge = MetadataBuilder::new(info);
         only_huge.add_visual(visual(MAX_COVER_BYTES + 1, "image/png".into()));
         let mut tags = AudioTags::default();
-        tags.read(&only_huge.metadata());
+        tags.read(&only_huge.build());
         assert!(tags.cover.is_none(), "too large art is never kept");
     }
 
@@ -544,13 +607,13 @@ mod tests {
 
     #[test]
     fn aac_config_with_a_dangling_core_coder_flag_is_repaired() {
-        let mut params = symphonia::core::codecs::CodecParameters::new();
-        params.for_codec(CODEC_TYPE_AAC);
+        let mut params = AudioCodecParameters::new();
+        params.for_codec(CODEC_ID_AAC);
         params.with_extra_data(vec![0x12, 0x12].into_boxed_slice());
         let fixed = repair_aac_config(params);
         assert_eq!(fixed.extra_data.as_deref(), Some(&[0x12, 0x10][..]));
-        let mut long = symphonia::core::codecs::CodecParameters::new();
-        long.for_codec(CODEC_TYPE_AAC);
+        let mut long = AudioCodecParameters::new();
+        long.for_codec(CODEC_ID_AAC);
         long.with_extra_data(vec![0x12, 0x12, 0x00].into_boxed_slice());
         assert_eq!(
             repair_aac_config(long).extra_data.as_deref(),

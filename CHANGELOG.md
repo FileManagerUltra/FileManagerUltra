@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Ctrl+Shift+= / Ctrl+Shift+- / Ctrl+Shift+0 now always zoom the whole app, also when a terminal or Preview has focus, so the keys do the same everywhere. To zoom only one terminal or Preview, use the zoom button in its header (a Preview also keeps Ctrl+= / Ctrl+- / Ctrl+0).
+- The built-in audio decoder is updated. Damaged or deliberately malformed audio files are handled more safely, MP3 files that only carry old-style (ID3v1) or APE tags now show their title and artist, and some variable-bitrate MP3s report their correct length.
 - Drives in This PC are shown as Windows writes them (`C:`, `Data (D:)`), without a trailing slash.
 - Paths are shown the way your system writes them, everywhere: on Windows `C:\Users\you`, `\\server\share\folder` and This PC instead of `file:///C:/…`, on Linux and macOS `/home/you`. This covers the location bar, recent locations, Find Files (including Search everywhere), bookmark names, tooltips, Properties, Copy Path and the Copy/Move destination. SFTP folders always read `sftp://user@host/folder`. Any path the app shows can be typed or pasted back; on Windows a `\\server\share` path uses the app's own connection to that server when one is open.
 
