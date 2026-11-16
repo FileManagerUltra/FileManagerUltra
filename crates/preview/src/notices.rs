@@ -55,7 +55,8 @@ mod tests {
     /// The EPL part is pinned: a merman upgrade must revisit this notice.
     #[test]
     fn the_elk_notice_matches_the_locked_version() {
-        let lock = include_str!("../../../Cargo.lock");
+        // Windows checkouts may turn the lock file's line endings into CRLF.
+        let lock = include_str!("../../../Cargo.lock").replace("\r\n", "\n");
         assert!(
             lock.contains("name = \"merman-elk-layered\"\nversion = \"0.10.0\""),
             "update the notice and licence text when merman-elk-layered changes"
