@@ -34,6 +34,7 @@ pub mod item_cmds;
 pub mod job_cmds;
 pub mod jobs;
 pub mod log_prefs_cmds;
+pub mod md_diagrams;
 pub mod md_images;
 pub mod media_audio_cmds;
 pub mod media_book;

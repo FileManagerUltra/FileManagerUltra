@@ -211,6 +211,18 @@ impl std::fmt::Display for DiagramError {
 }
 
 /// One-line, bounded, control-free text for a reason built from renderer messages.
+/// merman prefixes parse messages with "Diagram parse error (<internal parser id>): ";
+/// readers only need what follows, starting with a capital.
+fn strip_parse_prefix(message: &str) -> &str {
+    let trimmed = message.trim_start();
+    if trimmed.starts_with("Diagram parse error")
+        && let Some(at) = trimmed.find("): ")
+    {
+        return &trimmed[at + 3..];
+    }
+    trimmed
+}
+
 fn reason(text: &str) -> String {
     let line = text.lines().next().unwrap_or("").trim();
     let mut out: String = line
@@ -363,7 +375,7 @@ fn render_svg(source: &str, palette: &Palette, cancel: &Cancel) -> Result<String
                     if message.to_ascii_lowercase().contains("limit exceeded") {
                         DiagramError::TooComplex
                     } else {
-                        DiagramError::Syntax(reason(&message))
+                        DiagramError::Syntax(reason(strip_parse_prefix(&message)))
                     }
                 }
             });
@@ -483,6 +495,10 @@ mod tests {
     fn broken_unknown_and_oversized_diagrams_have_reasons() {
         let syntax = draw("flowchart LR\n A[[[(( --> }}} |x|").expect_err("syntax");
         assert!(matches!(syntax, DiagramError::Syntax(_)), "{syntax:?}");
+        assert!(
+            !syntax.to_string().contains("parse error ("),
+            "no internal parser id: {syntax}"
+        );
         assert!(!syntax.to_string().is_empty());
         assert_eq!(
             draw("quadrantChart\n").expect_err("type"),

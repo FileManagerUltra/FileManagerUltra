@@ -20,6 +20,8 @@ use crate::theme::Tokens;
 mod find;
 #[path = "preview_markdown.rs"]
 mod markdown;
+#[path = "preview_mermaid.rs"]
+pub mod mermaid_ui;
 #[path = "preview_time.rs"]
 mod time;
 
@@ -334,16 +336,60 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                         ),
                         _ => None,
                     };
-                    let mut want = Vec::new();
+                    // Diagrams use the app's tokens (not the zoomed content tokens) for
+                    // colour; the bitmap scale follows preview zoom × display density.
+                    let diagram_palette = tokens.mermaid_palette();
+                    let diagram_scale =
+                        (content_scale(ui) * ui.ctx().pixels_per_point()).clamp(0.25, 8.0);
+                    let diagrams = match (&*p, slot.source, s.prefs.preview_mermaid) {
+                        (Preview::Markdown(m), false, true) => Some(
+                            fm_engine::md_diagrams::mermaid_blocks(&m.blocks)
+                                .into_iter()
+                                .take(fm_preview::mermaid::MAX_PER_DOCUMENT)
+                                .map(|(index, source)| {
+                                    let state = s.md_diagrams.state(
+                                        source,
+                                        &diagram_palette,
+                                        diagram_scale,
+                                    );
+                                    (index, state)
+                                })
+                                .collect(),
+                        ),
+                        _ => None,
+                    };
+                    let mut want = markdown::MdWants::default();
+                    let inputs = markdown::MdInputs {
+                        images,
+                        diagrams,
+                        diagram_sources: slot.diagram_sources().to_vec(),
+                    };
                     if let Some(block) =
-                        static_body(ui, pane, tokens, &p, view, &mut link, images, &mut want)
+                        static_body(ui, pane, tokens, &p, view, &mut link, inputs, &mut want)
                     {
                         actions.push(("preview.code.copy", json!({ "block": block })));
                     }
-                    if !want.is_empty() {
+                    if !want.images.is_empty() {
                         actions.push((
                             "preview.md_images.want",
-                            json!({ "urls": want, "pane": pane }),
+                            json!({ "urls": want.images, "pane": pane }),
+                        ));
+                    }
+                    if let Some(block) = want.toggle {
+                        actions.push((
+                            "preview.md_diagrams.toggle_source",
+                            json!({ "pane": pane, "block": block }),
+                        ));
+                    }
+                    if !want.diagrams.is_empty() {
+                        actions.push((
+                            "preview.md_diagrams.want",
+                            json!({
+                                "pane": pane,
+                                "blocks": want.diagrams,
+                                "palette": fm_engine::md_diagrams::palette_json(&diagram_palette),
+                                "scale": diagram_scale,
+                            }),
                         ));
                     }
                     if let Some(url) = link {
@@ -974,15 +1020,15 @@ fn static_body(
         turns,
     }: View,
     link: &mut Option<String>,
-    images: Option<markdown::ImageStates>,
-    want: &mut Vec<String>,
+    inputs: markdown::MdInputs,
+    want: &mut markdown::MdWants,
 ) -> Option<usize> {
     match &**p {
         Preview::Text(d) => text_view(ui, pane, tokens, d, wrap),
         Preview::Structured(d) => structured(ui, pane, tokens, d, pretty, wrap),
         Preview::Markdown(m) if source => text_view(ui, pane, tokens, &m.source, wrap),
         Preview::Markdown(m) => {
-            return markdown::show(ui, pane, tokens, m, wrap, link, images, want);
+            return markdown::show(ui, pane, tokens, m, wrap, link, inputs, want);
         }
         Preview::Image(i) => image(ui, pane, tokens, p, i, zoom, subject, turns),
         Preview::Svg(d) if source => structured(ui, pane, tokens, &d.source, pretty, wrap),
@@ -1059,8 +1105,8 @@ fn multi_grid(
                                     preview,
                                     View { pretty: false, subject: Some(&entry.uri), source: false, wrap: false, zoom: Zoom::Fit, turns: 0 },
                                     &mut link,
-                                    None,
-                                    &mut Vec::new(),
+                                    markdown::MdInputs::default(),
+                                    &mut markdown::MdWants::default(),
                                 ) {
                                     actions.push(("preview.code.copy", json!({ "block": block, "item": row_index * columns + column_index })));
                                 }

@@ -31,6 +31,7 @@ pub fn specs() -> Vec<CommandSpec> {
         prefs_cmds::retarget_links(),
         prefs_cmds::recursive_preview(),
         prefs_cmds::remote_images(),
+        prefs_cmds::mermaid(),
         prefs_cmds::terminal_shell(),
         prefs_cmds::sftp_timing(),
         prefs_cmds::smb_encryption(),
@@ -52,6 +53,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(preview_cmds::specs());
     specs.extend(crate::preview_link_cmds::specs());
     specs.extend(crate::md_images::specs());
+    specs.extend(crate::md_diagrams::specs());
     specs.extend(crate::preview_text_cmds::specs());
     specs.extend(crate::preview_find_cmds::specs());
     specs.extend(crate::preview_code_cmds::specs());

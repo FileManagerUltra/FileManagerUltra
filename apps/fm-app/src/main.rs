@@ -899,6 +899,11 @@ impl App {
         session
             .volumes
             .set_waker(move || scan_ctx.request_repaint());
+        // A finished Mermaid diagram replaces its placeholder on the next frame.
+        let diagram_ctx = cc.egui_ctx.clone();
+        session
+            .md_diagrams
+            .set_waker(move || diagram_ctx.request_repaint());
         // Video is drawn when a frame is ready, not on a 16 ms timer, and only while a
         // player is on screen.
         let frame_ctx = cc.egui_ctx.clone();

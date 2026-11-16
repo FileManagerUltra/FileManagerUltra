@@ -565,6 +565,47 @@ pub fn blend(base: Color32, toward: Color32, t: f32) -> Color32 {
     )
 }
 
+fn hex(c: Color32) -> String {
+    format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
+}
+
+/// `preferred` when it has `minimum` contrast on `surface`, else `fallback`.
+fn readable(preferred: Color32, fallback: Color32, surface: Color32, minimum: f64) -> Color32 {
+    if contrast(preferred, surface) >= minimum {
+        preferred
+    } else {
+        fallback
+    }
+}
+
+impl Tokens {
+    /// Mermaid diagram colours (change `markdown-mermaid`), so dark/light, contrast and
+    /// accent settings apply. Text keeps 4.5:1 on every fill; lines and borders keep 3:1 on
+    /// what they sit on (WCAG 1.4.3, 1.4.11).
+    pub fn mermaid_palette(&self) -> fm_preview::mermaid::Palette {
+        let background = self.panel;
+        let node_fill = self.hover_bg;
+        let cluster_fill = self.bg;
+        let line = readable(self.text_muted, self.text, background, 3.0);
+        let line = readable(line, self.text, cluster_fill, 3.0);
+        let cluster_border = readable(self.border, line, cluster_fill, 3.0);
+        let cluster_border = readable(cluster_border, line, background, 3.0);
+        fm_preview::mermaid::Palette {
+            dark: self.dark,
+            background: hex(background),
+            node_fill: hex(node_fill),
+            node_border: hex(self.accent_text),
+            text: hex(self.text),
+            line: hex(line),
+            cluster_fill: hex(cluster_fill),
+            cluster_border: hex(cluster_border),
+            label_background: hex(background),
+            note_fill: hex(node_fill),
+            note_border: hex(self.accent_text),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -866,5 +907,69 @@ mod tests {
         assert!(!Tokens::resolve(ThemePreference::System, false).dark);
         assert!(Tokens::resolve(ThemePreference::Dark, false).dark);
         assert!(!Tokens::resolve(ThemePreference::Light, true).dark);
+    }
+
+    fn parse_hex(hex: &str) -> Color32 {
+        let v = |i: usize| {
+            hex.get(i..i + 2)
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+        };
+        Color32::from_rgb(v(1).unwrap_or(0), v(3).unwrap_or(0), v(5).unwrap_or(0))
+    }
+
+    /// Every theme × accent: diagram text 4.5:1 on fills, lines and borders 3:1 on what they
+    /// sit on.
+    #[test]
+    fn mermaid_colours_are_readable_for_every_accent_in_both_themes() {
+        let mut all = vec![Tokens::light(), Tokens::dark()];
+        for theme in [ThemePreference::Light, ThemePreference::Dark] {
+            for r in [0, 128, 255] {
+                for g in [0, 128, 255] {
+                    for b in [0, 128, 255] {
+                        let prefs = fm_engine::Prefs {
+                            theme,
+                            accent: Some(format!("#{r:02x}{g:02x}{b:02x}")),
+                            ..Default::default()
+                        };
+                        all.push(Tokens::resolve_with(&prefs, false));
+                    }
+                }
+            }
+        }
+        for t in all {
+            let p = t.mermaid_palette();
+            assert!(p.validate().is_ok());
+            let c = |s: &String| parse_hex(s);
+            for fill in [
+                &p.node_fill,
+                &p.background,
+                &p.cluster_fill,
+                &p.label_background,
+            ] {
+                assert!(contrast(c(&p.text), c(fill)) >= 4.5, "text on {fill}");
+            }
+            assert!(contrast(c(&p.line), c(&p.background)) >= 3.0, "lines");
+            assert!(
+                contrast(c(&p.line), c(&p.cluster_fill)) >= 3.0,
+                "lines in groups"
+            );
+            assert!(
+                contrast(c(&p.node_border), c(&p.node_fill)) >= 3.0,
+                "node borders"
+            );
+            assert!(
+                contrast(c(&p.node_border), c(&p.background)) >= 3.0,
+                "node borders"
+            );
+            assert!(
+                contrast(c(&p.cluster_border), c(&p.background)) >= 3.0,
+                "group borders"
+            );
+            assert_eq!(p.dark, t.dark);
+        }
+        assert_ne!(
+            Tokens::dark().mermaid_palette(),
+            Tokens::light().mermaid_palette()
+        );
     }
 }

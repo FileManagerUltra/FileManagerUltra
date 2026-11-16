@@ -227,6 +227,9 @@ pub struct Prefs {
     /// Markdown previews may fetch `http`/`https` images (capability `preview-pane`).
     #[serde(default)]
     pub preview_remote_images: bool,
+    /// Markdown previews draw Mermaid code blocks as diagrams (change `markdown-mermaid`).
+    #[serde(default = "default_true")]
+    pub preview_mermaid: bool,
     /// Browsing music stays quiet unless explicitly enabled.
     #[serde(default)]
     pub preview_audio_autoplay: bool,
@@ -612,6 +615,7 @@ impl Default for Prefs {
             retarget_links: true,
             recursive_preview: false,
             preview_remote_images: false,
+            preview_mermaid: true,
             preview_audio_autoplay: false,
             preview_video_autoplay: true,
             media_background_audio: true,
@@ -1105,6 +1109,7 @@ mod tests {
                 "media_skip_forward_secs",
                 "preview_audio_autoplay",
                 "preview_filters",
+                "preview_mermaid",
                 "preview_remote_images",
                 "preview_time_secs",
                 "preview_video_autoplay",

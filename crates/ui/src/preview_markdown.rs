@@ -5,11 +5,14 @@ use std::sync::Arc;
 
 use egui::text::LayoutJob;
 use egui::{Align, FontId, Id, Layout, RichText, ScrollArea, Stroke, TextFormat, Ui, vec2};
+use fm_engine::md_diagrams::MdDiagramState;
 use fm_engine::md_images::MdImageState;
 use fm_layout::PaneId;
 use fm_preview::markdown::{Alignment, CodeBlock, Inline, MdBlock, MdDoc, MdImage, Table};
+use fm_preview::mermaid::{self, Diagram};
 use fm_preview::thumbs::Thumb;
 
+use super::mermaid_ui::{self, DiagramStates};
 use super::{find, paged_scroll, remember_scroll, selection_job};
 use crate::{markdown_fonts, theme::Tokens};
 
@@ -17,6 +20,27 @@ use crate::{markdown_fonts, theme::Tokens};
 pub(super) type ImageStates = HashMap<String, Option<MdImageState>>;
 
 type Textures = HashMap<usize, (Arc<Thumb>, egui::TextureHandle)>;
+type DiagramTextures = HashMap<usize, (Arc<Diagram>, egui::TextureHandle)>;
+
+/// What the engine knows about a document's images and diagrams. `None`: that kind is not
+/// drawn here (cards, source view, diagrams turned off).
+#[derive(Default)]
+pub(super) struct MdInputs {
+    pub images: Option<ImageStates>,
+    pub diagrams: Option<DiagramStates>,
+    /// Mermaid blocks shown as source (code-block indices).
+    pub diagram_sources: Vec<usize>,
+}
+
+/// What the document needs that the engine has not been asked for yet.
+#[derive(Default)]
+pub(super) struct MdWants {
+    pub images: Vec<String>,
+    /// Code-block indices of Mermaid diagrams.
+    pub diagrams: Vec<usize>,
+    /// A Mermaid block to switch between diagram and source.
+    pub toggle: Option<usize>,
+}
 
 /// Every distinct image URL of the document, in order.
 pub(super) fn image_urls(doc: &MdDoc, dark: bool) -> Vec<String> {
@@ -170,8 +194,123 @@ fn inline(
     follow_link(&response, &galley, parts, actions);
 }
 
-fn code(ui: &mut Ui, tokens: &Tokens, code: &CodeBlock, wrap: bool, path: Id) -> bool {
-    let mut copied = false;
+/// The translucent copy icon of code panels and diagrams; true when activated.
+fn copy_control(ui: &mut Ui, tokens: &Tokens, rect: egui::Rect, id: Id, label: &str) -> bool {
+    let response = ui.interact(rect, id, egui::Sense::click());
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, response.enabled(), label));
+    let mut painter = ui.painter().clone();
+    painter.multiply_opacity(if response.hovered() || response.has_focus() {
+        1.0
+    } else {
+        0.5
+    });
+    let edge = rect.width();
+    painter.rect_filled(rect, tokens.corner_radius, tokens.hover_bg);
+    let icon = rect.shrink(edge * 0.22);
+    let shift = edge * 0.16;
+    let stroke = Stroke::new(tokens.border_width.max(1.0), tokens.text);
+    painter.rect_stroke(
+        icon.translate(vec2(-shift * 0.4, -shift * 0.4))
+            .shrink(shift * 0.5),
+        1.0,
+        stroke,
+        egui::StrokeKind::Inside,
+    );
+    painter.rect(
+        icon.translate(vec2(shift * 0.4, shift * 0.4))
+            .shrink(shift * 0.5),
+        1.0,
+        tokens.hover_bg,
+        stroke,
+        egui::StrokeKind::Inside,
+    );
+    let clicked = response.clicked();
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(label);
+    clicked
+}
+
+/// What was activated in a code or diagram header.
+#[derive(Clone, Copy, Default)]
+struct HeaderClicks {
+    copied: bool,
+    toggled: bool,
+}
+
+/// The header row of code panels and diagrams: the language on the left; on the right the
+/// copy control and, for Mermaid blocks, a text button switching between diagram and source.
+fn header_controls(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    header: egui::Rect,
+    language: &str,
+    copy_label: &str,
+    toggle: Option<&str>,
+    path: Id,
+) -> HeaderClicks {
+    let edge = header.height();
+    let copy = egui::Rect::from_min_size(header.right_top() - vec2(edge, 0.0), vec2(edge, edge));
+    let mut clicks = HeaderClicks {
+        copied: copy_control(ui, tokens, copy, path.with("copy-code"), copy_label),
+        toggled: false,
+    };
+    let mut reserved = edge + 6.0;
+    if let Some(label) = toggle {
+        let font = markdown_fonts::font(ui.ctx(), tokens.font_size * 0.8, true);
+        let text = ui
+            .painter()
+            .layout_no_wrap(label.to_owned(), font.clone(), tokens.text)
+            .size();
+        let width = text.x + edge * 0.8;
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(copy.left() - 6.0 - width, header.top()),
+            vec2(width, edge),
+        );
+        // A child Ui: placing the button must not move the parent's cursor (the diagram's
+        // header is filled in after its panel is laid out).
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(Layout::centered_and_justified(egui::Direction::LeftToRight)),
+        );
+        let response = child
+            .add(
+                egui::Button::new(RichText::new(label).font(font).color(tokens.text))
+                    .fill(tokens.hover_bg)
+                    .stroke(Stroke::new(tokens.border_width, tokens.border)),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        clicks.toggled = response.clicked();
+        reserved += width + 6.0;
+    }
+    if !language.is_empty() {
+        ui.painter()
+            .with_clip_rect(
+                egui::Rect::from_min_max(header.min, header.max - vec2(reserved, 0.0))
+                    .intersect(ui.clip_rect()),
+            )
+            .text(
+                header.left_center(),
+                egui::Align2::LEFT_CENTER,
+                language,
+                markdown_fonts::font(ui.ctx(), tokens.font_size * 0.8, true),
+                tokens.text_muted,
+            );
+    }
+    clicks
+}
+
+fn code(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    code: &CodeBlock,
+    wrap: bool,
+    path: Id,
+    toggle: Option<&str>,
+) -> HeaderClicks {
+    let mut clicks = HeaderClicks::default();
     egui::Frame::NONE
         .fill(tokens.panel)
         .stroke(Stroke::new(tokens.border_width, tokens.border))
@@ -182,55 +321,15 @@ fn code(ui: &mut Ui, tokens: &Tokens, code: &CodeBlock, wrap: bool, path: Id) ->
             let edge = tokens.font_size * 1.5;
             let (header, _) =
                 ui.allocate_exact_size(vec2(ui.available_width(), edge), egui::Sense::hover());
-            if !code.language.is_empty() {
-                ui.painter()
-                    .with_clip_rect(
-                        egui::Rect::from_min_max(header.min, header.max - vec2(edge + 6.0, 0.0))
-                            .intersect(ui.clip_rect()),
-                    )
-                    .text(
-                        header.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        &code.language,
-                        markdown_fonts::font(ui.ctx(), tokens.font_size * 0.8, true),
-                        tokens.text_muted,
-                    );
-            }
-            let rect =
-                egui::Rect::from_min_size(header.right_top() - vec2(edge, 0.0), vec2(edge, edge));
-            let response = ui.interact(rect, path.with("copy-code"), egui::Sense::click());
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::Button, response.enabled(), "Copy code block")
-            });
-            let mut painter = ui.painter().clone();
-            painter.multiply_opacity(if response.hovered() || response.has_focus() {
-                1.0
-            } else {
-                0.5
-            });
-            painter.rect_filled(rect, tokens.corner_radius, tokens.hover_bg);
-            let icon = rect.shrink(edge * 0.22);
-            let shift = edge * 0.16;
-            let stroke = Stroke::new(tokens.border_width.max(1.0), tokens.text);
-            painter.rect_stroke(
-                icon.translate(vec2(-shift * 0.4, -shift * 0.4))
-                    .shrink(shift * 0.5),
-                1.0,
-                stroke,
-                egui::StrokeKind::Inside,
+            clicks = header_controls(
+                ui,
+                tokens,
+                header,
+                &code.language,
+                "Copy code block",
+                toggle,
+                path,
             );
-            painter.rect(
-                icon.translate(vec2(shift * 0.4, shift * 0.4))
-                    .shrink(shift * 0.5),
-                1.0,
-                tokens.hover_bg,
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-            copied = response.clicked();
-            response
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text("Copy code block");
             ui.add_space(4.0);
             let mut job = LayoutJob::default();
             let font = FontId::monospace(tokens.font_size * 0.88);
@@ -264,7 +363,7 @@ fn code(ui: &mut Ui, tokens: &Tokens, code: &CodeBlock, wrap: bool, path: Id) ->
                     });
             }
         });
-    copied
+    clicks
 }
 
 #[derive(Default)]
@@ -280,6 +379,101 @@ struct CodeActions {
     waiting: bool,
     textures: Textures,
     textures_used: Textures,
+    /// `None` where diagrams are not drawn: Mermaid blocks stay code.
+    diagrams: Option<DiagramStates>,
+    want_diagrams: Vec<usize>,
+    /// Mermaid blocks the user switched to their source.
+    diagram_sources: Vec<usize>,
+    /// The block whose diagram/source button was activated this frame.
+    toggled: Option<usize>,
+    diagram_textures: DiagramTextures,
+    diagram_textures_used: DiagramTextures,
+}
+
+/// A Mermaid block drawn as a diagram or its placeholder (`true`), or nothing (`false`), in
+/// which case the caller draws it as code; a reason line comes first when it failed.
+fn mermaid_block(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    c: &CodeBlock,
+    index: usize,
+    wrap: bool,
+    path: Id,
+    actions: &mut CodeActions,
+) -> bool {
+    let Some(states) = actions.diagrams.as_ref() else {
+        return false;
+    };
+    if !mermaid::is_mermaid(&c.language) {
+        return false;
+    }
+    let Some(state) = states.get(&index).cloned() else {
+        mermaid_ui::reason(ui, tokens, "too many diagrams in this document");
+        return false;
+    };
+    match state {
+        Some(MdDiagramState::Failed(why)) => {
+            mermaid_ui::reason(ui, tokens, &why);
+            false
+        }
+        _ if actions.diagram_sources.contains(&index) => {
+            let clicks = code(ui, tokens, c, wrap, path, Some("Show diagram"));
+            if clicks.copied {
+                actions.clicked = Some(index);
+            }
+            if clicks.toggled {
+                actions.toggled = Some(index);
+            }
+            true
+        }
+        Some(MdDiagramState::Ready(drawn)) => {
+            let key = Arc::as_ptr(&drawn) as usize;
+            let reused = actions
+                .diagram_textures_used
+                .get(&key)
+                .cloned()
+                .or_else(|| actions.diagram_textures.remove(&key));
+            let (_, texture) = reused.unwrap_or_else(|| {
+                let image = egui::ColorImage::from_rgba_unmultiplied(
+                    [drawn.thumb.width as usize, drawn.thumb.height as usize],
+                    &drawn.thumb.rgba,
+                );
+                let texture = ui.ctx().load_texture(
+                    format!("pv-mermaid-{key}"),
+                    image,
+                    egui::TextureOptions::LINEAR,
+                );
+                (drawn.clone(), texture)
+            });
+            find::skip(ui);
+            let header = mermaid_ui::diagram(ui, tokens, &c.text, &drawn, &texture);
+            actions.diagram_textures_used.insert(key, (drawn, texture));
+            let clicks = header_controls(
+                ui,
+                tokens,
+                header,
+                &c.language,
+                "Copy diagram source",
+                Some("Show source"),
+                path,
+            );
+            if clicks.copied {
+                actions.clicked = Some(index);
+            }
+            if clicks.toggled {
+                actions.toggled = Some(index);
+            }
+            true
+        }
+        Some(MdDiagramState::Pending) | None => {
+            if state.is_none() && !actions.want_diagrams.contains(&index) {
+                actions.want_diagrams.push(index);
+            }
+            find::skip(ui);
+            mermaid_ui::placeholder(ui, tokens, &c.text);
+            true
+        }
+    }
 }
 
 /// An image, or the alt-text placeholder explaining why there is none.
@@ -541,8 +735,11 @@ fn blocks(
                 ui.add_space(tokens.font_size * 0.4);
             }
             MdBlock::Code(c) => {
-                if code(ui, tokens, c, wrap, path) {
-                    actions.clicked = Some(actions.next);
+                let index = actions.next;
+                if !mermaid_block(ui, tokens, c, index, wrap, path, actions)
+                    && code(ui, tokens, c, wrap, path, None).copied
+                {
+                    actions.clicked = Some(index);
                 }
                 actions.next += 1;
                 ui.add_space(tokens.font_size * 0.5);
@@ -654,15 +851,22 @@ pub(super) fn show(
     doc: &MdDoc,
     wrap: bool,
     link: &mut Option<String>,
-    images: Option<ImageStates>,
-    want: &mut Vec<String>,
+    inputs: MdInputs,
+    want: &mut MdWants,
 ) -> Option<usize> {
     let texture_id = Id::NULL.with(("pv-md-tex", pane));
+    let diagram_texture_id = Id::NULL.with(("pv-md-dtex", pane));
     let mut actions = CodeActions {
-        images,
+        images: inputs.images,
+        diagrams: inputs.diagrams,
+        diagram_sources: inputs.diagram_sources,
         textures: ui
             .ctx()
             .data_mut(|d| d.remove_temp::<Textures>(texture_id))
+            .unwrap_or_default(),
+        diagram_textures: ui
+            .ctx()
+            .data_mut(|d| d.remove_temp::<DiagramTextures>(diagram_texture_id))
             .unwrap_or_default(),
         ..CodeActions::default()
     };
@@ -701,7 +905,9 @@ pub(super) fn show(
         });
     remember_scroll(ui, &output);
     *link = actions.link;
-    *want = std::mem::take(&mut actions.want);
+    want.images = std::mem::take(&mut actions.want);
+    want.diagrams = std::mem::take(&mut actions.want_diagrams);
+    want.toggle = actions.toggled;
     if actions.waiting {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(100));
@@ -709,6 +915,10 @@ pub(super) fn show(
     let used = std::mem::take(&mut actions.textures_used);
     ui.ctx().data_mut(|d| d.insert_temp(texture_id, used));
     crate::frame_cache::touch::<Textures>(ui.ctx(), texture_id);
+    let used = std::mem::take(&mut actions.diagram_textures_used);
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(diagram_texture_id, used));
+    crate::frame_cache::touch::<DiagramTextures>(ui.ctx(), diagram_texture_id);
     actions.clicked
 }
 
@@ -731,7 +941,7 @@ mod tests {
                         .with_size(vec2(320.0, 180.0))
                         .build_ui(move |ui| {
                             crate::theme::apply_to(ui.ctx(), &tokens);
-                            code(ui, &tokens, &block, false, Id::NULL.with("test-code"));
+                            code(ui, &tokens, &block, false, Id::NULL.with("test-code"), None);
                         });
                 harness.run();
                 let rect = harness.get_by_label("Copy code block").rect();
@@ -812,7 +1022,13 @@ mod tests {
                         let mut states = ImageStates::new();
                         states.insert("a.png".into(), None);
                         states.insert("https://x.test/b.png".into(), Some(MdImageState::Blocked));
-                        show(ui, 1, &tokens, &doc, true, &mut link, Some(states), want);
+                        let inputs = MdInputs {
+                            images: Some(states),
+                            ..MdInputs::default()
+                        };
+                        let mut wants = MdWants::default();
+                        show(ui, 1, &tokens, &doc, true, &mut link, inputs, &mut wants);
+                        *want = wants.images;
                     },
                     Vec::new(),
                 );
@@ -838,7 +1054,16 @@ mod tests {
                 move |ui, got: &mut Vec<String>| {
                     crate::theme::apply_to(ui.ctx(), &tokens);
                     let mut link = None;
-                    show(ui, 1, &tokens, &doc, true, &mut link, None, &mut Vec::new());
+                    show(
+                        ui,
+                        1,
+                        &tokens,
+                        &doc,
+                        true,
+                        &mut link,
+                        MdInputs::default(),
+                        &mut MdWants::default(),
+                    );
                     got.extend(link);
                 },
                 Vec::new(),

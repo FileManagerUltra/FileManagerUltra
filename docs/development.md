@@ -403,9 +403,21 @@ pane: columns retain readable widths and scroll horizontally, never justify lett
 or stagger rows. Select/copy includes tasks, nested blocks and tab-separated cells.
 Links, raw HTML and image descriptions remain inert, with no external loads.
 
+Mermaid diagram checks: preview `crates/ui/tests/fixtures/mermaid.md` and a real
+architecture document with subgraphs and labelled edges, in dark and light and with
+a few accents. Labels (also edge labels and subgroup titles) are complete and
+unclipped; text is readable on nodes, lines visible on the background. Zoom the
+Preview from 50% to 400%: the diagram redraws sharp at each step, never wider than
+the column. The broken block shows "Diagram not drawn: …" above the code. Copy on a
+diagram copies its source; Show source swaps one diagram for its code (Show
+diagram swaps back, another file starts drawn); Ctrl+A, Ctrl+C keeps the source as code; Find skips drawn
+diagrams and finds text in the broken block; the source view shows everything as
+text. Preferences ▸ Preview ▸ Draw Mermaid diagrams off shows plain code blocks at
+once. A screen reader announces "Mermaid diagram, flowchart".
+
 Preview-only zoom: use the zoom button in the pane header (+ / percentage / −) or focus it and press
-Ctrl+= / Ctrl+- / Ctrl+0 (Cmd on macOS; Shift zoom chords also target a focused
-Preview). Verify text/Markdown, raw/pretty, logs, image Fit/Actual, hex, metadata,
+Ctrl+= / Ctrl+- / Ctrl+0 (Cmd on macOS; the Ctrl+Shift chords always zoom the whole
+app). Verify text/Markdown, raw/pretty, logs, image Fit/Actual, hex, metadata,
 folder summaries/thumbnails, mixed selections and video. Content scales between
 50% and 400%; the toolbar, other panes and application zoom stay unchanged.
 Open Preferences or focus a text field and verify its keyboard ownership.

@@ -1578,6 +1578,160 @@ fn markdown_document_dark_light() {
     }
 }
 
+/// Drawn diagram with subgroups, the first-frame placeholder, a failed block with its
+/// reason, and the preference off (change `markdown-mermaid`).
+#[test]
+fn markdown_mermaid_dark_light() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for case in ["drawn", "pending", "off", "source"] {
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let (mut s, pane) =
+                preview_fixture("diagrams.md", include_bytes!("fixtures/mermaid.md"), false);
+            s.layout.focus_pane(pane).expect("focus");
+            s.prefs.preview_mermaid = case != "off";
+            if case == "source" {
+                s.dispatch(
+                    "preview.md_diagrams.toggle_source",
+                    &serde_json::json!({"block": 0}),
+                )
+                .expect("show source");
+            }
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(850.0, 1000.0))
+                .renderer(renderer)
+                .build_ui_state(
+                    move |ui, s: &mut Session| {
+                        theme::apply_to(ui.ctx(), &tokens);
+                        ui.ctx().set_theme(if tokens.dark {
+                            egui::Theme::Dark
+                        } else {
+                            egui::Theme::Light
+                        });
+                        fm_ui::preview::show(ui, s, pane, &tokens);
+                    },
+                    s,
+                );
+            if case == "pending" {
+                harness.step();
+                assert_eq!(
+                    harness.get_all_by_label("Mermaid diagram, drawing").count(),
+                    2,
+                    "both diagrams wait in a placeholder on the first frame"
+                );
+            } else {
+                harness.run_steps(2);
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while harness.state().md_diagrams.is_busy() {
+                    assert!(Instant::now() < deadline, "diagrams never finished");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                harness.run_steps(4);
+            }
+            match case {
+                "drawn" => {
+                    harness.get_by_label("Mermaid diagram, flowchart");
+                    harness.get_by_label_contains("Diagram not drawn:");
+                }
+                "source" => {
+                    assert!(
+                        harness
+                            .query_by_label("Mermaid diagram, flowchart")
+                            .is_none()
+                    );
+                    harness.get_by_label("Show diagram");
+                }
+                "off" => {
+                    assert!(harness.query_by_label("Show source").is_none());
+                    assert!(
+                        harness
+                            .query_by_label("Mermaid diagram, flowchart")
+                            .is_none()
+                    );
+                    assert!(
+                        harness
+                            .query_by_label_contains("Diagram not drawn")
+                            .is_none()
+                    );
+                }
+                _ => {}
+            }
+            harness.snapshot(format!("markdown_mermaid_{case}_{theme}"));
+            results.extend_harness(&mut harness);
+        }
+    }
+}
+
+#[test]
+fn mermaid_copy_copies_the_source_and_document_copy_keeps_it() {
+    use egui_kittest::kittest::Queryable;
+    let (mut s, pane) =
+        preview_fixture("diagrams.md", include_bytes!("fixtures/mermaid.md"), false);
+    s.layout.focus_pane(pane).expect("focus");
+    let tokens = Tokens::dark();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(850.0, 1000.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                theme::apply_to(ui.ctx(), &tokens);
+                fm_ui::preview::show(ui, s, pane, &tokens);
+            },
+            s,
+        );
+    harness.run_steps(2);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while harness.state().md_diagrams.is_busy() {
+        assert!(Instant::now() < deadline, "diagrams never finished");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    harness.run_steps(4);
+    harness.get_by_label("Copy diagram source").click();
+    harness.run();
+    let copied = harness.state_mut().clipboard_out.take().expect("copied");
+    assert!(copied.starts_with("flowchart TB") && copied.contains("tag deploy"));
+    // The failed block is ordinary code with its own copy control.
+    harness.get_by_label("Copy code block").click();
+    harness.run();
+    let copied = harness.state_mut().clipboard_out.take().expect("copied");
+    assert!(copied.contains("A[[[ --> }}}"));
+    harness
+        .state_mut()
+        .dispatch("preview.text.select_all", &serde_json::Value::Null)
+        .expect("select all");
+    harness
+        .state_mut()
+        .dispatch("preview.text.copy", &serde_json::Value::Null)
+        .expect("copy document");
+    let all = harness.state_mut().clipboard_out.take().expect("document");
+    assert!(all.contains("flowchart TB") && all.contains("The end."));
+
+    // Show source turns the diagram into its code; Show diagram draws it again.
+    harness.get_by_label("Show source").click();
+    harness.run_steps(3);
+    assert!(
+        harness
+            .query_by_label("Mermaid diagram, flowchart")
+            .is_none()
+    );
+    assert_eq!(harness.get_all_by_label("Copy code block").count(), 2);
+    harness.get_by_label_contains("flowchart TB");
+    harness.get_by_label("Show diagram").click();
+    harness.run_steps(3);
+    harness.get_by_label("Mermaid diagram, flowchart");
+    assert!(
+        harness
+            .state()
+            .preview_slot(pane)
+            .expect("slot")
+            .diagram_sources()
+            .is_empty()
+    );
+}
+
 #[test]
 fn markdown_code_copy_button_and_document_copy_exclude_chrome() {
     use egui_kittest::kittest::Queryable;

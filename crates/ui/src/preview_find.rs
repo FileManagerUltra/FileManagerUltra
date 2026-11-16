@@ -165,6 +165,16 @@ pub(super) fn bar(
     }
 }
 
+/// A segment the engine counted but the view does not draw as text (a Mermaid diagram).
+pub(super) fn skip(ui: &Ui) {
+    ui.data_mut(|d| {
+        if let Some(mut frame) = d.get_temp::<Frame>(frame_id()) {
+            frame.segment += 1;
+            d.insert_temp(frame_id(), frame);
+        }
+    });
+}
+
 pub(super) fn set_segment(ui: &Ui, segment: usize) {
     ui.data_mut(|d| {
         if let Some(mut frame) = d.get_temp::<Frame>(frame_id()) {

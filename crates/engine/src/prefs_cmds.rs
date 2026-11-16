@@ -102,6 +102,28 @@ pub fn remote_images() -> CommandSpec {
     }
 }
 
+/// `prefs.preview.mermaid` — whether Markdown previews draw Mermaid code blocks as
+/// diagrams. On by default; without `value` the setting is toggled.
+pub fn mermaid() -> CommandSpec {
+    CommandSpec {
+        id: "prefs.preview.mermaid",
+        label: "Draw Mermaid Diagrams",
+        menu: &["File", "Preferences", "Draw Mermaid diagrams"],
+        shortcut: None,
+        params: "value?: bool",
+        enabled: |_session| true,
+        run: |session, params| {
+            session.prefs.preview_mermaid = match object(params)?.and_then(|m| m.get("value")) {
+                None => !session.prefs.preview_mermaid,
+                Some(v) => v.as_bool().ok_or_else(|| {
+                    FmError::InvalidParams("value must be true or false".to_string())
+                })?,
+            };
+            Ok(())
+        },
+    }
+}
+
 /// `prefs.preview.recursive` — whether a folder in the preview pane counts and thumbnails
 /// every file below it. Without `value` the setting is toggled.
 pub fn recursive_preview() -> CommandSpec {
@@ -331,6 +353,21 @@ mod tests {
         assert!(!s.prefs.preview_remote_images);
         assert!((remote_images().run)(&mut s, &json!({"value": "yes"})).is_err());
         assert!(!s.prefs.preview_remote_images, "unchanged on error");
+    }
+
+    #[test]
+    fn mermaid_default_on_toggle_round_trip_and_reject_bad_values() {
+        let mut s = Session::default();
+        assert!(s.prefs.preview_mermaid, "diagrams are drawn by default");
+        (mermaid().run)(&mut s, &Params::Null).expect("toggle");
+        assert!(!s.prefs.preview_mermaid);
+        (mermaid().run)(&mut s, &json!({"value": true})).expect("set");
+        assert!(s.prefs.preview_mermaid);
+        assert!((mermaid().run)(&mut s, &json!({"value": 1})).is_err());
+        assert!(s.prefs.preview_mermaid, "unchanged on error");
+        // An older prefs.toml without the key keeps the default.
+        let old: crate::prefs::Prefs = toml::from_str("check_updates = true").expect("parse");
+        assert!(old.preview_mermaid);
     }
 
     #[test]

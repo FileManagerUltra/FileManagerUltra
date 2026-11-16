@@ -42,6 +42,7 @@ struct Pending {
     document: Arc<Preview>,
     pretty: bool,
     options: Options,
+    diagrams: Vec<usize>,
     rx: Receiver<Result<Matches, String>>,
 }
 
@@ -58,6 +59,8 @@ pub struct Find {
     pub reveal: u64,
     document: Option<Arc<Preview>>,
     pretty: bool,
+    /// Code blocks drawn as diagrams when the matches were computed.
+    diagrams: Vec<usize>,
     searched: Options,
     pending: Option<Pending>,
 }
@@ -104,7 +107,25 @@ fn can_close(s: &Session) -> bool {
                 .is_some_and(|slot| slot.find.open)
 }
 
-fn segments(p: &Preview, pretty: bool, visit: &mut impl FnMut(String)) {
+/// Code-block indices (as in `preview.code.copy`) the preview draws as diagrams rather than
+/// text: Mermaid blocks while the preference is on, except those that failed to draw or that
+/// the user switched to their source. Find keeps their segment but reports no matches in them.
+fn diagram_blocks(s: &Session, p: &Preview, pretty: bool, as_source: &[usize]) -> Vec<usize> {
+    let Preview::Markdown(doc) = p else {
+        return Vec::new();
+    };
+    if pretty || !s.prefs.preview_mermaid {
+        return Vec::new();
+    }
+    crate::md_diagrams::mermaid_blocks(&doc.blocks)
+        .into_iter()
+        .take(fm_preview::mermaid::MAX_PER_DOCUMENT)
+        .filter(|(index, source)| !as_source.contains(index) && !s.md_diagrams.has_failed(source))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+fn segments(p: &Preview, pretty: bool, diagrams: &[usize], visit: &mut impl FnMut(String)) {
     fn text(doc: &TextDoc, visit: &mut impl FnMut(String)) {
         for line in &doc.lines {
             visit(line.iter().map(|span| span.text.as_str()).collect());
@@ -113,17 +134,31 @@ fn segments(p: &Preview, pretty: bool, visit: &mut impl FnMut(String)) {
     fn inlines(parts: &[Inline]) -> String {
         parts.iter().map(|part| part.text.as_str()).collect()
     }
-    fn markdown(blocks: &[MdBlock], visit: &mut impl FnMut(String)) {
+    fn markdown(
+        blocks: &[MdBlock],
+        diagrams: &[usize],
+        code_index: &mut usize,
+        visit: &mut impl FnMut(String),
+    ) {
         for block in blocks {
             match block {
                 MdBlock::Heading(_, parts) | MdBlock::Para(parts) => visit(inlines(parts)),
-                MdBlock::Code(code) => visit(code.text.clone()),
+                MdBlock::Code(code) => {
+                    if diagrams.contains(code_index) {
+                        visit(String::new());
+                    } else {
+                        visit(code.text.clone());
+                    }
+                    *code_index += 1;
+                }
                 MdBlock::List { items, .. } => {
                     for item in items {
-                        markdown(&item.blocks, visit);
+                        markdown(&item.blocks, diagrams, code_index, visit);
                     }
                 }
-                MdBlock::Quote(blocks) | MdBlock::Centered(blocks) => markdown(blocks, visit),
+                MdBlock::Quote(blocks) | MdBlock::Centered(blocks) => {
+                    markdown(blocks, diagrams, code_index, visit);
+                }
                 MdBlock::Table(table) => {
                     let header = (!table.headerless).then_some(&table.header);
                     for row in header.into_iter().chain(&table.rows) {
@@ -147,12 +182,22 @@ fn segments(p: &Preview, pretty: bool, visit: &mut impl FnMut(String)) {
             visit,
         ),
         Preview::Markdown(doc) if pretty => text(&doc.source, visit),
-        Preview::Markdown(doc) => markdown(&doc.blocks, visit),
+        Preview::Markdown(doc) => markdown(&doc.blocks, diagrams, &mut 0, visit),
         _ => {}
     }
 }
 
+#[cfg(test)]
 fn search(p: &Preview, pretty: bool, options: &Options) -> Result<Matches, String> {
+    search_skipping(p, pretty, &[], options)
+}
+
+fn search_skipping(
+    p: &Preview,
+    pretty: bool,
+    diagrams: &[usize],
+    options: &Options,
+) -> Result<Matches, String> {
     let pattern = if options.regex {
         options.query.clone()
     } else {
@@ -174,7 +219,7 @@ fn search(p: &Preview, pretty: bool, options: &Options) -> Result<Matches, Strin
         capped: false,
     };
     let mut segment = 0;
-    segments(p, pretty, &mut |text| {
+    segments(p, pretty, diagrams, &mut |text| {
         if !result.capped {
             for hit in re.find_iter(&text).filter(|hit| !hit.is_empty()) {
                 if result.hits.len() == MAX_MATCHES {
@@ -194,6 +239,15 @@ fn search(p: &Preview, pretty: bool, options: &Options) -> Result<Matches, Strin
 
 /// Poll/start at most one bounded search worker per pane; stale results are discarded.
 pub fn prepare(s: &mut Session, pane: PaneId) {
+    let diagrams = match s.previews.slots.get(&pane) {
+        Some(slot) => match &slot.body {
+            Body::Static(p) => {
+                diagram_blocks(s, p, slot.pretty || slot.source, slot.diagram_sources())
+            }
+            _ => Vec::new(),
+        },
+        None => return,
+    };
     let Some(slot) = s.previews.slots.get_mut(&pane) else {
         return;
     };
@@ -204,6 +258,7 @@ pub fn prepare(s: &mut Session, pane: PaneId) {
     };
     let same = find.pretty == (slot.pretty || slot.source)
         && find.searched == find.options
+        && find.diagrams == diagrams
         && match (&find.document, doc) {
             (Some(old), Some(new)) => Arc::ptr_eq(old, new),
             (None, None) => true,
@@ -213,6 +268,7 @@ pub fn prepare(s: &mut Session, pane: PaneId) {
         find.document = doc.cloned();
         find.pretty = slot.pretty || slot.source;
         find.searched = find.options.clone();
+        find.diagrams = diagrams.clone();
         find.matches = None;
         find.error = None;
         find.current = 0;
@@ -224,6 +280,7 @@ pub fn prepare(s: &mut Session, pane: PaneId) {
                 if doc.is_some_and(|doc| Arc::ptr_eq(doc, &pending.document))
                     && pending.pretty == (slot.pretty || slot.source)
                     && pending.options == find.options
+                    && pending.diagrams == diagrams
                 {
                     match result {
                         Ok(matches) => find.matches = Some(Arc::new(matches)),
@@ -254,16 +311,23 @@ pub fn prepare(s: &mut Session, pane: PaneId) {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let worker_doc = document.clone();
         let worker_options = options.clone();
+        let worker_diagrams = diagrams.clone();
         match std::thread::Builder::new()
             .name("fm-preview-find".into())
             .spawn(move || {
-                let _ = tx.send(search(&worker_doc, pretty, &worker_options));
+                let _ = tx.send(search_skipping(
+                    &worker_doc,
+                    pretty,
+                    &worker_diagrams,
+                    &worker_options,
+                ));
             }) {
             Ok(_) => {
                 find.pending = Some(Pending {
                     document,
                     options,
                     pretty,
+                    diagrams,
                     rx,
                 })
             }
@@ -502,6 +566,53 @@ mod tests {
                 segment: 2,
                 bytes: 0..3
             }]
+        );
+    }
+
+    #[test]
+    fn drawn_diagrams_keep_their_segment_but_have_no_matches() {
+        let p = Preview::Markdown(fm_preview::markdown::MdDoc {
+            blocks: fm_preview::markdown::parse(
+                "foo\n\n```mermaid\nflowchart LR\nfoo-->bar\n```\n\n```text\nfoo\n```\n\n```mermaid\nflowchart LR\n foo[[[ }}}\n```\n\nfoo",
+            ),
+            source: Default::default(),
+            truncated: false,
+            total_bytes: 0,
+        });
+        let options = Options {
+            query: "foo".into(),
+            ..Options::default()
+        };
+        let segments_of = |diagrams: &[usize]| -> Vec<usize> {
+            search_skipping(&p, false, diagrams, &options)
+                .expect("search")
+                .hits
+                .iter()
+                .map(|hit| hit.segment)
+                .collect()
+        };
+        assert_eq!(
+            segments_of(&[]),
+            [0, 1, 2, 3, 4],
+            "off: every block is code"
+        );
+        assert_eq!(
+            segments_of(&[0, 2]),
+            [0, 2, 4],
+            "same numbering, diagrams skipped"
+        );
+
+        let mut s = Session::new().expect("session");
+        assert_eq!(diagram_blocks(&s, &p, false, &[]), [0, 2]);
+        assert_eq!(diagram_blocks(&s, &p, false, &[2]), [0], "shown as source");
+        assert!(
+            diagram_blocks(&s, &p, true, &[]).is_empty(),
+            "source view searches all"
+        );
+        s.prefs.preview_mermaid = false;
+        assert!(
+            diagram_blocks(&s, &p, false, &[]).is_empty(),
+            "preference off"
         );
     }
 

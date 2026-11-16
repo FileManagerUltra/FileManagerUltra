@@ -99,6 +99,7 @@ pub struct Session {
     pub thumbs: crate::thumbs::ThumbService,
     /// Images of the Markdown preview (own worker pools, byte-capped memory cache).
     pub md_images: crate::md_images::MdImageService,
+    pub md_diagrams: crate::md_diagrams::MdDiagramService,
     /// Text a command wants on the system clipboard; the app shell drains it.
     pub clipboard_out: Option<String>,
     /// Pixels a command wants on the system clipboard; the app shell drains it.
@@ -204,6 +205,7 @@ impl Default for Session {
             preview_text_selection: None,
             thumbs: Default::default(),
             md_images: Default::default(),
+            md_diagrams: Default::default(),
             clipboard_out: None,
             clipboard_image: None,
             image_clip: Default::default(),

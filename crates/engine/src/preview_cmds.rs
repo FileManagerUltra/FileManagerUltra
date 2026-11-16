@@ -145,6 +145,9 @@ pub struct PreviewSlot {
     pub scale: f32,
     /// Quarter turns clockwise the user gave the shown picture, with the file it is for.
     pub(crate) turn: Option<(VfsUri, u8)>,
+    /// Mermaid blocks (code-block indices) the user switched to their source, with the file
+    /// they are for.
+    pub(crate) diagram_source: Option<(VfsUri, Vec<usize>)>,
     pub find: crate::preview_find_cmds::Find,
     /// Directory thumbnail grid instead of the summary card.
     pub thumbs: bool,
@@ -191,6 +194,7 @@ impl PreviewSlot {
             zoom: Zoom::Fit,
             scale: 1.0,
             turn: None,
+            diagram_source: None,
             find: Default::default(),
             thumbs: false,
             thumb_size: 0,
@@ -214,6 +218,15 @@ impl PreviewSlot {
 
     /// Quarter turns clockwise (0-3) to show the current picture with; another file starts
     /// upright again.
+    /// Mermaid blocks of the current document shown as source instead of a diagram; another
+    /// file starts with every diagram drawn.
+    pub fn diagram_sources(&self) -> &[usize] {
+        match (&self.diagram_source, &self.subject) {
+            (Some((uri, blocks)), Some(subject)) if *uri == subject.uri => blocks,
+            _ => &[],
+        }
+    }
+
     pub fn image_turns(&self) -> u8 {
         match (&self.turn, &self.subject) {
             (Some((uri, turns)), Some(subject)) if *uri == subject.uri => *turns,

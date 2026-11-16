@@ -786,6 +786,17 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
             if response.changed() {
                 s.dispatch_or_notice("prefs.preview.remote_images", &json!({"value": remote}));
             }
+            let mut mermaid = s.prefs.preview_mermaid;
+            let response = ui
+                .checkbox(&mut mermaid, "Draw Mermaid diagrams")
+                .on_hover_text(
+                    "Show ```mermaid code blocks as diagrams in the app's colours. \
+                     Drawn offline; a diagram that cannot be drawn stays a code block \
+                     with the reason. Turn off to always see the code.",
+                );
+            if response.changed() {
+                s.dispatch_or_notice("prefs.preview.mermaid", &json!({"value": mermaid}));
+            }
             ui.add_space(18.0);
             section_heading(ui, tokens, "Log previews");
             let mut poll = s.prefs.log_poll_ms.clamp(

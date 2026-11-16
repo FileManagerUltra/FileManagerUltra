@@ -13,22 +13,23 @@
 
 ## 3. Engine service (L3)
 
-- [ ] 3.1 `md_diagrams.rs` modelled on `md_images`: key (source hash, palette hash, scale bucket of 0.25), states `Pending | Ready(Arc<Thumb>) | Failed(reason)`, one worker, queue ≤ 32, generation counter, jobs for documents no longer shown dropped, 64 MiB / 256-entry LRU cache, waker for the UI
-- [ ] 3.2 `preview.md_diagrams.want {pane?, blocks, palette, scale}` command (new `*_cmds.rs` module, added to `commands.rs`), block indices addressed like `preview.code.copy`, at most 50 diagrams per document; malformed-params fuzz coverage plus explicit bad-colour/font/index/scale tests
-- [ ] 3.3 `Prefs::preview_mermaid` (default true, serde default) through the existing preferences command; round-trip and bad-value tests
-- [ ] 3.4 Tests: state transitions, cache eviction under the cap, stale generation discarded, panic in a job becomes `Failed`, nothing rendered on the UI thread (work only from the command/worker)
+- [x] 3.1 `md_diagrams.rs` modelled on `md_images`: key (source hash, palette hash, scale bucket of 0.25), states `Pending | Ready(Arc<Thumb>) | Failed(reason)`, one worker, queue ≤ 32, generation counter, jobs for documents no longer shown dropped, 64 MiB / 256-entry LRU cache, waker for the UI
+- [x] 3.2 `preview.md_diagrams.want {pane?, blocks, palette, scale}` command (new `*_cmds.rs` module, added to `commands.rs`), block indices addressed like `preview.code.copy`, at most 50 diagrams per document; malformed-params fuzz coverage plus explicit bad-colour/font/index/scale tests
+- [x] 3.3 `Prefs::preview_mermaid` (default true, serde default) through the existing preferences command; round-trip and bad-value tests
+- [x] 3.4 Tests: state transitions, cache eviction under the cap, stale generation discarded, panic in a job becomes `Failed`, nothing rendered on the UI thread (work only from the command/worker)
 
 ## 4. UI (L4)
 
-- [ ] 4.1 `Palette` from `Tokens` (both palettes exhaustive; contrast of text on node fill and of lines on background meets WCAG 1.4.3 / 1.4.11, tested for every accent in both themes like the zoom-button test)
-- [ ] 4.2 `preview_markdown`: `mermaid` blocks with the preference on show the bitmap (scaled to width, never up), the copy control top-right (`preview.code.copy`), a placeholder of the last known size while pending, the code block with "Diagram not drawn: <reason>" when failed; dispatch `want` for visible diagrams only
-- [ ] 4.3 Accessibility: accessible name "Mermaid diagram, <type>" and description (first 1000 chars of source); copy control keyboard reachable as on code panels
-- [ ] 4.4 Find skips drawn diagrams and searches failed/off/source-view blocks as code; document copy keeps the source
-- [ ] 4.5 Preferences > Preview: "Draw Mermaid diagrams" checkbox with hover text
-- [ ] 4.6 Snapshots (dark and light): drawn flowchart with subgroups, pending placeholder, failed block with reason, preference off; UI harness test that the copy control copies the source
+- [x] 4.1 `Palette` from `Tokens` (both palettes exhaustive; contrast of text on node fill and of lines on background meets WCAG 1.4.3 / 1.4.11, tested for every accent in both themes like the zoom-button test)
+- [x] 4.2 `preview_markdown`: `mermaid` blocks with the preference on show the bitmap (scaled to width, never up), the copy control top-right (`preview.code.copy`), a placeholder of the last known size while pending, the code block with "Diagram not drawn: <reason>" when failed; dispatch `want` for visible diagrams only
+- [x] 4.3 Accessibility: accessible name "Mermaid diagram, <type>" and description (first 1000 chars of source); copy control keyboard reachable as on code panels
+- [x] 4.4 Find skips drawn diagrams and searches failed/off/source-view blocks as code; document copy keeps the source
+- [x] 4.5 Preferences > Preview: "Draw Mermaid diagrams" checkbox with hover text
+- [x] 4.6 Snapshots (dark and light): drawn flowchart with subgroups, pending placeholder, failed block with reason, preference off; UI harness test that the copy control copies the source
+- [x] 4.7 (requested during apply) "Show source" / "Show diagram" button per diagram: `preview.md_diagrams.toggle_source {pane?, block}`, state per document in the preview slot, diagram panel gets the code panel's header, Find searches blocks shown as source; engine and UI harness tests, snapshot
 
 ## 5. Docs and wrap-up
 
-- [ ] 5.1 `docs/architecture.md` (preview pools: diagrams beside Markdown images), `AGENTS.md` §7 (merman: pure Rust, features off, only behind `fm_preview::mermaid`), `docs/development.md` manual check
-- [ ] 5.2 CHANGELOG `Added` line, devlog entry; `cargo test` for touched crates, clippy, fmt, `cargo xtask layers`, `cargo xtask brand-check`
+- [x] 5.1 `docs/architecture.md` (preview pools: diagrams beside Markdown images), `AGENTS.md` §7 (merman: pure Rust, features off, only behind `fm_preview::mermaid`), `docs/development.md` manual check
+- [x] 5.2 CHANGELOG `Added` line, devlog entry; `cargo test` for touched crates, clippy, fmt, `cargo xtask layers`, `cargo xtask brand-check`
 - [ ] 5.3 Manual: open `it-architecture.md` and `ecommerce-landscape.md` in a Preview on Linux and Windows, both themes, zoom 50% to 400%, toggle the preference, Copy on a diagram, Find, source view, screen reader reads the diagram name
