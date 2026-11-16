@@ -796,6 +796,45 @@ fn dialogs_dark_light() {
 }
 
 #[test]
+fn about_dialog_dark_light() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for case in ["closed", "licence"] {
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(760.0, 820.0))
+                .renderer(renderer)
+                .build_ui(move |ui| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    let mut open = true;
+                    fm_ui::about::dialog(ui.ctx(), &tokens, &mut open);
+                });
+            harness.run_steps(3);
+            if case == "licence" {
+                harness
+                    .get_all_by_label("View licence")
+                    .last()
+                    .expect("ELK row")
+                    .click();
+                harness.run();
+                harness.get_by_label_contains("Eclipse Public License - v 2.0");
+            }
+            harness.snapshot(format!("dialog_about_{case}_{theme}"));
+            results.extend_harness(&mut harness);
+        }
+    }
+}
+
+#[test]
 fn preferences_dialog_dark_light() {
     use egui_kittest::kittest::Queryable;
     use serde_json::json;

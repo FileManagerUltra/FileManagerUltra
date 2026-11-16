@@ -26,8 +26,8 @@ pub const NOTICES: &[Notice] = &[
         text: include_str!("../assets/fonts/OFL.txt"),
     },
     Notice {
-        name: "Eclipse ELK layered layout (merman-elk-layered 0.10.0)",
-        purpose: "Layout of Mermaid diagrams",
+        name: "Eclipse ELK layout",
+        purpose: "Layout of Mermaid diagrams (Rust port merman-elk-layered 0.10.0)",
         licence: "EPL-2.0",
         source: "https://crates.io/crates/merman-elk-layered/0.10.0",
         text: include_str!("../licenses/EPL-2.0.txt"),

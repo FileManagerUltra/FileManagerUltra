@@ -602,24 +602,7 @@ impl eframe::App for App {
         fm_ui::sftp_popup::sftp_prompt_dialog(&ctx, &mut self.session, &tokens);
         fm_ui::remote::host_key_alert(&ctx, &mut self.session, &tokens);
 
-        if self.session.about_open {
-            let mut open = self.session.about_open;
-            fm_ui::dialog_style::window(&ctx, &tokens, "About", &mut open).show(ui, |ui| {
-                fm_ui::dialog_style::apply(ui, &tokens);
-                ui.vertical_centered(|ui| {
-                    if let Some(logo) = logo_texture(&ctx) {
-                        ui.add(egui::Image::new(&logo).fit_to_exact_size(egui::vec2(96.0, 96.0)));
-                    }
-                    ui.heading(fm_brand::APP_NAME);
-                    ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
-                    ui.label(format!("build {}", fm_engine::diag::build_commit()));
-                    ui.label(fm_brand::ORG_NAME);
-                });
-                ui.add_space(12.0);
-                fm_ui::about::third_party(ui, &tokens);
-            });
-            self.session.about_open = open;
-        }
+        fm_ui::about::dialog(&ctx, &tokens, &mut self.session.about_open);
 
         if !self.session.running {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -940,19 +923,6 @@ impl App {
 }
 
 /// The brand logo as a texture, decoded once and kept in egui's memory.
-fn logo_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
-    let id = egui::Id::NULL.with("fm-brand-logo");
-    if let Some(tex) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
-        return Some(tex);
-    }
-    let icon = eframe::icon_data::from_png_bytes(fm_brand::ICON_PNG).ok()?;
-    let size = [icon.width as usize, icon.height as usize];
-    let image = egui::ColorImage::from_rgba_unmultiplied(size, &icon.rgba);
-    let tex = ctx.load_texture("fm-brand-logo", image, egui::TextureOptions::LINEAR);
-    ctx.data_mut(|d| d.insert_temp(id, tex.clone()));
-    Some(tex)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

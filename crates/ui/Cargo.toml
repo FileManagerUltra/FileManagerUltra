@@ -11,6 +11,7 @@ publish = false
 workspace = true
 
 [dependencies]
+fm-brand.workspace = true
 fm-engine.workspace = true
 fm-layout.workspace = true
 fm-media.workspace = true
