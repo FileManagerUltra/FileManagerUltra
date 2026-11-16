@@ -816,7 +816,12 @@ fn about_dialog_dark_light() {
                         egui::Theme::Light
                     });
                     let mut open = true;
-                    fm_ui::about::dialog(ui.ctx(), &tokens, &mut open);
+                    fm_ui::about::dialog_with_version(
+                        ui.ctx(),
+                        &tokens,
+                        &mut open,
+                        "Version 9.9.9 · build fixture",
+                    );
                 });
             harness.run_steps(3);
             if case == "licence" {

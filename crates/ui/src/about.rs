@@ -28,19 +28,29 @@ fn logo(ctx: &Context) -> Option<egui::TextureHandle> {
 
 /// The About window while `open` is true; the close button clears it.
 pub fn dialog(ctx: &Context, tokens: &Tokens, open: &mut bool) {
+    let version = format!(
+        "Version {} · build {}",
+        env!("CARGO_PKG_VERSION"),
+        fm_engine::diag::build_commit()
+    );
+    dialog_with_version(ctx, tokens, open, &version);
+}
+
+/// [`dialog`] with the version line given, so snapshots do not change with every release.
+pub fn dialog_with_version(ctx: &Context, tokens: &Tokens, open: &mut bool, version: &str) {
     if !*open {
         return;
     }
     crate::dialog_style::window(ctx, tokens, "About", open).show(ctx, |ui| {
         crate::dialog_style::apply(ui, tokens);
         ui.set_width(WIDTH);
-        identity(ui, tokens);
+        identity(ui, tokens, version);
         ui.add_space(tokens.padding * 2.0);
         third_party(ui, tokens);
     });
 }
 
-fn identity(ui: &mut Ui, tokens: &Tokens) {
+fn identity(ui: &mut Ui, tokens: &Tokens, version: &str) {
     ui.horizontal(|ui| {
         if let Some(texture) = logo(ui.ctx()) {
             ui.add(egui::Image::new(&texture).fit_to_exact_size(vec2(72.0, 72.0)));
@@ -53,14 +63,7 @@ fn identity(ui: &mut Ui, tokens: &Tokens) {
                     .size(tokens.font_size * 1.6)
                     .strong(),
             );
-            ui.label(quiet(
-                tokens,
-                format!(
-                    "Version {} · build {}",
-                    env!("CARGO_PKG_VERSION"),
-                    fm_engine::diag::build_commit()
-                ),
-            ));
+            ui.label(quiet(tokens, version));
             if fm_brand::ORG_NAME != fm_brand::APP_NAME {
                 ui.label(quiet(tokens, fm_brand::ORG_NAME));
             }
