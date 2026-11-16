@@ -6,8 +6,8 @@ TBD - created by archiving change pane-preview. Update Purpose after archive.
 ### Requirement: Preview zoom reset takes precedence over workspace switching
 Ctrl+0 (Cmd+0 on macOS) SHALL reset only the focused Preview's zoom when no dialog or
 text field owns the keyboard. It SHALL NOT switch
-workspaces or change interface zoom. Ctrl+Shift+0 SHALL retain the same
-Preview-local reset behavior. Outside Preview, Ctrl+0 SHALL retain workspace 10
+workspaces or change interface zoom. Ctrl+Shift+0 SHALL reset the interface zoom,
+as in every other pane. Outside Preview, Ctrl+0 SHALL retain workspace 10
 selection; terminal input and text fields SHALL keep their existing ownership.
 
 #### Scenario: Reset zoom from Preview
@@ -53,7 +53,7 @@ The `preview.find.{open,close,set,next,previous}` commands SHALL validate their
 parameters and remain pane-local; `set` accepts query/case/word/regex options and
 the other commands accept only an optional pane.
 
-Find and preview zoom controls SHALL share the main source/title toolbar row,
+The Find control SHALL share the main source/title toolbar row (preview zoom is in the pane header, see `panes` "Pane zoom"),
 not consume a separate row. At narrow widths view controls SHALL move into the
 existing View options overflow menu; the filename SHALL truncate to keep that
 menu and the log Filter button visible. An open search/filter panel MAY appear
@@ -246,17 +246,19 @@ Markdown SHALL enforce a 1 MiB source cap, the configured text-line cap,
 ### Requirement: Pane-local preview magnification
 Every Preview body SHALL support independent 50%-400% magnification in 20% steps
 through `preview.scale.in`, `preview.scale.out` and `preview.scale.reset`.
-The toolbar SHALL expose minus, percentage/reset and plus controls in every view
-type, including text, Markdown, structured text, logs, images, hex, metadata,
-folder summaries, thumbnails, multi-file cards and video.
+The pane header's zoom (`panes` requirement "Pane zoom", which dispatches
+`pane.scale.*` and routes it to these commands) SHALL offer zoom in, the
+percentage/reset and zoom out for every view type, including text, Markdown,
+structured text, logs, images, hex, metadata, folder summaries, thumbnails,
+multi-file cards and video; the Preview toolbar SHALL NOT repeat them.
 Only that pane's content SHALL scale; pane chrome, other panes and the application
 zoom preference SHALL remain unchanged. Scale SHALL survive changes of previewed
 file within the same pane. Images SHALL retain Fit/Actual modes; choosing either
 SHALL reset additional magnification. Zoom SHALL NOT increase file/decode limits.
 
 A focused Preview SHALL accept Ctrl/Cmd+= (or +), Ctrl/Cmd+- and Ctrl/Cmd+0.
-Existing Ctrl/Cmd+Shift zoom shortcuts SHALL target preview magnification when
-a Preview owns the keyboard; elsewhere they retain application-wide behavior.
+A shortcut SHALL do the same in every pane: Ctrl/Cmd+Shift+= (or +), Ctrl/Cmd+Shift+-
+and Ctrl/Cmd+Shift+0 SHALL keep changing the interface zoom while a Preview has focus.
 Dialogs, popups and focused text fields SHALL retain keyboard ownership.
 Commands SHALL reject malformed parameters and invalid explicit panes.
 
@@ -265,6 +267,10 @@ Commands SHALL reject malformed parameters and invalid explicit panes.
 - **THEN** its body changes size while the toolbar, Files panes, other previews,
   global zoom preference and egui zoom factor remain unchanged
 - **AND** minimum/maximum scales are enforced and bad parameters return an error
+
+#### Scenario: Interface zoom keys from a Preview
+- **WHEN** a Preview has focus and the user presses Ctrl+Shift+=
+- **THEN** the whole application zooms in one step, as from any other pane, and the Preview's own zoom is unchanged
 
 ### Requirement: Select and copy loaded preview text
 A focused single text, source, structured-text or Markdown preview SHALL support
@@ -574,14 +580,22 @@ Rendering SHALL NOT load external files, URLs or embedded resources (including `
 ### Requirement: Volume information in directory previews
 The directory Preview SHALL show the closest containing listed volume's name,
 mount path, filesystem, capacity and free space, plus used space when known.
-It SHALL use cached device data only, reflect cache changes, explicitly show
-unavailable capacity and preserve unsupported-removal explanations. Thumbnail
-mode SHALL keep this information in an expandable section.
+A folder that is itself the root of a local volume (a Windows drive such as
+`C:\`, `/`, or any mount point), listed under Devices or not, SHALL show the
+same information for that volume. It SHALL use cached data only (the Devices
+list and a cached list of every local volume refreshed in the background),
+reflect cache changes, explicitly show unavailable capacity and preserve
+unsupported-removal explanations. Thumbnail mode SHALL keep this information in
+an expandable section.
 
 #### Scenario: Preview inside a mounted volume
 - **WHEN** a mounted directory or its descendant is previewed
 - **THEN** volume information appears above its folder summary without extra sidebar lines
-- **AND** a directory outside listed volumes has no volume section
+- **AND** a directory outside listed volumes that is not a volume root has no volume section
+
+#### Scenario: Preview a system drive
+- **WHEN** a Windows user selects `C:` in This PC
+- **THEN** Preview shows its name, `C:\`, the filesystem (for example NTFS), capacity, free space and a used-space bar above the folder summary
 
 ### Requirement: Readable information summaries
 Folder and file-information summaries SHALL follow the dialog style guide's
@@ -647,4 +661,34 @@ Raster pictures SHALL be shown the way their EXIF orientation says (rotation and
 #### Scenario: Next file
 - **WHEN** the user turned a picture and selects another picture
 - **THEN** the other picture is shown upright
+
+### Requirement: ffmpeg can be installed on demand
+Where a verified build is pinned (Windows), Preferences > Media SHALL show where ffmpeg was found (system or app-managed), and offer Download, Update (when a newer pin ships in this app version) and Reinstall. The system install is always preferred; the app-managed copy is searched last. Downloading runs on a background thread with progress and never blocks the UI.
+
+#### Scenario: System ffmpeg present
+- **WHEN** ffmpeg and ffprobe are found next to the executable or on `PATH`
+- **THEN** they are used, the section reports the location, and no download is started
+
+#### Scenario: Missing ffmpeg
+- **WHEN** no ffmpeg is found and a pin exists for the platform
+- **THEN** the hint on a video card or error names Preferences > Media, and Download starts the verified installation; on success playback works without restarting
+
+#### Scenario: Newer pin
+- **WHEN** the installed manifest version differs from the app's pin
+- **THEN** the section offers Update; the old copy keeps working until the new one is verified and renamed into place
+
+#### Scenario: Failed install
+- **WHEN** the download fails, is rejected, or the files cannot be replaced
+- **THEN** the section shows the reason and the previous install, if any, stays usable
+
+### Requirement: Camera RAW photos
+Camera RAW photos with a TIFF structure (DNG, CR2, NEF, NRW, ARW, SR2, SRF, ORF, PEF, SRW, ERF, 3FR), recognised by their content, SHALL be previewed, thumbnailed and copied through the largest embedded baseline or progressive JPEG they contain, turned by the RAW file's orientation. Sensor data SHALL never be decoded. The preview SHALL read only the TIFF directories and the chosen JPEG, not the whole file, and SHALL bound the walk (directories visited, entries per directory, SubIFD depth, loops) and check every offset. The info line SHALL name the format ("DNG camera preview"). A TIFF file without such a JPEG SHALL show a card saying it has no embedded picture.
+
+#### Scenario: Canon CR2
+- **WHEN** a CR2 with a full-size 5184×3456 embedded JPEG and a lossless sensor strip is previewed
+- **THEN** the 5184×3456 picture is shown (downscaled for the pane), labelled "Canon CR2 camera preview", and the sensor strip is not read
+
+#### Scenario: Damaged RAW file
+- **WHEN** a RAW file is truncated anywhere or has corrupted directory entries, offsets pointing outside the file or a directory that points at itself
+- **THEN** the preview shows the picture or the no-picture card, never crashes and never hangs
 

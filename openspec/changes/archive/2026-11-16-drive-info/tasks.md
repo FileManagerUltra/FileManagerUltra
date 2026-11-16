@@ -19,4 +19,4 @@
 ## 4. Wrap-up
 
 - [x] 4.1 CHANGELOG, devlog; test/clippy/fmt/layers/brand-check; snapshots if touched
-- [ ] 4.2 Manual (Windows): This PC names, Preview of C:, Properties of C: and of a file on a share
+- [x] 4.2 Manual (Windows): This PC names, Preview of C:, Properties of C: and of a file on a share (passed, user check 2026-11-16)

@@ -4,11 +4,19 @@
 TBD - created by archiving change pane-types. Update Purpose after archive.
 ## Requirements
 ### Requirement: Terminal session lifecycle
-A Terminal pane SHALL own one pty-backed shell session, started on first show in the pane's directory when that is a local path, otherwise in the user's home directory. The shell follows the `terminal_shell` preference (`prefs.terminal.shell`, applied to new sessions): `default` is PowerShell on Windows (PowerShell 7 `pwsh` from `PATH`, else the built-in Windows PowerShell, else `%COMSPEC%`) and the login shell (`$SHELL`) elsewhere; `powershell` and `cmd` select those explicitly and fail with an error where they do not exist. It runs with `TERM=xterm-256color`. Closing the pane or quitting SHALL terminate the child; no orphan process remains.
+A Terminal pane SHALL own one pty-backed shell session, started on first show in the first local folder of: the active pane (a Files pane's folder, or a terminal's current folder; a pane being switched to Terminal counts as the Files pane it was), the pane active just before it (for a split, the terminal it was split from), the most recently active Files pane's folder in any workspace, and finally the user's home directory. A terminal pane's stored location SHALL NOT be used. A terminal's current folder SHALL be the shell's working directory where the OS exposes it without FFI (Linux), otherwise the folder it started in or was last sent to by `term.cd_here`. `term.restart` SHALL start the new shell in the old shell's current folder. The shell follows the `terminal_shell` preference (`prefs.terminal.shell`, applied to new sessions): `default` is PowerShell on Windows (PowerShell 7 `pwsh` from `PATH`, else the built-in Windows PowerShell, else `%COMSPEC%`) and the login shell (`$SHELL`) elsewhere; `powershell` and `cmd` select those explicitly and fail with an error where they do not exist. It runs with `TERM=xterm-256color`. Closing the pane or quitting SHALL terminate the child; no orphan process remains.
 
 #### Scenario: Start in pane directory
 - **WHEN** a Files pane at a local directory `/tmp/x` switches to Terminal
 - **THEN** the shell's working directory is `/tmp/x`
+
+#### Scenario: Split a terminal
+- **WHEN** the user runs `cd /tmp/y` in a terminal on Linux and splits that terminal
+- **THEN** the new terminal starts in `/tmp/y`, whatever the pane's stored location or the workspace's Files panes say
+
+#### Scenario: Workspace without Files panes
+- **WHEN** the user last worked in a Files pane at `/home/alice` in workspace 1 and opens a terminal in workspace 2, which has only terminals that have never been told a folder
+- **THEN** the terminal starts in `/home/alice`
 
 #### Scenario: PowerShell on Windows
 - **WHEN** a Windows user opens a Terminal pane with the default shell setting
@@ -159,4 +167,19 @@ A terminal pane whose shell exits (exit, Ctrl-D) SHALL close. The last remaining
 #### Scenario: Exit closes the pane
 - **WHEN** the shell in a terminal pane exits and other panes exist
 - **THEN** the pane is closed
+
+### Requirement: Per-terminal zoom
+Each terminal pane SHALL have its own text zoom from 50% to 400% in ×1.2 steps, applied on top of the terminal font size, independent of other terminals and of the interface zoom, and saved with the pane in its workspace. Its zoom controls SHALL be the pane header's zoom (requirement "Pane zoom" in `panes`); nothing SHALL float over the terminal's text. `term.zoom.in`, `term.zoom.out` and `term.zoom.reset` take `{pane?}` (a terminal pane, default the focused one) and have no shortcut of their own. A shortcut SHALL do the same in every pane: while a terminal has focus, Ctrl+Shift+=, Ctrl+Shift+- and Ctrl+Shift+0 SHALL keep changing the interface zoom of the whole application. A stored zoom that is not a finite number in range SHALL be read as bounded (100% when not a number).
+
+#### Scenario: One terminal larger
+- **WHEN** two terminals are open and the user opens the left one's header zoom and clicks + twice
+- **THEN** the left terminal's text is 144% and re-flows to fewer columns and rows, the right one is unchanged, and the interface zoom and terminal font size preferences are unchanged
+
+#### Scenario: Keyboard
+- **WHEN** a terminal has focus and the user presses Ctrl+Shift+= then Ctrl+Shift+0
+- **THEN** the whole application zooms in one step and back to 100%, as from any other pane; that terminal's own zoom is unchanged and nothing is sent to the shell
+
+#### Scenario: Bad params
+- **WHEN** a zoom command names a pane that is not a terminal, or receives malformed params
+- **THEN** it returns an error and no zoom changes
 

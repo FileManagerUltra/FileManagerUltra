@@ -2,7 +2,6 @@
 
 ## Purpose
 The Media pane: a player with a persisted playlist for local and remote audio and video, its controls and keyboard use, and how files are opened and played from Files and Preview.
-
 ## Requirements
 ### Requirement: The playlist follows added items
 After any request that adds items to the queue (Play, Play next, Add to queue, Play folder, a drop, loading a playlist, or a media file activated with the *Play in Media pane* preference), the Media pane SHALL select exactly the added rows, open a collapsed playlist folder that holds them, and scroll the first added row into view (centred when it was off-screen, no scroll when it is already fully visible). A drop on the Media pane SHALL also give that pane the focus. Adds requested from another pane SHALL leave the focus where it is, because plain arrow keys in the Media pane control volume and seeking. Items skipped as missing or unsupported are not selected. When the Media pane is hidden, the reveal SHALL happen the next time the pane is shown. The engine SHALL expose the added range with a sequence number, and each pane SHALL consume it once.
@@ -311,4 +310,15 @@ While the status bar shows the media controls, it SHALL also show the playing po
 #### Scenario: Paused
 - **WHEN** playback is paused at 2:05 of a 1:02:00 audiobook
 - **THEN** the readout shows `2:05 / 1:02:00` and the window draws no frames for it
+
+### Requirement: Video frames reuse one texture
+Each video picture (Media pane, Preview pane) SHALL keep one GPU texture exactly the size of its frames: a frame of the same size SHALL overwrite it in place, and a frame of a new size (another video, a resized pane) SHALL re-specify it once. The texture SHALL survive up to 5 seconds of frames without a picture (seek, decoder restart) and be released after that or when its pane closes.
+
+#### Scenario: Resizing while playing
+- **WHEN** a 1080p video plays and the pane is resized so the decode width changes several times
+- **THEN** the texture is re-specified once per decode-width change, never per frame, and memory does not grow with each resize
+
+#### Scenario: Seeking
+- **WHEN** the user seeks repeatedly in a playing video
+- **THEN** the same texture is used across the decoder restarts
 

@@ -14,4 +14,4 @@
 
 - [x] 3.1 AGENTS.md §7 and docs/architecture.md §7: walks may use the SMB session from their own thread
 - [x] 3.2 CHANGELOG, devlog; test/clippy/fmt/layers/brand-check
-- [ ] 3.3 Manual: search a NAS share by name and by content; Properties on a share folder
+- [x] 3.3 Manual: search a NAS share by name and by content; Properties on a share folder (passed, user check 2026-11-16)

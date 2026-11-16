@@ -15,7 +15,7 @@ Additional change, done and archived: `git-status-and-diff` (git status markers,
 
 **Latest release:** 0.2.3 (2026-11-15): per-pane and per-terminal zoom, Ctrl+Tab workspace switching, playing time in the status bar, a diagnostic log, and on Windows Direct3D 12 drawing (fixes the NVIDIA memory growth) and a consistently named settings folder. 0.2.2 (2026-11-13) brought SVG and camera RAW photos in Preview and thumbnails, photos and phone videos upright, picture subtitles, hardware video decoding, keyboard-accessible Preferences and memory fixes. 0.2.0 (2026-11-12) brought the Media pane, Find Files redesign and Activity panel. The next minor release (0.3.0) waits for signed and notarized installers. Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
 
-**Current focus:** see "Current focus" below: the outstanding manual checks (mostly Windows) that keep the remaining open changes from being archived.
+**Current focus:** see "Current focus" below: the `windows-wgpu` redraw fix (task 3.4), then release 0.2.4.
 
 Session persistence is already delivered by `workspaces` (saved pane layouts and
 startup behavior). Release packaging is also configured in `.github/workflows/release.yml`:
@@ -46,15 +46,13 @@ Picture (PGS/VobSub) subtitles and hardware decoding with a software fallback ha
 landed too. `live-watch` (Windows/macOS checks done), `status-bar-time` and
 `image-orientation` are archived as well.
 
-Manual checks that block archiving the open changes:
-
-- Windows: `native-paths` (location bar, Find Files, Copy Path, disconnected SMB
-  bookmark), `drive-info` (This PC names, Preview/Properties of C: and of a share file),
-  `windows-wgpu` (3.2 memory, 3.3 OpenGL switch, 3.4 frame-driven video redraws),
-  `diagnostics-log` (1080p memory with the log on), `managed-ffmpeg` (download, play,
-  Update, Reinstall), `app-folder-names` (upgrade over `Roaming\filemanagerultra`).
-- Any platform: `smb-search` and `raw-photos` (NAS share), `remote-bookmark-panes`,
-  `terminal-start-folder`, `terminal-zoom` (screen readers).
+All open changes except `windows-wgpu` passed their manual checks and were archived
+on 2026-11-16 (`native-paths`, `drive-info`, `smb-search`, `raw-photos`,
+`remote-bookmark-panes`, `terminal-start-folder`, `terminal-zoom`, `diagnostics-log`,
+`managed-ffmpeg`, `app-folder-names`). `windows-wgpu` stays open on task 3.4: a
+playing video redraws on a 33 ms timer (75 frames/s for 25 fps video, ~40/s with the
+Media pane hidden) because `MediaSession::is_busy()` counts playback; fix, then re-check
+on Windows.
 
 Recent interaction improvements include rich native Markdown previews (nested lists,
 tasks, highlighted code and aligned tables), full-loaded-document selection/copy,

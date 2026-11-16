@@ -318,3 +318,33 @@ Watcher events and paths SHALL be normalized and bounds-checked before mapping t
 - **THEN** all active watches are marked for a debounced rescan without inspecting or allocating per remaining path
 - **AND** changes in paths beyond the inspection limit are not silently lost
 
+### Requirement: Downloaded helper tools are pinned and verified
+Any executable the app downloads at the user's request SHALL come from a pin compiled into the app (HTTPS URL, exact size, SHA-256, expected archive members). The download SHALL be rejected, and nothing unpacked or executed, unless its size and SHA-256 match the pin. Pins are never fetched from the network, and a "latest" URL is never used.
+
+#### Scenario: Wrong hash
+- **WHEN** the downloaded bytes do not match the pinned SHA-256
+- **THEN** installation fails with an actionable error, no tool file is created or replaced, and temporary files are removed
+
+#### Scenario: Oversized or endless download
+- **WHEN** the response is larger than the pinned size or the hard cap
+- **THEN** reading stops at the cap and installation fails without writing the rest
+
+#### Scenario: Hostile archive
+- **WHEN** the verified archive contains entries with `..` or absolute paths, symlinks, duplicate or extra members, or members above the per-file cap
+- **THEN** only the exactly-named expected members are extracted, to fixed file names chosen by the app, and any other entry is ignored or rejects the install
+
+#### Scenario: Safe install location
+- **WHEN** the tools are installed
+- **THEN** they are written to a temporary file in the app's tools folder, then renamed into place; the folder is owner-only on Unix and the manifest records only the version and hashes (no secrets)
+
+#### Scenario: HTTPS only
+- **WHEN** the download or any redirect uses a scheme other than `https`
+- **THEN** the request is refused
+
+### Requirement: Diagnostic log is private and bounded
+The diagnostic log SHALL never contain file names, paths, URIs, host names, user names, command parameters or credentials: events carry command ids, numbers and fixed labels only, and records from the `log` crate are accepted only from the graphics stack (`egui_glow` at debug level and above; `eframe`, `egui_winit`, `winit` and `glutin` at warning level and above). The log folder SHALL be created owner-only (`0700`) and log files owner-only (`0600`) on Unix. Size and rate are capped (capability `diagnostics`).
+
+#### Scenario: Commands with paths
+- **WHEN** the user opens a file from an SMB share while the log is on
+- **THEN** the log shows the command id (for example `open.entry`) and never the share, host, user or file name
+

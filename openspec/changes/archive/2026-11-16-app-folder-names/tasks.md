@@ -5,4 +5,4 @@
 - [x] 1.3 `prefs::fix_app_dir_case()` at startup (Windows only, best effort, keeps contents)
 - [x] 1.4 Tests: one name across all folders; case-only rename keeps files; exact name, absent folder and same-named file untouched; no-op off Windows
 - [x] 1.5 Docs (development, architecture), CHANGELOG, devlog
-- [ ] 1.6 Manual (Windows): upgrade with an existing `Roaming\filemanagerultra`; settings kept, folder shows `FileManagerUltra`
+- [x] 1.6 Manual (Windows): upgrade with an existing `Roaming\filemanagerultra`; settings kept, folder shows `FileManagerUltra` (passed, user check 2026-11-16)

@@ -6,4 +6,4 @@
 - [x] Preferences > Media ffmpeg section; missing-tool hints name it on Windows
 - [x] Docs, changelog, `security` and `preview-pane` deltas
 - [x] Stop bundling ffmpeg in the Windows installer (`release.yml`, `packager-config`)
-- [ ] Real-app check on Windows (download, play, Update, Reinstall)
+- [x] Real-app check on Windows (download, play, Update, Reinstall) (passed, user check 2026-11-16)

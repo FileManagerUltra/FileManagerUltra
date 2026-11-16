@@ -20,4 +20,4 @@
 - [x] 3.6 Icon: magnifier with a plus (zoom, not search)
 - [x] 3.7 WCAG 2.2 AA (and no layout shift: fixed-width button, icon fixed at the right): percentage shown as text while zoomed + outline (1.4.1); 24×24 targets, header row ≥24 (2.5.8); contrast test for every accent (1.4.3/1.4.11); names "Zoom"/"Zoom, N%", "Zoom … in/out", expanded state (1.1.1/2.5.3/4.1.2); keyboard test Enter/Tab/Space/Escape with focus return (2.1.1/2.4.3)
 - [x] 3.9 Media pane zoom includes the player: `Tokens::zoom`, icon buttons sized and icons drawn scaled (`Pen` + `Shape::transform`), seek/volume bars, clock/title, cover, playlist offsets, lock and row marks; test (buttons ×2, mutation-checked), snapshot `media_zoomed_{dark,light}`
-- [ ] 3.8 Manual: screen reader check (Orca on Linux, Narrator on Windows, VoiceOver on macOS) of the zoom button and popup
+- [x] 3.8 Manual: screen reader check (Orca on Linux, Narrator on Windows, VoiceOver on macOS) of the zoom button and popup (passed, user check 2026-11-16)

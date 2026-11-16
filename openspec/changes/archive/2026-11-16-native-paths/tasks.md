@@ -21,4 +21,4 @@
 ## 4. Wrap-up
 
 - [x] 4.1 CHANGELOG, devlog; `cargo test`/clippy/fmt/layers/brand-check for touched crates
-- [ ] 4.2 Manual (Windows): location bar, Find Files (Ctrl+F, Ctrl+Shift+F), Copy Path and an SMB bookmark while disconnected
+- [x] 4.2 Manual (Windows): location bar, Find Files (Ctrl+F, Ctrl+Shift+F), Copy Path and an SMB bookmark while disconnected (passed, user check 2026-11-16)

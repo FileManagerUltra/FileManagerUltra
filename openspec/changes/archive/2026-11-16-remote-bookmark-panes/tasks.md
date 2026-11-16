@@ -10,4 +10,4 @@
 ## 3. Wrap-up
 
 - [x] 3.1 CHANGELOG, devlog; test/clippy/fmt/layers/brand-check
-- [ ] 3.2 Manual: SMB and SFTP bookmark from a Files pane, connected and not
+- [x] 3.2 Manual: SMB and SFTP bookmark from a Files pane, connected and not (passed, user check 2026-11-16)

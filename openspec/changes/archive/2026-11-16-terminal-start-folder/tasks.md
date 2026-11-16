@@ -12,4 +12,4 @@
 ## 3. Wrap-up
 
 - [x] 3.1 CHANGELOG, devlog; test/clippy/fmt/layers/brand-check
-- [ ] 3.2 Manual: split a terminal after `cd`; a terminals-only workspace
+- [x] 3.2 Manual: split a terminal after `cd`; a terminals-only workspace (passed, user check 2026-11-16)

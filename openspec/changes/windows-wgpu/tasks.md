@@ -23,6 +23,6 @@
 ## 3. Docs and checks
 
 - [x] 3.1 CHANGELOG, devlog, architecture note
-- [ ] 3.2 Manual (Windows, NVIDIA, Threaded optimization on Auto): Preferences shows "In use: Direct3D 12 (…)"; with the diagnostic log on, commit stays flat while hovering, playing video and viewing thumbnails; drawing looks right (text, images, video, tooltips, menus, fullscreen)
-- [ ] 3.3 Manual: switching to OpenGL and back applies after a restart; `WGPU_BACKEND=gl`-style failure shows the OpenGL notice
-- [ ] 3.4 Manual: video plays smoothly with the frame-driven redraws on Linux and Windows; a hidden Media pane draws nothing extra
+- [x] 3.2 Manual (Windows, NVIDIA, Threaded optimization on Auto): Preferences shows "In use: Direct3D 12 (…)"; with the diagnostic log on, commit stays flat while hovering, playing video and viewing thumbnails; drawing looks right (text, images, video, tooltips, menus, fullscreen) (passed, user check 2026-11-16)
+- [x] 3.3 Manual: switching to OpenGL and back applies after a restart; `WGPU_BACKEND=gl`-style failure shows the OpenGL notice (passed, user check 2026-11-16)
+- [ ] 3.4 Manual: video plays smoothly with the frame-driven redraws on Linux and Windows; a hidden Media pane draws nothing extra. Failed 2026-11-16 (log 10:39): 75 frames/s for 25 fps video, 37-48/s hidden; `MediaSession::is_busy()` counts `playing`, so `main.rs` repaints every 33 ms

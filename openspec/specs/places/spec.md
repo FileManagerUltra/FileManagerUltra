@@ -158,3 +158,34 @@ Device scanning SHALL run on a dedicated single-flight worker isolated from file
 - **THEN** the engine uses its verified non-forced dismount adapter and rescans after completion
 - **AND** it reports failure rather than success if the operation cannot be confirmed
 
+### Requirement: Bookmark names and server bookmarks
+A new bookmark's default name SHALL be the folder's name, or for a root (a drive, an SMB server or share root, an SFTP server root) its display form (see `path-display`). A saved bookmark whose name is still its own canonical uri (made before this rule) SHALL be shown with the default name; renaming it stores the new name. Opening a bookmark on an SMB or SFTP server without a connection SHALL start the sign-in and open the bookmark once connected.
+
+#### Scenario: Bookmark of an SMB server root on Windows
+- **WHEN** the user bookmarks `smb://192.168.0.50/` on Windows
+- **THEN** the bookmark is named `\\192.168.0.50` and the prefs file stores `smb://192.168.0.50/`
+
+#### Scenario: Old raw-address name
+- **WHEN** the prefs file holds a bookmark named `smb://192.168.0.50/` for `smb://192.168.0.50/`
+- **THEN** Places shows it as `\\192.168.0.50` on Windows and `smb://192.168.0.50/` elsewhere
+
+#### Scenario: Open a server bookmark while disconnected
+- **WHEN** the user clicks a bookmark for `smb://nas/media` with no connection to `nas`
+- **THEN** the sign-in starts and the pane opens `smb://nas/media` once connected
+
+### Requirement: Remote places open in their own pane
+`place.open {uri, pane?}` SHALL open a place (Places click, the Places context menu's Open, Go → Places). For an `smb://` or `sftp://` place opened from a pane that is not a Network pane (SMB) or SFTP pane (SFTP), it SHALL use an existing pane of that kind or else split the pane and make the new half that kind, focus it and open the place there, starting the sign-in when the server is not connected. The pane the place was opened from SHALL keep its location and folder tree. Other places SHALL open in the pane they were opened from. Bad params SHALL return an error and change nothing.
+
+#### Scenario: SMB bookmark from a Files pane
+- **WHEN** the user clicks the bookmark `\\192.168.0.50` in a Files pane at `C:\Users\alice` and no Network pane exists
+- **THEN** a Network pane opens beside it, the sign-in dialog appears for 192.168.0.50, and after signing in that pane shows the server
+- **AND** the Files pane still shows `C:\Users\alice` with its tree
+
+#### Scenario: A Network pane exists
+- **WHEN** a Network pane is already open and the user clicks an SMB bookmark in a Files pane
+- **THEN** the bookmark opens in that Network pane and no new pane is created
+
+#### Scenario: Local bookmark
+- **WHEN** the user clicks a local bookmark in a Files pane
+- **THEN** that pane navigates to it, as before
+
