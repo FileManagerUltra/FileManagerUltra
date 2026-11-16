@@ -17,6 +17,10 @@ pub const MAX_USER_PRESETS: usize = 32;
 pub const MAX_PRESET_NAME: usize = 40;
 pub const MAX_SLEEP_MINUTES: u64 = 720;
 const FADE_SECS: f64 = 10.0;
+/// How often playback bookkeeping (next item, sleep fade, clock) needs `poll()`.
+pub const PLAYBACK_TICK: Duration = Duration::from_millis(250);
+/// Soonest wake for an A-B loop end, so a wake never turns into a busy loop.
+const MIN_PLAYBACK_WAKE: Duration = Duration::from_millis(10);
 const MIN_LOOP_SECS: f64 = 0.5;
 const MAX_ARMED: usize = 8;
 
@@ -159,6 +163,25 @@ impl Session {
                 self.media.error = Some(error.to_string());
             }
         }
+    }
+
+    /// How soon `poll()` must run again for playback (moving to the next item, the A-B loop,
+    /// the sleep fade, the clock); `None` when nothing plays. At most [`PLAYBACK_TICK`],
+    /// sooner only to end an A-B loop on time. Drawing video does not depend on this: new
+    /// frames wake the UI themselves while a player is on screen.
+    pub fn playback_wake(&self) -> Option<Duration> {
+        if !self.media.playing {
+            return None;
+        }
+        let mut wake = PLAYBACK_TICK;
+        if let (Some(_), Some(b)) = (self.media.extras.loop_a, self.media.extras.loop_b) {
+            let left = (b - self.media.position) / self.media.speed.max(0.01);
+            if left.is_finite() {
+                let left = Duration::from_secs_f64(left.clamp(0.0, PLAYBACK_TICK.as_secs_f64()));
+                wake = left.max(MIN_PLAYBACK_WAKE);
+            }
+        }
+        Some(wake)
     }
 
     /// Loop and sleep-timer bookkeeping, once per tick.
@@ -475,6 +498,31 @@ mod tests {
 
     fn session() -> Session {
         Session::new().expect("session")
+    }
+
+    /// Playback wakes the UI a few times a second instead of making the session busy (busy
+    /// means a 33 ms redraw timer: 75 frames/s for 25 fps video, ~40/s with the player hidden).
+    #[test]
+    fn playback_wakes_a_few_times_a_second_instead_of_making_the_session_busy() {
+        let mut s = session();
+        assert!(!s.is_busy(), "a fresh session is idle");
+        assert_eq!(s.playback_wake(), None, "nothing plays");
+        s.media.playing = true;
+        assert!(!s.is_busy(), "playback alone is not busy");
+        assert_eq!(s.playback_wake(), Some(PLAYBACK_TICK));
+        // An A-B loop ending in 0.1 s wakes then, not a tick later.
+        s.media.position = 10.0;
+        s.media.extras.loop_a = Some(5.0);
+        s.media.extras.loop_b = Some(10.1);
+        let wake = s.playback_wake().expect("wake");
+        assert!((wake.as_secs_f64() - 0.1).abs() < 0.001, "{wake:?}");
+        // Past B (or at double speed far ahead) the wake stays bounded, never a busy loop.
+        s.media.position = 11.0;
+        assert_eq!(s.playback_wake(), Some(MIN_PLAYBACK_WAKE));
+        s.media.extras.loop_b = Some(1.0e9);
+        assert_eq!(s.playback_wake(), Some(PLAYBACK_TICK));
+        s.media.speed = f64::NAN;
+        assert_eq!(s.playback_wake(), Some(PLAYBACK_TICK));
     }
 
     #[test]

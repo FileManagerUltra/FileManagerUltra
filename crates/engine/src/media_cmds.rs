@@ -116,16 +116,14 @@ impl MediaSession {
         self.reveal = Some(MediaReveal { start, len, seq });
     }
 
+    /// Background work the UI must poll for. Playback itself is not: it wakes the UI through
+    /// [`Session::playback_wake`] and, while a player is on screen, new video frames.
     pub(crate) fn is_busy(&self) -> bool {
-        self.playing
-            || self.cover_job.is_some()
+        self.cover_job.is_some()
             || (self.player.is_some() && self.info.is_none())
             || self.video_probe.is_some()
             || self.spool.is_pending()
-            || self
-                .video
-                .as_ref()
-                .is_some_and(|video| !video.player_is_idle())
+            || self.video.as_ref().is_some_and(|video| video.starting())
     }
 
     pub fn gain_eq(&self) -> fm_media::EqSettings {

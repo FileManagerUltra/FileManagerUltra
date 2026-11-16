@@ -96,6 +96,11 @@ impl VideoState {
     }
 
     /// No decoder is running (paused, ended or not started).
+    /// A decoder start is due and can run on the next poll (the UI has reported a width).
+    pub(crate) fn starting(&self) -> bool {
+        self.need_start && self.width.is_some()
+    }
+
     pub fn player_is_idle(&self) -> bool {
         self.player.is_none() && !self.need_start
     }

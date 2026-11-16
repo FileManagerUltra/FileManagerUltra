@@ -431,6 +431,11 @@ impl eframe::App for App {
         if self.session.is_busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
+        // Playback needs `poll()` a few times a second (next item, A-B loop, sleep fade), not
+        // every frame; video frames wake the UI on their own while a player is on screen.
+        if let Some(wake) = self.session.playback_wake() {
+            ctx.request_repaint_after(wake);
+        }
         // Discovery results arrive without input: keep frames flowing while Network shows.
         if self.session.shows_network() {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
