@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-16
+
 ### Added
 - Drive details everywhere: selecting a drive (such as C: in This PC) or any other volume root shows its name, filesystem, capacity, free space and a usage bar in the Preview pane, and Properties of a drive shows the same right away instead of counting every file on it. Properties of any other item shows how much space is free on the drive or server it is on.
 - Bookmarks and places on a network share (SMB) or SFTP server open in a Network or SFTP pane of their own (an open one is reused, otherwise one opens beside the current pane), so the Files pane you clicked in keeps its folder and tree. Signing in, when needed, happens for that pane.
@@ -233,7 +235,8 @@ First public release (beta).
 
 - macOS install notes: clear the quarantine flag on the downloaded `.dmg` (`xattr -d com.apple.quarantine`), as the app is not yet signed or notarized.
 
-[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.0...v0.2.1
