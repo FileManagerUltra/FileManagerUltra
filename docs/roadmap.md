@@ -49,10 +49,9 @@ landed too. `live-watch` (Windows/macOS checks done), `status-bar-time` and
 All open changes except `windows-wgpu` passed their manual checks and were archived
 on 2026-11-16 (`native-paths`, `drive-info`, `smb-search`, `raw-photos`,
 `remote-bookmark-panes`, `terminal-start-folder`, `terminal-zoom`, `diagnostics-log`,
-`managed-ffmpeg`, `app-folder-names`). `windows-wgpu` stays open on task 3.4: a
-playing video redraws on a 33 ms timer (75 frames/s for 25 fps video, ~40/s with the
-Media pane hidden) because `MediaSession::is_busy()` counts playback; fix, then re-check
-on Windows.
+`managed-ffmpeg`, `app-folder-names`). `windows-wgpu` followed the same day, after the
+playback redraw fix (playback no longer counts as busy; it wakes the UI four times a
+second) passed on Windows. The audio decoder runs on Symphonia 0.6.
 
 `markdown-mermaid` is archived (2026-11-16, checked on Linux and Windows): Mermaid code
 blocks in Markdown previews are drawn as diagrams (eleven types, ELK layout, app theme
