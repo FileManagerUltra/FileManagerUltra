@@ -25,6 +25,8 @@ syntect = { workspace = true, features = ["default-fancy"] }
 pulldown-cmark.workspace = true
 fast_image_resize.workspace = true
 resvg.workspace = true
+merman.workspace = true
+merman-export.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -764,7 +764,7 @@ including nested blocks and explicitly targeted multi-file cards, and publishes
 only the code through the clipboard outbox. UI labels/tooltips are never part of
 the Markdown export or selectable text.
 Document-only Atkinson Hyperlegible regular/bold faces are bundled under the SIL
-Open Font License in `crates/ui/assets/fonts/OFL.txt`; named font families leave
+Open Font License in `crates/preview/assets/fonts/OFL.txt`; named font families leave
 the application's normal UI/terminal faces unchanged.
 
 `PreviewSlot::scale` holds pane-local 50%-400% content magnification, independent

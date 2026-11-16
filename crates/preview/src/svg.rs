@@ -152,6 +152,9 @@ fn fonts() -> &'static Fonts {
     FONTS.get_or_init(|| {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
+        // The bundled reading face: Mermaid diagrams name it, and are measured with it.
+        db.load_font_data(crate::fonts::REGULAR.to_vec());
+        db.load_font_data(crate::fonts::BOLD.to_vec());
         let installed = |candidates: &[&str]| {
             candidates
                 .iter()
@@ -355,6 +358,31 @@ pub fn rasterize(bytes: &[u8], max_edge: u32) -> Result<Thumb, String> {
     )
 }
 
+/// Render at `scale` times the document's own size (above 1 for zoom and HiDPI), reduced
+/// so the longest edge is at most `limits.image_edge` and the area at most
+/// `limits.image_pixels`. Returns the bitmap and the document's own size.
+pub fn rasterize_scaled(
+    bytes: &[u8],
+    scale: f32,
+    limits: &Limits,
+) -> Result<(Thumb, (f32, f32)), String> {
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err("Invalid scale".into());
+    }
+    let tree = parse(bytes)?;
+    let size = tree.size();
+    let (w, h) = (size.width(), size.height());
+    if w > MAX_DECLARED || h > MAX_DECLARED {
+        return Err(format!("The SVG declares an unusable size ({w}×{h})"));
+    }
+    let mut scale = scale.min(limits.image_edge.max(1) as f32 / w.max(h));
+    let pixels = f64::from(w * scale) * f64::from(h * scale);
+    if pixels > limits.image_pixels as f64 {
+        scale *= (limits.image_pixels as f64 / pixels).sqrt() as f32;
+    }
+    Ok((paint(&tree, scale)?, (w, h)))
+}
+
 fn unpremultiply(data: &[u8]) -> Vec<u8> {
     let mut out = data.to_vec();
     for px in out.as_chunks_mut::<4>().0 {
@@ -373,6 +401,32 @@ mod tests {
     use super::*;
 
     const SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#ff0000"/></svg>"##;
+
+    #[test]
+    fn rasterize_scaled_scales_up_within_the_edge_and_pixel_caps() {
+        let limits = Limits::default();
+        let (t, natural) = rasterize_scaled(SVG, 2.0, &limits).expect("svg");
+        assert_eq!((t.width, t.height, natural), (80, 40, (40.0, 20.0)));
+        let small = Limits {
+            image_edge: 50,
+            ..Limits::default()
+        };
+        let (t, _) = rasterize_scaled(SVG, 4.0, &small).expect("svg");
+        assert_eq!(
+            (t.width, t.height),
+            (50, 25),
+            "edge cap wins over the scale"
+        );
+        let tiny = Limits {
+            image_pixels: 200,
+            ..Limits::default()
+        };
+        let (t, _) = rasterize_scaled(SVG, 4.0, &tiny).expect("svg");
+        assert!(u64::from(t.width) * u64::from(t.height) <= 210, "pixel cap");
+        for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert!(rasterize_scaled(SVG, bad, &limits).is_err());
+        }
+    }
 
     #[test]
     fn renders_and_scales_down() {

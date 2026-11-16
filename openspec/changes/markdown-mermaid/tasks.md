@@ -1,14 +1,15 @@
 ## 1. Renderer choice settled
 
-- [ ] 1.1 Add `merman` (exact minor version) to workspace dependencies with `default-features = false`, `svg` and the diagram features from the proposal; register nothing new in `xtask/src/layers.rs` (it is a dependency of `fm-preview`, L1). Measure new transitive crates and build time; drop any diagram type whose feature pulls in a layout engine that is heavy, and record the count and decision in design.md
-- [ ] 1.2 Text measurement: try `native-fonts` measurement with the same system font resvg draws with; check the spike's clipped edge labels ("PR build", "tag deploy", subgroup titles) in both palettes; record the outcome (or the padding fallback) in design.md
-- [ ] 1.3 Confirm `merman`'s input resource policy can deny every external resource and that the resvg-safe SVG has no `<foreignObject>`, `<image>` with external `href`, or `<style>` `@import`; add the policy to the render call
+- [x] 1.1 Add `merman` (exact minor version) to workspace dependencies with `default-features = false`, `svg` and the diagram features from the proposal; register nothing new in `xtask/src/layers.rs` (it is a dependency of `fm-preview`, L1). Measure new transitive crates and build time; drop any diagram type whose feature pulls in a layout engine that is heavy, and record the count and decision in design.md
+- [x] 1.2 Text measurement: try `native-fonts` measurement with the same system font resvg draws with; check the spike's clipped edge labels ("PR build", "tag deploy", subgroup titles) in both palettes; record the outcome (or the padding fallback) in design.md
+- [x] 1.3 Confirm `merman`'s input resource policy can deny every external resource and that the resvg-safe SVG has no `<foreignObject>`, `<image>` with external `href`, or `<style>` `@import`; add the policy to the render call
 
 ## 2. `fm-preview::mermaid` (L1)
 
-- [ ] 2.1 `Palette` (validated `#rrggbb` colours, font family ≤ 64 chars, `hash()`), `DiagramLimits` constants (64 KiB source, 2 s deadline, 8 MiB SVG, image edge/pixel caps), `DiagramError` with short user-facing reasons
-- [ ] 2.2 `render(source, &Palette, scale, &cancel) -> Result<Thumb, DiagramError>`: size check, `merman` with `base` theme variables from the palette (document `%%{init}%%` theme keys overridden), `resvg_safe()`, deadline through `OperationControl`, SVG size check, `svg::rasterize`; `catch_unwind` around the renderer; `diagram_kind(source)` for the accessible name
-- [ ] 2.3 Tests: golden renders of the spike's two documents (succeeds, expected node/cluster/edge-label counts, no `<foreignObject>`), every supported type renders a minimal example, hostile inputs (garbage, 10 MiB, 3000-edge chain, 200 nested subgraphs, `click`/`href`/icon/`https` image references produce no I/O), deadline and cancellation, palette validation, init-directive theme override
+- [x] 2.0 Move the Atkinson Hyperlegible font files from `crates/ui/assets/fonts` to `crates/preview/assets/fonts` and expose them from `fm_preview` (`fm-ui::markdown_fonts` uses them from there); no visual change
+- [x] 2.1 `Palette` (validated `#rrggbb` colours, `hash()`), `DiagramLimits` constants (64 KiB source, 2 s deadline, 8 MiB SVG, image edge/pixel caps), `DiagramError` with short user-facing reasons
+- [x] 2.2 `render(source, &Palette, scale, &cancel) -> Result<Thumb, DiagramError>`: size check, `merman` with `base` theme variables from the palette (document `%%{init}%%` theme keys overridden), `resvg_safe()`, deadline through `OperationControl`, SVG size check, `svg::rasterize`; `catch_unwind` around the renderer; `diagram_kind(source)` for the accessible name
+- [x] 2.3 Tests: golden renders of the spike's two documents (succeeds, expected node/cluster/edge-label counts, no `<foreignObject>`), every supported type renders a minimal example, hostile inputs (garbage, 10 MiB, 3000-edge chain, 200 nested subgraphs, `click`/`href`/icon/`https` image references produce no I/O), deadline and cancellation, palette validation, init-directive theme override
 
 ## 3. Engine service (L3)
 

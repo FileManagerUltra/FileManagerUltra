@@ -21,14 +21,8 @@ pub fn install(ctx: &Context) {
         .cloned()
         .unwrap_or_default();
     for (name, bytes) in [
-        (
-            REGULAR,
-            include_bytes!("../assets/fonts/AtkinsonHyperlegible-Regular.ttf").as_slice(),
-        ),
-        (
-            BOLD,
-            include_bytes!("../assets/fonts/AtkinsonHyperlegible-Bold.ttf").as_slice(),
-        ),
+        (REGULAR, fm_preview::fonts::REGULAR),
+        (BOLD, fm_preview::fonts::BOLD),
     ] {
         fonts
             .font_data
