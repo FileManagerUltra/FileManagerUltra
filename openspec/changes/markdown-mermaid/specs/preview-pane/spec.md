@@ -33,6 +33,10 @@ When a diagram cannot be drawn (unknown or unsupported type, syntax error, a lim
 - **WHEN** the user activates "Copy diagram as image" on a drawn diagram
 - **THEN** the clipboard holds the diagram as shown, without transparent pixels, so it stays readable when pasted on any background
 
+#### Scenario: Clear the diagram cache
+- **WHEN** the user activates Preferences > Advanced > "Clear diagram cache" (or Preview > Clear Diagram Cache)
+- **THEN** every drawn diagram and remembered failure is forgotten, queued and running drawing work is dropped, and open documents draw their diagrams again
+
 #### Scenario: Preference off
 - **WHEN** "Draw Mermaid diagrams" is turned off
 - **THEN** every `mermaid` block is shown as an ordinary code block on the next frame, and Find searches its text

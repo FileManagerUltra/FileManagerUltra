@@ -56,6 +56,7 @@ pub const LOG_MARK: &str = "preview.log.mark";
 pub const THUMBS_TOGGLE: &str = "preview.thumbs.toggle";
 pub const THUMBS_SIZE: &str = "preview.thumbs.size";
 pub const THUMBS_CLEAR: &str = "preview.thumbs.clear_cache";
+pub const DIAGRAMS_CLEAR: &str = "preview.md_diagrams.clear_cache";
 pub const VIDEO_PLAY: &str = "preview.video.play";
 pub const VIDEO_MUTE: &str = "preview.video.mute";
 pub const AUDIO_PLAY: &str = "preview.audio.play";
@@ -164,6 +165,7 @@ pub fn all_ids() -> &'static [&'static str] {
         THUMBS_TOGGLE,
         THUMBS_SIZE,
         THUMBS_CLEAR,
+        DIAGRAMS_CLEAR,
         VIDEO_PLAY,
         VIDEO_MUTE,
         AUDIO_PLAY,
@@ -887,6 +889,7 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
                 item(ui, session, dialogs, THUMBS_TOGGLE);
                 item(ui, session, dialogs, THUMBS_SIZE);
                 item(ui, session, dialogs, THUMBS_CLEAR);
+                item(ui, session, dialogs, DIAGRAMS_CLEAR);
                 item(ui, session, dialogs, VIDEO_PLAY);
                 item(ui, session, dialogs, VIDEO_MUTE);
                 item(ui, session, dialogs, AUDIO_PLAY);

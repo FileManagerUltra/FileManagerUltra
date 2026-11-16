@@ -241,6 +241,25 @@ impl MdDiagramService {
         })
     }
 
+    /// Forget every drawn diagram and failure, drop queued work and cancel the one being
+    /// drawn, so open documents draw their diagrams again.
+    pub fn clear(&self) {
+        let mut st = self.inner.lock();
+        st.map.clear();
+        st.bytes = 0;
+        // Queued jobs carry their pane's epoch: a new epoch drops them, and a pane asking
+        // again right away gets the new one, never an old job's.
+        for (_, epoch) in st.panes.values_mut() {
+            *epoch += 1;
+        }
+        drop(st);
+        if let Some((_, _, cancel)) = &*self.inner.running.lock().unwrap_or_else(|p| p.into_inner())
+        {
+            cancel.cancel();
+        }
+        self.inner.wake();
+    }
+
     /// Whether `source` failed to draw (at any palette or scale): it is then shown as code.
     pub fn has_failed(&self, source: &str) -> bool {
         if source.len() > mermaid::MAX_SOURCE {
@@ -570,10 +589,34 @@ fn copy_image() -> CommandSpec {
     }
 }
 
+/// `preview.md_diagrams.clear_cache`: draw every Mermaid diagram again.
+fn clear_cache() -> CommandSpec {
+    CommandSpec {
+        id: "preview.md_diagrams.clear_cache",
+        label: "Clear Diagram Cache",
+        menu: &["Preview", "Clear Diagram Cache"],
+        shortcut: None,
+        params: "none",
+        enabled: |_s| true,
+        run: |s, params| {
+            if !params.is_null() && params.as_object().is_none_or(|m| !m.is_empty()) {
+                return Err(FmError::InvalidParams("no parameters expected".into()));
+            }
+            s.md_diagrams.clear();
+            s.info = Some((
+                "Cleared the diagram cache; diagrams are drawn again".to_string(),
+                std::time::Instant::now(),
+            ));
+            Ok(())
+        },
+    }
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         toggle_source(),
         copy_image(),
+        clear_cache(),
         CommandSpec {
             id: "preview.md_diagrams.want",
             label: "Draw Mermaid Diagrams",
@@ -634,6 +677,7 @@ mod tests {
     use super::*;
     use crate::Session;
     use crate::preview_cmds::PreviewSlot;
+    use crate::registry::Params;
     use fm_preview::markdown::{MdDoc, parse};
     use fm_vfs::{Entry, EntryKind};
     use serde_json::json;
@@ -870,6 +914,74 @@ mod tests {
             assert!(copy(&mut s, bad.clone()).is_err(), "{bad}");
         }
         assert!(s.clipboard_image.is_none(), "nothing copied on errors");
+    }
+
+    #[test]
+    fn clearing_the_cache_draws_diagrams_again() {
+        let (mut s, pane) = previewing(DOC, "clear");
+        let p = palette(false);
+        want(&mut s, json!([1, 3])).expect("want");
+        settle(&s);
+        let good = source_of(&s, pane, 0);
+        let bad = source_of(&s, pane, 2);
+        let Some(MdDiagramState::Ready(before)) = s.md_diagrams.state(&good, &p, 1.0) else {
+            panic!("drawn")
+        };
+        assert!(s.md_diagrams.has_failed(&bad));
+        s.dispatch("preview.md_diagrams.clear_cache", &Params::Null)
+            .expect("clear");
+        assert!(
+            s.md_diagrams.state(&good, &p, 1.0).is_none(),
+            "asked for again"
+        );
+        assert!(
+            !s.md_diagrams.has_failed(&bad),
+            "failures are forgotten too"
+        );
+        assert_eq!(s.md_diagrams.inner.lock().bytes, 0);
+        assert!(s.info.is_some());
+        want(&mut s, json!([1])).expect("want again");
+        settle(&s);
+        let Some(MdDiagramState::Ready(after)) = s.md_diagrams.state(&good, &p, 1.0) else {
+            panic!("drawn again")
+        };
+        assert!(!Arc::ptr_eq(&before, &after), "a fresh drawing");
+        for bad in [json!({"x": 1}), json!([1]), json!("now")] {
+            assert!(
+                s.dispatch("preview.md_diagrams.clear_cache", &bad).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(
+            s.dispatch("preview.md_diagrams.clear_cache", &json!({}))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn queued_work_is_dropped_when_the_cache_is_cleared() {
+        let svc = MdDiagramService::default();
+        let p = palette(false);
+        let shown: Shown = (VfsUri::parse("/tmp/q.md").expect("uri"), None);
+        let sources: Vec<String> = (0..20)
+            .map(|n| format!("flowchart LR\nQ{n}-->R{n}"))
+            .collect();
+        let refs: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let queued = svc.want(7, &shown, &refs, &p, 1.0);
+        svc.clear();
+        let end = Instant::now() + Duration::from_secs(20);
+        while svc.is_busy() {
+            assert!(Instant::now() < end);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let drawn = refs
+            .iter()
+            .filter(|src| svc.state(src, &p, 1.0).is_some())
+            .count();
+        assert!(
+            drawn < queued,
+            "cleared work is not drawn ({drawn} of {queued})"
+        );
     }
 
     #[test]

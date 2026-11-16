@@ -29,6 +29,7 @@
 - [x] 4.7 (requested during apply) "Show source" / "Show diagram" icon control per diagram: `preview.md_diagrams.toggle_source {pane?, block}`, state per document in the preview slot, diagram panel gets the code panel's header, Find searches blocks shown as source; engine and UI harness tests, snapshot
 - [x] 4.8 (requested during apply) icon controls instead of text buttons (`</>` source, node diagram, picture) and "Copy diagram as image": `preview.md_diagrams.copy_image {pane?, block, palette, scale}` flattens the drawn bitmap onto the palette background with a 16-point margin (`mermaid::flatten`) into the existing clipboard-image outbox; tests in fm-preview, engine and UI harness
 - [x] 4.9 (after the first Linux check) ELK layout (`layout-elk`, EPL-2.0 approved with notices: `fm_preview::notices`, About section, `THIRD-PARTY-NOTICES.md`, licence text, locked-version test), group boxes without their own fill, large-graph timing test
+- [x] 4.10 (requested) Preferences ▸ Advanced ▸ "Clear diagram cache" and Preview menu item: `preview.md_diagrams.clear_cache` forgets drawn diagrams and failures, drops queued work (pane epochs bumped) and cancels the running render; engine tests, snapshot
 
 ## 5. Docs and wrap-up
 

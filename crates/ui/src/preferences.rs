@@ -552,6 +552,23 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
             section(
                 ui,
                 tokens,
+                "Diagrams",
+                Some("Drawn Mermaid diagrams are kept in memory while the app runs."),
+                |ui| {
+                    if ui
+                        .button("Clear diagram cache")
+                        .on_hover_text(
+                            "Forget every drawn Mermaid diagram; open documents draw them again.",
+                        )
+                        .clicked()
+                    {
+                        s.dispatch_or_notice("preview.md_diagrams.clear_cache", &Params::Null);
+                    }
+                },
+            );
+            section(
+                ui,
+                tokens,
                 "Preview",
                 Some("A preview that takes longer is abandoned with an error card."),
                 |ui| {
