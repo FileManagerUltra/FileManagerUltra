@@ -1709,6 +1709,16 @@ fn mermaid_copy_copies_the_source_and_document_copy_keeps_it() {
     let all = harness.state_mut().clipboard_out.take().expect("document");
     assert!(all.contains("flowchart TB") && all.contains("The end."));
 
+    // Copy as image hands an opaque picture of the drawn diagram to the app.
+    harness.get_by_label("Copy diagram as image").click();
+    harness.run();
+    let image = harness
+        .state_mut()
+        .clipboard_image
+        .take()
+        .expect("image copied");
+    assert!(image.width > 100 && image.rgba.as_chunks::<4>().0.iter().all(|px| px[3] == 255));
+
     // Show source turns the diagram into its code; Show diagram draws it again.
     harness.get_by_label("Show source").click();
     harness.run_steps(3);

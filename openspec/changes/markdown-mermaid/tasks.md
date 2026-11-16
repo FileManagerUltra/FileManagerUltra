@@ -26,7 +26,8 @@
 - [x] 4.4 Find skips drawn diagrams and searches failed/off/source-view blocks as code; document copy keeps the source
 - [x] 4.5 Preferences > Preview: "Draw Mermaid diagrams" checkbox with hover text
 - [x] 4.6 Snapshots (dark and light): drawn flowchart with subgroups, pending placeholder, failed block with reason, preference off; UI harness test that the copy control copies the source
-- [x] 4.7 (requested during apply) "Show source" / "Show diagram" button per diagram: `preview.md_diagrams.toggle_source {pane?, block}`, state per document in the preview slot, diagram panel gets the code panel's header, Find searches blocks shown as source; engine and UI harness tests, snapshot
+- [x] 4.7 (requested during apply) "Show source" / "Show diagram" icon control per diagram: `preview.md_diagrams.toggle_source {pane?, block}`, state per document in the preview slot, diagram panel gets the code panel's header, Find searches blocks shown as source; engine and UI harness tests, snapshot
+- [x] 4.8 (requested during apply) icon controls instead of text buttons (`</>` source, node diagram, picture) and "Copy diagram as image": `preview.md_diagrams.copy_image {pane?, block, palette, scale}` flattens the drawn bitmap onto the palette background with a 16-point margin (`mermaid::flatten`) into the existing clipboard-image outbox; tests in fm-preview, engine and UI harness
 
 ## 5. Docs and wrap-up
 

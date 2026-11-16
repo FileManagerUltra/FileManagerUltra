@@ -40,6 +40,8 @@ pub(super) struct MdWants {
     pub diagrams: Vec<usize>,
     /// A Mermaid block to switch between diagram and source.
     pub toggle: Option<usize>,
+    /// A drawn diagram to copy as an image.
+    pub copy_image: Option<usize>,
 }
 
 /// Every distinct image URL of the document, in order.
@@ -194,8 +196,95 @@ fn inline(
     follow_link(&response, &galley, parts, actions);
 }
 
-/// The translucent copy icon of code panels and diagrams; true when activated.
-fn copy_control(ui: &mut Ui, tokens: &Tokens, rect: egui::Rect, id: Id, label: &str) -> bool {
+/// Icons of the code and diagram header controls.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Icon {
+    /// Two overlapping sheets.
+    Copy,
+    /// `</>`: show the source code.
+    Source,
+    /// Three connected boxes: draw the diagram.
+    Diagram,
+    /// A framed landscape: copy as a picture.
+    Image,
+}
+
+fn paint_icon(painter: &egui::Painter, rect: egui::Rect, icon: Icon, tokens: &Tokens) {
+    let edge = rect.width();
+    let stroke = Stroke::new(tokens.border_width.max(1.0), tokens.text);
+    let inner = rect.shrink(edge * 0.22);
+    let (w, h) = (inner.width(), inner.height());
+    let at = |x: f32, y: f32| inner.min + vec2(w * x, h * y);
+    match icon {
+        Icon::Copy => {
+            let shift = edge * 0.16;
+            painter.rect_stroke(
+                inner
+                    .translate(vec2(-shift * 0.4, -shift * 0.4))
+                    .shrink(shift * 0.5),
+                1.0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            painter.rect(
+                inner
+                    .translate(vec2(shift * 0.4, shift * 0.4))
+                    .shrink(shift * 0.5),
+                1.0,
+                tokens.hover_bg,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        Icon::Source => {
+            painter.add(egui::Shape::line(
+                vec![at(0.3, 0.2), at(0.0, 0.5), at(0.3, 0.8)],
+                stroke,
+            ));
+            painter.add(egui::Shape::line(
+                vec![at(0.7, 0.2), at(1.0, 0.5), at(0.7, 0.8)],
+                stroke,
+            ));
+            painter.line_segment([at(0.58, 0.12), at(0.42, 0.88)], stroke);
+        }
+        Icon::Diagram => {
+            let node = |cx: f32, cy: f32| {
+                egui::Rect::from_center_size(at(cx, cy), vec2(w * 0.36, h * 0.28))
+            };
+            let (top, left, right) = (node(0.5, 0.14), node(0.18, 0.86), node(0.82, 0.86));
+            for n in [top, left, right] {
+                painter.rect_stroke(n, 1.0, stroke, egui::StrokeKind::Inside);
+            }
+            painter.line_segment([top.center_bottom(), left.center_top()], stroke);
+            painter.line_segment([top.center_bottom(), right.center_top()], stroke);
+        }
+        Icon::Image => {
+            painter.rect_stroke(inner, 1.0, stroke, egui::StrokeKind::Inside);
+            painter.add(egui::Shape::line(
+                vec![
+                    at(0.1, 0.85),
+                    at(0.4, 0.5),
+                    at(0.6, 0.7),
+                    at(0.75, 0.55),
+                    at(0.9, 0.85),
+                ],
+                stroke,
+            ));
+            painter.circle_stroke(at(0.7, 0.3), w * 0.1, stroke);
+        }
+    }
+}
+
+/// A translucent icon button of code panels and diagrams (opaque when hovered or focused),
+/// with `label` as tooltip and accessible name; true when activated.
+fn icon_control(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    rect: egui::Rect,
+    id: Id,
+    icon: Icon,
+    label: &str,
+) -> bool {
     let response = ui.interact(rect, id, egui::Sense::click());
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, response.enabled(), label));
@@ -205,26 +294,8 @@ fn copy_control(ui: &mut Ui, tokens: &Tokens, rect: egui::Rect, id: Id, label: &
     } else {
         0.5
     });
-    let edge = rect.width();
     painter.rect_filled(rect, tokens.corner_radius, tokens.hover_bg);
-    let icon = rect.shrink(edge * 0.22);
-    let shift = edge * 0.16;
-    let stroke = Stroke::new(tokens.border_width.max(1.0), tokens.text);
-    painter.rect_stroke(
-        icon.translate(vec2(-shift * 0.4, -shift * 0.4))
-            .shrink(shift * 0.5),
-        1.0,
-        stroke,
-        egui::StrokeKind::Inside,
-    );
-    painter.rect(
-        icon.translate(vec2(shift * 0.4, shift * 0.4))
-            .shrink(shift * 0.5),
-        1.0,
-        tokens.hover_bg,
-        stroke,
-        egui::StrokeKind::Inside,
-    );
+    paint_icon(&painter, rect, icon, tokens);
     let clicked = response.clicked();
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -237,58 +308,65 @@ fn copy_control(ui: &mut Ui, tokens: &Tokens, rect: egui::Rect, id: Id, label: &
 struct HeaderClicks {
     copied: bool,
     toggled: bool,
+    image: bool,
 }
 
-/// The header row of code panels and diagrams: the language on the left; on the right the
-/// copy control and, for Mermaid blocks, a text button switching between diagram and source.
+/// Extra controls of a Mermaid block's header.
+#[derive(Clone, Copy, Default)]
+struct MermaidControls {
+    /// Show source (on a diagram) or Show diagram (on its source).
+    toggle: Option<(Icon, &'static str)>,
+    copy_image: bool,
+}
+
+/// The header row of code panels and diagrams: the language on the left, icon controls on
+/// the right (from the right: copy, copy as image, show source/diagram).
 fn header_controls(
     ui: &mut Ui,
     tokens: &Tokens,
     header: egui::Rect,
     language: &str,
     copy_label: &str,
-    toggle: Option<&str>,
+    extra: MermaidControls,
     path: Id,
 ) -> HeaderClicks {
     let edge = header.height();
-    let copy = egui::Rect::from_min_size(header.right_top() - vec2(edge, 0.0), vec2(edge, edge));
-    let mut clicks = HeaderClicks {
-        copied: copy_control(ui, tokens, copy, path.with("copy-code"), copy_label),
-        toggled: false,
+    let gap = 6.0;
+    let mut right = header.right();
+    let mut slot = || {
+        let rect =
+            egui::Rect::from_min_size(egui::pos2(right - edge, header.top()), vec2(edge, edge));
+        right -= edge + gap;
+        rect
     };
-    let mut reserved = edge + 6.0;
-    if let Some(label) = toggle {
-        let font = markdown_fonts::font(ui.ctx(), tokens.font_size * 0.8, true);
-        let text = ui
-            .painter()
-            .layout_no_wrap(label.to_owned(), font.clone(), tokens.text)
-            .size();
-        let width = text.x + edge * 0.8;
-        let rect = egui::Rect::from_min_size(
-            egui::pos2(copy.left() - 6.0 - width, header.top()),
-            vec2(width, edge),
+    let mut clicks = HeaderClicks {
+        copied: icon_control(
+            ui,
+            tokens,
+            slot(),
+            path.with("copy-code"),
+            Icon::Copy,
+            copy_label,
+        ),
+        ..HeaderClicks::default()
+    };
+    if extra.copy_image {
+        clicks.image = icon_control(
+            ui,
+            tokens,
+            slot(),
+            path.with("copy-image"),
+            Icon::Image,
+            "Copy diagram as image",
         );
-        // A child Ui: placing the button must not move the parent's cursor (the diagram's
-        // header is filled in after its panel is laid out).
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(rect)
-                .layout(Layout::centered_and_justified(egui::Direction::LeftToRight)),
-        );
-        let response = child
-            .add(
-                egui::Button::new(RichText::new(label).font(font).color(tokens.text))
-                    .fill(tokens.hover_bg)
-                    .stroke(Stroke::new(tokens.border_width, tokens.border)),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
-        clicks.toggled = response.clicked();
-        reserved += width + 6.0;
+    }
+    if let Some((icon, label)) = extra.toggle {
+        clicks.toggled = icon_control(ui, tokens, slot(), path.with("toggle-source"), icon, label);
     }
     if !language.is_empty() {
         ui.painter()
             .with_clip_rect(
-                egui::Rect::from_min_max(header.min, header.max - vec2(reserved, 0.0))
+                egui::Rect::from_min_max(header.min, egui::pos2(right, header.bottom()))
                     .intersect(ui.clip_rect()),
             )
             .text(
@@ -308,7 +386,7 @@ fn code(
     code: &CodeBlock,
     wrap: bool,
     path: Id,
-    toggle: Option<&str>,
+    extra: MermaidControls,
 ) -> HeaderClicks {
     let mut clicks = HeaderClicks::default();
     egui::Frame::NONE
@@ -327,7 +405,7 @@ fn code(
                 header,
                 &code.language,
                 "Copy code block",
-                toggle,
+                extra,
                 path,
             );
             ui.add_space(4.0);
@@ -386,6 +464,8 @@ struct CodeActions {
     diagram_sources: Vec<usize>,
     /// The block whose diagram/source button was activated this frame.
     toggled: Option<usize>,
+    /// The diagram to copy as an image.
+    copy_image: Option<usize>,
     diagram_textures: DiagramTextures,
     diagram_textures_used: DiagramTextures,
 }
@@ -417,7 +497,11 @@ fn mermaid_block(
             false
         }
         _ if actions.diagram_sources.contains(&index) => {
-            let clicks = code(ui, tokens, c, wrap, path, Some("Show diagram"));
+            let controls = MermaidControls {
+                toggle: Some((Icon::Diagram, "Show diagram")),
+                copy_image: false,
+            };
+            let clicks = code(ui, tokens, c, wrap, path, controls);
             if clicks.copied {
                 actions.clicked = Some(index);
             }
@@ -448,17 +532,24 @@ fn mermaid_block(
             find::skip(ui);
             let header = mermaid_ui::diagram(ui, tokens, &c.text, &drawn, &texture);
             actions.diagram_textures_used.insert(key, (drawn, texture));
+            let controls = MermaidControls {
+                toggle: Some((Icon::Source, "Show source")),
+                copy_image: true,
+            };
             let clicks = header_controls(
                 ui,
                 tokens,
                 header,
                 &c.language,
                 "Copy diagram source",
-                Some("Show source"),
+                controls,
                 path,
             );
             if clicks.copied {
                 actions.clicked = Some(index);
+            }
+            if clicks.image {
+                actions.copy_image = Some(index);
             }
             if clicks.toggled {
                 actions.toggled = Some(index);
@@ -737,7 +828,7 @@ fn blocks(
             MdBlock::Code(c) => {
                 let index = actions.next;
                 if !mermaid_block(ui, tokens, c, index, wrap, path, actions)
-                    && code(ui, tokens, c, wrap, path, None).copied
+                    && code(ui, tokens, c, wrap, path, MermaidControls::default()).copied
                 {
                     actions.clicked = Some(index);
                 }
@@ -908,6 +999,7 @@ pub(super) fn show(
     want.images = std::mem::take(&mut actions.want);
     want.diagrams = std::mem::take(&mut actions.want_diagrams);
     want.toggle = actions.toggled;
+    want.copy_image = actions.copy_image;
     if actions.waiting {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(100));
@@ -941,7 +1033,14 @@ mod tests {
                         .with_size(vec2(320.0, 180.0))
                         .build_ui(move |ui| {
                             crate::theme::apply_to(ui.ctx(), &tokens);
-                            code(ui, &tokens, &block, false, Id::NULL.with("test-code"), None);
+                            code(
+                                ui,
+                                &tokens,
+                                &block,
+                                false,
+                                Id::NULL.with("test-code"),
+                                MermaidControls::default(),
+                            );
                         });
                 harness.run();
                 let rect = harness.get_by_label("Copy code block").rect();

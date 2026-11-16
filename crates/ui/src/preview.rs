@@ -381,6 +381,17 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             json!({ "pane": pane, "block": block }),
                         ));
                     }
+                    if let Some(block) = want.copy_image {
+                        actions.push((
+                            "preview.md_diagrams.copy_image",
+                            json!({
+                                "pane": pane,
+                                "block": block,
+                                "palette": fm_engine::md_diagrams::palette_json(&diagram_palette),
+                                "scale": diagram_scale,
+                            }),
+                        ));
+                    }
                     if !want.diagrams.is_empty() {
                         actions.push((
                             "preview.md_diagrams.want",

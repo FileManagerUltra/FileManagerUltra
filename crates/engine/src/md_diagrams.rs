@@ -416,6 +416,14 @@ fn palette_param(value: Option<&Value>) -> Result<Palette, FmError> {
     Ok(palette)
 }
 
+fn scale_param(value: Option<&Value>) -> Result<f32, FmError> {
+    value
+        .and_then(Value::as_f64)
+        .map(|v| v as f32)
+        .filter(|v| SCALE_RANGE.contains(v))
+        .ok_or_else(|| FmError::InvalidParams("scale: number 0.25-8 expected".into()))
+}
+
 /// A palette as command parameters (what the UI sends).
 pub fn palette_json(palette: &Palette) -> Value {
     serde_json::json!({
@@ -514,9 +522,58 @@ fn toggle_source() -> CommandSpec {
     }
 }
 
+/// `preview.md_diagrams.copy_image {pane?, block, palette, scale}`: put a drawn diagram on
+/// the clipboard as an opaque picture with a margin of its background colour.
+fn copy_image() -> CommandSpec {
+    CommandSpec {
+        id: "preview.md_diagrams.copy_image",
+        label: "Copy Diagram as Image",
+        menu: &["Preview", "Copy Diagram as Image"],
+        shortcut: None,
+        params: "{pane?: number, block: code-block index of a drawn Mermaid block, palette: as for preview.md_diagrams.want, scale: number 0.25-8}",
+        enabled: |s| s.prefs.preview_mermaid,
+        run: |s, params| {
+            let map = crate::file_cmds::object(params)?
+                .ok_or_else(|| FmError::InvalidParams("parameters object expected".into()))?;
+            let block = map
+                .get("block")
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or_else(|| FmError::InvalidParams("block: index expected".into()))?;
+            let palette = palette_param(map.get("palette"))?;
+            let scale = scale_param(map.get("scale"))?;
+            if !s.prefs.preview_mermaid {
+                return Err(FmError::Unsupported("Mermaid diagrams are turned off"));
+            }
+            let (_, drawable) = previewed_blocks(s, map)?;
+            let (_, source) = drawable.iter().find(|(i, _)| *i == block).ok_or_else(|| {
+                FmError::InvalidParams(format!("block: {block} is not a drawable Mermaid block"))
+            })?;
+            let Some(MdDiagramState::Ready(drawn)) = s.md_diagrams.state(source, &palette, scale)
+            else {
+                return Err(FmError::Unsupported("the diagram is not drawn yet"));
+            };
+            let pad = (16.0 * scale).round() as u32;
+            let flat = mermaid::flatten(&drawn.thumb, &palette.background, pad)
+                .map_err(|_| FmError::Unsupported("the diagram could not be copied"))?;
+            s.clipboard_image = Some(crate::image_clip_cmds::ClipImage {
+                width: flat.width as usize,
+                height: flat.height as usize,
+                rgba: flat.rgba,
+            });
+            s.info = Some((
+                "Copied diagram to the clipboard as an image".to_string(),
+                std::time::Instant::now(),
+            ));
+            Ok(())
+        },
+    }
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         toggle_source(),
+        copy_image(),
         CommandSpec {
             id: "preview.md_diagrams.want",
             label: "Draw Mermaid Diagrams",
@@ -547,14 +604,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let palette = palette_param(map.get("palette"))?;
-                let scale = map
-                    .get("scale")
-                    .and_then(Value::as_f64)
-                    .map(|v| v as f32)
-                    .filter(|v| SCALE_RANGE.contains(v))
-                    .ok_or_else(|| {
-                        FmError::InvalidParams("scale: number 0.25-8 expected".into())
-                    })?;
+                let scale = scale_param(map.get("scale"))?;
                 let (pane, drawable) = previewed_blocks(s, map)?;
                 let mut sources = Vec::with_capacity(indices.len());
                 for index in indices {
@@ -778,6 +828,48 @@ mod tests {
         );
         s.prefs.preview_mermaid = false;
         assert!(toggle(&mut s, json!({"block": 1})).is_err());
+    }
+
+    #[test]
+    fn a_drawn_diagram_is_copied_as_an_opaque_image() {
+        let (mut s, _) = previewing(DOC, "img");
+        let params = |block: usize, scale: f64| json!({"block": block, "palette": palette_json(&palette(true)), "scale": scale});
+        let copy = |s: &mut Session, p: Value| s.dispatch("preview.md_diagrams.copy_image", &p);
+        assert!(copy(&mut s, params(1, 1.0)).is_err(), "not drawn yet");
+        s.dispatch(
+            "preview.md_diagrams.want",
+            &json!({"blocks": [1, 3], "palette": palette_json(&palette(true)), "scale": 1.0}),
+        )
+        .expect("want");
+        settle(&s);
+        copy(&mut s, params(1, 1.0)).expect("copy");
+        let image = s.clipboard_image.take().expect("image on the clipboard");
+        assert!(image.width > 32 && image.height > 32);
+        assert_eq!(image.rgba.len(), image.width * image.height * 4);
+        assert!(
+            image.rgba.as_chunks::<4>().0.iter().all(|px| px[3] == 255),
+            "opaque"
+        );
+        assert_eq!(
+            &image.rgba[..3],
+            &[0xff, 0xff, 0xff],
+            "margin in the background colour"
+        );
+        assert!(s.info.is_some(), "confirmation shown");
+        let no_palette = json!({"block": 1, "scale": 1.0});
+        let no_scale = json!({"block": 1, "palette": palette_json(&palette(true))});
+        // A failed diagram, another scale, a non-Mermaid block, missing fields, garbage.
+        for bad in [
+            params(3, 1.0),
+            params(1, 2.0),
+            params(0, 1.0),
+            no_palette,
+            no_scale,
+            json!(null),
+        ] {
+            assert!(copy(&mut s, bad.clone()).is_err(), "{bad}");
+        }
+        assert!(s.clipboard_image.is_none(), "nothing copied on errors");
     }
 
     #[test]

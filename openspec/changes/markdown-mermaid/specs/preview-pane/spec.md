@@ -5,7 +5,7 @@ A rendered Markdown preview SHALL draw a fenced code block whose language (the f
 
 Diagrams SHALL use the app's current theme (dark or light, contrast and accent settings) for background, shapes, borders, text, lines, subgroup boxes and labels; theme settings in the document's own `%%{init}%%` directive SHALL NOT override them. A diagram SHALL scale down to the document width, never up past its natural size, and follow preview magnification, like Markdown images. While a diagram is being drawn, a placeholder SHALL reserve its space; the rest of the document SHALL stay usable.
 
-A diagram SHALL keep the code block's header (language label and copy control, which copies the Mermaid source exactly) and add a "Show source" button that shows that one block as its highlighted source code, with a "Show diagram" button to draw it again; the choice SHALL apply to the current document only, and a block shown as source SHALL be searched by Find like code. Whole-document copy SHALL contain the source as code text. The diagram SHALL be exposed to assistive technology as "Mermaid diagram" with its type, described by its source (first 1000 characters). The Markdown source view SHALL show the Mermaid source.
+A diagram SHALL keep the code block's header (language label and copy control, which copies the Mermaid source exactly) and add two icon controls, each with a tooltip and accessible name: "Copy diagram as image", which puts the drawn diagram on the clipboard as an opaque picture on its background colour with a margin, and "Show source", which shows that one block as its highlighted source code, with a "Show diagram" icon control to draw it again; the choice SHALL apply to the current document only, and a block shown as source SHALL be searched by Find like code. Whole-document copy SHALL contain the source as code text. The diagram SHALL be exposed to assistive technology as "Mermaid diagram" with its type, described by its source (first 1000 characters). The Markdown source view SHALL show the Mermaid source.
 
 When a diagram cannot be drawn (unknown or unsupported type, syntax error, a limit exceeded, a render failure or timeout), the block SHALL be shown as an ordinary highlighted code block with one line above it: "Diagram not drawn: " followed by a short reason. At most 50 diagrams SHALL be drawn per document; later ones SHALL be code blocks with the reason "Too many diagrams in this document".
 
@@ -28,6 +28,10 @@ When a diagram cannot be drawn (unknown or unsupported type, syntax error, a lim
 #### Scenario: Show one diagram's source
 - **WHEN** the user activates "Show source" on a drawn diagram
 - **THEN** that block alone is shown as its highlighted Mermaid source with a "Show diagram" button, other diagrams stay drawn, and opening another file shows all of its diagrams drawn
+
+#### Scenario: Copy a diagram as an image
+- **WHEN** the user activates "Copy diagram as image" on a drawn diagram
+- **THEN** the clipboard holds the diagram as shown, without transparent pixels, so it stays readable when pasted on any background
 
 #### Scenario: Preference off
 - **WHEN** "Draw Mermaid diagrams" is turned off

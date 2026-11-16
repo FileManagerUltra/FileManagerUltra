@@ -263,6 +263,75 @@ pub struct Diagram {
     pub natural: (f32, f32),
 }
 
+/// Most padding [`flatten`] adds around a copied diagram, in pixels.
+pub const MAX_PAD: u32 = 256;
+
+/// `#rrggbb` → bytes; `None` for anything else.
+fn rgb(hex: &str) -> Option<[u8; 3]> {
+    let digits = hex.strip_prefix('#').filter(|d| d.len() == 6)?;
+    let byte = |i: usize| {
+        digits
+            .get(i..i + 2)
+            .and_then(|h| u8::from_str_radix(h, 16).ok())
+    };
+    Some([byte(0)?, byte(2)?, byte(4)?])
+}
+
+/// An opaque copy of a drawn diagram for the clipboard: `pad` pixels of `background` on
+/// every side and every transparent pixel blended onto it, so the picture stays readable
+/// wherever it is pasted (light text of a dark palette on a white page would vanish).
+pub fn flatten(thumb: &Thumb, background: &str, pad: u32) -> Result<Thumb, String> {
+    let bg = rgb(background).ok_or("background colour must be #rrggbb")?;
+    let pad = pad.min(MAX_PAD);
+    let width = thumb
+        .width
+        .checked_add(pad * 2)
+        .ok_or("the diagram is too large")?;
+    let height = thumb
+        .height
+        .checked_add(pad * 2)
+        .ok_or("the diagram is too large")?;
+    let expected = (thumb.width as usize)
+        .checked_mul(thumb.height as usize)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or("the diagram is too large")?;
+    if thumb.rgba.len() != expected {
+        return Err("the diagram bitmap is damaged".into());
+    }
+    let total = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or("the diagram is too large")?;
+    let mut rgba = Vec::with_capacity(total);
+    for _ in 0..(width as usize) * (height as usize) {
+        rgba.extend_from_slice(&[bg[0], bg[1], bg[2], 255]);
+    }
+    let row = thumb.width as usize * 4;
+    for (y, line) in thumb.rgba.chunks_exact(row.max(4)).enumerate() {
+        let start = ((y + pad as usize) * width as usize + pad as usize) * 4;
+        let Some(out) = rgba.get_mut(start..start + row) else {
+            break;
+        };
+        for (dst, src) in out
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(line.as_chunks::<4>().0)
+        {
+            let a = u16::from(src[3]);
+            for c in 0..3 {
+                let blended = (u16::from(src[c]) * a + u16::from(bg[c]) * (255 - a) + 127) / 255;
+                dst[c] = blended as u8;
+            }
+        }
+    }
+    Ok(Thumb {
+        width,
+        height,
+        rgba,
+    })
+}
+
 /// Settings a document's own `%%{init}%%` or front matter may not change: merman's hardened
 /// defaults plus every theme setting, so the app's palette and font always win (readability
 /// for low-vision users; labels are measured with the bundled face).
@@ -683,6 +752,45 @@ mod tests {
             lower.contains(&palette(true).node_fill),
             "palette node fill used"
         );
+    }
+
+    #[test]
+    fn copies_are_opaque_padded_and_keep_the_drawing() {
+        let d = draw("flowchart LR\nA-->B").expect("draws");
+        let p = palette(true);
+        let flat = flatten(&d.thumb, &p.background, 16).expect("flatten");
+        assert_eq!(
+            (flat.width, flat.height),
+            (d.thumb.width + 32, d.thumb.height + 32)
+        );
+        assert_eq!(
+            flat.rgba.len(),
+            flat.width as usize * flat.height as usize * 4
+        );
+        assert!(
+            flat.rgba.as_chunks::<4>().0.iter().all(|px| px[3] == 255),
+            "opaque"
+        );
+        let bg = rgb(&p.background).expect("bg");
+        assert_eq!(&flat.rgba[..3], &bg, "corner is background");
+        let drawn = flat
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|px| px[..3] != bg)
+            .count();
+        assert!(drawn > 100, "the drawing survives ({drawn} pixels)");
+        // Hostile input is refused, never a panic.
+        let broken = Thumb {
+            width: 10,
+            height: 10,
+            rgba: vec![0; 7],
+        };
+        assert!(flatten(&broken, "#000000", 4).is_err());
+        assert!(flatten(&d.thumb, "red", 4).is_err());
+        let huge = flatten(&d.thumb, "#000000", u32::MAX).expect("pad capped");
+        assert_eq!(huge.width, d.thumb.width + 2 * MAX_PAD);
     }
 
     #[test]

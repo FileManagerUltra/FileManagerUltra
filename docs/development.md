@@ -409,7 +409,8 @@ a few accents. Labels (also edge labels and subgroup titles) are complete and
 unclipped; text is readable on nodes, lines visible on the background. Zoom the
 Preview from 50% to 400%: the diagram redraws sharp at each step, never wider than
 the column. The broken block shows "Diagram not drawn: …" above the code. Copy on a
-diagram copies its source; Show source swaps one diagram for its code (Show
+diagram copies its source; Copy as image pastes into a word processor or image
+editor as an opaque picture (check a dark-theme diagram on a white page); Show source swaps one diagram for its code (Show
 diagram swaps back, another file starts drawn); Ctrl+A, Ctrl+C keeps the source as code; Find skips drawn
 diagrams and finds text in the broken block; the source view shows everything as
 text. Preferences ▸ Preview ▸ Draw Mermaid diagrams off shows plain code blocks at
