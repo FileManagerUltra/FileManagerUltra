@@ -54,6 +54,12 @@ playing video redraws on a 33 ms timer (75 frames/s for 25 fps video, ~40/s with
 Media pane hidden) because `MediaSession::is_busy()` counts playback; fix, then re-check
 on Windows.
 
+`markdown-mermaid` is archived (2026-11-16, checked on Linux and Windows): Mermaid code
+blocks in Markdown previews are drawn as diagrams (eleven types, ELK layout, app theme
+colours, offline and bounded) with Show source, Copy source, Copy as image and a cache
+reset in Preferences ▸ Advanced. Help ▸ About lists third-party licences (ELK is EPL-2.0).
+A follow-up could preview standalone `.mmd` / `.mermaid` files with the same service.
+
 Recent interaction improvements include rich native Markdown previews (nested lists,
 tasks, highlighted code and aligned tables), full-loaded-document selection/copy,
 per-preview 50%-400% zoom, configurable terminal scrollback (5,000-1,000,000 rows,

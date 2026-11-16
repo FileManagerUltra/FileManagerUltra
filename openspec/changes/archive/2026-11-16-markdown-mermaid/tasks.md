@@ -35,4 +35,4 @@
 
 - [x] 5.1 `docs/architecture.md` (preview pools: diagrams beside Markdown images), `AGENTS.md` §7 (merman: pure Rust, features off, only behind `fm_preview::mermaid`), `docs/development.md` manual check
 - [x] 5.2 CHANGELOG `Added` line, devlog entry; `cargo test` for touched crates, clippy, fmt, `cargo xtask layers`, `cargo xtask brand-check`
-- [ ] 5.3 Manual: open `it-architecture.md` and `ecommerce-landscape.md` in a Preview on Linux and Windows, both themes, zoom 50% to 400%, toggle the preference, Copy on a diagram, Find, source view, screen reader reads the diagram name
+- [x] 5.3 Manual: open `it-architecture.md` and `ecommerce-landscape.md` in a Preview on Linux and Windows, both themes, zoom 50% to 400%, toggle the preference, Copy on a diagram, Find, source view, screen reader reads the diagram name
