@@ -73,11 +73,16 @@ An entry classified as a program SHALL NOT start unless the caller passes `mode:
 - **THEN** it is spawned as a single absolute path argument, no shell and no expansion is involved
 
 ### Requirement: Cut, copy and paste
-`file.clip_copy` and `file.clip_cut` SHALL remember the focused selection (Files pane or thumbnail grid) and mirror its paths to the OS clipboard as text; `file.clip_paste` SHALL copy (an item already in the destination folder is duplicated as `name (2).ext` via `ops::duplicate`, never skipped; or, after a cut, move and clear the clipboard) the remembered items into the focused folder through the ordinary pipelines with conflict policy `ask`. Paste with `os_text` that differs from what was mirrored SHALL fail with a notice and clear the clipboard. Ctrl/Cmd+X/C/V arrive as egui clipboard events and SHALL be mapped to these commands except while a terminal has focus, text is being edited or a dialog is open.
+`file.clip_copy` and `file.clip_cut` SHALL remember the focused selection (Files pane or thumbnail grid) and mirror its paths to the OS clipboard as text; `file.clip_paste` SHALL copy (an item already in the destination folder is duplicated as `name (2).ext` via `ops::duplicate`, never skipped; or, after a cut, move and clear the clipboard) the remembered items into the focused folder through the ordinary pipelines with conflict policy `ask`. Paste with `os_text` that differs from what was mirrored SHALL fail with a notice and clear the clipboard. Ctrl/Cmd+X/C/V arrive as egui clipboard events and SHALL be mapped to these commands except while a terminal has focus, text is being edited or a dialog is open. The clipboard belongs to the application, not to a workspace: switching, opening or closing workspace tabs SHALL NOT clear or change it.
 
 #### Scenario: Cut and paste
 - **WHEN** a file is cut and pasted into another folder
 - **THEN** it exists there, is gone from the source, and the clipboard is empty
+
+#### Scenario: Across workspaces
+- **WHEN** a file is copied (or cut) in a pane of one workspace tab, the user switches to another tab and pastes into its focused folder
+- **THEN** the result is the same as within one tab: a copy keeps the source and can be pasted again, a cut moves the file once and empties the clipboard, and conflicts ask as usual
+- **AND** this holds for local, SMB and SFTP sources and destinations
 
 #### Scenario: Explicit folder-menu destination
 - **WHEN** `file.clip_paste` receives an optional `dest` URI from a folder context menu
@@ -91,10 +96,10 @@ An entry classified as a program SHALL NOT start unless the caller passes `mode:
 - **WHEN** a folder thumbnail is double-clicked in a focused grid
 - **THEN** the connected Files pane navigates into that folder
 
-
 ### Requirement: Everyday item commands
 The context menu and File/Edit menus SHALL offer: `file.open_with.dialog` (Open With…: installed applications, those registered for the file type first and the default marked — XDG desktop entries on Linux, `/Applications` on macOS, the system dialog on Windows; local files only, launched without a shell), `file.duplicate` (Ctrl+Shift+D, a "copy" next to the original), `file.copy_path` / `file.copy_name` (to the clipboard), `bookmark.add` and `file.properties` (Alt+Enter). Properties SHALL show name, location, kind, modified time and a live size/count computed on a background walk that stops when the window closes; for one item on a backend that supports it, permissions are editable (rwx grid plus setuid/setgid/sticky) and applied with `file.chmod {mode, sources?}` (local unix and SFTP; symlinks are refused).
 
 #### Scenario: Bad chmod params
 - **WHEN** `file.chmod` is dispatched with mode `"9999"` or no mode
 - **THEN** it returns an error and no job is submitted
+

@@ -13,7 +13,8 @@
 ## 3. Ctrl+Shift+X on Windows
 
 - [x] 3.1 Diagnostic log `key` events for Ctrl/Cmd chords with the command run or `unmatched`; never text-typing chords (AltGr, Option) or anything in a text field; test
-- [ ] 3.2 Windows test: log of Ctrl+Shift+X; fix the cause it shows (manual, needs the user)
+- [x] 3.2 Windows test: log of Ctrl+Shift+X; fix the cause it shows (manual, needs the user)
+  - 2026-11-15 log (0.2.3, Windows 11 26300, Ryzen with Radeon iGPU + RTX 4090): three attempts log only `Ctrl+ControlLeft` and `Ctrl+Shift+ShiftLeft`, never an X key event, and no command (one stray `term.input` while a terminal was focused). With Shift held egui-winit cannot turn X into `Event::Cut` (`command_only()`), so the X key-down never reached the window: another program holds Ctrl+Shift+X as a system-wide hotkey. AMD Software (Adrenalin/ReLive) is the known culprit on Windows 11 even without a visible AMD hotkey for it. Confirmed 2026-11-15: with AMD Software removed, Ctrl+Shift+X zooms the pane on Windows. No app change needed.
 
 ## 4. Clipboard across workspaces
 

@@ -66,7 +66,7 @@ docs/  AGENTS.md  openspec/  log/devlog.md
 
 Dependency direction in one line: **`vfs` knows nothing, backends know `vfs`, `ops` knows backends only through `Vfs`, `engine` orchestrates, `ui` observes `engine`, `fm-app` wires them.**
 
-### Shared audio foundation (`add-media-pane`, in progress)
+### Shared audio foundation (`add-media-pane`, archived 2026-11-15)
 
 `fm-media` (L1) decodes local audio with Symphonia on a dedicated worker and
 outputs through cpal's safe API. Native FFI inside cpal and ALSA development

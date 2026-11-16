@@ -9,13 +9,13 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 | 3 | `dnd-and-file-ops` | Cross-pane drag & drop (tree node + listing targets, Ctrl=copy/Shift=move), external file drop, `ops` pipelines, job queue with progress/cancel, conflict dialogs, trash + undo | done, archived |
 | 4 | `sftp-backend` | **SFTP client that fills a pane** (`sftp://user@host/…` → tree + listing, connect dialog, in-memory passwords, TOFU host keys, profiles without secrets, cross-backend ops, free space in the status bar) | archived |
 | 4b | `smb-backend` | SMB via the pure-Rust `smb` crate (NTLM, no system library, one code path on all platforms), reusing the connection model from change 4 | done (archived) |
-| 5 | `live-watch-and-packaging` | `notify`-driven directory refresh; cross-platform watcher and release-package smoke checks | watcher implemented and Linux-tested; Windows/macOS checks remain |
+| 5 | `live-watch-and-packaging` | `notify`-driven directory refresh; cross-platform watcher and release-package smoke checks | watcher done and archived as `live-watch` (Linux, Windows, macOS checked); packaging in `.github/workflows/release.yml` |
 
 Additional change, done and archived: `git-status-and-diff` (git status markers, Diff view in the Preview pane) — see `docs/architecture.md` §12a.
 
 **Latest release:** 0.2.3 (2026-11-15): per-pane and per-terminal zoom, Ctrl+Tab workspace switching, playing time in the status bar, a diagnostic log, and on Windows Direct3D 12 drawing (fixes the NVIDIA memory growth) and a consistently named settings folder. 0.2.2 (2026-11-13) brought SVG and camera RAW photos in Preview and thumbnails, photos and phone videos upright, picture subtitles, hardware video decoding, keyboard-accessible Preferences and memory fixes. 0.2.0 (2026-11-12) brought the Media pane, Find Files redesign and Activity panel. The next minor release (0.3.0) waits for signed and notarized installers. Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
 
-**Current focus:** see "Current focus" below: finish `add-media-pane`, and run the outstanding Windows/macOS manual checks that keep `live-watch` and `managed-ffmpeg` from being archived.
+**Current focus:** see "Current focus" below: the outstanding manual checks (mostly Windows) that keep the remaining open changes from being archived.
 
 Session persistence is already delivered by `workspaces` (saved pane layouts and
 startup behavior). Release packaging is also configured in `.github/workflows/release.yml`:
@@ -31,7 +31,7 @@ remain future work (the command registry is already in place).
 
 ## Current focus
 
-`add-media-pane` (43/48 tasks) shipped in 0.2.0: shared native audio pipeline
+`add-media-pane` shipped in 0.2.0 and is archived (2026-11-15): shared native audio pipeline
 with Preview sound, the Media pane (persisted queue with lockable playlist folders,
 playlists, drop targets on player and playlist, Files/Preview entry points with
 position hand-off, double-click to play, player right-click menu), local and remote
@@ -42,15 +42,19 @@ audiobooks (chapters, resume, bookmarks, skip), and an ffmpeg fallback for audio
 formats Symphonia cannot read. ffmpeg is not bundled: Windows offers a pinned,
 verified download (`managed-ffmpeg`). `media-open-and-play-ux` is archived.
 
-Remaining in `add-media-pane`: the changelog/devlog entries at archive time (9.3) and
-Windows/macOS smoke tests (9.4), including hardware decoding (Direct3D 11, VideoToolbox)
-and picture subtitles. Picture (PGS/VobSub) subtitles and hardware decoding with a
-software fallback have landed.
+Picture (PGS/VobSub) subtitles and hardware decoding with a software fallback have
+landed too. `live-watch` (Windows/macOS checks done), `status-bar-time` and
+`image-orientation` are archived as well.
 
-Manual checks that block archiving other changes:
+Manual checks that block archiving the open changes:
 
-- `live-watch`: Windows and macOS, including a mapped network drive.
-- `managed-ffmpeg`: the Windows download, play, Update and Reinstall.
+- Windows: `native-paths` (location bar, Find Files, Copy Path, disconnected SMB
+  bookmark), `drive-info` (This PC names, Preview/Properties of C: and of a share file),
+  `windows-wgpu` (3.2 memory, 3.3 OpenGL switch, 3.4 frame-driven video redraws),
+  `diagnostics-log` (1080p memory with the log on), `managed-ffmpeg` (download, play,
+  Update, Reinstall), `app-folder-names` (upgrade over `Roaming\filemanagerultra`).
+- Any platform: `smb-search` and `raw-photos` (NAS share), `remote-bookmark-panes`,
+  `terminal-start-folder`, `terminal-zoom` (screen readers).
 
 Recent interaction improvements include rich native Markdown previews (nested lists,
 tasks, highlighted code and aligned tables), full-loaded-document selection/copy,
@@ -84,8 +88,6 @@ USB media and VeraCrypt on Linux and Windows (macOS untested) and is archived.
 ## Ideas for future changes
 
 Captured so they are not lost; each becomes an OpenSpec proposal (`/opsx-propose`) when picked up.
-
-- **To do: Ctrl+Shift+X (Zoom Pane) does nothing on Windows** (reported 2026-11-14): `pane.zoom` in `crates/engine/src/arrange_cmds.rs`; works on Linux. Not egui's Cut mapping (that needs Ctrl alone). Change `workspace-keys` makes the diagnostic log record Ctrl chords (`key: Ctrl+Shift+X -> pane.zoom` or `unmatched`); get that line from Windows first. Then check whether other Ctrl+Shift+letter shortcuts (Ctrl+Shift+C, +F, +T) work on Windows, which separates a key-matching problem (winit's logical key with Ctrl+Shift held on Windows; egui-winit is vendored now, see `vendor/FM-VENDORED.md`) from something taking that one combination (a focused widget, a terminal pane, a system-wide hotkey). Fix and add a shortcut test.
 
 - **Preferences menu + pane-layout restore policy** (extends existing workspace startup behavior): a Preferences menu item holding app settings from `prefs.toml`, with *Restore previous pane layout* as `yes` / `no` / `ask`. On `ask`, a popup poses the question at startup before the saved layout is applied, and the popup repeats the same yes/no/ask control so the setting can be changed right there (the answer persists the preference). Stays a command (`prefs.*` id) and a `Prefs` field, so the security rules (no secrets, owner-only file) hold unchanged.
 

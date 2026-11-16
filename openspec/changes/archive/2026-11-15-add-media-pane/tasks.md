@@ -87,5 +87,5 @@ controls remain pending.
 
 - [x] 9.1 Extend `security` coverage: playlist caps, decoder timeouts, spool permissions, no credentials in queue state or notices (audit: most existed; added tests for the hung ffprobe deadline, stalled ffmpeg kill, kill on seek/drop, and tag/cover caps)
 - [x] 9.2 Update `docs/architecture.md` (crate map, `AudioOwner`, clock, lanes), `docs/roadmap.md`, `docs/development.md` (audio backend, ffmpeg), and sync the delta specs (docs updated 2026-11-12; the delta specs sync when the change is archived)
-- [ ] 9.3 Add `CHANGELOG.md` entries under Unreleased and a `log/devlog.md` entry
+- [x] 9.3 Add `CHANGELOG.md` entries under Unreleased and a `log/devlog.md` entry (the entries shipped in the 0.2.0 release section; devlog entry at archive, 2026-11-15)
 - [x] 9.4 Gate: `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo xtask layers`, `cargo xtask brand-check`, `cargo fmt --all -- --check`; Windows and macOS smoke tests for audio device, ffmpeg discovery and fullscreen

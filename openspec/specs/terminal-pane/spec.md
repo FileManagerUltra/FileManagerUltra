@@ -59,7 +59,7 @@ Preferences and other open forms, or a focused text editor, SHALL own keyboard a
 clipboard input ahead of an underlying Terminal pane. Copy/cut/paste in a dialog
 SHALL NOT send control bytes or pasted text to the shell.
 
-While a Terminal pane is focused, text, Enter, Backspace, Tab, arrows, Home/End, PageUp/Down, Delete, F1–F12 and `Ctrl+<letter>` SHALL be sent to the shell. Only `Ctrl+Shift+…` chords and `Ctrl+Shift+Tab` are handled as app shortcuts. Mouse wheel scrolls scrollback unless the application requested mouse reporting; typing returns to the live screen.
+While a Terminal pane is focused, text, Enter, Backspace, Tab, arrows, Home/End, PageUp/Down, Delete, F1–F12 and `Ctrl+<letter>` SHALL be sent to the shell. Only `Ctrl+Shift+…` chords, `Ctrl+Tab` and `Ctrl+Shift+Tab` (switching workspace tabs) are handled as app shortcuts. Mouse wheel scrolls scrollback unless the application requested mouse reporting; typing returns to the live screen.
 
 #### Scenario: Ctrl+C
 - **WHEN** Ctrl+C is pressed in a focused terminal
@@ -68,6 +68,10 @@ While a Terminal pane is focused, text, Enter, Backspace, Tab, arrows, Home/End,
 #### Scenario: Unfocused pane
 - **WHEN** another pane is focused
 - **THEN** key events are not sent to the terminal
+
+#### Scenario: Switching workspaces from a terminal
+- **WHEN** Ctrl+Tab or Ctrl+Shift+Tab is pressed in a focused terminal
+- **THEN** the workspace tab changes as elsewhere and nothing is sent to the shell; panes are no longer swapped by Ctrl+Shift+Tab
 
 ### Requirement: Application mouse input
 When a terminal application requests mouse input, pointer events SHALL be sent through `term.mouse`, using the application's requested protocol: X10 (`?9`), press/release (`?1000`), button motion (`?1002`) or any motion (`?1003`), with default byte, UTF-8 (`?1005`) or SGR (`?1006`) encoding. Reports SHALL contain one-based screen-cell coordinates, left/middle/right buttons, wheel up/down and modifiers; movement is reported only when the cell changes and the requested mode permits it. Legacy bytes MUST NOT be converted to UTF-8; coordinates outside a legacy encoding's range are not reported at a different location.
@@ -155,3 +159,4 @@ A terminal pane whose shell exits (exit, Ctrl-D) SHALL close. The last remaining
 #### Scenario: Exit closes the pane
 - **WHEN** the shell in a terminal pane exits and other panes exist
 - **THEN** the pane is closed
+
