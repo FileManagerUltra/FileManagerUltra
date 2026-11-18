@@ -138,10 +138,21 @@ fn close() -> CommandSpec {
         label: "Close Folder Sync",
         menu: &["File", "Synchronize Folders", "Close"],
         shortcut: None,
-        params: "none",
+        params: r#"{ discard?: bool } — an unsaved sync that was compared or set up past the first step asks to save first; discard closes without asking"#,
         enabled: |s| s.sync.current.is_some(),
         run: |s, params| {
             object(params)?;
+            let discard = bool_param(params, "discard")?;
+            let unsaved_work = s
+                .sync
+                .current_state()
+                .is_some_and(|st| !st.saved && (st.plan.is_some() || st.step > 0));
+            if unsaved_work && !discard {
+                // Asked in the window, so a minimized sync comes back to ask.
+                s.sync.close_prompt = true;
+                s.sync.minimized = false;
+                return Ok(());
+            }
             if let Some(id) = s.sync.current.clone()
                 && let Some(st) = s.sync.states.get_mut(&id)
             {
@@ -149,6 +160,23 @@ fn close() -> CommandSpec {
             }
             s.sync.current = None;
             s.sync.minimized = false;
+            s.sync.close_prompt = false;
+            Ok(())
+        },
+    }
+}
+
+fn close_cancel() -> CommandSpec {
+    CommandSpec {
+        id: "sync.close.cancel",
+        label: "Keep Folder Sync Open",
+        menu: &["File", "Synchronize Folders", "Keep Open"],
+        shortcut: None,
+        params: "none",
+        enabled: |s| s.sync.close_prompt,
+        run: |s, params| {
+            object(params)?;
+            s.sync.close_prompt = false;
             Ok(())
         },
     }
@@ -679,7 +707,18 @@ fn watch_confirm() -> CommandSpec {
             if let Some(st) = s.sync.states.get_mut(&id) {
                 st.arming = Arming::Off;
             }
-            s.sync_apply_confirmed(&id);
+            // The user reviewed this plan and pressed Start: run it like Synchronize, which
+            // asks about deletes that need confirming. Only later automatic runs hold back
+            // conflicts and deletes for review.
+            let has_work = s
+                .sync
+                .states
+                .get(&id)
+                .and_then(|st| st.plan.as_ref())
+                .is_some_and(|p| !p.is_empty_work());
+            if has_work {
+                s.sync_run(&id, false)?;
+            }
             Ok(())
         },
     }
@@ -726,6 +765,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         open(),
         close(),
+        close_cancel(),
         minimize(),
         restore(),
         sort(),
@@ -1090,6 +1130,80 @@ mod tests {
     }
 
     #[test]
+    fn start_syncing_a_plan_with_deletes_asks_instead_of_doing_nothing() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (l, r, c) = (
+            tmp.path().join("l"),
+            tmp.path().join("r"),
+            tmp.path().join("cfg"),
+        );
+        for d in [&l, &r, &c] {
+            std::fs::create_dir_all(d).expect("mkdir");
+        }
+        std::fs::write(l.join("new.txt"), "n").expect("w");
+        std::fs::write(r.join("old.txt"), "o").expect("w");
+        // Mirror with permanent deletes: the plan needs the user's confirmation.
+        let mut s = session_with(&l, &r, &c);
+        s.dispatch(
+            "sync.profile.set",
+            &json!({"patch": {"watch": {"enabled": true}}}),
+        )
+        .expect("set");
+        s.dispatch("sync.watch.start", &json!({})).expect("watch");
+        pump_until_idle(&mut s);
+        s.dispatch("sync.watch.confirm", &json!({}))
+            .expect("start syncing");
+        let st = s.sync.current_state().expect("state");
+        assert!(st.watching() && st.arming == Arming::Off);
+        assert!(st.confirm, "the delete confirmation opens");
+        assert!(
+            r.join("old.txt").exists(),
+            "nothing deleted before confirming"
+        );
+        s.dispatch("sync.run", &json!({"confirmed": true}))
+            .expect("delete and synchronize");
+        pump_until_idle(&mut s);
+        assert!(!r.join("old.txt").exists());
+        assert!(r.join("new.txt").exists());
+        s.dispatch("sync.watch.stop", &json!({})).expect("stop");
+    }
+
+    #[test]
+    fn closing_an_unsaved_compared_sync_asks_first() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (l, r, c) = (
+            tmp.path().join("l"),
+            tmp.path().join("r"),
+            tmp.path().join("cfg"),
+        );
+        for d in [&l, &r, &c] {
+            std::fs::create_dir_all(d).expect("mkdir");
+        }
+        std::fs::write(l.join("a.txt"), "a").expect("w");
+        let mut s = session_with(&l, &r, &c);
+        // Nothing compared or set up yet: closes at once.
+        s.dispatch("sync.close", &json!({})).expect("close");
+        assert!(s.sync.current.is_none() && !s.sync.close_prompt);
+
+        s.dispatch("sync.open", &json!({})).expect("open");
+        let patch =
+            json!({"left": VfsUriExt::uri(l.as_path()), "right": VfsUriExt::uri(r.as_path())});
+        s.dispatch("sync.profile.set", &json!({ "patch": patch }))
+            .expect("set");
+        s.dispatch("sync.compare", &json!({})).expect("compare");
+        pump_until_idle(&mut s);
+        s.sync.minimized = true;
+        s.dispatch("sync.close", &json!({})).expect("asks");
+        assert!(s.sync.current.is_some() && s.sync.close_prompt);
+        assert!(!s.sync.minimized, "a minimized sync comes back to ask");
+        s.dispatch("sync.close.cancel", &json!({})).expect("keep");
+        assert!(s.sync.current.is_some() && !s.sync.close_prompt);
+        s.dispatch("sync.close", &json!({"discard": true}))
+            .expect("discard");
+        assert!(s.sync.current.is_none() && !s.sync.close_prompt);
+    }
+
+    #[test]
     fn a_filtered_tree_keeps_the_folders_of_the_rows_it_shows() {
         let tmp = tempfile::tempdir().expect("tmp");
         let (l, r, c) = (
@@ -1246,6 +1360,8 @@ mod tests {
             ("sync.watch.confirm", json!({})),
             ("sync.open", json!({"id": "missing"})),
             ("sync.compare", json!({})), // empty folders
+            ("sync.close", json!({"discard": "yes"})),
+            ("sync.close.cancel", json!([1])),
         ] {
             assert!(s.dispatch(id, &p).is_err(), "{id} {p}");
         }

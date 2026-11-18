@@ -205,7 +205,20 @@ pub(crate) fn table(
         .selected
         .and_then(|i| plan.items.get(i as usize))
         .filter(|i| tree || !i.rel.is_empty());
-    let detail_h = if selected_item.is_some() { 52.0 } else { 0.0 };
+    // The path details under the table: measured once drawn; until then estimated from the
+    // font and spacing (three single lines in a frame), so the list leaves room for them and
+    // a click never makes the window grow (and, centred, move).
+    let detail_id = view_id.with("detail-height");
+    let detail_h = if selected_item.is_some() {
+        ui.data(|d| d.get_temp::<f32>(detail_id))
+            .unwrap_or_else(|| {
+                let line = ui.text_style_height(&egui::TextStyle::Body);
+                let gap = ui.spacing().item_spacing.y;
+                3.0 * line + 3.0 * gap + 2.0 * DETAIL_MARGIN + 4.0
+            })
+    } else {
+        0.0
+    };
     let mut toggled: Option<String> = None;
     let mut picked: Option<u32> = None;
     // show_rows spaces rows by the outer item spacing; rows are drawn flush, so it must be zero.
@@ -280,9 +293,17 @@ pub(crate) fn table(
     }
     painter.rect_stroke(table, tokens.corner_radius, line, egui::StrokeKind::Inside);
     if let Some(item) = selected_item {
+        let top = ui.cursor().top();
         detail_strip(ui, tokens, plan, item);
+        let used = (ui.cursor().top() - top).ceil();
+        if ui.data(|d| d.get_temp::<f32>(detail_id)) != Some(used) {
+            ui.data_mut(|d| d.insert_temp(detail_id, used));
+            ui.ctx().request_repaint();
+        }
     }
 }
+
+const DETAIL_MARGIN: f32 = 6.0;
 
 /// Folders the user has folded shut and the row whose details are shown below the table.
 #[derive(Clone, Default)]
@@ -461,10 +482,11 @@ fn detail_strip(ui: &mut egui::Ui, tokens: &Tokens, plan: &fm_sync::Plan, item: 
             tokens.text_muted.gamma_multiply(0.45),
         ))
         .corner_radius(tokens.corner_radius)
-        .inner_margin(6.0)
+        .inner_margin(DETAIL_MARGIN)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.add(egui::Label::new(RichText::new(&item.rel).color(tokens.text)).wrap());
+            // Single lines (full text on hover) keep the strip's height fixed.
+            ui.add(egui::Label::new(RichText::new(&item.rel).color(tokens.text)).truncate());
             let side = |name: &str, text: String| {
                 RichText::new(format!("{name} {text}")).color(tokens.text_muted)
             };

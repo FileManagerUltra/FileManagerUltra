@@ -351,6 +351,11 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let mut message_action: Option<(u64, usize)> = None;
     let mut clear_messages = false;
     let mut open = true;
+    // While the pointer is over the panel it keeps its height: it is anchored at the bottom,
+    // so shrinking (Clear all, a dismissed card) would move every card above under the pointer.
+    let hold_id = Id::NULL.with("fm-jobs-hold");
+    let held: Option<f32> = ctx.data(|d| d.get_temp(hold_id));
+    let mut content_h = 0.0_f32;
     let shown = crate::dialog_style::window(ctx, tokens, "Activity", &mut open)
         .id(Id::NULL.with("fm-jobs-panel"))
         .pivot(egui::Align2::RIGHT_BOTTOM)
@@ -360,6 +365,9 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             crate::dialog_style::apply(ui, tokens);
             ui.set_min_width(340.0);
             ui.set_max_width(420.0);
+            if let Some(h) = held {
+                ui.set_min_height(h);
+            }
             ui.spacing_mut().item_spacing.y = 8.0;
             if crate::updates::available(s) {
                 crate::updates::show(ui, s, tokens);
@@ -579,13 +587,22 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                     }
                 });
             }
+            content_h = ui.min_rect().height();
         });
     if !open {
         ctx.data_mut(|d| d.insert_temp(open_id(), false));
     }
-    if shown.is_some_and(|r| r.response.hovered() || r.response.contains_pointer())
-        && message_deadline(ctx).is_some()
-    {
+    let pointer_over = shown
+        .as_ref()
+        .is_some_and(|r| r.response.hovered() || r.response.contains_pointer());
+    if pointer_over {
+        let keep = held.unwrap_or(0.0).max(content_h);
+        ctx.data_mut(|d| d.insert_temp(hold_id, keep));
+    } else if held.is_some() {
+        ctx.data_mut(|d| d.remove_temp::<f32>(hold_id));
+        ctx.request_repaint();
+    }
+    if pointer_over && message_deadline(ctx).is_some() {
         let keep = shown_for(s);
         ctx.data_mut(|d| d.insert_temp(until_id(), std::time::Instant::now() + keep));
     }

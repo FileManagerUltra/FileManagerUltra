@@ -380,6 +380,13 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             esc = false;
         }
     }
+    if s.sync.close_prompt {
+        close_dialog(ctx, tokens, state, &mut commands);
+        if esc {
+            commands.push(("sync.close.cancel", Value::Null));
+            esc = false;
+        }
+    }
     if is_expanded(ctx) {
         if esc {
             set_expanded(ctx, false);
@@ -873,6 +880,59 @@ fn confirm_dialog(ctx: &Context, tokens: &Tokens, state: &SyncState, commands: &
     }
 }
 
+/// Closing an unsaved sync: save it, discard it, or keep the window open.
+fn close_dialog(ctx: &Context, tokens: &Tokens, state: &SyncState, commands: &mut Vec<Command>) {
+    let mut open = true;
+    crate::dialog_style::sign_in_window(ctx, tokens, "Save this sync?", &mut open)
+        .id(Id::NULL.with("fm-sync-close"))
+        .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
+            ui.set_width(440.0);
+            ui.horizontal(|ui| {
+                sync_icons::icon(ui, tokens, Icon::Save, 32.0);
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(
+                            "This sync is not saved. Save it to open it again later from \
+                             the list of saved syncs.",
+                        )
+                        .color(tokens.text),
+                    );
+                    ui.label(
+                        RichText::new(
+                            "Close without saving forgets its folders, settings and comparison. \
+                             No files are changed either way.",
+                        )
+                        .color(tokens.text_muted),
+                    );
+                });
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    commands.push(("sync.close.cancel", Value::Null));
+                }
+                if ui.button("Close without saving").clicked() {
+                    commands.push(("sync.close", json!({ "discard": true })));
+                }
+                let valid = state.profile.validate().is_ok();
+                ui.add_enabled_ui(valid, |ui| {
+                    if sync_icons::button(ui, tokens, Icon::Save, "Save and close", true)
+                        .on_disabled_hover_text("Choose two folders first")
+                        .clicked()
+                    {
+                        // A failed save leaves the sync unsaved, so the close asks again.
+                        commands.push(("sync.profile.save", Value::Null));
+                        commands.push(("sync.close", Value::Null));
+                    }
+                });
+            });
+        });
+    if !open {
+        commands.push(("sync.close.cancel", Value::Null));
+    }
+}
+
 fn expanded_id() -> Id {
     Id::NULL.with("fm-sync-expanded")
 }
@@ -1000,8 +1060,21 @@ fn expanded_window(ctx: &Context, tokens: &Tokens, state: &SyncState, commands: 
             crate::dialog_style::apply(ui, tokens);
             ui.label(RichText::new("All changes").strong().color(tokens.text));
             RowFilterBar::show(ui, state, commands, false, tokens);
-            table(ui, tokens, state, commands, 40.0, true);
+            // Keep exactly the room the status line took last frame (it can wrap), so the
+            // path details of a clicked row never push the window larger and move it.
+            let status_id = Id::NULL.with("fm-sync-large-status");
+            let reserve = ui
+                .data(|d| d.get_temp::<f32>(status_id))
+                .unwrap_or(40.0)
+                .max(40.0);
+            table(ui, tokens, state, commands, reserve, true);
+            let top = ui.cursor().top();
             status_bar(ui, tokens, state, commands);
+            let used = (ui.cursor().top() - top).ceil();
+            if ui.data(|d| d.get_temp::<f32>(status_id)) != Some(used) {
+                ui.data_mut(|d| d.insert_temp(status_id, used));
+                ui.ctx().request_repaint();
+            }
         });
     if !open {
         set_expanded(ctx, false);

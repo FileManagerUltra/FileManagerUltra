@@ -480,6 +480,45 @@ fn closing_unsaved_prompt_does_not_quit_or_discard() {
 }
 
 #[test]
+fn clear_all_keeps_the_activity_panel_still_under_the_pointer() {
+    let s = Session::new().expect("session");
+    let tokens = Tokens::dark();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 800.0))
+        .build_ui_state(
+            move |ui, s| {
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                fm_ui::jobs::show(ui.ctx(), s, &tokens);
+            },
+            s,
+        );
+    h.run_steps(2);
+    // Messages that arrive while the app runs open the panel.
+    for n in 0..3 {
+        h.state_mut().messages.push(&format!("Message number {n}"));
+    }
+    h.run_steps(3);
+    let id = Id::NULL.with("fm-jobs-panel");
+    let before = h.ctx.memory(|m| m.area_rect(id)).expect("panel shown");
+    h.get_by_label("Clear all").click();
+    h.run_steps(4);
+    assert!(h.state().messages.recent().next().is_none(), "cleared");
+    let held = h.ctx.memory(|m| m.area_rect(id)).expect("panel");
+    assert!(
+        (held.top() - before.top()).abs() < 1.0,
+        "the panel's top must not move under the pointer: {before:?} -> {held:?}"
+    );
+    h.hover_at(egui::pos2(5.0, 5.0));
+    h.run_steps(4);
+    if let Some(after) = h.ctx.memory(|m| m.area_rect(id)) {
+        assert!(
+            after.height() < before.height(),
+            "shrinks once the pointer leaves"
+        );
+    }
+}
+
+#[test]
 fn closing_jobs_hides_without_dismissing_update_and_indicator_reopens() {
     for tokens in [Tokens::dark(), Tokens::light()] {
         let mut s = Session::new().expect("session");
@@ -1325,13 +1364,78 @@ fn sync_inputs_follow_a_folder_chosen_in_the_picker() {
 
 #[test]
 fn escape_closes_the_sync_window() {
-    let s = sync_session(&[("a", "x.txt", 1)], "Update");
+    let mut s = sync_session(&[("a", "x.txt", 1)], "Update");
+    s.dispatch("sync.profile.save", &json!({})).expect("save");
     let mut h = harness(Tokens::dark(), s, fm_ui::sync::show);
     h.run();
     assert!(h.state().sync.current_state().is_some());
     h.key_press(egui::Key::Escape);
     h.run();
+    assert!(
+        h.state().sync.current_state().is_none(),
+        "a saved sync closes without asking"
+    );
+}
+
+#[test]
+fn closing_an_unsaved_compared_sync_asks_to_save_it() {
+    let s = sync_session(&[("a", "x.txt", 1)], "Update");
+    let mut h = harness(Tokens::dark(), s, fm_ui::sync::show);
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.query_by_label("Save this sync?").is_some(), "asks first");
+    assert!(h.state().sync.current_state().is_some());
+    // Escape (or Cancel) keeps the sync open, comparison and all.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.query_by_label("Save this sync?").is_none());
+    assert!(
+        h.state()
+            .sync
+            .current_state()
+            .is_some_and(|st| st.plan.is_some())
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.get_by_label("Save and close").click();
+    h.run();
+    assert!(h.state().sync.current_state().is_none(), "saved and closed");
+    assert_eq!(h.state().sync.profiles.len(), 1, "kept in the saved syncs");
+}
+
+#[test]
+fn folding_a_folder_in_the_large_changes_window_does_not_move_it() {
+    let s = sync_session(
+        &[("a", "docs/one.txt", 1), ("a", "docs/two.txt", 1)],
+        "Update",
+    );
+    let mut h = harness(Tokens::dark(), s, fm_ui::sync::show);
+    h.run();
+    h.get_by_label("Expand table").click();
+    h.run_steps(6);
+    let id = Id::NULL.with("fm-sync-large");
+    let before = h.ctx.memory(|m| m.area_rect(id)).expect("large window");
+    h.get_by_label("Collapse folder docs").click();
+    h.run_steps(6);
+    let after = h.ctx.memory(|m| m.area_rect(id)).expect("large window");
+    assert!(
+        (after.min - before.min).length() < 1.0 && (after.size() - before.size()).length() < 1.0,
+        "the window moved or grew: {before:?} -> {after:?}"
+    );
+}
+
+#[test]
+fn close_without_saving_discards_the_sync() {
+    let s = sync_session(&[("a", "x.txt", 1)], "Update");
+    let mut h = harness(Tokens::dark(), s, fm_ui::sync::show);
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.get_by_label("Close without saving").click();
+    h.run();
     assert!(h.state().sync.current_state().is_none());
+    assert!(h.state().sync.profiles.is_empty());
 }
 
 #[test]
@@ -1443,9 +1547,10 @@ fn escape_closes_an_open_action_menu_before_the_sync_window() {
         h.state().sync.current_state().is_some(),
         "the first Escape must leave the sync window open"
     );
+    // The next Escape closes the window, which first asks to save this unsaved sync.
     h.key_press(egui::Key::Escape);
     h.run();
-    assert!(h.state().sync.current_state().is_none());
+    assert!(h.query_by_label("Save this sync?").is_some());
 }
 
 #[test]

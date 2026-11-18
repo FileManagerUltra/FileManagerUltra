@@ -358,6 +358,8 @@ pub struct SyncHub {
     pub current: Option<String>,
     /// The window is hidden and the sync lives in the Activity panel.
     pub minimized: bool,
+    /// Closing asked whether to save the current, unsaved sync first.
+    pub close_prompt: bool,
     pub states: BTreeMap<String, SyncState>,
     config_dir: Option<PathBuf>,
 }
@@ -931,15 +933,6 @@ impl Session {
             self.info = Some((n, Instant::now()));
         }
         changed
-    }
-
-    /// Apply the plan the user just confirmed, under the same safeguards as later runs.
-    pub(crate) fn sync_apply_confirmed(&mut self, id: &str) {
-        let mut notices = Vec::new();
-        self.sync_auto_apply(id, &mut notices);
-        if let Some(n) = notices.pop() {
-            self.notice = Some(n);
-        }
     }
 
     fn sync_auto_apply(&mut self, id: &str, notices: &mut Vec<String>) {
