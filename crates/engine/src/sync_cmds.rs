@@ -1090,6 +1090,46 @@ mod tests {
     }
 
     #[test]
+    fn a_filtered_tree_keeps_the_folders_of_the_rows_it_shows() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (l, r, c) = (
+            tmp.path().join("l"),
+            tmp.path().join("r"),
+            tmp.path().join("cfg"),
+        );
+        for d in [&l, &r, &c] {
+            std::fs::create_dir_all(d).expect("mkdir");
+        }
+        for side in [&l, &r] {
+            std::fs::create_dir_all(side.join("Family/2024")).expect("mkdir");
+            std::fs::create_dir_all(side.join("Work")).expect("mkdir");
+            std::fs::write(side.join("same.txt"), "s").expect("w");
+            std::fs::write(side.join("Work/same.txt"), "s").expect("w");
+        }
+        std::fs::write(l.join("Family/2024/IMG_0803.jpg"), "new").expect("w");
+        let mut s = session_with(&l, &r, &c);
+        s.dispatch("sync.profile.set", &json!({"patch": {"mode": "Update"}}))
+            .expect("mode");
+        s.dispatch("sync.compare", &json!({})).expect("compare");
+        pump_until_idle(&mut s);
+        s.dispatch("sync.filter", &json!({"show": "changes"}))
+            .expect("filter");
+        let st = s.sync.current_state().expect("state");
+        let plan = st.plan.as_ref().expect("plan");
+        let shown: Vec<&str> = st
+            .rows
+            .iter()
+            .filter_map(|&n| plan.items.get(n as usize))
+            .map(|i| i.rel.as_str())
+            .collect();
+        assert_eq!(
+            shown,
+            ["Family", "Family/2024", "Family/2024/IMG_0803.jpg"],
+            "the changed file keeps its folders; unchanged folders and files stay hidden"
+        );
+    }
+
+    #[test]
     fn the_action_filter_shows_only_rows_with_that_action() {
         let tmp = tempfile::tempdir().expect("tmp");
         let (l, r, c) = (

@@ -877,6 +877,65 @@ fn expanded_id() -> Id {
     Id::NULL.with("fm-sync-expanded")
 }
 
+/// Height a part (the list or a wizard step's body) of page `page` may take beyond its
+/// `designed` height when the user makes the window taller, so the list grows with it.
+///
+/// Each page records, on the previous frame (`measure_below`), the distance from the end of
+/// that part to an anchor row (the Back/Next buttons) and the height from the anchor to the
+/// end of the page. The anchor then lands at the window's bottom minus the tallest tail of
+/// any page in `group`, so the buttons stay in the same place on every page of a group,
+/// and the page never ends below the window (which would push the window larger).
+pub(crate) fn spare_height(
+    ui: &egui::Ui,
+    group: &'static str,
+    page: &'static str,
+    designed: f32,
+) -> f32 {
+    let get = |key: &'static str| ui.data(|d| d.get_temp::<f32>(grow_id(group, page, key)));
+    let tail = ui.data(|d| d.get_temp::<f32>(grow_id(group, "", "tail-max")));
+    let (Some(to_anchor), Some(tail)) = (get("to-anchor"), tail) else {
+        return 0.0;
+    };
+    (ui.available_height() - designed - to_anchor - tail - 1.0).max(0.0)
+}
+
+/// Record where page `page`'s anchor row started (`anchor_top`) relative to the end of the
+/// growing part (`part_end`, a cursor position), and how much follows the anchor; call it
+/// after the page is drawn.
+pub(crate) fn measure_below(
+    ui: &egui::Ui,
+    group: &'static str,
+    page: &'static str,
+    part_end: f32,
+    anchor_top: f32,
+) {
+    let to_anchor = (anchor_top - part_end).max(0.0);
+    // The cursor, not `min_rect`: a resizable window's content rect already spans the
+    // whole window. The cursor includes the trailing item spacing, which errs on the safe side.
+    let tail = (ui.cursor().top() - anchor_top).max(0.0);
+    let ids = (
+        grow_id(group, page, "to-anchor"),
+        grow_id(group, page, "tail"),
+        grow_id(group, "", "tail-max"),
+    );
+    let changed = ui.data_mut(|d| {
+        let old = (d.get_temp::<f32>(ids.0), d.get_temp::<f32>(ids.1));
+        d.insert_temp(ids.0, to_anchor);
+        d.insert_temp(ids.1, tail);
+        let max = d.get_temp::<f32>(ids.2).unwrap_or(0.0).max(tail);
+        d.insert_temp(ids.2, max);
+        old.0.is_none_or(|v| (v - to_anchor).abs() > 0.25)
+            || old.1.is_none_or(|v| (v - tail).abs() > 0.25)
+    });
+    if changed {
+        ui.ctx().request_repaint();
+    }
+}
+
+fn grow_id(group: &'static str, page: &'static str, key: &'static str) -> Id {
+    Id::NULL.with(("fm-sync-grow", group, page, key))
+}
+
 pub(crate) fn is_expanded(ctx: &Context) -> bool {
     ctx.data(|d| d.get_temp::<bool>(expanded_id()))
         .unwrap_or(false)

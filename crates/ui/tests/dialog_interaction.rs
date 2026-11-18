@@ -1335,6 +1335,91 @@ fn escape_closes_the_sync_window() {
 }
 
 #[test]
+fn the_sync_list_grows_with_a_taller_window_and_the_window_stays_put() {
+    list_grows_with_the_window(false);
+}
+
+#[test]
+fn the_guided_review_list_grows_with_a_taller_window() {
+    list_grows_with_the_window(true);
+}
+
+fn list_grows_with_the_window(guided_review: bool) {
+    let names: Vec<String> = (0..60).map(|n| format!("f{n:02}.txt")).collect();
+    let files: Vec<(&str, &str, u64)> = names.iter().map(|n| ("a", n.as_str(), 1)).collect();
+    let mut s = sync_session(&files, "Update");
+    if guided_review {
+        s.dispatch("sync.wizard.go", &json!({"step": 6}))
+            .expect("review");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while s
+            .sync
+            .current_state()
+            .is_none_or(|st| st.busy() || st.plan.is_none())
+            && std::time::Instant::now() < deadline
+        {
+            s.poll();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1100.0, 1300.0))
+        .build_ui_state(
+            |ui, s: &mut Session| {
+                let tokens = Tokens::dark();
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                fm_ui::sync::show(ui.ctx(), s, &tokens);
+            },
+            s,
+        );
+    let id = Id::NULL.with("fm-sync");
+    let rows = |h: &Harness<'_, Session>| {
+        h.query_all_by_role(egui::accesskit::Role::Button)
+            .filter(|n| {
+                n.accesskit_node()
+                    .label()
+                    .is_some_and(|l| l.ends_with(": Copy to the right"))
+            })
+            .count()
+    };
+    h.run_steps(6);
+    let before = h.ctx.memory(|m| m.area_rect(id)).expect("window");
+    let shown = rows(&h);
+    h.run_steps(12);
+    let still = h.ctx.memory(|m| m.area_rect(id)).expect("window");
+    assert!(
+        (still.size() - before.size()).length() < 1.0,
+        "the window must not grow by itself: {before:?} -> {still:?}"
+    );
+    // Drag the bottom-right resize corner 200 points down.
+    let corner = before.max - egui::vec2(3.0, 3.0);
+    h.hover_at(corner);
+    h.run_steps(2);
+    h.drag_at(corner);
+    h.run_steps(2);
+    h.hover_at(corner + egui::vec2(0.0, 200.0));
+    h.run_steps(2);
+    h.drop_at(corner + egui::vec2(0.0, 200.0));
+    h.run_steps(6);
+    let taller = h.ctx.memory(|m| m.area_rect(id)).expect("window");
+    assert!(
+        taller.height() > before.height() + 150.0,
+        "{before:?} -> {taller:?}"
+    );
+    assert!(
+        rows(&h) >= shown + 5,
+        "the list grew: {shown} -> {} rows",
+        rows(&h)
+    );
+    h.run_steps(12);
+    let settled = h.ctx.memory(|m| m.area_rect(id)).expect("window");
+    assert!(
+        (settled.size() - taller.size()).length() < 1.0,
+        "{taller:?} -> {settled:?}"
+    );
+}
+
+#[test]
 fn escape_closes_an_open_action_menu_before_the_sync_window() {
     let s = sync_session(&[("a", "x.txt", 1)], "Update");
     let mut h = harness(Tokens::dark(), s, |ctx, s, tokens| {

@@ -275,12 +275,42 @@ impl SyncState {
             self.rows.clear();
             return;
         };
-        let mut rows: Vec<u32> = plan
+        let mut keep: Vec<bool> = plan
             .items
             .iter()
+            .map(|i| filter.shows(i.status) && action.is_none_or(|a| i.action == a))
+            .collect();
+        // In the folder tree a filtered row keeps the folders above it, or it would show
+        // indented under nothing (a folder whose own action is "none" is filtered away).
+        if self.sort.is_tree() && keep.iter().any(|k| !k) {
+            let folders: std::collections::HashMap<&str, usize> = plan
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, i)| i.kind() == fm_sync::NodeKind::Dir)
+                .map(|(n, i)| (i.rel.as_str(), n))
+                .collect();
+            let shown: Vec<usize> = keep
+                .iter()
+                .enumerate()
+                .filter_map(|(n, k)| k.then_some(n))
+                .collect();
+            for n in shown {
+                let Some(mut rel) = plan.items.get(n).map(|i| i.rel.as_str()) else {
+                    continue;
+                };
+                while let Some((parent, _)) = rel.rsplit_once('/') {
+                    if let Some(k) = folders.get(parent).and_then(|&p| keep.get_mut(p)) {
+                        *k = true;
+                    }
+                    rel = parent;
+                }
+            }
+        }
+        let mut rows: Vec<u32> = keep
+            .iter()
             .enumerate()
-            .filter(|(_, i)| filter.shows(i.status))
-            .filter(|(_, i)| action.is_none_or(|a| i.action == a))
+            .filter(|(_, k)| **k)
             .filter_map(|(n, _)| u32::try_from(n).ok())
             .collect();
         let item = |n: &u32| plan.items.get(usize::try_from(*n).unwrap_or(usize::MAX));

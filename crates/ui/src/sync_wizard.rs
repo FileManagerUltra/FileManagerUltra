@@ -95,7 +95,9 @@ pub(crate) fn show(
         review(ui, tokens, state, draft, commands);
         return;
     }
-    fixed_body(ui, BODY_HEIGHT, |ui| {
+    // A taller window gives every step the same extra room, so Back/Next stay put.
+    let extra = crate::sync::spare_height(ui, "wizard", "step", BODY_HEIGHT);
+    fixed_body(ui, BODY_HEIGHT + extra, |ui| {
         ui.add_enabled_ui(!state.busy(), |ui| match step {
             0 => folders(ui, tokens, state, draft, commands),
             1 => goal(ui, tokens, state, commands),
@@ -109,7 +111,9 @@ pub(crate) fn show(
         .get(usize::from(step) + 1)
         .copied()
         .unwrap_or("Review");
-    footer(ui, tokens, step, state, next, commands);
+    let body_end = ui.cursor().top();
+    let anchor = footer(ui, tokens, step, state, next, commands);
+    crate::sync::measure_below(ui, "wizard", "step", body_end, anchor);
 }
 
 /// Every step has the same body height, so the Back/Next buttons never move.
@@ -409,8 +413,10 @@ fn footer(
     state: &SyncState,
     next: &str,
     commands: &mut Vec<Command>,
-) {
+) -> f32 {
     ui.separator();
+    // Top of the Back/Next row: the anchor that stays in place on every step.
+    let anchor = ui.cursor().top();
     ui.horizontal(|ui| {
         ui.add_enabled_ui(step > 0 && !state.busy(), |ui| {
             if sync_icons::button(ui, tokens, Icon::Back, "Back", false).clicked() {
@@ -446,6 +452,7 @@ fn footer(
         format!("saves this answer and goes to “{next}”. Nothing is changed yet.")
     };
     caption(ui, tokens, &format!("Next: {what}"));
+    anchor
 }
 
 /// Name and save the profile: prominent, on the last step.
@@ -515,13 +522,13 @@ fn review(
     commands: &mut Vec<Command>,
 ) {
     let keep = state.profile.watch.enabled;
-    fixed_body(
-        ui,
-        BODY_HEIGHT - SAVE_CARD_HEIGHT - FOOTER_HEIGHT - 6.0,
-        |ui| {
-            grid_reserving(ui, tokens, state, commands, 0.0, true);
-        },
-    );
+    let designed = BODY_HEIGHT - SAVE_CARD_HEIGHT - FOOTER_HEIGHT - 6.0;
+    // The list takes whatever a taller window adds.
+    let extra = crate::sync::spare_height(ui, "wizard", "review", designed);
+    fixed_body(ui, designed + extra, |ui| {
+        grid_reserving(ui, tokens, state, commands, 0.0, true);
+    });
+    let body_end = ui.cursor().top();
     // Outside the scrolling body so the result of the comparison is always in view.
     egui::Frame::new()
         .fill(tokens.hover_bg)
@@ -548,6 +555,7 @@ fn review(
     let has_work = state.plan.as_ref().is_some_and(|p| !p.is_empty_work());
     let comparing =
         matches!(state.phase, Phase::Comparing { .. }) || state.arming == Arming::Comparing;
+    let anchor = ui.cursor().top();
     ui.horizontal(|ui| {
         if working {
             if ui.button("Cancel").clicked() {
@@ -594,4 +602,5 @@ fn review(
             caption(ui, tokens, text);
         }
     }
+    crate::sync::measure_below(ui, "wizard", "review", body_end, anchor);
 }

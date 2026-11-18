@@ -46,11 +46,14 @@ pub(crate) fn show(
     actions(ui, tokens, state, commands);
     RowFilterBar::show(ui, state, commands, false, tokens);
     let used = ui.cursor().top() - top;
-    let table = (PAGE_HEIGHT - used - FOOTER_HEIGHT - BOTTOM_HEIGHT).max(60.0);
+    let designed = (PAGE_HEIGHT - used - FOOTER_HEIGHT - BOTTOM_HEIGHT).max(60.0);
+    // The list takes whatever a taller window adds.
+    let table = designed + sync::spare_height(ui, "advanced", "advanced", designed);
     let width = ui.available_width();
     ui.allocate_ui(egui::vec2(width, table), |ui| {
         grid_reserving(ui, tokens, state, commands, 0.0, false);
     });
+    let below = ui.cursor().top();
     // The same footer as the guided review: the result of the comparison is always in view.
     egui::Frame::new()
         .fill(tokens.hover_bg)
@@ -69,6 +72,7 @@ pub(crate) fn show(
     ui.separator();
     name_row(ui, tokens, state, draft, commands);
     synchronize_row(ui, tokens, state, commands);
+    sync::measure_below(ui, "advanced", "advanced", below, below);
 }
 
 fn name_row(
