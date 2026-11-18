@@ -30,6 +30,8 @@ What is already done on `main` but not released yet is listed under `[Unreleased
 - **Better search.** Builds on the existing Find Files window: regular expressions,
   include/exclude filters, search on SFTP/SMB, results you can open at the matching
   line, and search-and-replace across files.
+- **More previews.** A PDF view where you can fill in forms and sign (not a full PDF
+  editor), a CSV/TSV table view, and diagram previews for draw.io and Dia files.
 
 ## Later
 

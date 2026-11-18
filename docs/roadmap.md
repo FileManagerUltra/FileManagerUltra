@@ -94,6 +94,25 @@ Captured so they are not lost; each becomes an OpenSpec proposal (`/opsx-propose
 
 - **Preferences menu + pane-layout restore policy** (extends existing workspace startup behavior): a Preferences menu item holding app settings from `prefs.toml`, with *Restore previous pane layout* as `yes` / `no` / `ask`. On `ask`, a popup poses the question at startup before the saved layout is applied, and the popup repeats the same yes/no/ask control so the setting can be changed right there (the answer persists the preference). Stays a command (`prefs.*` id) and a `Prefs` field, so the security rules (no secrets, owner-only file) hold unchanged.
 
+### Near-future: more viewers in the Preview pane
+
+Planned next; each becomes its own OpenSpec proposal. All render off the UI thread, are
+bounded for hostile input like the existing previews, and follow the Preview pane's
+zoom, Find and theme conventions.
+
+- **PDF view with form-fill and signing**: read PDFs page by page, fill AcroForm fields
+  and add a signature (drawn, typed or image) and save a copy. Deliberately not a full
+  editor: no text/page editing. The proposal must settle the pure-Rust renderer
+  (the no-FFI rule applies), saving to a new file by default, and digital signatures
+  versus visual signatures only.
+- **CSV / TSV table view**: delimiter detection, header row, virtualized rows and
+  columns for large files, column sorting and Find. Read-only first.
+- **draw.io diagram view**: render `.drawio` / `.dio` files (including compressed
+  diagrams and multiple pages) as an SVG-style preview through the shared SVG service,
+  with Copy as image like Mermaid.
+- **Dia diagram view**: render `.dia` files in the Preview pane. Open question for the
+  proposal: view only, or basic editing (the request called it an "editor view").
+
 ### File synchronization
 
 Implemented as OpenSpec change `add-file-sync` (`fm-sync`, `sync.*` commands, File >
