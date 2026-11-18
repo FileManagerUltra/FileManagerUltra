@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Advanced folder sync view now follows the same order as the guided setup (folders, goal, deleting, compare by, leave out, keep in sync) on one page, in a window the same size as the guided setup, with Synchronize in the far corner.
 
 ### Fixed
+- Ctrl+R in a Preview pane no longer shows an "unsupported" error; it refreshes the folder the preview is showing.
 - Synchronize Folders now starts from the folder you selected (or the current folder), not the one the cursor happens to rest on.
 - The large "Changes" window now fills its whole table, and opening it from the guided setup no longer crashes the app.
 - Switching a pane (for example a preview pane restored from an earlier session) to a Files pane no longer pops up an uncancellable connection dialog for a server you are not connected to; it opens the folder selected in the other pane.

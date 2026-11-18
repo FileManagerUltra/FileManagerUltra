@@ -179,11 +179,15 @@ pub fn refresh() -> CommandSpec {
                 .and_then(|m| m.get("uri"))
                 .map(crate::file_cmds::parse_uri)
                 .transpose()?;
-            let loc = match explicit.or_else(|| {
-                s.layout
-                    .state(s.layout.focused())
-                    .map(|p| p.location.clone())
-            }) {
+            // A Preview pane has no folder of its own: refresh the Files pane it shows.
+            let pane = s.layout.focused();
+            let pane = match s.layout.state(pane) {
+                Some(st) if st.kind == fm_layout::PaneKind::Preview => {
+                    s.layout.preview_target(pane).unwrap_or(pane)
+                }
+                _ => pane,
+            };
+            let loc = match explicit.or_else(|| s.layout.state(pane).map(|p| p.location.clone())) {
                 Some(loc) => loc,
                 None => return Ok(()),
             };
@@ -332,6 +336,25 @@ mod tests {
         wait_ready(&mut s, &home);
         let (entries, _) = s.pane_view(1).expect("view");
         assert_eq!(entries.len(), 3, "fresh listing includes new.txt");
+    }
+
+    #[test]
+    fn refresh_in_a_preview_pane_refreshes_the_files_pane_it_shows() {
+        let (mut s, mem, home) = mem_session();
+        wait_ready(&mut s, &home);
+        let files = s.layout.focused();
+        let preview = s
+            .layout
+            .split(files, fm_layout::Axis::Horizontal, 0.5)
+            .expect("split");
+        let st = s.layout.state_mut(preview).expect("state");
+        st.kind = fm_layout::PaneKind::Preview;
+        st.location = VfsUri::parse("network:///").expect("uri");
+        s.layout.focus_pane(preview).expect("focus");
+        mem.put_str("/home/alice/new.txt", b"n").expect("put");
+        (refresh().run)(&mut s, &Params::Null).expect("refresh from preview");
+        wait_ready(&mut s, &home);
+        assert_eq!(s.dirs.entries(&home).expect("entries").len(), 3);
     }
 
     #[test]
