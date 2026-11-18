@@ -113,6 +113,13 @@ zoom, Find and theme conventions.
 - **Dia diagram view**: render `.dia` files in the Preview pane. Open question for the
   proposal: view only, or basic editing (the request called it an "editor view").
 
+### Near-future: quick feature walkthrough
+- **Guided tour**: a short walkthrough (Help menu and first run) that shows off several
+  features with balloons pointing at the real UI, e.g. panes, tree, preview, Find, sync.
+  It runs on a built-in sandbox of example files (in-memory/temp, never the user's
+  folders), so nothing it demonstrates can change, copy or delete real data. Skippable,
+  restartable, every step dispatches normal commands against the sample tree.
+
 ### File synchronization
 
 Implemented as OpenSpec change `add-file-sync` (`fm-sync`, `sync.*` commands, File >

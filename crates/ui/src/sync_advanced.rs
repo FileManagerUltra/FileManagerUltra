@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::sync::{
     Command, Draft, RowFilterBar, caption, confirmation, folder_pair, grid_reserving, split_list,
-    start_syncing, status_bar,
+    status_bar,
 };
 use crate::sync_icons::{self, Icon};
 use crate::sync_wizard::FOOTER_HEIGHT;
@@ -40,14 +40,8 @@ pub(crate) fn show(
     );
     // A question that needs an answer takes the place of the settings, so the window stays the
     // same size.
-    let asking = state.arming == Arming::Confirm || state.confirm;
-    if asking {
-        if state.arming == Arming::Confirm {
-            start_syncing(ui, tokens, state, commands);
-        }
-        if state.confirm {
-            confirmation(ui, tokens, state, commands);
-        }
+    if state.confirm {
+        confirmation(ui, tokens, state, commands);
     } else if state.plan.is_some() && !settings_open(ui, state) {
         summary_card(ui, tokens, state);
     } else {
@@ -485,22 +479,61 @@ fn synchronize_row(
     state: &SyncState,
     commands: &mut Vec<Command>,
 ) {
+    let keep = state.profile.watch.enabled || state.watching() || state.arming != Arming::Off;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let ready = !state.busy() && state.plan.as_ref().is_some_and(|pl| !pl.is_empty_work());
-        ui.add_enabled_ui(ready, |ui| {
-            if crate::sync::check_button(ui, tokens, "Synchronize now")
-                .on_hover_text("Carry out the listed actions")
+        let has_work = state.plan.as_ref().is_some_and(|pl| !pl.is_empty_work());
+        if state.watching() {
+            if crate::sync::check_button(ui, tokens, "Stop syncing").clicked() {
+                commands.push(("sync.watch.stop", Value::Null));
+            }
+        } else if keep {
+            let ready = state.arming == Arming::Confirm;
+            ui.add_enabled_ui(ready, |ui| {
+                if crate::sync::check_button(ui, tokens, "Start syncing")
+                    .on_hover_text(
+                        "Apply the listed changes now, then apply later ones automatically",
+                    )
+                    .clicked()
+                {
+                    commands.push(("sync.watch.confirm", Value::Null));
+                }
+            });
+        } else {
+            ui.add_enabled_ui(!state.busy() && has_work, |ui| {
+                if crate::sync::check_button(ui, tokens, "Synchronize now")
+                    .on_hover_text("Carry out the listed actions")
+                    .clicked()
+                {
+                    commands.push(("sync.run", Value::Null));
+                }
+            });
+        }
+        if keep {
+            if ui
+                .button("Minimize to Activity panel")
+                .on_hover_text(
+                    "Keep syncing in the background; progress shows in the Activity panel",
+                )
                 .clicked()
             {
-                commands.push(("sync.run", Value::Null));
+                commands.push(("sync.minimize", Value::Null));
             }
-        });
-        ui.add(
-            egui::Label::new(
-                RichText::new("Synchronize: carry out the listed actions.")
-                    .color(tokens.text_muted),
-            )
-            .truncate(),
-        );
+            if state.arming == Arming::Confirm && ui.button("Cancel").clicked() {
+                commands.push(("sync.watch.cancel", Value::Null));
+            }
+        }
+        // The explanation shares the row, so the page height never changes.
+        let text = if keep {
+            if state.arming == Arming::Confirm {
+                "Applies the listed changes now, then later ones automatically."
+            } else {
+                ""
+            }
+        } else {
+            "Synchronize: carry out the listed actions."
+        };
+        if !text.is_empty() {
+            ui.add(egui::Label::new(RichText::new(text).color(tokens.text_muted)).truncate());
+        }
     });
 }

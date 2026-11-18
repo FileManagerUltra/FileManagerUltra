@@ -32,6 +32,8 @@ What is already done on `main` but not released yet is listed under `[Unreleased
   line, and search-and-replace across files.
 - **More previews.** A PDF view where you can fill in forms and sign (not a full PDF
   editor), a CSV/TSV table view, and diagram previews for draw.io and Dia files.
+- **Feature walkthrough.** A quick tour with balloons that shows off several features
+  using built-in examples, so it never changes any of your files.
 
 ## Later
 
