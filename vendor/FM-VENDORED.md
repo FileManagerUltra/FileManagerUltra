@@ -54,3 +54,20 @@ the change (`diff -r` against crates.io shows it) or drop the patch once egui st
 repainting on moves (or offers an option). The upstream macOS scroll-momentum module
 keeps its own `unsafe` (AppKit), as in the crates.io release.
 
+
+## russh-sftp 3.0.1 (Apache-2.0)
+
+Identical to crates.io except the new `src/handle_bytes.rs`, its `pub mod` line in
+`src/lib.rs`, and a `#[serde(with = "crate::handle_bytes")]` (or `serialize_with`) on the
+`handle` field of `Handle`, `Close`, `Read`, `Write`/`WriteRef`, `Fstat`, `FSetStat`,
+`ReadDir` and `FsyncExtension`. The release decodes handles as lossy UTF-8, but handles are
+opaque bytes: asyncssh's are a 4-byte big-endian counter, so from handle 128 on a byte of
+0x80 or more came back as U+FFFD and the server answered "Invalid file handle" (128 of every
+256 files of a large SFTP copy or sync failed). The patch maps handle bytes one per `char`
+(Latin-1), so they round-trip exactly; the wire format is unchanged.
+
+Upstream fixed it on master (`bb2dff4`, 2026-11-17: `SftpHandle` keeps the bytes), not yet
+released. Drop this copy and the `[patch.crates-io]` entry when a release with that fix is
+out, adapting `fm-fs-sftp` to `SftpHandle`. Regression tests: `cargo test -p fm-fs-sftp`
+(`a_non_utf8_handle_is_sent_back_unchanged` fails without the patch;
+`many_files_in_a_row_use_every_handle` uses the test server's asyncssh-style handles).

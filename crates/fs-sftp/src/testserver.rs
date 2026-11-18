@@ -267,9 +267,12 @@ impl Sftp {
         Ok(out)
     }
 
+    /// Handles in asyncssh's format: a 4-byte big-endian counter from 0, so from the 129th
+    /// handle on they contain bytes that are not valid UTF-8 (`00 00 00 80`, …).
     fn new_handle(&mut self, open: Open) -> String {
+        let n = u32::try_from(self.next % (1 << 32)).unwrap_or(0);
         self.next += 1;
-        let h = format!("h{}", self.next);
+        let h = russh_sftp::handle_bytes::from_bytes(&n.to_be_bytes());
         self.handles.insert(h.clone(), open);
         h
     }

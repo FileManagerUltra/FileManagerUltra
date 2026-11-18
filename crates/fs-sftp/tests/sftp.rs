@@ -388,3 +388,55 @@ fn set_attrs_on_a_missing_file_is_an_error() {
             .is_err()
     );
 }
+
+/// asyncssh hands out 4-byte big-endian handles; number 128 is `00 00 00 80`. The handle must
+/// go back to the server byte for byte (a lossy UTF-8 decode made every handle with a byte of
+/// 0x80 or more "Invalid file handle", failing 128 of every 256 files).
+#[test]
+fn a_non_utf8_handle_is_sent_back_unchanged() {
+    use bytes::Bytes;
+    use russh_sftp::protocol::{Close, Handle, Packet};
+    // A HANDLE reply as asyncssh writes it, after the packet length the stream reader takes:
+    // type 102, id 7, handle length 4, then the handle.
+    let body: Vec<u8> = [
+        vec![102u8],
+        7u32.to_be_bytes().to_vec(),
+        4u32.to_be_bytes().to_vec(),
+    ]
+    .concat()
+    .into_iter()
+    .chain([0u8, 0, 0, 0x80])
+    .collect();
+    let mut bytes = Bytes::from(body);
+    let Packet::Handle(Handle { handle, .. }) = Packet::try_from(&mut bytes).unwrap() else {
+        panic!("not a handle reply");
+    };
+    let close = Bytes::try_from(Packet::Close(Close { id: 8, handle })).unwrap();
+    // length, type 4 (CLOSE), id 8, then the handle: length 4 and the same four bytes.
+    assert_eq!(
+        close.get(9..).unwrap(),
+        [0u8, 0, 0, 4, 0, 0, 0, 0x80].as_slice(),
+        "{close:?}"
+    );
+}
+
+/// Hundreds of files in a row through handles that cross 0x80, 0x100 and 0x180.
+#[test]
+fn many_files_in_a_row_use_every_handle() {
+    let (dir, _server, fs) = setup();
+    for n in 0..300 {
+        let file = uri(&fs, &format!("/f{n:03}.bin"));
+        let mut w = fs.open_write(&file, WriteOpts::default()).unwrap();
+        w.write_all(&[u8::try_from(n % 251).unwrap(); 2048])
+            .unwrap();
+        w.flush().unwrap();
+    }
+    let count = std::fs::read_dir(dir.path()).unwrap().count();
+    assert_eq!(count, 300);
+    for n in [0usize, 127, 128, 200, 255, 256, 299] {
+        let mut r = fs.open_read(&uri(&fs, &format!("/f{n:03}.bin"))).unwrap();
+        let mut got = Vec::new();
+        r.read_to_end(&mut got).unwrap();
+        assert_eq!(got, vec![u8::try_from(n % 251).unwrap(); 2048], "file {n}");
+    }
+}

@@ -116,6 +116,8 @@ winresource = "0.1"
 # external — SFTP (fm-fs-sftp only; tokio never leaks to other crates)
 russh = "0.65"
 russh-sftp = "3"
+# Already in the tree through russh; only fm-fs-sftp tests name it.
+bytes = "1.12"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
 secrecy = "0.10"
 
@@ -169,6 +171,7 @@ sspi = { path = "vendor/sspi" }
 smb-transport = { path = "vendor/smb-transport" }
 vt100 = { path = "vendor/vt100" }
 egui-winit = { path = "vendor/egui-winit" }
+russh-sftp = { path = "vendor/russh-sftp" }
 
 # Fat LTO with one codegen unit: faster and smaller. Panics are caught on purpose
 # (see engine), so no panic=abort. opt-level stays 3 because decode speed matters most.
