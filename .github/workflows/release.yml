@@ -83,10 +83,61 @@ jobs:
           mkdir -p target/release
           cp target/${{ matrix.target }}/release/filemanagerultra* target/release/ || true
           rm -f target/release/*.d target/release/*.pdb
+      # macOS: Developer ID signing and notarization. cargo-packager imports the certificate
+      # into a temporary keychain, signs the app with the hardened runtime, notarizes and
+      # staples it, then signs the DMG. The App Store Connect API key is only on disk for
+      # this job (the runner is discarded afterwards; the cleanup step removes it anyway).
+      - name: macOS signing credentials
+        if: runner.os == 'macOS'
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          if [ -z "$ASC_KEY_P8" ]; then
+            echo "No signing secrets: building an unsigned DMG" >&2
+            exit 0
+          fi
+          umask 077
+          printf %s "$ASC_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          echo "APPLE_SIGNING_IDENTITY=Developer ID Application" >> "$GITHUB_ENV"
       - name: Package
+        env:
+          APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && secrets.DEVID_CERT_P12 || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && secrets.DEVID_CERT_PASSWORD || '' }}
+          APPLE_API_KEY: ${{ runner.os == 'macOS' && secrets.ASC_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ runner.os == 'macOS' && secrets.ASC_ISSUER_ID || '' }}
         run: |
           cargo xtask packager-config
           cargo packager --config target/Packager.toml --release --formats ${{ matrix.formats }}
+      - name: Notarize, staple and verify the DMG
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          dmg=$(ls target/packager/*.dmg)
+          auth=(--key "$APPLE_API_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
+          result=$(xcrun notarytool submit "$dmg" "${auth[@]}" --wait --timeout 30m --output-format json)
+          echo "$result"
+          if [ "$(jq -r .status <<<"$result")" != "Accepted" ]; then
+            xcrun notarytool log "$(jq -r .id <<<"$result")" "${auth[@]}" || true
+            exit 1
+          fi
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          codesign --verify --strict --verbose=2 "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+          mnt=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
+          app=$(ls -d "$mnt"/*.app)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -d --verbose=2 "$app" 2>&1 | grep -E 'Identifier=|flags=.*runtime|TeamIdentifier='
+          spctl --assess --type execute --verbose=2 "$app"
+          hdiutil detach "$mnt"
+      - name: Remove the signing key
+        if: always() && runner.os == 'macOS'
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
       - uses: actions/upload-artifact@v7
         with:
           name: filemanagerultra-${{ matrix.name }}

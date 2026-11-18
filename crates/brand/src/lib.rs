@@ -17,8 +17,12 @@ pub const APP_SLUG: &str = "filemanagerultra";
 /// convention on Linux; macOS keeps its existing folders).
 pub const APP_DIR_NAME: &str = if cfg!(windows) { APP_NAME } else { APP_SLUG };
 
-/// Reverse-DNS application id (desktop entry `StartupWMClass`, bundle identifier).
+/// Reverse-DNS application id (installer identifier on Linux and Windows).
 pub const APP_ID: &str = "io.filemanagerultra.app";
+
+/// macOS bundle identifier. It must match the App ID registered with Apple (signing,
+/// notarization, a future Mac App Store build); macOS ties privacy grants to it.
+pub const MACOS_BUNDLE_ID: &str = "com.filemanagerultra.mac";
 
 /// Vendor/organisation name shown in About and used by installers.
 pub const ORG_NAME: &str = "FileManagerUltra";
@@ -178,6 +182,7 @@ mod tests {
             APP_NAME,
             APP_SLUG,
             APP_ID,
+            MACOS_BUNDLE_ID,
             ORG_NAME,
             EXECUTABLE,
             WINDOW_CLASS,
@@ -210,6 +215,24 @@ mod tests {
         assert!(
             APP_ID.contains(APP_SLUG),
             "APP_ID should contain APP_SLUG so a rename stays coherent: {APP_ID:?}"
+        );
+    }
+
+    #[test]
+    fn macos_bundle_id_is_reverse_dns_and_mentions_the_slug() {
+        assert!(
+            MACOS_BUNDLE_ID.split('.').count() >= 3,
+            "MACOS_BUNDLE_ID must look like reverse-DNS: {MACOS_BUNDLE_ID:?}"
+        );
+        assert!(
+            MACOS_BUNDLE_ID
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-'),
+            "bundle ids allow only alphanumerics, '.' and '-': {MACOS_BUNDLE_ID:?}"
+        );
+        assert!(
+            MACOS_BUNDLE_ID.contains(APP_SLUG),
+            "MACOS_BUNDLE_ID should contain APP_SLUG so a rename stays coherent"
         );
     }
 

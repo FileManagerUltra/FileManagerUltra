@@ -2,7 +2,7 @@
 
 Installers are built by the `release` workflow and attached to each GitHub Release (or, for a manual run, to the run's **Artifacts**). Each artifact is a zip; unzip it first. Verify the download against the `sha256` digest shown next to the artifact if you like (`sha256sum file.zip`, `shasum -a 256 file.zip`, or `Get-FileHash file.zip`).
 
-The installers are **not signed**, so your OS will warn on first start (see below).
+The macOS disk image is signed with an Apple Developer ID and notarized by Apple, so it opens without warnings. The Windows and Linux installers are **not signed** yet, so Windows may warn on first start (see below).
 
 ## Windows (x64)
 
@@ -12,11 +12,10 @@ The installers are **not signed**, so your OS will warn on first start (see belo
 
 ## macOS (Apple silicon: `macos-arm64`)
 
-1. Unzip, clear the quarantine flag on the disk image (`xattr -d com.apple.quarantine ~/Downloads/FileManagerUltra_*.dmg`), open the `*.dmg` and drag the app to **Applications**.
-2. Because the app is unsigned, Gatekeeper blocks the first start. Either right-click the app → **Open** → **Open**, or run:
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/FileManagerUltra.app
-   ```
+1. Unzip `filemanagerultra-macos-arm64`, open the `*.dmg` and drag the app to **Applications**.
+2. Start it from Applications or Launchpad. The app is signed and notarized, so macOS opens it after the usual "downloaded from the Internet" confirmation.
+
+Versions before 0.3.0 were unsigned and used a different app identifier. After upgrading, macOS asks once more for any folder permissions (such as Documents or Full Disk Access) you had granted; your settings are kept.
 
 ## Linux (x64)
 

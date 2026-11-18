@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Browse… buttons choose a folder or file from a list (local, network share or SFTP) instead of typing it: on both sync folders, the copy/move destination and the subtitle and playlist dialogs.
 
 ### Changed
+- macOS: the disk image and the app are now signed with an Apple Developer ID and notarized by Apple, so they open without Gatekeeper warnings or quarantine workarounds. The app has a new identifier (`com.filemanagerultra.mac`), so macOS asks once more for folder permissions you granted before; settings are kept.
 - The folder chooser is tidier: Up, New folder and a new Show hidden button are icon buttons with tooltips, the path box lines up with them, and the places list runs the full height.
 - Synchronize Folders: the action filter in the list is cleared whenever you start a new comparison.
 - Synchronize Folders: the Advanced view now matches the guided setup: Save and Synchronize buttons look the same and sit below the list (Synchronize last), and the comparison summary sits in the same always-visible footer with the expand button.

@@ -124,12 +124,10 @@ pub fn packager_config() -> Result<String, String> {
     let root = util::workspace_root()?;
     let brand = read_brand(&root)?;
     let lib = util::read(&root.join(BRAND_LIB))?;
-    let id = Regex::new(r#"APP_ID: &str = "([^"]+)""#)
-        .map_err(|e| e.to_string())?
-        .captures(&lib)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().to_string())
-        .ok_or("APP_ID not found in the brand crate")?;
+    // macOS uses its own bundle id (the App ID registered with Apple); the packager
+    // writes one identifier per run, so pick it by the host the installer is built on.
+    let id = capture_const(&lib, packager_identifier_const(cfg!(target_os = "macos")))?;
+    let macos = macos_section(std::env::var("APPLE_SIGNING_IDENTITY").ok().as_deref())?;
     let manifest = util::read(&root.join("Cargo.toml"))?;
     let version = Regex::new(r#"(?m)^version\s*=\s*"([^"]+)""#)
         .map_err(|e| e.to_string())?
@@ -143,7 +141,7 @@ description = \"A cross-platform multi-pane file manager\"\ncategory = \"Utility
 icons = [\"{root}/packaging/icon.png\", \"{root}/packaging/icon.ico\", \"{root}/packaging/icon.icns\"]\nout-dir = \"{root}/target/packager\"\n\
 binaries-dir = \"{root}/target/release\"\nbinaries = [{{ path = \"{slug}\", main = true }}]\n\
 \n[deb]\ndepends = [{deb_depends}]\n\
-\n[nsis]\ninstaller-icon = \"{root}/packaging/icon.ico\"\npreinstall-section = '''\n{icon_refresh}\n'''\n",
+\n[nsis]\ninstaller-icon = \"{root}/packaging/icon.ico\"\npreinstall-section = '''\n{icon_refresh}\n'''\n{macos}",
         name = brand.name,
         slug = brand.slug,
         root = root.display().to_string().replace('\\', "/"),
@@ -160,6 +158,33 @@ binaries-dir = \"{root}/target/release\"\nbinaries = [{{ path = \"{slug}\", main
     }
     fs::write(&out, toml).map_err(|e| e.to_string())?;
     Ok(format!("wrote {}", util::rel(&root, &out).display()))
+}
+
+/// The brand constant holding the packager `identifier` for the build host.
+fn packager_identifier_const(macos: bool) -> &'static str {
+    if macos { "MACOS_BUNDLE_ID" } else { "APP_ID" }
+}
+
+/// `[macos]` section of the packager config. With a signing identity (CI sets
+/// `APPLE_SIGNING_IDENTITY`), cargo-packager signs the app with the hardened runtime and,
+/// when notarization credentials are in the environment, notarizes and staples it.
+/// Without one the build stays unsigned, as local and manual test builds are.
+fn macos_section(signing_identity: Option<&str>) -> Result<String, String> {
+    let Some(identity) = signing_identity.map(str::trim).filter(|i| !i.is_empty()) else {
+        return Ok(String::new());
+    };
+    if identity.len() > 200
+        || identity
+            .chars()
+            .any(|c| c.is_control() || c == '"' || c == '\\')
+    {
+        return Err(
+            "APPLE_SIGNING_IDENTITY must be a certificate name or hash, without quotes, \
+             backslashes or control characters"
+                .into(),
+        );
+    }
+    Ok(format!("\n[macos]\nsigning-identity = \"{identity}\"\n"))
 }
 
 /// Cross-check `apps/fm-app/src/menu.rs` command-id literals against the ids
@@ -224,6 +249,7 @@ pub fn rename(new_name: &str) -> Result<String, String> {
         ("APP_NAME", new_name.to_string()),
         ("APP_SLUG", new_slug.clone()),
         ("APP_ID", format!("io.{new_slug}.app")),
+        ("MACOS_BUNDLE_ID", format!("com.{new_slug}.mac")),
         ("ORG_NAME", new_name.to_string()),
         ("EXECUTABLE", new_slug.clone()),
     ] {
@@ -415,6 +441,31 @@ mod tests {
     fn replace_const_errors_when_missing() {
         let text = "pub const OTHER: &str = \"x\";\n";
         assert!(replace_const(text, "APP_NAME", "New").is_err());
+    }
+
+    #[test]
+    fn macos_builds_use_the_registered_bundle_id() {
+        assert_eq!(packager_identifier_const(true), "MACOS_BUNDLE_ID");
+        assert_eq!(packager_identifier_const(false), "APP_ID");
+        let root = util::workspace_root().expect("workspace");
+        let lib = util::read(&root.join(BRAND_LIB)).expect("brand");
+        let mac = capture_const(&lib, "MACOS_BUNDLE_ID").expect("bundle id");
+        assert!(mac.starts_with("com.") && mac.ends_with(".mac"), "{mac}");
+    }
+
+    #[test]
+    fn signing_identity_is_optional_and_validated() {
+        assert_eq!(macos_section(None).expect("none"), "");
+        assert_eq!(macos_section(Some("  ")).expect("blank"), "");
+        let section = macos_section(Some("Developer ID Application")).expect("identity");
+        let config: toml::Table = toml::from_str(&section).expect("parse");
+        assert_eq!(
+            config["macos"]["signing-identity"].as_str(),
+            Some("Developer ID Application")
+        );
+        for bad in ["a\"b", "a\\b", "a\nb", &"x".repeat(201)] {
+            assert!(macos_section(Some(bad)).is_err(), "{bad:?}");
+        }
     }
 
     #[test]
