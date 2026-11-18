@@ -25,6 +25,14 @@ pub(crate) enum Icon {
     Check,
     Next,
     Back,
+    /// An arrow pointing up: the parent folder.
+    Up,
+    /// A folder with a plus.
+    NewFolder,
+    /// An open eye: hidden items are shown.
+    Eye,
+    /// A struck-through eye: hidden items are left out.
+    EyeOff,
     Compare,
     Swap,
     /// An open folder: load a saved sync.
@@ -87,8 +95,14 @@ impl Icon {
             Self::TwoWay | Self::Loop | Self::Next | Self::Compare | Self::Swap => tokens.accent,
             Self::Funnel | Self::Hash => tokens.git_modified,
             Self::Open => tokens.git_modified,
-            Self::Sliders | Self::Expand => tokens.accent,
-            Self::Folder | Self::Clock | Self::List | Self::Save | Self::Back => tokens.text_muted,
+            Self::Sliders | Self::Expand | Self::NewFolder | Self::Eye => tokens.accent,
+            Self::Folder
+            | Self::Clock
+            | Self::List
+            | Self::Save
+            | Self::Back
+            | Self::Up
+            | Self::EyeOff => tokens.text_muted,
         }
     }
 }
@@ -125,6 +139,47 @@ pub(crate) fn paint(p: &Painter, icon: Icon, c: Pos2, size: f32, color: Color32)
         }
         Icon::Update | Icon::Next | Icon::CopyRight => arrow(p, c, k, 0.0, true, st),
         Icon::Back | Icon::CopyLeft => arrow(p, c, k, 0.0, false, st),
+        Icon::Up => {
+            p.line_segment([at(-6.0, -7.0), at(6.0, -7.0)], st);
+            p.line_segment([at(0.0, 7.0), at(0.0, -3.0)], st);
+            p.add(egui::Shape::line(
+                vec![at(-5.0, 1.0), at(0.0, -4.0), at(5.0, 1.0)],
+                st,
+            ));
+        }
+        Icon::Eye | Icon::EyeOff => {
+            let lid = |sign: f32| {
+                (0..=8)
+                    .map(|i| {
+                        let x = -8.0 + 2.0 * i as f32;
+                        at(x, sign * 5.0 * (1.0 - (x / 8.0).powi(2)))
+                    })
+                    .collect::<Vec<_>>()
+            };
+            p.add(egui::Shape::line(lid(-1.0), st));
+            p.add(egui::Shape::line(lid(1.0), st));
+            p.circle_stroke(c, 2.0 * k, st);
+            if icon == Icon::EyeOff {
+                p.line_segment([at(-7.0, 7.0), at(7.0, -7.0)], st);
+            }
+        }
+        Icon::NewFolder => {
+            p.add(egui::Shape::closed_line(
+                vec![
+                    at(-8.0, -5.0),
+                    at(-8.0, 7.0),
+                    at(8.0, 7.0),
+                    at(8.0, -3.0),
+                    at(1.5, -3.0),
+                    at(-0.5, -6.0),
+                    at(-6.0, -6.0),
+                    at(-6.0, -5.0),
+                ],
+                st,
+            ));
+            p.line_segment([at(0.0, 0.0), at(0.0, 5.0)], st);
+            p.line_segment([at(-2.5, 2.5), at(2.5, 2.5)], st);
+        }
         Icon::DeleteLeft | Icon::DeleteRight => {
             let sx = if icon == Icon::DeleteLeft { -1.0 } else { 1.0 };
             p.line_segment([at(8.0 * sx, -6.0), at(8.0 * sx, 6.0)], st);
@@ -457,9 +512,20 @@ pub(crate) fn menu_item(
 
 /// A square button with only an icon; `label` is its accessible name and hover text.
 pub(crate) fn icon_button(ui: &mut Ui, tokens: &Tokens, icon: Icon, label: &str) -> egui::Response {
+    icon_button_sized(ui, tokens, icon, label, 44.0)
+}
+
+/// An icon-only button `side` points wide and high; the label is its tooltip and accessible name.
+pub(crate) fn icon_button_sized(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    icon: Icon,
+    label: &str,
+    side: f32,
+) -> egui::Response {
     let enabled = ui.is_enabled();
     let fade = if enabled { 1.0 } else { 0.45 };
-    let (rect, response) = ui.allocate_exact_size(vec2(44.0, 44.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(side, side), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     let v = ui.style().interact(&response);
     ui.painter().rect(
@@ -473,7 +539,7 @@ pub(crate) fn icon_button(ui: &mut Ui, tokens: &Tokens, icon: Icon, label: &str)
         ui.painter(),
         icon,
         rect.center(),
-        22.0,
+        if side > 40.0 { 22.0 } else { side * 0.58 },
         icon.color(tokens).gamma_multiply(fade),
     );
     response

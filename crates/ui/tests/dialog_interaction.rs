@@ -783,12 +783,12 @@ fn picker_new_folder_creates_it_and_escape_closes_the_row_first() {
             s,
         );
     h.run_steps(5);
-    h.get_by_label("New folder").click();
+    h.get_by_label("Create a folder in the open folder").click();
     h.run_steps(3);
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
     assert!(h.state().picker.is_some(), "Esc closed the whole picker");
-    h.get_by_label("New folder").click();
+    h.get_by_label("Create a folder in the open folder").click();
     h.run_steps(3);
     h.event(egui::Event::Text("fresh".into()));
     h.run_steps(2);
@@ -1443,4 +1443,34 @@ fn sync_large_window_fills_its_table_with_rows() {
         .filter_map(|n| n.accesskit_node().bounding_box().map(|b| b.y1))
         .fold(0.0_f64, f64::max);
     assert!(rows >= 20 && max_y > 750.0, "{rows} rows, last at {max_y}");
+}
+
+#[test]
+fn picker_hidden_button_lists_dot_folders() {
+    let tokens = Tokens::dark();
+    let dir = tempfile::tempdir().expect("tmp");
+    std::fs::create_dir(dir.path().join(".secret")).expect("mkdir");
+    std::fs::create_dir(dir.path().join("plain")).expect("mkdir");
+    let mut s = Session::new().expect("session");
+    s.dispatch(
+        "picker.open",
+        &json!({"purpose": "x", "start": dir.path().to_string_lossy()}),
+    )
+    .expect("picker");
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(900.0, 700.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                s.poll();
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                fm_ui::picker::show(ui.ctx(), s, &tokens);
+            },
+            s,
+        );
+    h.run_steps(8);
+    assert!(h.query_by_label(".secret").is_none());
+    h.get_by_label("Show hidden files and folders").click();
+    h.run_steps(3);
+    assert!(h.query_by_label(".secret").is_some());
+    assert!(h.query_by_label("plain").is_some());
 }

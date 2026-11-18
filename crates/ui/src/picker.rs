@@ -18,17 +18,19 @@ struct Draft {
     creating: Option<String>,
     /// Which chooser (purpose, depth in the stack) the window last showed.
     shown_for: Option<(String, usize)>,
+    /// List dot-files and other hidden entries.
+    hidden: bool,
 }
 
 fn draft_id() -> Id {
     Id::NULL.with("fm-picker-draft")
 }
 
-/// Folders first, then (for file pickers only) files, each by name; hidden entries are left out.
-fn sorted(entries: &[Entry], kind: PickKind) -> Vec<Entry> {
+/// Folders first, then (for file pickers only) files, each by name; hidden entries only when asked.
+fn sorted(entries: &[Entry], kind: PickKind, hidden: bool) -> Vec<Entry> {
     let mut rows: Vec<Entry> = entries
         .iter()
-        .filter(|e| !fm_engine::is_hidden(e))
+        .filter(|e| hidden || !fm_engine::is_hidden(e))
         .filter(|e| e.is_dir_like() || (kind == PickKind::File && e.is_file()))
         .cloned()
         .collect();
@@ -65,7 +67,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let rows = s
         .dirs
         .entries(&picker.folder)
-        .map(|entries| sorted(&entries, picker.kind))
+        .map(|entries| sorted(&entries, picker.kind, draft.hidden))
         .unwrap_or_default();
     let folder_kind = picker.kind == PickKind::Folder;
     let title = if !picker.title.is_empty() {
@@ -97,11 +99,14 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         .fixed_size([780.0, 480.0])
         .show(ctx, |ui| {
             crate::dialog_style::apply(ui, tokens);
+            let height = ui.available_height();
             ui.horizontal_top(|ui| {
-                ui.allocate_ui(egui::vec2(220.0, 400.0), |ui| {
+                ui.allocate_ui(egui::vec2(220.0, height), |ui| {
                     ui.set_width(220.0);
                     ui.vertical(|ui| {
-                        if let Some(uri) = places_column(ui, tokens, &sections, &picker.folder) {
+                        if let Some(uri) =
+                            places_column(ui, tokens, &sections, &picker.folder, height)
+                        {
                             go = Some(uri);
                         }
                     });
@@ -113,9 +118,14 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                             let parent = picker.folder.parent();
                             if ui
                                 .add_enabled_ui(parent.is_some(), |ui| {
-                                    sync_icons::button(ui, tokens, Icon::Back, "Up", false)
-                                        .on_hover_text("Go to the parent folder")
-                                        .clicked()
+                                    sync_icons::icon_button_sized(
+                                        ui,
+                                        tokens,
+                                        Icon::Up,
+                                        "Go to the parent folder",
+                                        32.0,
+                                    )
+                                    .clicked()
                                 })
                                 .inner
                             {
@@ -123,16 +133,31 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                             }
                             let can_create = fm_engine::picker_cmds::choosable(&picker.folder);
                             if ui
-                                .add_enabled(can_create, egui::Button::new("New folder"))
-                                .on_hover_text("Create a folder in the open folder")
-                                .clicked()
+                                .add_enabled_ui(can_create, |ui| {
+                                    sync_icons::icon_button_sized(
+                                        ui,
+                                        tokens,
+                                        Icon::NewFolder,
+                                        "Create a folder in the open folder",
+                                        32.0,
+                                    )
+                                    .clicked()
+                                })
+                                .inner
                             {
                                 draft.creating = Some(String::new());
                             }
+                            let (eye, tip) = if draft.hidden {
+                                (Icon::Eye, "Hide hidden files and folders")
+                            } else {
+                                (Icon::EyeOff, "Show hidden files and folders")
+                            };
+                            if sync_icons::icon_button_sized(ui, tokens, eye, tip, 32.0).clicked() {
+                                draft.hidden = !draft.hidden;
+                            }
                             let edit = ui.add(
-                                egui::TextEdit::singleline(&mut draft.path)
+                                crate::sync::input(&mut draft.path)
                                     .hint_text("Type a location and press Enter")
-                                    .margin(egui::vec2(8.0, 6.0))
                                     .desired_width(f32::INFINITY),
                             );
                             if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -148,9 +173,8 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                         if let Some(name) = draft.creating.as_mut() {
                             ui.horizontal(|ui| {
                                 let edit = ui.add(
-                                    egui::TextEdit::singleline(name)
+                                    crate::sync::input(name)
                                         .hint_text("New folder name")
-                                        .margin(egui::vec2(8.0, 6.0))
                                         .desired_width(ui.available_width() - 190.0),
                                 );
                                 if !edit.has_focus() && !edit.lost_focus() {
@@ -357,11 +381,12 @@ fn places_column(
     tokens: &Tokens,
     sections: &[(&'static str, Vec<fm_engine::places_cmds::Place>)],
     current: &VfsUri,
+    height: f32,
 ) -> Option<VfsUri> {
     let mut open = None;
     egui::ScrollArea::vertical()
         .id_salt("fm-picker-places")
-        .max_height(390.0)
+        .max_height(height)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
