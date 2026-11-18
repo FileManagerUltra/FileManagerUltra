@@ -50,6 +50,8 @@ pub struct Session {
     /// Requested native window fullscreen; the app applies it. Never persisted.
     pub window_fullscreen: bool,
     pub(crate) media_store: crate::media_store::MediaStore,
+    /// Folder sync profiles, plans and runs.
+    pub sync: crate::sync_hub::SyncHub,
     pub(crate) playlist_job: crate::media_playlist_cmds::PlaylistJob,
     pub(crate) media_source: crate::media_source_cmds::MediaSourceJob,
     pub registry: Registry,
@@ -137,6 +139,13 @@ pub struct Session {
     pub open_with: Option<crate::openwith_cmds::OpenWith>,
     /// The "Compare with…" file chooser, while open.
     pub compare: Option<crate::diff_compare_cmds::ComparePicker>,
+    /// The path picker, while open.
+    pub picker: Option<crate::picker_cmds::Picker>,
+    /// Pickers waiting beneath the open one: a dialog opened from a picker (a sign-in form's
+    /// key file) gets its own chooser, and closing it brings the earlier one back.
+    pub parked_pickers: Vec<crate::picker_cmds::Picker>,
+    /// A finished picker's `(purpose, path)` for the dialog that asked; it takes it once.
+    pub picked: Option<(String, String)>,
     pub(crate) app_catalog: Option<Arc<Mutex<Option<Arc<crate::openwith_cmds::AppCatalog>>>>>,
     /// The Find Files window and its running search.
     pub search: Option<crate::search_cmds::Search>,
@@ -171,6 +180,9 @@ impl Default for Session {
             search: None,
             open_with: None,
             compare: None,
+            picker: None,
+            parked_pickers: Vec::new(),
+            picked: None,
             app_catalog: None,
             registry: Registry::new(),
             audio_owner: crate::audio_owner::AudioOwner::None,
@@ -179,6 +191,7 @@ impl Default for Session {
             media_fullscreen: None,
             window_fullscreen: false,
             media_store: Default::default(),
+            sync: Default::default(),
             playlist_job: Default::default(),
             media_source: Default::default(),
             prefs: Prefs::default(),
@@ -400,6 +413,7 @@ impl Session {
             || self.updates.browser_job.is_some()
             || !self.inflight.is_empty()
             || self.watch.has_pending()
+            || self.sync.any_busy()
             || self.git_busy()
             || self.diff_busy()
             || self.remote.is_busy()
@@ -437,6 +451,7 @@ impl Session {
         self.note_files_dir();
         changed |= self.media_tick();
         changed |= self.media_store_tick();
+        changed |= self.pump_sync();
         changed |= self.media_playlist_tick();
         changed |= self.media_source_tick();
         self.reconcile_audio_owner();

@@ -6,6 +6,7 @@
 
 use std::io::{Read, Write};
 
+use crate::attrs::{AttrCaps, AttrReport, AttrSet, Attrs};
 use crate::entry::Entry;
 use crate::error::FmError;
 use crate::uri::VfsUri;
@@ -94,9 +95,88 @@ pub trait Vfs: Send + Sync {
         ))
     }
 
+    /// Every attribute the backend can read for one item (a final symlink is not followed).
+    /// Backends without attribute support keep this default.
+    fn stat_full(&self, uri: &VfsUri) -> Result<Attrs, FmError> {
+        let _ = uri;
+        Err(FmError::Unsupported(
+            "this location does not expose full attributes",
+        ))
+    }
+
+    /// Apply the attribute groups in `which` that `attrs` carries, best effort: one failing
+    /// group never stops the others (see [`AttrReport`]). A final symlink is not followed.
+    fn set_attrs(
+        &self,
+        uri: &VfsUri,
+        attrs: &Attrs,
+        which: AttrSet,
+    ) -> Result<AttrReport, FmError> {
+        let _ = (uri, attrs, which);
+        Err(FmError::Unsupported("this location cannot set attributes"))
+    }
+
+    /// What this backend can read and write at `uri`; nothing by default.
+    fn attr_caps(&self, uri: &VfsUri) -> AttrCaps {
+        let _ = uri;
+        AttrCaps::NONE
+    }
+
     /// Are both paths on the same volume? Drives move/copy decisions.
     fn same_device(&self, a: &VfsUri, b: &VfsUri) -> bool;
 
     /// Disk usage of a volume, if the backend can tell.
     fn space(&self, uri: &VfsUri) -> Result<Option<SpaceInfo>, FmError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::uri::{Scheme, VfsUri};
+
+    struct Bare;
+
+    impl Vfs for Bare {
+        fn scheme(&self) -> Scheme {
+            Scheme::File
+        }
+        fn read_dir(&self, _: &VfsUri) -> Result<Vec<Entry>, FmError> {
+            Ok(vec![])
+        }
+        fn stat(&self, u: &VfsUri) -> Result<Entry, FmError> {
+            Err(FmError::NotFound(u.to_string()))
+        }
+        fn open_read(&self, u: &VfsUri) -> Result<Box<dyn Read + Send>, FmError> {
+            Err(FmError::NotFound(u.to_string()))
+        }
+        fn open_write(&self, u: &VfsUri, _: WriteOpts) -> Result<Box<dyn Write + Send>, FmError> {
+            Err(FmError::NotFound(u.to_string()))
+        }
+        fn create_dir(&self, _: &VfsUri) -> Result<(), FmError> {
+            Ok(())
+        }
+        fn remove(&self, _: &VfsUri) -> Result<(), FmError> {
+            Ok(())
+        }
+        fn rename(&self, _: &VfsUri, _: &VfsUri) -> Result<(), FmError> {
+            Ok(())
+        }
+        fn same_device(&self, _: &VfsUri, _: &VfsUri) -> bool {
+            true
+        }
+        fn space(&self, _: &VfsUri) -> Result<Option<SpaceInfo>, FmError> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn a_backend_without_attribute_support_reports_unsupported() {
+        let uri = VfsUri::root_file();
+        assert!(matches!(Bare.stat_full(&uri), Err(FmError::Unsupported(_))));
+        assert!(matches!(
+            Bare.set_attrs(&uri, &Attrs::default(), AttrSet::ALL),
+            Err(FmError::Unsupported(_))
+        ));
+        assert_eq!(Bare.attr_caps(&uri), AttrCaps::NONE);
+    }
 }

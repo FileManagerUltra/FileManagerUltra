@@ -1513,8 +1513,17 @@ mod tests {
         let mut h = harness(Tokens::dark(), egui::vec2(1000.0, 700.0));
         h.get_by_label("Files").click();
         h.run();
-        h.get_by_label("Open with a single click").click();
-        h.get_by_label("Ask before deleting permanently").click();
+        for label in [
+            "Open with a single click",
+            "Ask before deleting permanently",
+        ] {
+            h.get_by_label(label).scroll_to_me();
+            h.run();
+            h.get_by_label(label).click();
+            h.run();
+        }
+        h.get_by_label("Bytes").scroll_to_me();
+        h.run();
         h.get_by_label("Bytes").click();
         h.run();
         assert!(h.state().prefs.single_click_open);

@@ -10,14 +10,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 
 use fm_vfs::{
-    Authority, Entry, EntryKind, FmError, MAX_COMPONENT_BYTES, MAX_DIR_ENTRIES, Scheme, SpaceInfo,
-    Vfs, VfsUri, WriteOpts,
+    AttrCaps, AttrFailKind, AttrGroup, AttrReport, AttrSet, Attrs, Authority, Entry, EntryKind,
+    FmError, MAX_COMPONENT_BYTES, MAX_DIR_ENTRIES, Scheme, SpaceInfo, Vfs, VfsUri, WriteOpts,
 };
 use secrecy::{ExposeSecret, SecretString};
 use smb::binrw_util::sized_string::SizedWideString;
 use smb::{
     Client, CreateDisposition, CreateOptions, DirAccessMask, FileAccessMask, FileAttributes,
-    FileCreateArgs, FileDispositionInformation, FileFsFullSizeInformation,
+    FileBasicInformation, FileCreateArgs, FileDispositionInformation, FileFsFullSizeInformation,
     FileFullDirectoryInformation, FileNetworkOpenInformation, FileRenameInformation, Resource,
     UncPath,
 };
@@ -29,6 +29,31 @@ use crate::errors::map_err;
 const CHUNK: usize = 1024 * 1024;
 /// Seconds between 1601-01-01 (FILETIME) and 1970-01-01.
 const FILETIME_UNIX_OFFSET_SECS: u64 = 11_644_473_600;
+/// What SMB carries and this backend writes: the three times and the DOS flags.
+const SMB_ATTRS: AttrSet = AttrSet::of(&[
+    AttrGroup::Btime,
+    AttrGroup::Mtime,
+    AttrGroup::Atime,
+    AttrGroup::Flags,
+]);
+// Standard FILE_ATTRIBUTE_* bits, the `Attrs::dos_flags` encoding.
+const DOS_READONLY: u32 = 0x1;
+const DOS_HIDDEN: u32 = 0x2;
+const DOS_SYSTEM: u32 = 0x4;
+const DOS_ARCHIVE: u32 = 0x20;
+const DOS_MASK: u32 = DOS_READONLY | DOS_HIDDEN | DOS_SYSTEM | DOS_ARCHIVE;
+
+fn dos_bits(a: &FileAttributes) -> u32 {
+    [
+        (a.readonly(), DOS_READONLY),
+        (a.hidden(), DOS_HIDDEN),
+        (a.system(), DOS_SYSTEM),
+        (a.archive(), DOS_ARCHIVE),
+    ]
+    .into_iter()
+    .filter(|(set, _)| *set)
+    .fold(0, |acc, (_, bit)| acc | bit)
+}
 
 pub(crate) struct Inner {
     pub(crate) client: Client,
@@ -469,6 +494,126 @@ impl Vfs for SmbFs {
             info.end_of_file,
             *info.last_write_time,
         ))
+    }
+
+    fn stat_full(&self, uri: &VfsUri) -> Result<Attrs, FmError> {
+        let Some(loc) = self.locate(uri)? else {
+            return Ok(Attrs::default());
+        };
+        let display = uri.path_str();
+        let args = FileCreateArgs::make_open_existing(read_access());
+        let res = self.open(&loc, &args, display)?;
+        let info = match &res {
+            Resource::File(f) => f.query_info::<FileNetworkOpenInformation>(),
+            Resource::Directory(d) => d.query_info::<FileNetworkOpenInformation>(),
+            Resource::Pipe(_) => return Err(FmError::Unsupported("pipes are not browsable")),
+        }
+        .map_err(|e| map_err(&e, display));
+        close_res(res);
+        let info = self.mark(info)?;
+        Ok(Attrs {
+            btime: filetime_to_system(*info.creation_time),
+            mtime: filetime_to_system(*info.last_write_time),
+            atime: filetime_to_system(*info.last_access_time),
+            dos_flags: Some(dos_bits(&info.file_attributes)),
+            ..Attrs::default()
+        })
+    }
+
+    fn set_attrs(
+        &self,
+        uri: &VfsUri,
+        attrs: &Attrs,
+        which: AttrSet,
+    ) -> Result<AttrReport, FmError> {
+        let mut report = AttrReport::default();
+        let wanted = which.intersect(attrs.present());
+        for g in wanted.iter() {
+            if !SMB_ATTRS.contains(g) {
+                report.fail(g, AttrFailKind::Unsupported);
+            }
+        }
+        let wanted = wanted.intersect(SMB_ATTRS);
+        if wanted.is_empty() {
+            return Ok(report);
+        }
+        let loc = self.need(uri)?;
+        let display = uri.path_str();
+        if loc.rel.is_empty() {
+            return Err(FmError::PermissionDenied(display.to_string()));
+        }
+        let ft = |g: AttrGroup, t: Option<std::time::SystemTime>| {
+            // A zero FILETIME means "leave unchanged".
+            t.filter(|_| wanted.contains(g))
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |d| {
+                    (d.as_secs().saturating_add(FILETIME_UNIX_OFFSET_SECS))
+                        .saturating_mul(10_000_000)
+                        .saturating_add(u64::from(d.subsec_nanos() / 100))
+                })
+        };
+        let mut file_attributes = FileAttributes::new();
+        if wanted.contains(AttrGroup::Flags)
+            && let Some(bits) = attrs.dos_flags
+        {
+            file_attributes = file_attributes
+                .with_readonly(bits & DOS_READONLY != 0)
+                .with_hidden(bits & DOS_HIDDEN != 0)
+                .with_system(bits & DOS_SYSTEM != 0)
+                .with_archive(bits & DOS_ARCHIVE != 0);
+            if bits & DOS_MASK == 0 {
+                // All-zero attributes mean "unchanged"; NORMAL clears the rest.
+                file_attributes = file_attributes.with_normal(true);
+            }
+        }
+        let info = FileBasicInformation {
+            creation_time: ft(AttrGroup::Btime, attrs.btime).into(),
+            last_access_time: ft(AttrGroup::Atime, attrs.atime).into(),
+            last_write_time: ft(AttrGroup::Mtime, attrs.mtime).into(),
+            change_time: 0.into(),
+            file_attributes,
+        };
+        let args = FileCreateArgs::make_open_existing(
+            FileAccessMask::new()
+                .with_file_write_attributes(true)
+                .with_file_read_attributes(true)
+                .with_synchronize(true),
+        );
+        let res = self.open(&loc, &args, display)?;
+        let result = match &res {
+            Resource::File(f) => f.set_info(info),
+            Resource::Directory(d) => d.set_info(info),
+            Resource::Pipe(_) => return Err(FmError::Unsupported("pipes are not browsable")),
+        }
+        .map_err(|e| map_err(&e, display));
+        close_res(res);
+        match self.mark(result) {
+            Ok(()) => {
+                for g in wanted.iter() {
+                    report.ok(g);
+                }
+            }
+            Err(FmError::PermissionDenied(_)) => {
+                for g in wanted.iter() {
+                    report.fail(g, AttrFailKind::PermissionDenied);
+                }
+            }
+            Err(e @ FmError::Io(_)) => return Err(e),
+            Err(e) => {
+                let msg = e.to_string();
+                for g in wanted.iter() {
+                    report.fail(g, AttrFailKind::Other(msg.clone()));
+                }
+            }
+        }
+        Ok(report)
+    }
+
+    fn attr_caps(&self, _uri: &VfsUri) -> AttrCaps {
+        AttrCaps {
+            read: SMB_ATTRS,
+            write: SMB_ATTRS,
+        }
     }
 
     fn open_read(&self, uri: &VfsUri) -> Result<Box<dyn Read + Send>, FmError> {

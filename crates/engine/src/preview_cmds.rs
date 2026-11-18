@@ -348,7 +348,7 @@ impl Session {
 
     /// The entry under the cursor of Files pane `pane` (`None` on `..` or when empty).
     /// On `.` this is the pane's own folder, so a following Preview shows the folder.
-    fn cursor_entry(&mut self, pane: PaneId) -> Option<Entry> {
+    pub(crate) fn cursor_entry(&mut self, pane: PaneId) -> Option<Entry> {
         let (on_current, on_parent, row, location) = {
             let state = self.layout.state(pane)?;
             (

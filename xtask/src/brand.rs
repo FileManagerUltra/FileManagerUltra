@@ -79,7 +79,9 @@ pub fn check() -> Result<String, String> {
             Err(_) => continue,
         };
         for (line_no, line) in text.lines().enumerate() {
-            if line.contains("Color32::") || line.contains("Color32 {") {
+            let is_return_type =
+                line.contains("-> Color32 {") || line.contains("-> egui::Color32 {");
+            if line.contains("Color32::") || (line.contains("Color32 {") && !is_return_type) {
                 problems.push(format!(
                     "{}:{}: colour literal outside theme.rs — use a semantic token from fm_ui::theme",
                     util::rel(&root, path).display(),

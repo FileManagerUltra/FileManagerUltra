@@ -527,7 +527,7 @@ mod tests {
         let ctx = Context::default();
         let mut picker = fixture();
         let mut previous = None;
-        for size in [egui::vec2(900.0, 650.0), egui::vec2(1100.0, 750.0)] {
+        for size in [egui::vec2(1100.0, 900.0), egui::vec2(1300.0, 1000.0)] {
             let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
             for _ in 0..3 {
                 let mut output = ctx.run_ui(

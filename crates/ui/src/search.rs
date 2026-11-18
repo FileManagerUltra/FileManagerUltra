@@ -361,7 +361,12 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
 }
 
 /// A borderless glyph button for the title bar: a cross (`close`) or a dash.
-fn title_button(ui: &mut egui::Ui, tokens: &Tokens, label: &str, close: bool) -> egui::Response {
+pub(crate) fn title_button(
+    ui: &mut egui::Ui,
+    tokens: &Tokens,
+    label: &str,
+    close: bool,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     if response.hovered() {

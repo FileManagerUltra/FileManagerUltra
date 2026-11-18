@@ -13,7 +13,10 @@ use std::io::Write;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::SystemTime;
 
-use fm_vfs::{Entry, EntryKind, FmError, Scheme, SpaceInfo, Vfs, VfsUri, WriteOpts};
+use fm_vfs::{
+    AttrCaps, AttrFailKind, AttrGroup, AttrReport, AttrSet, Attrs, Entry, EntryKind, FmError,
+    Scheme, SpaceInfo, Vfs, VfsUri, WriteOpts,
+};
 
 #[derive(Clone, Debug)]
 enum Node {
@@ -26,6 +29,10 @@ enum Node {
 struct Inner {
     /// Key = `VfsUri::to_string()` (canonical form).
     nodes: BTreeMap<String, Node>,
+    /// Extended attributes per node (a file's mtime lives in the node itself).
+    attrs: BTreeMap<String, Attrs>,
+    /// Groups this filesystem accepts; the rest are reported as unsupported.
+    caps: Option<AttrSet>,
 }
 
 /// In-memory filesystem. The root directory always exists.
@@ -50,6 +57,13 @@ impl MemFs {
     /// Serve `scheme` (default `file`), to stand in for a remote backend.
     pub fn with_scheme(mut self, scheme: Scheme) -> Self {
         self.scheme = Some(scheme);
+        self
+    }
+
+    /// Restrict the attribute groups this filesystem can store, to stand in for a
+    /// backend with fewer capabilities (default: all).
+    pub fn with_attr_caps(self, caps: AttrSet) -> Self {
+        self.lock().caps = Some(caps);
         self
     }
 
@@ -429,6 +443,7 @@ impl Vfs for MemFs {
             }
         }
         g.nodes.remove(&key);
+        g.attrs.remove(&key);
         Ok(())
     }
 
@@ -472,6 +487,11 @@ impl Vfs for MemFs {
             .iter()
             .filter_map(|(old, _)| g.nodes.remove(old).map(|n| (old.clone(), n)))
             .collect();
+        for (old, new) in &moving {
+            if let Some(a) = g.attrs.remove(old) {
+                g.attrs.insert(new.clone(), a);
+            }
+        }
         for (old, node) in nodes {
             let new = moving
                 .iter()
@@ -485,6 +505,76 @@ impl Vfs for MemFs {
 
     fn same_device(&self, a: &VfsUri, b: &VfsUri) -> bool {
         a.scheme() == b.scheme() && a.authority() == b.authority()
+    }
+
+    fn stat_full(&self, uri: &VfsUri) -> Result<Attrs, FmError> {
+        let g = self.lock();
+        let key = uri.to_string();
+        let node = g
+            .nodes
+            .get(&key)
+            .ok_or_else(|| FmError::NotFound(key.clone()))?;
+        let mut a = g.attrs.get(&key).cloned().unwrap_or_default();
+        if let Node::File { modified, .. } = node {
+            a.mtime = Some(*modified);
+        }
+        Ok(a)
+    }
+
+    fn set_attrs(
+        &self,
+        uri: &VfsUri,
+        attrs: &Attrs,
+        which: AttrSet,
+    ) -> Result<AttrReport, FmError> {
+        let mut g = self.lock();
+        let key = uri.to_string();
+        if !g.nodes.contains_key(&key) {
+            return Err(FmError::NotFound(key));
+        }
+        let caps = g.caps.unwrap_or(AttrSet::ALL);
+        let mut report = AttrReport::default();
+        let wanted = which.intersect(attrs.present());
+        let mut stored = g.attrs.get(&key).cloned().unwrap_or_default();
+        for group in wanted.iter() {
+            if !caps.contains(group) {
+                report.fail(group, AttrFailKind::Unsupported);
+                continue;
+            }
+            match group {
+                AttrGroup::Btime => stored.btime = attrs.btime,
+                AttrGroup::Mtime => match g.nodes.get_mut(&key) {
+                    Some(Node::File { modified, .. }) => {
+                        if let Some(t) = attrs.mtime {
+                            *modified = t;
+                        }
+                    }
+                    _ => stored.mtime = attrs.mtime,
+                },
+                AttrGroup::Atime => stored.atime = attrs.atime,
+                AttrGroup::Mode => stored.mode = attrs.mode.map(|m| m & 0o7777),
+                AttrGroup::Owner => {
+                    stored.uid = attrs.uid;
+                    stored.gid = attrs.gid;
+                    stored.owner.clone_from(&attrs.owner);
+                    stored.group.clone_from(&attrs.group);
+                }
+                AttrGroup::Acl => stored.acl.clone_from(&attrs.acl),
+                AttrGroup::Xattrs => stored.xattrs.clone_from(&attrs.xattrs),
+                AttrGroup::Flags => stored.dos_flags = attrs.dos_flags,
+            }
+            report.ok(group);
+        }
+        g.attrs.insert(key, stored);
+        Ok(report)
+    }
+
+    fn attr_caps(&self, _uri: &VfsUri) -> AttrCaps {
+        let caps = self.lock().caps.unwrap_or(AttrSet::ALL);
+        AttrCaps {
+            read: caps,
+            write: caps,
+        }
     }
 
     fn space(&self, _uri: &VfsUri) -> Result<Option<SpaceInfo>, FmError> {
@@ -596,6 +686,45 @@ mod tests {
             fs.create_dir(&file),
             Err(FmError::AlreadyExists(_))
         ));
+    }
+
+    #[test]
+    fn attrs_round_trip_follow_renames_and_respect_caps() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let fs = fs();
+        let a = VfsUri::parse("/home/alice/a.txt").expect("uri");
+        let want = Attrs {
+            mtime: Some(UNIX_EPOCH + Duration::from_secs(100)),
+            atime: Some(UNIX_EPOCH + Duration::from_secs(200)),
+            mode: Some(0o640),
+            uid: Some(7),
+            ..Attrs::default()
+        };
+        let r = fs.set_attrs(&a, &want, AttrSet::ALL).expect("set");
+        assert!(r.is_complete());
+        assert_eq!(fs.stat(&a).expect("stat").modified, want.mtime);
+        let moved = VfsUri::parse("/home/alice/z.txt").expect("uri");
+        fs.rename(&a, &moved).expect("rename");
+        let got = fs.stat_full(&moved).expect("stat_full");
+        assert_eq!(
+            (got.mode, got.uid, got.atime),
+            (Some(0o640), Some(7), want.atime)
+        );
+        fs.remove(&moved).expect("remove");
+        assert!(fs.stat_full(&moved).is_err());
+
+        let limited = MemFs::new().with_attr_caps(AttrSet::TIMES);
+        let f = VfsUri::parse("/f").expect("uri");
+        limited.put_file(&f, b"x").expect("put");
+        let r = limited.set_attrs(&f, &want, AttrSet::ALL).expect("set");
+        assert!(r.failed_group(AttrGroup::Mode).is_some());
+        assert!(r.failed_group(AttrGroup::Mtime).is_none());
+        assert_eq!(limited.stat_full(&f).expect("full").mode, None);
+        assert!(
+            limited
+                .set_attrs(&VfsUri::parse("/nope").expect("uri"), &want, AttrSet::ALL)
+                .is_err()
+        );
     }
 
     #[test]

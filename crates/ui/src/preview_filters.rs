@@ -127,6 +127,7 @@ fn panel<R>(
     ui: &mut Ui,
     tokens: &Tokens,
     width: f32,
+    rows: f32,
     caption: &str,
     toolbar: impl FnOnce(&mut Ui) -> R,
     list: impl FnOnce(&mut Ui),
@@ -151,7 +152,7 @@ fn panel<R>(
                     Sense::hover(),
                 );
                 ui.painter().rect_filled(line, 0.0, tokens.border);
-                let height = VISIBLE_ROWS * row_height(tokens);
+                let height = rows * row_height(tokens);
                 egui::ScrollArea::vertical()
                     .id_salt(("preview-filter-list", caption.split(' ').next()))
                     .auto_shrink([false, false])
@@ -252,6 +253,7 @@ fn types_panel(
         ui,
         tokens,
         width,
+        VISIBLE_ROWS,
         "Types, checked top to bottom",
         |ui| {
             let up = media_icons::button(
@@ -400,6 +402,7 @@ fn patterns_panel(
         ui,
         tokens,
         width,
+        VISIBLE_ROWS,
         &format!("Filename patterns for {label}"),
         |ui| {
             let has = toolbar_chosen.is_some();
@@ -452,7 +455,13 @@ fn patterns_panel(
                 });
                 if is_edit {
                     if let Some(edit) = editing.as_mut() {
-                        let (done, keep) = edit_row(ui, tokens, edit);
+                        let (done, keep) = edit_row(
+                            ui,
+                            tokens,
+                            &mut edit.text,
+                            &mut edit.focus,
+                            edit.row.is_none(),
+                        );
                         if done {
                             by_key = ui
                                 .input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Escape));
@@ -648,28 +657,220 @@ fn patterns_panel(
 }
 
 /// The in-place editor. Returns `(finished, Some(text) to save | None to cancel)`.
-fn edit_row(ui: &mut Ui, tokens: &Tokens, edit: &mut Editing) -> (bool, Option<String>) {
+fn edit_row(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    text: &mut String,
+    focus: &mut bool,
+    new_row: bool,
+) -> (bool, Option<String>) {
     ui.spacing_mut().interact_size.y = row_height(tokens);
     let response = ui.add_sized(
         [ui.available_width(), row_height(tokens)],
-        TextEdit::singleline(&mut edit.text)
+        TextEdit::singleline(text)
             .hint_text("Pattern, for example *.trace")
             .char_limit(ROW_LIMIT)
             .margin(Margin::symmetric(9, 2)),
     );
     let response = response.on_hover_text("Enter saves, Escape cancels");
-    if std::mem::take(&mut edit.focus) {
+    if std::mem::take(focus) {
         response.request_focus();
         response.scroll_to_me(None);
     }
     if !response.lost_focus() {
         return (false, None);
     }
-    let text = edit.text.trim().to_string();
-    if ui.input(|input| input.key_pressed(Key::Escape)) || (edit.row.is_none() && text.is_empty()) {
+    let text = text.trim().to_string();
+    if ui.input(|input| input.key_pressed(Key::Escape)) || (new_row && text.is_empty()) {
         return (true, None);
     }
     (true, Some(text))
+}
+
+#[derive(Clone)]
+struct ListEdit {
+    row: Option<usize>,
+    saved: String,
+    text: String,
+    focus: bool,
+}
+
+/// The preferences' pattern box for any list of patterns: toolbar (add, remove, edit) and rows
+/// edited in place. Returns the new list when the user changed it.
+pub(crate) fn pattern_list(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    key: &'static str,
+    caption: &str,
+    patterns: &[String],
+    rows: f32,
+) -> Option<Vec<String>> {
+    let ctx = ui.ctx().clone();
+    let sel_id = Id::NULL.with(("pattern-list-selected", key));
+    let edit_key = Id::NULL.with(("pattern-list-edit", key));
+    let mut chosen = ctx
+        .data_mut(|d| d.get_temp::<usize>(sel_id))
+        .filter(|r| *r < patterns.len());
+    let mut editing = ctx
+        .data_mut(|d| d.get_temp::<ListEdit>(edit_key))
+        .filter(|e| e.row.is_none_or(|r| patterns.get(r) == Some(&e.saved)));
+    let mut start: Option<Option<usize>> = None;
+    let mut remove: Option<usize> = None;
+    let mut commit: Option<String> = None;
+    let mut cancel = false;
+    let width = ui.available_width() - 6.0;
+    let had = chosen;
+    let (add, gone, edit) = panel(
+        ui,
+        tokens,
+        width,
+        rows,
+        caption,
+        |ui| {
+            let add = media_icons::button(ui, tokens, Icon::Add, "Add pattern", true, false);
+            let has = had.is_some();
+            let gone = media_icons::button(
+                ui,
+                tokens,
+                Icon::Remove,
+                "Remove selected pattern",
+                has,
+                false,
+            );
+            let edit =
+                media_icons::button(ui, tokens, Icon::Edit, "Edit selected pattern", has, false);
+            (add.clicked(), gone.clicked(), edit.clicked())
+        },
+        |ui| {
+            let count =
+                patterns.len() + usize::from(editing.as_ref().is_some_and(|e| e.row.is_none()));
+            if count == 0 {
+                ui.vertical_centered(|ui| {
+                    ui.add_space((rows / 2.0 - 0.5) * row_height(tokens));
+                    ui.label(
+                        RichText::new("Nothing is left out yet. Press + to add a pattern.")
+                            .color(tokens.text_muted),
+                    );
+                });
+            }
+            for index in 0..count {
+                let pattern = patterns.get(index);
+                let is_edit = editing.as_ref().is_some_and(|e| match e.row {
+                    Some(r) => r == index,
+                    None => pattern.is_none(),
+                });
+                if is_edit {
+                    if let Some(e) = editing.as_mut() {
+                        let (done, keep) =
+                            edit_row(ui, tokens, &mut e.text, &mut e.focus, e.row.is_none());
+                        if done {
+                            match keep {
+                                Some(text) if !text.is_empty() && text != e.saved => {
+                                    commit = Some(text);
+                                }
+                                _ => cancel = true,
+                            }
+                        }
+                    }
+                    continue;
+                }
+                let Some(pattern) = pattern else { continue };
+                let selected = chosen == Some(index);
+                let response = row(
+                    ui,
+                    tokens,
+                    Id::NULL.with(("pattern-list-row", key, index)),
+                    false,
+                    pattern,
+                    None,
+                    selected,
+                    pattern.clone(),
+                )
+                .on_hover_text(
+                    "Click to select; click again, Enter or F2 to edit; Delete to remove",
+                );
+                if response.clicked() || response.double_clicked() {
+                    if selected {
+                        start = Some(Some(index));
+                    }
+                    chosen = Some(index);
+                }
+                if response.has_focus() {
+                    ui.input(|i| {
+                        if i.key_pressed(Key::Delete) {
+                            remove = Some(index);
+                        }
+                        if i.key_pressed(Key::F2) || i.key_pressed(Key::Enter) {
+                            start = Some(Some(index));
+                        }
+                        if i.key_pressed(Key::Insert) {
+                            start = Some(None);
+                        }
+                    });
+                }
+            }
+        },
+    );
+    if add {
+        start = Some(None);
+    }
+    if gone {
+        remove = had;
+    }
+    if edit {
+        start = had.map(Some);
+    }
+    let mut out: Option<Vec<String>> = None;
+    if let (Some(text), Some(e)) = (commit, editing.as_ref()) {
+        let mut next = patterns.to_vec();
+        match e.row {
+            Some(row) => {
+                if let Some(slot) = next.get_mut(row) {
+                    *slot = text;
+                }
+            }
+            None => next.push(text),
+        }
+        chosen = Some(e.row.unwrap_or(patterns.len()));
+        out = Some(next);
+        cancel = true;
+    }
+    if cancel {
+        editing = None;
+    }
+    if let Some(row) = remove.filter(|r| *r < patterns.len()) {
+        let mut next = patterns.to_vec();
+        next.remove(row);
+        chosen = (!next.is_empty()).then(|| row.min(next.len() - 1));
+        out = Some(next);
+    }
+    if let Some(row) = start {
+        let saved = row
+            .and_then(|r| patterns.get(r))
+            .cloned()
+            .unwrap_or_default();
+        editing = Some(ListEdit {
+            row,
+            text: saved.clone(),
+            saved,
+            focus: true,
+        });
+    }
+    ctx.data_mut(|d| {
+        match editing {
+            Some(e) => {
+                d.insert_temp(edit_key, e);
+            }
+            None => d.remove::<ListEdit>(edit_key),
+        }
+        match chosen {
+            Some(r) => {
+                d.insert_temp(sel_id, r);
+            }
+            None => d.remove::<usize>(sel_id),
+        }
+    });
+    out
 }
 
 #[cfg(test)]

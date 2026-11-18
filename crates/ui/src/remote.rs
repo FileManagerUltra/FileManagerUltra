@@ -14,15 +14,18 @@ use crate::theme::Tokens;
 
 /// Ask whether to trust an unknown host key (trust on first use).
 pub fn host_key_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    let window = Id::NULL.with("fm-hostkey-dialog");
     let Some(info) = s.remote.pending_host_key() else {
+        crate::dialog_style::raise_on_open(ctx, window, false);
         return;
     };
+    crate::dialog_style::raise_on_open(ctx, window, true);
     let mut answer = None;
     if ctx.input(|i| i.key_pressed(Key::Escape)) {
         answer = Some(false);
     }
     let mut open = true;
-    crate::dialog_style::window(ctx, tokens, "Unknown host key", &mut open)
+    crate::dialog_style::sign_in_window(ctx, tokens, "Unknown host key", &mut open)
         .id(Id::NULL.with("fm-hostkey-dialog"))
         .show(ctx, |ui| {
             crate::dialog_style::apply(ui, tokens);
@@ -73,10 +76,12 @@ struct LoginForm {
 /// The "Authentication Required" popup for a Network-folder host; answers with
 /// `network.login` / `network.login.cancel`.
 pub fn login_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    let id = Id::NULL.with("fm-login-dialog");
     let Some(prompt) = s.remote.login_prompt.clone() else {
+        crate::dialog_style::raise_on_open(ctx, id.with("window"), false);
         return;
     };
-    let id = Id::NULL.with("fm-login-dialog");
+    crate::dialog_style::raise_on_open(ctx, id.with("window"), true);
     let mut form: LoginForm = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
     if form.seed.as_ref() != Some(&prompt) {
         form = LoginForm {
@@ -98,7 +103,7 @@ pub fn login_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         "Authentication Required"
     };
     let mut open = true;
-    crate::dialog_style::window(ctx, tokens, title, &mut open)
+    crate::dialog_style::sign_in_window(ctx, tokens, title, &mut open)
         .id(id.with("window"))
         .show(ctx, |ui| {
             crate::dialog_style::apply(ui, tokens);
@@ -282,12 +287,15 @@ pub fn login_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
 
 /// A card for a refused, changed host key. Stays until dismissed.
 pub fn host_key_alert(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    let window = Id::NULL.with("fm-hostkey-alert");
     let Some(message) = s.remote.host_key_alert.clone() else {
+        crate::dialog_style::raise_on_open(ctx, window, false);
         return;
     };
+    crate::dialog_style::raise_on_open(ctx, window, true);
     let mut dismiss = ctx.input(|i| i.key_pressed(Key::Escape));
     let mut open = true;
-    crate::dialog_style::window(ctx, tokens, "Host key changed", &mut open)
+    crate::dialog_style::sign_in_window(ctx, tokens, "Host key changed", &mut open)
         .id(Id::NULL.with("fm-hostkey-alert"))
         .show(ctx, |ui| {
             crate::dialog_style::apply(ui, tokens);

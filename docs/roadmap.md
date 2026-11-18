@@ -96,23 +96,11 @@ Captured so they are not lost; each becomes an OpenSpec proposal (`/opsx-propose
 
 ### File synchronization
 
-A substantial future feature inspired by FreeFileSync, not just a folder-comparison
-action. Folder comparison belongs to this feature as the basis for planning a sync.
-Candidate scope for its OpenSpec proposal:
-
-- Compare two folder trees by relative path, size and timestamps, with optional
-  content comparison.
-- Show a reviewable plan of copies, updates, deletions and conflicts before any
-  changes; make direction and destructive actions explicit.
-- Consider one-way update, mirror and two-way synchronization, with include/exclude
-  filters and reusable folder-pair profiles.
-- Build on the VFS and existing background file-operation lanes, progress and
-  cancellation rather than introducing a separate transfer engine.
-
-The proposal must settle supported backends, comparison rules, two-way change
-tracking, deletion/conflict policy, symlink handling and recovery after partial
-failure or cancellation. Scheduling and unattended operation are separate scope
-decisions, not commitments. No implementation or delivery date is planned yet.
+Implemented as OpenSpec change `add-file-sync` (`fm-sync`, `sync.*` commands, File >
+Synchronize Folders): Update, Mirror and Two-way modes, reviewable plan, filters,
+saved profiles, "Keep in sync" watching, attribute carry-over. See
+`docs/architecture.md` §12b. Open follow-ups: grid sorting by size/time, more
+conflict rules, a shortcut, manual checks on SFTP/SMB/Windows.
 
 ### Batch rename
 

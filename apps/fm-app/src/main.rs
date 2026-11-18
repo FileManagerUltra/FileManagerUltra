@@ -431,6 +431,10 @@ impl eframe::App for App {
         if self.session.is_busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
+        // Keep-in-sync folders poll their watchers from `poll()`, also with no window open.
+        if let Some(wake) = self.session.sync.wake() {
+            ctx.request_repaint_after(wake);
+        }
         // Playback needs `poll()` a few times a second (next item, A-B loop, sleep fade), not
         // every frame; video frames wake the UI on their own while a player is on screen.
         if let Some(wake) = self.session.playback_wake() {
@@ -594,12 +598,15 @@ impl eframe::App for App {
         fm_ui::preferences::show(&ctx, &mut self.session, &tokens);
         fm_ui::properties::show(&ctx, &mut self.session, &tokens);
         fm_ui::search::show(&ctx, &mut self.session, &tokens);
+        fm_ui::sync::show(&ctx, &mut self.session, &tokens);
         fm_ui::open_with::show(&ctx, &mut self.session, &tokens);
         fm_ui::ffmpeg_prompt::show(&ctx, &mut self.session, &tokens);
         fm_ui::compare_with::show(&ctx, &mut self.session, &tokens);
         fm_ui::remote::host_key_dialog(&ctx, &mut self.session, &tokens);
         fm_ui::remote::login_dialog(&ctx, &mut self.session, &tokens);
         fm_ui::sftp_popup::sftp_prompt_dialog(&ctx, &mut self.session, &tokens);
+        // After the dialogs that open it, so a nested chooser sits on top and gets Esc first.
+        fm_ui::picker::show(&ctx, &mut self.session, &tokens);
         fm_ui::remote::host_key_alert(&ctx, &mut self.session, &tokens);
 
         fm_ui::about::dialog(&ctx, &tokens, &mut self.session.about_open);
@@ -743,6 +750,9 @@ fn main() -> eframe::Result {
     if let Some(dir) = &config_dir {
         session.remote.set_config_dir(dir.clone());
         session.media_store_start(dir.clone());
+        if let Some(problem) = session.sync.set_config_dir(dir.clone()) {
+            session.notice = Some(problem);
+        }
     }
     if !session
         .thumbs

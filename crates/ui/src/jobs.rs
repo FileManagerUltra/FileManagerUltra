@@ -76,6 +76,37 @@ pub fn indicator_text(s: &Session) -> String {
         .iter()
         .filter(|j| j.state.is_running())
         .collect();
+    let syncs = crate::sync::activity(s);
+    let syncs_running = syncs.iter().filter(|x| x.running).count();
+    if syncs_running > 0 && running.len() + syncs_running > 1 {
+        return format!("{} jobs", running.len() + syncs_running);
+    }
+    if running.is_empty() && !s.search.as_ref().is_some_and(|x| x.status().running) {
+        if let Some(x) = syncs.iter().find(|x| x.running) {
+            return match x.fraction {
+                Some(f) => format!("Sync {} · {:.0}%", x.name, f * 100.0),
+                None => format!("Sync {} · {}", x.name, x.text),
+            };
+        }
+        let attention: Vec<_> = syncs.iter().filter(|x| x.attention).collect();
+        match attention.as_slice() {
+            [] => {}
+            [one] => return format!("Sync {}: {}", one.name, one.text),
+            many => return format!("{} syncs need attention", many.len()),
+        }
+        let watching: Vec<_> = syncs.iter().filter(|x| x.watching).collect();
+        let jobs_attention = s.fileops.jobs().iter().any(|j| {
+            matches!(j.state, OpState::Failed(_))
+                || j.summary.as_ref().is_some_and(|x| x.failed_count > 0)
+        });
+        if !crate::updates::available(s) && !jobs_attention {
+            match watching.as_slice() {
+                [] => {}
+                [one] => return format!("Syncing {} · {}", one.name, one.text),
+                many => return format!("{} syncs watching", many.len()),
+            }
+        }
+    }
     if let Some(status) = s
         .search
         .as_ref()
@@ -148,7 +179,9 @@ pub fn icon_button(ui: &mut Ui, s: &Session, tokens: &Tokens) {
             matches!(j.state, OpState::Failed(_))
                 || j.summary.as_ref().is_some_and(|x| x.failed_count > 0)
         });
-    let busy = s.fileops.running() > 0;
+    let syncs = crate::sync::activity(s);
+    let attention = attention || syncs.iter().any(|x| x.attention);
+    let busy = s.fileops.running() > 0 || syncs.iter().any(|x| x.running);
     let color = if open || response.hovered() {
         tokens.accent_text
     } else {
@@ -276,6 +309,11 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     if search_row.as_ref().is_some_and(|row| row.2) {
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
     }
+    let sync_lines = crate::sync::activity(s);
+    if sync_lines.iter().any(|x| x.running) {
+        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+    }
+    let mut sync_action: Option<(&'static str, serde_json::Value)> = None;
     let mut search_action: Option<&'static str> = None;
     let mut cancel = Vec::new();
     let mut dismiss = Vec::new();
@@ -328,10 +366,75 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             }
             if rows.is_empty()
                 && search_row.is_none()
+                && sync_lines.is_empty()
                 && messages.is_empty()
                 && !crate::updates::available(s)
             {
                 crate::dialog_style::hint(ui, tokens, "No jobs or messages");
+            }
+            for line in &sync_lines {
+                let tone = if line.attention {
+                    Tone::Error
+                } else {
+                    Tone::Info
+                };
+                let heading = if line.watching {
+                    "Keeping in sync"
+                } else {
+                    "Sync"
+                };
+                card::card(ui, tokens, tone, heading, None, |ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(&line.name).color(tokens.text)).truncate(),
+                    );
+                    if let Some(f) = line.fraction {
+                        ui.add(egui::ProgressBar::new(f).fill(tokens.accent));
+                    }
+                    ui.horizontal(|ui| {
+                        if line.running {
+                            ui.add(crate::spinner::Spinner::new());
+                        }
+                        let color = if line.attention {
+                            tokens.error
+                        } else {
+                            tokens.text_muted
+                        };
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&line.text)
+                                    .font(egui::FontId::proportional(tokens.font_size - 1.0))
+                                    .color(color),
+                            )
+                            .truncate(),
+                        );
+                    });
+                    card::buttons(ui, |ui| {
+                        if card::primary(ui, tokens, "Show", true)
+                            .on_hover_text("Open the Synchronize Folders window")
+                            .clicked()
+                        {
+                            sync_action = Some(("sync.restore", json!({ "id": line.id })));
+                        }
+                        if line.confirming && card::secondary(ui, "Cancel").clicked() {
+                            sync_action = Some(("sync.watch.cancel", json!({ "id": line.id })));
+                        }
+                        if line.watching
+                            && card::primary(ui, tokens, "Stop syncing", true).clicked()
+                        {
+                            sync_action = Some(("sync.watch.stop", json!({ "id": line.id })));
+                        }
+                        if line.running && card::secondary(ui, "Cancel").clicked() {
+                            sync_action = Some(("sync.cancel", json!({ "id": line.id })));
+                        }
+                        if !line.watching && !line.running && !line.confirming {
+                            card::end(ui, |ui| {
+                                if card::quiet(ui, tokens, "Dismiss").clicked() {
+                                    sync_action = Some(("sync.close", serde_json::Value::Null));
+                                }
+                            });
+                        }
+                    });
+                });
             }
             if let Some((label, status, running)) = &search_row {
                 card::card(ui, tokens, Tone::Info, "Search", None, |ui| {
@@ -499,6 +602,9 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     }
     for id in dismiss {
         s.dispatch_or_notice("job.dismiss", &json!({"job": id}));
+    }
+    if let Some((id, params)) = sync_action {
+        s.dispatch_or_notice(id, &params);
     }
     if let Some(id) = search_action {
         s.dispatch_or_notice(id, &serde_json::Value::Null);

@@ -14,5 +14,11 @@ workspace = true
 fm-vfs.workspace = true
 sysinfo.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["fs", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+fm-winsec.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

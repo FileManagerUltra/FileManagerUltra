@@ -30,7 +30,7 @@ This document is the source of truth for the crate map, layering, data model, co
 These apply to every crate. They are checked in review and by CI (`cargo xtask layers`, `cargo clippy`).
 
 1. **Never crash.** Non-test code contains no `unwrap()`, `expect()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` — errors propagate as `FmError` with `?`. A malformed filename, a vanished file mid-copy, an unreachable SMB server, a full disk or a 0-byte write must produce a user-visible error, never a panic. Unimplemented backends return `FmError::Unsupported`.
-2. **No `unsafe` in our code.** `unsafe_code = "forbid"` workspace-wide. No FFI: the SMB backend is the pure-Rust `smb` crate. Exceptions: `fm-wayland` (two `unsafe` calls adopting winit's Wayland display; roadmap priority 1 to remove) and `fm-winout` (the Windows OLE drag source, `unsafe` confined to `ole.rs`).
+2. **No `unsafe` in our code.** `unsafe_code = "forbid"` workspace-wide. No FFI: the SMB backend is the pure-Rust `smb` crate. Exceptions: `fm-wayland` (two `unsafe` calls adopting winit's Wayland display; roadmap priority 1 to remove) `fm-winout` (the Windows OLE drag source, `unsafe` confined to `ole.rs`) and `fm-winsec` (Windows owner/group/DACL read and write for file attributes, `unsafe` confined to `sd.rs`; descriptors are size-capped, validated in safe code first and treated as opaque blobs).
 3. **Everything user-visible is a command.** New behaviour = a `CommandSpec` in `crates/engine/src/*_cmds.rs`, registered in `commands.rs`, with id, label, menu path, shortcut, params doc, `enabled` and `run`, plus tests. The UI never performs file operations directly.
 4. **The UI is thin.** `crates/ui` holds widgets and view state only. It reads `Session` state and dispatches commands; no `std::fs` calls, no job spawning.
 5. **The UI thread never blocks on I/O.** Every filesystem call runs on a worker (see §7). A 40 GiB copy across a slow SMB link must not drop a frame.
@@ -690,6 +690,14 @@ backgrounds, divider and change markers stay fixed. A two-axis viewport paints
 only visible rows with independent text clips per column. Measured line widths
 are cached as rows are visited, keyed by document/font/mode; widths never feed
 back into pane sizing. Unified diffs use the same virtualized scrolling.
+
+## 12b. Folder synchronization (`add-file-sync`)
+
+The path picker (`add-path-picker`) is a shared in-app chooser: `Session::picker` (`engine/src/picker_cmds.rs`, `picker.open/navigate/select/accept/cancel`) lists folders through `DirCache` like any pane; `fm_ui::picker` only dispatches. A purpose string routes the result: `sync.left`/`sync.right` are applied to the sync profile by the engine, any other purpose lands in `Session::picked` for the dialog that asked (`dialog.subtitle`, `dialog.playlist`, `dialog.destination`).
+
+`fm-sync` (L1) is a pure library: `compare()` validates a `Profile`, scans both sides (bounded, cancellable), loads the two-way snapshot and builds a `Plan` (one `Item` per path with a `Status` and an overridable `Action`); `run()` executes it through the `fm-ops` copy pipeline, applies attributes (`Vfs::set_attrs`, see the attribute layer in `fm-vfs`), honours the `DeletePolicy` and the deletion `Guards`, and records the snapshot only for verified paths.
+
+`engine::sync_hub` owns the profiles (`sync-profiles.json`, owner-only, no secrets), per-profile `SyncState` and one scan/run thread each (at most four at once). Only `Session::poll()` → `pump_sync()` applies results. The watcher marks a profile dirty from debounced `notify` events (local sides) or a poll interval (remote sides, at least 10 s); it starts a single follow-up compare and auto-applies only a plan without conflicts, permanent deletes or tripped safeguards. `sync_cmds.rs` exposes `sync.open/close/minimize/restore/compare/run/cancel/set_action/filter/sort/confirm.dismiss/watch.start/watch.confirm/watch.cancel/watch.stop`, `sync.profile.*` and `sync.watch.*`; `sync_wizard_cmds.rs` adds `sync.view` (wizard/advanced) and `sync.wizard.go` (steps 0–6, the review compares), rendered by `fm_ui::sync_wizard`; `fm_ui::sync` renders the window and dispatches those ids only; `fm_ui::sync::activity` feeds the Activity panel cards and the status-bar text for minimized, running and watching syncs, and `SyncHub::wake` keeps frames flowing while one is watching.
 
 ## 13. Change history
 

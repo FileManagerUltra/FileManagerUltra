@@ -112,6 +112,7 @@ pub const COMPARE_WITH: &str = "file.compare_with";
 pub const PROPERTIES: &str = "file.properties";
 pub const FIND_FILES: &str = "search.open";
 pub const FIND_EVERYWHERE: &str = "search.open_everywhere";
+pub const SYNC_OPEN: &str = "sync.open";
 pub const BOOKMARK_ADD: &str = "bookmark.add";
 
 /// Every command id referenced by the menus or the shortcut table.
@@ -237,6 +238,7 @@ pub fn all_ids() -> &'static [&'static str] {
         PROPERTIES,
         FIND_FILES,
         FIND_EVERYWHERE,
+        SYNC_OPEN,
         BOOKMARK_ADD,
     ]
 }
@@ -760,6 +762,7 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, PROPERTIES);
             item(ui, session, dialogs, FIND_FILES);
             item(ui, session, dialogs, FIND_EVERYWHERE);
+            item(ui, session, dialogs, SYNC_OPEN);
             ui.separator();
             item(ui, session, dialogs, REMOTE_CONNECT);
             item(ui, session, dialogs, NETWORK_CONNECT);

@@ -184,6 +184,26 @@ impl<V: Vfs> Vfs for FaultFs<V> {
         }
     }
 
+    fn stat_full(&self, uri: &VfsUri) -> Result<fm_vfs::Attrs, FmError> {
+        if self.is_vanished(uri) {
+            return Err(FmError::NotFound(uri.to_string()));
+        }
+        self.inner.stat_full(uri)
+    }
+
+    fn set_attrs(
+        &self,
+        uri: &VfsUri,
+        attrs: &fm_vfs::Attrs,
+        which: fm_vfs::AttrSet,
+    ) -> Result<fm_vfs::AttrReport, FmError> {
+        self.inner.set_attrs(uri, attrs, which)
+    }
+
+    fn attr_caps(&self, uri: &VfsUri) -> fm_vfs::AttrCaps {
+        self.inner.attr_caps(uri)
+    }
+
     fn space(&self, uri: &VfsUri) -> Result<Option<SpaceInfo>, FmError> {
         self.inner.space(uri)
     }

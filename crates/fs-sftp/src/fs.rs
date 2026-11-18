@@ -4,9 +4,10 @@ use std::io::{self, Read, SeekFrom, Write};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
+use fm_vfs::redact::redact;
 use fm_vfs::{
-    Authority, Entry, EntryKind, FmError, MAX_COMPONENT_BYTES, MAX_DIR_ENTRIES, Scheme, SpaceInfo,
-    Vfs, VfsUri, WriteOpts,
+    AttrCaps, AttrFailKind, AttrGroup, AttrReport, AttrSet, Attrs, Authority, Entry, EntryKind,
+    FmError, MAX_COMPONENT_BYTES, MAX_DIR_ENTRIES, Scheme, SpaceInfo, Vfs, VfsUri, WriteOpts,
 };
 use russh::client;
 use russh_sftp::client::error::Error as SftpError;
@@ -163,6 +164,46 @@ impl SftpFs {
             kind,
             label: None,
         }
+    }
+}
+
+/// Attributes SFTP v3 can carry: whole-second times, mode, uid/gid.
+const SFTP_ATTRS: AttrSet = AttrSet::of(&[
+    AttrGroup::Mtime,
+    AttrGroup::Atime,
+    AttrGroup::Mode,
+    AttrGroup::Owner,
+]);
+
+fn attrs_from(a: &FileAttributes) -> Attrs {
+    let secs = |s: u32| UNIX_EPOCH + Duration::from_secs(u64::from(s));
+    Attrs {
+        mtime: a.mtime.map(secs),
+        atime: a.atime.map(secs),
+        mode: if a.is_symlink() {
+            None
+        } else {
+            a.permissions.map(|m| m & 0o7777)
+        },
+        uid: a.uid,
+        gid: a.gid,
+        owner: a.user.as_deref().and_then(Attrs::bounded_name),
+        group: a.group.as_deref().and_then(Attrs::bounded_name),
+        ..Attrs::default()
+    }
+}
+
+/// A refusal worth reporting per attribute, or `None` when the transport is dead.
+fn attr_failure(e: &SftpError) -> Option<AttrFailKind> {
+    match e {
+        SftpError::Status(s) => Some(match s.status_code {
+            StatusCode::PermissionDenied => AttrFailKind::PermissionDenied,
+            StatusCode::OpUnsupported => AttrFailKind::Unsupported,
+            StatusCode::NoConnection | StatusCode::ConnectionLost => return None,
+            _ => AttrFailKind::Other(redact(&s.error_message)),
+        }),
+        SftpError::Timeout | SftpError::IO(_) => None,
+        other => Some(AttrFailKind::Other(redact(&other.to_string()))),
     }
 }
 
@@ -438,6 +479,125 @@ impl Vfs for SftpFs {
                 .await
                 .map_err(|e| map_err(e, &path))
         })?
+    }
+
+    fn stat_full(&self, uri: &VfsUri) -> Result<Attrs, FmError> {
+        let path = self.path(uri)?.to_string();
+        let inner = self.inner.clone();
+        block_on_timeout(async move {
+            let a = inner
+                .sftp
+                .symlink_metadata(path.clone())
+                .await
+                .map_err(|e| map_err(e, &path))?;
+            Ok(attrs_from(&a))
+        })?
+    }
+
+    fn set_attrs(
+        &self,
+        uri: &VfsUri,
+        attrs: &Attrs,
+        which: AttrSet,
+    ) -> Result<AttrReport, FmError> {
+        let path = self.path(uri)?.to_string();
+        let inner = self.inner.clone();
+        let attrs = attrs.clone();
+        block_on_timeout(async move {
+            let current = inner
+                .sftp
+                .symlink_metadata(path.clone())
+                .await
+                .map_err(|e| map_err(e, &path))?;
+            let mut report = AttrReport::default();
+            let wanted = which.intersect(attrs.present());
+            let is_link = current.is_symlink();
+            for g in wanted.iter() {
+                // SETSTAT follows symlinks, so a link's own attributes are never written.
+                if !SFTP_ATTRS.contains(g) || is_link {
+                    report.fail(g, AttrFailKind::Unsupported);
+                }
+            }
+            if is_link {
+                return Ok(report);
+            }
+            let secs = |t: std::time::SystemTime| {
+                t.duration_since(UNIX_EPOCH)
+                    .ok()
+                    .and_then(|d| u32::try_from(d.as_secs()).ok())
+            };
+            // One request per group so a refusal of one does not cost the others.
+            let mut requests: Vec<(Vec<AttrGroup>, FileAttributes)> = Vec::new();
+            if wanted.contains(AttrGroup::Owner) {
+                requests.push((
+                    vec![AttrGroup::Owner],
+                    FileAttributes {
+                        uid: attrs.uid,
+                        gid: attrs.gid,
+                        ..FileAttributes::empty()
+                    },
+                ));
+            }
+            if wanted.contains(AttrGroup::Mode) {
+                requests.push((
+                    vec![AttrGroup::Mode],
+                    FileAttributes {
+                        permissions: attrs.mode.map(|m| m & 0o7777),
+                        ..FileAttributes::empty()
+                    },
+                ));
+            }
+            let groups: Vec<AttrGroup> = [AttrGroup::Mtime, AttrGroup::Atime]
+                .into_iter()
+                .filter(|g| wanted.contains(*g))
+                .collect();
+            if !groups.is_empty() {
+                // The protocol sets both times together: keep the other one as it is.
+                let mtime = attrs
+                    .mtime
+                    .filter(|_| wanted.contains(AttrGroup::Mtime))
+                    .and_then(secs)
+                    .or(current.mtime);
+                let atime = attrs
+                    .atime
+                    .filter(|_| wanted.contains(AttrGroup::Atime))
+                    .and_then(secs)
+                    .or(current.atime)
+                    .or(mtime);
+                requests.push((
+                    groups,
+                    FileAttributes {
+                        atime,
+                        mtime,
+                        ..FileAttributes::empty()
+                    },
+                ));
+            }
+            for (groups, req) in requests {
+                let res = inner.sftp.set_metadata(path.clone(), req).await;
+                for g in groups {
+                    match &res {
+                        Ok(_) => report.ok(g),
+                        Err(e) => match attr_failure(e) {
+                            Some(kind) => report.fail(g, kind),
+                            None => {
+                                return Err(transport_error(
+                                    "the connection to the server was lost",
+                                ));
+                            }
+                        },
+                    }
+                }
+            }
+            Ok(report)
+        })?
+    }
+
+    fn attr_caps(&self, _uri: &VfsUri) -> AttrCaps {
+        AttrCaps {
+            read: SFTP_ATTRS,
+            write: SFTP_ATTRS,
+        }
     }
 
     fn rename(&self, from: &VfsUri, to: &VfsUri) -> Result<(), FmError> {

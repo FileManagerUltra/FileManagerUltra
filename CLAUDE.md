@@ -32,7 +32,7 @@ cargo xtask ci                                       # everything CI runs
 The authoritative layer table is `xtask/src/layers.rs`. Besides the crates in
 AGENTS.md: L0 `fm-discovery` (mDNS/WS-Discovery network hosts), `fm-git`
 (read-only `gix` status/diff), `fm-dragout` (X11 XDND drag source),
-`fm-wayland`, `fm-winout`; L1 `fm-term` (embedded terminal), `fm-preview`
+`fm-wayland`, `fm-winout`, `fm-winsec` (Windows security descriptors); L1 `fm-term` (embedded terminal), `fm-preview`
 (Markdown/text/SVG/log preview models).
 
 ## Big-picture flow

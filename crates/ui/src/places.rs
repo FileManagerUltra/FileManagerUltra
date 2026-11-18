@@ -493,7 +493,7 @@ fn chevron(painter: &Painter, c: Pos2, size: f32, expanded: bool, color: Color32
 }
 
 /// A small line icon of radius `r` centred on `c`.
-fn paint_icon(painter: &Painter, kind: PlaceKind, c: Pos2, r: f32, color: Color32) {
+pub(crate) fn paint_icon(painter: &Painter, kind: PlaceKind, c: Pos2, r: f32, color: Color32) {
     let stroke = Stroke::new(1.3, color);
     let line = |a: Pos2, b: Pos2| painter.line_segment([a, b], stroke);
     let p = |x: f32, y: f32| c + vec2(x * r, y * r);

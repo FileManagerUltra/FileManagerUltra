@@ -54,6 +54,8 @@ pub struct Tokens {
     pub diff_del_bg: Color32,
     pub diff_add_word: Color32,
     pub diff_del_word: Color32,
+    /// Folder sync: tint behind rows that need a decision (conflicts, unreadable items).
+    pub sync_conflict_bg: Color32,
     /// Subtitle text drawn over video, and the outline that keeps it readable on any picture.
     pub subtitle_text: Color32,
     pub subtitle_outline: Color32,
@@ -118,6 +120,7 @@ impl Tokens {
             diff_del_bg: Color32::from_rgb(0x44, 0x22, 0x26),
             diff_add_word: Color32::from_rgb(0x2b, 0x62, 0x3c),
             diff_del_word: Color32::from_rgb(0x7a, 0x30, 0x38),
+            sync_conflict_bg: Color32::from_rgb(0x4a, 0x2a, 0x44),
             subtitle_text: Color32::from_rgb(0xff, 0xff, 0xff),
             subtitle_outline: Color32::from_rgba_unmultiplied(0x00, 0x00, 0x00, 0xe0),
             checker: [
@@ -185,6 +188,7 @@ impl Tokens {
             diff_del_bg: Color32::from_rgb(0xfd, 0xe3, 0xe3),
             diff_add_word: Color32::from_rgb(0xa6, 0xe3, 0xb2),
             diff_del_word: Color32::from_rgb(0xf6, 0xb5, 0xb5),
+            sync_conflict_bg: Color32::from_rgb(0xf6, 0xdc, 0xf0),
             // Drawn on the video, not on the light UI, so it stays light-on-dark.
             subtitle_text: Color32::from_rgb(0xff, 0xff, 0xfa),
             subtitle_outline: Color32::from_rgba_unmultiplied(0x10, 0x10, 0x10, 0xe0),
@@ -809,6 +813,7 @@ mod tests {
                 diff_del_bg,
                 diff_add_word,
                 diff_del_word,
+                sync_conflict_bg,
                 subtitle_text,
                 subtitle_outline,
                 checker,
@@ -849,6 +854,7 @@ mod tests {
                 ("diff_del_bg", diff_del_bg),
                 ("diff_add_word", diff_add_word),
                 ("diff_del_word", diff_del_word),
+                ("sync_conflict_bg", sync_conflict_bg),
                 ("term_bg", term_bg),
                 ("term_fg", term_fg),
                 ("term_cursor", term_cursor),

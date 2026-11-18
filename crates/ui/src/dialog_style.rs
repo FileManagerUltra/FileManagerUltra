@@ -16,15 +16,56 @@ pub fn window<'a>(ctx: &Context, tokens: &Tokens, title: &str, open: &'a mut boo
         .frame(crate::dialogs::frame(tokens))
 }
 
+/// A dialog that other dialogs (a chooser, say) can open: it lives on the Foreground layer so it
+/// is always above the dialog that asked for it, whatever order the windows were used in.
+pub fn sign_in_window<'a>(
+    ctx: &Context,
+    tokens: &Tokens,
+    title: &str,
+    open: &'a mut bool,
+) -> Window<'a> {
+    window(ctx, tokens, title, open).order(egui::Order::Foreground)
+}
+
+/// Call every frame with whether the dialog `window_id` is showing: when it appears it goes
+/// in front of whatever opened it (a chooser that was already on screen keeps its layer).
+pub fn raise_on_open(ctx: &Context, window_id: egui::Id, shown: bool) {
+    let flag = window_id.with("raise-seen");
+    let was = ctx.data(|d| d.get_temp::<bool>(flag)).unwrap_or(false);
+    if shown && !was {
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Foreground, window_id));
+    }
+    if shown != was {
+        ctx.data_mut(|d| d.insert_temp(flag, shown));
+    }
+}
+
 /// Apply only to the dialog's UI, never the application's global style.
+/// Roomy, large targets and clearly outlined buttons and inputs so every kind of user can
+/// see what is clickable.
 pub fn apply(ui: &mut Ui, tokens: &Tokens) {
+    let lift = |amount: f32| tokens.panel.lerp_to_gamma(tokens.text, amount);
     let style = ui.style_mut();
     for font in style.text_styles.values_mut() {
         font.family = FontFamily::Proportional;
-        font.size = tokens.font_size;
+        font.size = tokens.font_size + 1.0;
     }
-    style.spacing.interact_size.y = 28.0;
-    style.spacing.item_spacing = egui::vec2(12.0, 10.0);
+    style.spacing.interact_size.y = 34.0;
+    style.spacing.item_spacing = egui::vec2(14.0, 12.0);
+    style.spacing.button_padding = egui::vec2(14.0, 7.0);
+    let outline = |color| egui::Stroke::new(1.5, color);
+    let w = &mut style.visuals.widgets;
+    w.inactive.weak_bg_fill = lift(0.16);
+    w.inactive.bg_fill = lift(0.16);
+    w.inactive.bg_stroke = outline(lift(0.5));
+    w.hovered.weak_bg_fill = lift(0.26);
+    w.hovered.bg_fill = lift(0.26);
+    w.hovered.bg_stroke = outline(tokens.accent);
+    w.active.bg_stroke = outline(tokens.accent);
+    if tokens.dark {
+        // Inputs: clearly set apart from the panel instead of near-black holes.
+        style.visuals.extreme_bg_color = lift(0.07);
+    }
 }
 
 /// Bound long forms while leaving room for the title and footer actions.

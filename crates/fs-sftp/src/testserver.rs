@@ -421,11 +421,23 @@ impl russh_sftp::server::Handler for Sftp {
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
         #[cfg(unix)]
-        if let Some(mode) = attrs.permissions {
+        {
             use std::os::unix::fs::PermissionsExt;
             let p = self.map(&path)?;
-            fs::set_permissions(&p, fs::Permissions::from_mode(mode & 0o7777))
-                .map_err(|e| code(&e))?;
+            if let Some(mode) = attrs.permissions {
+                fs::set_permissions(&p, fs::Permissions::from_mode(mode & 0o7777))
+                    .map_err(|e| code(&e))?;
+            }
+            if let (Some(a), Some(m)) = (attrs.atime, attrs.mtime) {
+                let at = |s: u32| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s.into());
+                let f = fs::File::options()
+                    .write(true)
+                    .open(&p)
+                    .or_else(|_| fs::File::open(&p))
+                    .map_err(|e| code(&e))?;
+                f.set_times(fs::FileTimes::new().set_accessed(at(a)).set_modified(at(m)))
+                    .map_err(|e| code(&e))?;
+            }
         }
         #[cfg(not(unix))]
         let _ = (path, attrs);

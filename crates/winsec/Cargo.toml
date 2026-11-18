@@ -1,0 +1,32 @@
+[package]
+name = "fm-winsec"
+description = "Reads and writes Windows security descriptors (owner, group, DACL) of local files; one of three crates allowed to use unsafe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Not `workspace = true`: the workspace forbids `unsafe`; this crate denies it and allows it
+# in `sd.rs` only (the Win32 security calls). Validation and conversion stay in safe code.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
+dbg_macro = "warn"
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true

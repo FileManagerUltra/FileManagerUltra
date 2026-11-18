@@ -348,3 +348,43 @@ fn set_permissions_changes_the_remote_mode() {
         Some(0o750)
     );
 }
+
+#[test]
+fn set_attrs_round_trips_times_and_mode_and_reports_the_rest() {
+    use fm_vfs::{AttrFailKind, AttrGroup, AttrSet, Attrs};
+    use std::time::{Duration, UNIX_EPOCH};
+    let (dir, _server, fs) = setup();
+    std::fs::write(dir.path().join("a.txt"), b"x").unwrap();
+    let u = uri(&fs, "/a.txt");
+    let want = Attrs {
+        mtime: Some(UNIX_EPOCH + Duration::from_secs(1_600_000_000)),
+        atime: Some(UNIX_EPOCH + Duration::from_secs(1_600_000_500)),
+        mode: Some(0o640),
+        btime: Some(UNIX_EPOCH),
+        ..Attrs::default()
+    };
+    let report = fs.set_attrs(&u, &want, AttrSet::ALL).unwrap();
+    assert!(report.failed_group(AttrGroup::Mtime).is_none());
+    assert!(report.failed_group(AttrGroup::Mode).is_none());
+    let f = report.failed_group(AttrGroup::Btime).unwrap();
+    assert_eq!(f.kind, AttrFailKind::Unsupported);
+    let got = fs.stat_full(&u).unwrap();
+    assert_eq!(got.mtime, want.mtime);
+    assert_eq!(got.atime, want.atime);
+    assert_eq!(got.mode, Some(0o640));
+    assert!(fs.attr_caps(&u).write.contains(AttrGroup::Owner));
+}
+
+#[test]
+fn set_attrs_on_a_missing_file_is_an_error() {
+    use fm_vfs::{AttrSet, Attrs};
+    let (_dir, _server, fs) = setup();
+    let want = Attrs {
+        mode: Some(0o600),
+        ..Attrs::default()
+    };
+    assert!(
+        fs.set_attrs(&uri(&fs, "/nope"), &want, AttrSet::ALL)
+            .is_err()
+    );
+}

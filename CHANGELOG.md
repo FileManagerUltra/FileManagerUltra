@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Synchronize Folders (File menu, starting from the folder you have highlighted): compare two folders (local, network share or SFTP), review what would be copied or deleted, change any item's action, then synchronize. Choose Update (copy new and newer files), Mirror (make one folder identical to the other) or Two-way (changes go both ways, conflicts are left for you). Deletes that cannot be undone ask for confirmation first. A target folder that does not exist yet is created by the first sync. The window can be minimized to the Activity panel with a status in the status bar (also when you close it while "Keep in sync" is on), and the grid can be sorted by name, size, modified time or action. Profiles can be saved, and "Keep in sync" first compares and asks you to confirm what it will do, then re-compares and applies safe changes while the app is open (conflicts and deletes wait for your review); it can be stopped from the Activity panel, and folders are shown as normal OS paths. A new sync starts in a guided setup that asks a few questions (folders, goal, deleting, comparing, what to ignore, keep in sync) and ends with a review of the changes before anything happens; an Advanced view offers every option at once, and both explain what each button does. Both views show the same choices (changing one updates the other), use the same icons and colors, and have a button to swap the two folders; the guided setup saves the profile on the last step and shows the source and target folders above the list of changes.
+- The Browse… chooser has a sidebar with your places, bookmarks, devices, the file system (This PC on Windows), Network and Saved servers for faster browsing; picking a server that is not connected yet opens its sign-in dialog right from the chooser.
+- Browse… buttons choose a folder or file from a list (local, network share or SFTP) instead of typing it: on both sync folders, the copy/move destination and the subtitle and playlist dialogs.
+
+### Changed
+- Synchronize Folders: the action filter in the list is cleared whenever you start a new comparison.
+- Synchronize Folders: the Advanced view now matches the guided setup: Save and Synchronize buttons look the same and sit below the list (Synchronize last), and the comparison summary sits in the same always-visible footer with the expand button.
+- Synchronize Folders: the "Name and save this sync" card has a large save illustration so it stands out.
+- Synchronize Folders: a "Cancel scan" button next to the scanning progress stops a long comparison.
+- Synchronize Folders: the action menu of an item explains each choice (Skip, Do nothing and the rest) in a tooltip and offers "Add to ignore list", which adds the file or folder to the sync's ignore list (the "Leave out" step) and compares again.
+- Synchronize Folders: the Action column has a filter (funnel icon) to show only items that will be copied either way, deleted on either side or skipped, the Action column shows clear icons (copy either way, delete on either side, skip, no action, identical, conflict) instead of text, with the same icons and labels in its menus, and the table's "Expand" button is now a square icon next to the comparison result.
+- The last step of the guided sync setup no longer shows the purple notice; the comparison result (and any permanent-delete warning) now sits in its own bar below the list, where it can't be scrolled out of view.
+- The SFTP key file "Browse…" uses the same file chooser as everywhere else; choosers opened from a connect dialog open as separate windows stacked in order.
+- The Browse… chooser is smaller and denser, and has a New folder button to create a folder where you are browsing.
+- The sync list is now a folder tree: click a folder to fold or unfold it (it shows how many files are inside and what will happen to them), long names are shortened in the middle, hovering a row shows its full path, and clicking a row shows the full left and right paths below the list.
+- Folder sync: a folder's menu applies a choice (copy, skip, delete…) to everything inside it, “Expand table” opens the list of changes in a large window (Esc closes it first), and after a comparison the Advanced settings fold into one line (“Change settings” brings them back) so the list gets more room.
+- The Advanced folder sync view now follows the same order as the guided setup (folders, goal, deleting, compare by, leave out, keep in sync) on one page, in a window the same size as the guided setup, with Synchronize in the far corner.
+
+### Fixed
+- Synchronize Folders now starts from the folder you selected (or the current folder), not the one the cursor happens to rest on.
+- The large "Changes" window now fills its whole table, and opening it from the guided setup no longer crashes the app.
+- Switching a pane (for example a preview pane restored from an earlier session) to a Files pane no longer pops up an uncancellable connection dialog for a server you are not connected to; it opens the folder selected in the other pane.
+
 ## [0.2.4] - 2026-11-16
 
 ### Added
@@ -17,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Find Files now searches network shares (SMB), by name and by content, like SFTP servers and local folders. Properties now shows the size and number of items of folders on network shares too. In the Network folder or on a server that lists its shares, Find Files tells you to open a share first.
 
 ### Changed
+- Folder sync has an “Open saved” button next to square Guided setup and Advanced buttons with icons, and the wizard's last step keeps the Start button in the far corner, away from Back.
+- The sync wizard has a clear header for each question, outlined folder boxes, the same pattern list as Preferences for “Leave out”, and one fixed size so Back and Next never move between steps.
+- Dialogs are roomier and easier to read: larger text, taller buttons and list rows, clearly outlined buttons and input fields, and better contrast in the dark theme. The folder chooser is larger to match.
 - Ctrl+Shift+= / Ctrl+Shift+- / Ctrl+Shift+0 now always zoom the whole app, also when a terminal or Preview has focus, so the keys do the same everywhere. To zoom only one terminal or Preview, use the zoom button in its header (a Preview also keeps Ctrl+= / Ctrl+- / Ctrl+0).
 - The built-in audio decoder is updated. Damaged or deliberately malformed audio files are handled more safely, MP3 files that only carry old-style (ID3v1) or APE tags now show their title and artist, and some variable-bitrate MP3s report their correct length.
 - Drives in This PC are shown as Windows writes them (`C:`, `Data (D:)`), without a trailing slash.

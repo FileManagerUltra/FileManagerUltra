@@ -3503,7 +3503,7 @@ fn log_time_picker_dark_light() {
         );
         let mut harness = Harness::builder()
             .renderer(renderer)
-            .with_size(egui::vec2(900.0, 650.0))
+            .with_size(egui::vec2(1000.0, 860.0))
             .with_accessibility_check(false)
             .build_ui_state(
                 move |ui, session: &mut Session| {
@@ -3520,6 +3520,7 @@ fn log_time_picker_dark_light() {
             );
         harness.get_by_label("Time").click();
         harness.run();
+        harness.run_steps(3);
         harness.get_by_label("From").click();
         harness.run();
         harness.get_by_label("To").click();
@@ -4344,6 +4345,278 @@ fn find_files_window_lists_results_dark_light() {
 }
 
 #[test]
+fn sync_window_shows_actions_and_conflicts_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let mem = MemFs::new();
+        mem.mkdirs_str("/s/a/docs").expect("mkdirs");
+        mem.mkdirs_str("/s/b/docs").expect("mkdirs");
+        let at = |secs: u64| SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
+        for (path, body, secs) in [
+            ("/s/a/new.txt", &b"only left"[..], 1_700_000_000),
+            ("/s/a/newer.txt", &b"left is newer"[..], 1_700_100_000),
+            ("/s/b/newer.txt", &b"old"[..], 1_700_000_000),
+            ("/s/a/same.txt", &b"same"[..], 1_700_000_000),
+            ("/s/b/same.txt", &b"same"[..], 1_700_000_000),
+            ("/s/b/only-right.bin", &b"extra"[..], 1_700_000_000),
+        ] {
+            mem.put_file_at(&VfsUri::parse(path).expect("uri"), body, at(secs))
+                .expect("put");
+        }
+        let mut session = test_session();
+        session.registry =
+            fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+        session.backends.register(Arc::new(mem));
+        session
+            .dispatch("sync.open", &serde_json::json!({}))
+            .expect("open");
+        session
+            .dispatch("sync.view", &serde_json::json!({"mode": "advanced"}))
+            .expect("advanced");
+        session
+            .dispatch(
+                "sync.profile.set",
+                &serde_json::json!({"patch": {
+                    "name": "Photos", "left": "/s/a", "right": "/s/b", "mode": "Update"}}),
+            )
+            .expect("set");
+        session
+            .dispatch("sync.compare", &serde_json::json!({}))
+            .expect("compare");
+        wait_until(&mut session, |s| {
+            s.sync
+                .current_state()
+                .is_some_and(|st| !st.busy() && st.plan.is_some())
+        });
+        session
+            .dispatch(
+                "sync.set_action",
+                &serde_json::json!({"rel": "newer.txt", "action": "skip"}),
+            )
+            .expect("action");
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(960.0, 800.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::sync::show(ui.ctx(), &mut session, &tokens);
+            });
+        harness.run();
+        harness.run_steps(3);
+        harness.snapshot(format!("dialog_sync_{theme}"));
+        egui_kittest::kittest::Queryable::get_by_label(&harness, "Expand table").click();
+        harness.run_steps(3);
+        harness.snapshot(format!("dialog_sync_large_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
+fn sync_keep_in_sync_asks_for_confirmation_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let mem = MemFs::new();
+        mem.mkdirs_str("/s/a").expect("mkdirs");
+        mem.mkdirs_str("/s/b").expect("mkdirs");
+        let at = |secs: u64| SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
+        for (path, body, secs) in [
+            ("/s/a/new.txt", &b"only left"[..], 1_700_000_000),
+            ("/s/a/same.txt", &b"same"[..], 1_700_000_000),
+            ("/s/b/same.txt", &b"same"[..], 1_700_000_000),
+            ("/s/b/only-right.bin", &b"extra"[..], 1_700_000_000),
+        ] {
+            mem.put_file_at(&VfsUri::parse(path).expect("uri"), body, at(secs))
+                .expect("put");
+        }
+        let mut session = test_session();
+        session.registry =
+            fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+        session.backends.register(Arc::new(mem));
+        session
+            .dispatch("sync.open", &serde_json::json!({}))
+            .expect("open");
+        session
+            .dispatch("sync.view", &serde_json::json!({"mode": "advanced"}))
+            .expect("advanced");
+        session
+            .dispatch(
+                "sync.profile.set",
+                &serde_json::json!({"patch": {
+                    "name": "Photos", "left": "/s/a", "right": "/s/b", "mode": "TwoWay"}}),
+            )
+            .expect("set");
+        session
+            .dispatch("sync.watch.start", &serde_json::json!({}))
+            .expect("start");
+        wait_until(&mut session, |s| {
+            s.sync
+                .current_state()
+                .is_some_and(|st| st.arming == fm_engine::sync_hub::Arming::Confirm)
+        });
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(960.0, 560.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::sync::show(ui.ctx(), &mut session, &tokens);
+            });
+        harness.run();
+        harness.run_steps(3);
+        harness.snapshot(format!("dialog_sync_confirm_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
+fn sync_wizard_goal_and_review_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for (step, name) in [(1u8, "goal"), (6, "review")] {
+            let mem = MemFs::new();
+            mem.mkdirs_str("/s/a").expect("mkdirs");
+            mem.mkdirs_str("/s/b").expect("mkdirs");
+            let at = |secs: u64| SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
+            for (path, body, secs) in [
+                ("/s/a/new.txt", &b"new"[..], 1_700_000_100),
+                ("/s/a/same.txt", &b"same"[..], 1_700_000_000),
+                ("/s/b/same.txt", &b"same"[..], 1_700_000_000),
+            ] {
+                mem.put_file_at(&VfsUri::parse(path).expect("uri"), body, at(secs))
+                    .expect("put");
+            }
+            let mut session = test_session();
+            session.registry =
+                fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+            session.backends.register(Arc::new(mem));
+            for (id, params) in [
+                ("sync.open", serde_json::json!({})),
+                (
+                    "sync.profile.set",
+                    serde_json::json!({"patch": {
+                        "name": "Photos", "left": "/s/a", "right": "/s/b", "mode": "Update"}}),
+                ),
+                ("sync.wizard.go", serde_json::json!({"step": step})),
+            ] {
+                session.dispatch(id, &params).expect(id);
+            }
+            wait_until(&mut session, |s| {
+                s.sync
+                    .current_state()
+                    .is_some_and(|st| !st.busy() && (step < 6 || st.plan.is_some()))
+            });
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(960.0, 800.0))
+                .renderer(renderer)
+                .build_ui(move |ui| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    fm_ui::sync::show(ui.ctx(), &mut session, &tokens);
+                });
+            harness.run();
+            harness.run_steps(3);
+            harness.snapshot(format!("dialog_sync_wizard_{name}_{theme}"));
+            results.extend_harness(&mut harness);
+        }
+    }
+}
+
+#[test]
+fn sync_open_saved_menu_lists_syncs_clearly_dark_light() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let mut session = test_session();
+        session.registry =
+            fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+        for (name, left, right, mode) in [
+            (
+                "Holiday photos",
+                "/home/me/Pictures",
+                "/mnt/backup/Pictures",
+                "Update",
+            ),
+            (
+                "Work documents",
+                "/home/me/Documents",
+                "sftp://nas/share/Documents",
+                "Mirror",
+            ),
+            (
+                "Phone and laptop",
+                "/home/me/Music",
+                "/media/phone/Music",
+                "TwoWay",
+            ),
+        ] {
+            for (id, params) in [
+                ("sync.profile.new", serde_json::json!({})),
+                (
+                    "sync.profile.set",
+                    serde_json::json!({"patch": {
+                        "name": name, "left": left, "right": right, "mode": mode}}),
+                ),
+                ("sync.profile.save", serde_json::json!({})),
+            ] {
+                session.dispatch(id, &params).expect(id);
+            }
+        }
+        session
+            .dispatch("sync.view", &serde_json::json!({"mode": "wizard"}))
+            .expect("view");
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(960.0, 760.0))
+            .renderer(renderer)
+            .build_ui_state(
+                move |ui, session: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    fm_ui::sync::show(ui.ctx(), session, &tokens);
+                },
+                session,
+            );
+        harness.run_steps(3);
+        harness.get_by_label("Open saved").click();
+        harness.run_steps(4);
+        harness.snapshot(format!("dialog_sync_open_saved_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
 fn preview_diff_split_and_unified_dark_light() {
     use fm_engine::diff_cmds::DiffStatus;
     let _gpu = lock_gpu();
@@ -4754,5 +5027,58 @@ fn media_drop_zones_dark_light() {
             harness.snapshot(format!("media_drop_{zone}_{theme}"));
             results.extend_harness(&mut harness);
         }
+    }
+}
+
+#[test]
+fn dialog_picker_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let mem = MemFs::new();
+        for dir in ["/s/Documents", "/s/Music", "/s/Photos"] {
+            mem.mkdirs_str(dir).expect("mkdirs");
+        }
+        let mut session = test_session();
+        session.registry =
+            fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+        session.backends.register(Arc::new(mem));
+        session
+            .dispatch(
+                "picker.open",
+                &serde_json::json!({"purpose": "sync.left", "kind": "folder",
+                    "title": "Choose the source folder", "start": "/s"}),
+            )
+            .expect("picker");
+        session
+            .dispatch("picker.navigate", &serde_json::json!({"uri": "/s"}))
+            .expect("navigate");
+        session
+            .dispatch("picker.select", &serde_json::json!({"uri": "/s/Photos"}))
+            .expect("select");
+        wait_until(&mut session, |s| {
+            s.picker.as_ref().is_some_and(|p| {
+                matches!(s.dirs.state(&p.folder), fm_engine::DirState::Ready { .. })
+            })
+        });
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(960.0, 640.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::picker::show(ui.ctx(), &mut session, &tokens);
+            });
+        harness.run();
+        harness.run_steps(3);
+        harness.snapshot(format!("dialog_picker_{theme}"));
+        results.extend_harness(&mut harness);
     }
 }

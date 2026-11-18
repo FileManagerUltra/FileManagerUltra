@@ -5,7 +5,7 @@
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use fm_vfs::{Entry, EntryKind, FmError, Scheme, Vfs, VfsUri, WriteOpts};
+use fm_vfs::{AttrFailKind, AttrReport, Entry, EntryKind, FmError, Scheme, Vfs, VfsUri, WriteOpts};
 
 use crate::ConflictPolicy;
 use crate::ctx::{Backends, Choice, Conflict, ConflictSide, OpCtx, OpReport, Progress};
@@ -166,6 +166,9 @@ impl<'a, 'b> Runner<'a, 'b> {
                 .unwrap_or_else(|| top.dst.path_str().to_string()),
         ));
         let mut failed_dirs: Vec<&VfsUri> = Vec::new();
+        // Directory attributes (mtime above all) are applied after their children are
+        // written, or the children would bump them again.
+        let mut dir_attrs: Vec<&PlanItem> = Vec::new();
         let mut done_idx: Vec<usize> = Vec::new();
         let mut clean = true;
         for (i, item) in items.iter().enumerate() {
@@ -186,6 +189,9 @@ impl<'a, 'b> Runner<'a, 'b> {
                 Outcome::Done { created } => {
                     self.report.done += 1;
                     done_idx.push(i);
+                    if item.kind == PlanKind::Dir {
+                        dir_attrs.push(item);
+                    }
                     if i == 0 {
                         self.report.created.extend(created);
                     }
@@ -208,6 +214,9 @@ impl<'a, 'b> Runner<'a, 'b> {
             }
             self.progress.items.done += 1;
             self.emit();
+        }
+        for item in dir_attrs.into_iter().rev() {
+            self.copy_attrs(&item.src, &item.dst);
         }
         if moving {
             let removed = self.delete_sources(items, &done_idx);
@@ -373,11 +382,38 @@ impl<'a, 'b> Runner<'a, 'b> {
             Err(e) => return Outcome::Failed(e),
         }
         match self.write_file(&*src_vfs, &*dst_vfs, &item.src, &dst, overwrite) {
-            Ok(()) => Outcome::Done {
-                created: (!overwrite).then_some(dst),
-            },
+            Ok(()) => {
+                self.copy_attrs(&item.src, &dst);
+                Outcome::Done {
+                    created: (!overwrite).then_some(dst),
+                }
+            }
             Err(FmError::Cancelled) => Outcome::Cancelled,
             Err(e) => Outcome::Failed(e),
+        }
+    }
+
+    /// Carry the requested attribute groups over. Never fails the item: whatever could
+    /// not be applied is recorded in the report and the content stays as written.
+    fn copy_attrs(&mut self, src: &VfsUri, dst: &VfsUri) {
+        let which = self.ctx.attrs;
+        if which.is_empty() {
+            return;
+        }
+        let applied = match (self.backends.vfs(src), self.backends.vfs(dst)) {
+            (Ok(s), Ok(d)) => s.stat_full(src).and_then(|a| d.set_attrs(dst, &a, which)),
+            (Err(e), _) | (_, Err(e)) => Err(e),
+        };
+        match applied {
+            Ok(r) if r.is_complete() => {}
+            Ok(r) => self.report.attr_incomplete.push((dst.clone(), r)),
+            Err(e) => {
+                let mut r = AttrReport::default();
+                for g in which.iter() {
+                    r.fail(g, AttrFailKind::Other(e.to_string()));
+                }
+                self.report.attr_incomplete.push((dst.clone(), r));
+            }
         }
     }
 

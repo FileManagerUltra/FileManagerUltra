@@ -308,3 +308,37 @@ fn other_shares_connect_on_demand() {
     assert_eq!(names(&bare), ["other", SHARE]);
     assert_eq!(bare.start_uri().unwrap(), root);
 }
+
+#[test]
+fn attributes_round_trip_times_and_dos_flags() {
+    use fm_vfs::{AttrFailKind, AttrGroup, AttrSet, Attrs};
+    use std::time::{Duration, UNIX_EPOCH};
+    let (_g, s) = server_or_skip!();
+    let fs = connect(&params(s, PASS)).unwrap();
+    let f = uri(&fs, "/attrs.txt");
+    let mut w = fs.open_write(&f, WriteOpts::default()).unwrap();
+    w.write_all(b"x").unwrap();
+    drop(w);
+    let want = Attrs {
+        btime: Some(UNIX_EPOCH + Duration::from_secs(1_500_000_000)),
+        mtime: Some(UNIX_EPOCH + Duration::from_secs(1_600_000_000)),
+        atime: Some(UNIX_EPOCH + Duration::from_secs(1_650_000_000)),
+        dos_flags: Some(0x2),
+        mode: Some(0o600),
+        ..Attrs::default()
+    };
+    let report = fs.set_attrs(&f, &want, AttrSet::ALL).unwrap();
+    assert!(report.failed_group(AttrGroup::Mtime).is_none());
+    assert_eq!(
+        report.failed_group(AttrGroup::Mode).map(|x| x.kind.clone()),
+        Some(AttrFailKind::Unsupported)
+    );
+    let got = fs.stat_full(&f).unwrap();
+    assert_eq!(got.btime, want.btime);
+    assert_eq!(got.mtime, want.mtime);
+    assert_eq!(got.dos_flags, Some(0x2));
+    assert!(
+        fs.set_attrs(&uri(&fs, "/missing"), &want, AttrSet::TIMES)
+            .is_err()
+    );
+}

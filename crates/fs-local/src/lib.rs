@@ -4,6 +4,8 @@
 //! never calls this directly. Errors map to typed [`FmError`]s; listings are capped
 //! at [`fm_vfs::MAX_DIR_ENTRIES`] (configurable per instance for tests).
 
+mod attrs;
+
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -378,6 +380,28 @@ impl Vfs for LocalFs {
         }
         fs::set_permissions(&path, fs::Permissions::from_mode(mode & 0o7777))
             .map_err(|e| map_io(e, display))
+    }
+
+    fn stat_full(&self, uri: &VfsUri) -> Result<fm_vfs::Attrs, FmError> {
+        let path = self.path(uri)?;
+        attrs::read(&path, &shown(uri))
+    }
+
+    fn set_attrs(
+        &self,
+        uri: &VfsUri,
+        a: &fm_vfs::Attrs,
+        which: fm_vfs::AttrSet,
+    ) -> Result<fm_vfs::AttrReport, FmError> {
+        let path = self.path(uri)?;
+        attrs::write(&path, a, which).map_err(|e| match e {
+            FmError::NotFound(_) => FmError::NotFound(shown(uri)),
+            other => other,
+        })
+    }
+
+    fn attr_caps(&self, _uri: &VfsUri) -> fm_vfs::AttrCaps {
+        attrs::caps()
     }
 
     fn remove(&self, uri: &VfsUri) -> Result<(), FmError> {

@@ -6,7 +6,6 @@ use serde_json::{Map, Value, json};
 
 use fm_engine::Session;
 use fm_engine::remote::SftpPrompt;
-use fm_vfs::VfsUri;
 
 use crate::theme::Tokens;
 
@@ -25,8 +24,7 @@ struct SftpForm {
     save_as: String,
     remember: bool,
     focus_pending: bool,
-    /// Folder shown by the key-file picker, while it is open.
-    picker: Option<VfsUri>,
+    key_chooser_open: bool,
 }
 
 impl SftpForm {
@@ -109,8 +107,10 @@ pub fn sftp_prompt_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let id = Id::NULL.with("fm-sftp-prompt");
     let Some(prompt) = s.remote.sftp_prompt.clone() else {
         ctx.data_mut(|d| d.remove::<SftpForm>(id));
+        crate::dialog_style::raise_on_open(ctx, id.with("window"), false);
         return;
     };
+    crate::dialog_style::raise_on_open(ctx, id.with("window"), true);
     let mut form: SftpForm = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
     // A new error must not wipe what the user typed.
     let seed = SftpPrompt {
@@ -122,6 +122,13 @@ pub fn sftp_prompt_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     }
     let busy = s.remote.is_connecting();
     let mut submit = false;
+    let mut browse: Option<String> = None;
+    // The shared chooser answers through `Session::picked`.
+    if s.picked.as_ref().is_some_and(|(p, _)| p == KEY_PURPOSE)
+        && let Some((_, path)) = s.picked.take()
+    {
+        form.key_path = path;
+    }
     let mut cancel = ctx.input(|i| i.key_pressed(Key::Escape));
     let title = if prompt.editing {
         "Edit Saved Server"
@@ -129,7 +136,7 @@ pub fn sftp_prompt_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         "Connect to Server"
     };
     let mut open = true;
-    crate::dialog_style::window(ctx, tokens, title, &mut open)
+    crate::dialog_style::sign_in_window(ctx, tokens, title, &mut open)
         .id(id.with("window"))
         .show(ctx, |ui| {
             crate::dialog_style::apply(ui, tokens);
@@ -165,8 +172,7 @@ pub fn sftp_prompt_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                                     .labelled_by(caption.id);
                                 enter |= r.lost_focus();
                                 if ui.button("Browse…").clicked() {
-                                    let home = fm_engine::workspace::home_location();
-                                    form.picker = Some(home.join(".ssh").unwrap_or(home));
+                                    browse = Some(key_start(&form.key_path));
                                 }
                             });
                             ui.end_row();
@@ -214,19 +220,25 @@ pub fn sftp_prompt_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 }
             });
         });
-    if let Some(dir) = form.picker.clone() {
-        match key_picker(ctx, s, tokens, &dir) {
-            Picked::Stay => {}
-            Picked::Go(next) => form.picker = Some(next),
-            Picked::File(path) => {
-                form.key_path = path;
-                form.picker = None;
-            }
-            Picked::Close => form.picker = None,
-        }
-        // Escape closes the picker first, not the whole popup.
+    if let Some(start) = browse {
+        s.dispatch_or_notice(
+            "picker.open",
+            &json!({"purpose": KEY_PURPOSE, "kind": "file", "title": "Choose Key File", "start": start}),
+        );
+    }
+    // Escape closes the chooser first, not the whole popup.
+    let key_chooser_open = s.picker.as_ref().is_some_and(|p| p.purpose == KEY_PURPOSE);
+    if key_chooser_open {
         cancel = false;
     }
+    // When the key chooser closes, an earlier chooser reappears; this form goes back in front.
+    if form.key_chooser_open && !key_chooser_open {
+        ctx.move_to_top(egui::LayerId::new(
+            egui::Order::Foreground,
+            id.with("window"),
+        ));
+    }
+    form.key_chooser_open = key_chooser_open;
     if cancel || !open {
         ctx.data_mut(|d| d.remove::<SftpForm>(id));
         s.dispatch_or_notice("remote.connect.cancel", &Value::Null);
@@ -251,91 +263,23 @@ pub fn sftp_prompt_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     ctx.data_mut(|d| d.insert_temp(id, form));
 }
 
-enum Picked {
-    Stay,
-    Go(VfsUri),
-    File(String),
-    Close,
-}
+const KEY_PURPOSE: &str = "sftp.key";
 
-/// Local path of a `file://` uri, in the form a user would type.
-fn display_path(uri: &VfsUri) -> String {
-    let p = uri.path_str();
-    let b = p.as_bytes();
-    if b.len() >= 3 && b[0] == b'/' && b[2] == b':' {
-        p.get(1..).unwrap_or(p).to_string()
-    } else {
-        p.to_string()
+/// Where the chooser opens: the typed key file (`~` expanded) or `~/.ssh`.
+fn key_start(typed: &str) -> String {
+    let home = fm_engine::workspace::home_location();
+    let typed = typed.trim();
+    let ssh = || {
+        home.join(".ssh")
+            .map(|u| fm_engine::item_cmds::display_path(&u))
+            .unwrap_or_default()
+    };
+    match typed.strip_prefix("~/") {
+        Some(rest) if !rest.is_empty() => {
+            let base = fm_engine::item_cmds::display_path(&home);
+            format!("{}/{rest}", base.trim_end_matches('/'))
+        }
+        _ if typed.is_empty() || typed.starts_with('~') => ssh(),
+        _ => typed.to_string(),
     }
-}
-
-/// A small file chooser over the local folder `dir`, read through the engine's directory cache.
-fn key_picker(ctx: &Context, s: &mut Session, tokens: &Tokens, dir: &VfsUri) -> Picked {
-    use fm_engine::DirState;
-    let mut out = Picked::Stay;
-    if let Err(err) = s.ensure_read(dir.clone()) {
-        s.notice = Some(err.to_string());
-    }
-    let state = s.dirs.state(dir);
-    // No ~/.ssh: fall back to the home folder.
-    if matches!(state, DirState::Failed { .. }) {
-        let home = fm_engine::workspace::home_location();
-        return if *dir == home {
-            Picked::Close
-        } else {
-            Picked::Go(home)
-        };
-    }
-    let entries = s.dirs.entries(dir);
-    let mut open = true;
-    crate::dialog_style::window(ctx, tokens, "Choose Key File", &mut open)
-        .id(Id::NULL.with("fm-key-picker"))
-        .show(ctx, |ui| {
-            crate::dialog_style::apply(ui, tokens);
-            crate::dialog_style::hint(ui, tokens, display_path(dir));
-            ui.add_space(tokens.padding);
-            egui::ScrollArea::vertical()
-                .max_height(260.0)
-                .min_scrolled_width(320.0)
-                .show(ui, |ui| {
-                    if let Some(parent) = dir.parent()
-                        && ui.selectable_label(false, "../").clicked()
-                    {
-                        out = Picked::Go(parent);
-                    }
-                    let mut rows: Vec<_> = entries
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .filter(|e| !e.name.ends_with(".pub"))
-                        .collect();
-                    rows.sort_by_cached_key(|e| (!e.is_dir_like(), e.name.to_lowercase()));
-                    for e in rows {
-                        let dir_like = e.is_dir_like();
-                        let label = if dir_like {
-                            format!("{}/", e.name)
-                        } else {
-                            e.name.clone()
-                        };
-                        if ui.selectable_label(false, label).clicked() {
-                            out = if dir_like {
-                                Picked::Go(e.uri.clone())
-                            } else {
-                                Picked::File(display_path(&e.uri))
-                            };
-                        }
-                    }
-                    if matches!(state, DirState::Loading { .. }) {
-                        crate::dialog_style::hint(ui, tokens, "Loading…");
-                    }
-                });
-            ui.add_space(tokens.padding);
-            if ui.button("Cancel").clicked() {
-                out = Picked::Close;
-            }
-        });
-    if !open || ctx.input(|i| i.key_pressed(Key::Escape)) {
-        out = Picked::Close;
-    }
-    out
 }

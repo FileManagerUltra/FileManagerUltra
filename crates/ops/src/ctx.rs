@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
-use fm_vfs::{FmError, Vfs, VfsUri};
+use fm_vfs::{AttrReport, AttrSet, FmError, Vfs, VfsUri};
 
 use crate::{ConflictPolicy, TransferProgress};
 
@@ -87,6 +87,9 @@ pub struct OpReport {
     pub moved: Vec<(VfsUri, VfsUri)>,
     /// Originals now in the platform trash (undo input).
     pub trashed: Vec<VfsUri>,
+    /// Destinations where a requested attribute could not be applied. The content is
+    /// intact; only the groups listed in each report are missing.
+    pub attr_incomplete: Vec<(VfsUri, AttrReport)>,
 }
 
 impl OpReport {
@@ -126,6 +129,9 @@ pub struct OpCtx<'a> {
     pub on_conflict: &'a mut dyn FnMut(&Conflict) -> Decision,
     /// Point copied absolute symlinks that lie inside the copied tree at the copy.
     pub retarget_links: bool,
+    /// Attribute groups carried from source to destination once the content is in
+    /// place (default: none, a plain copy).
+    pub attrs: AttrSet,
 }
 
 impl<'a> OpCtx<'a> {
@@ -140,7 +146,13 @@ impl<'a> OpCtx<'a> {
             on_progress,
             on_conflict,
             retarget_links: true,
+            attrs: AttrSet::NONE,
         }
+    }
+
+    pub fn with_attrs(mut self, attrs: AttrSet) -> Self {
+        self.attrs = attrs;
+        self
     }
 
     pub fn with_retarget_links(mut self, retarget: bool) -> Self {

@@ -87,6 +87,7 @@ pub fn window_owns_keyboard(s: &Session) -> bool {
         || s.about_open
         || s.open_with.is_some()
         || s.compare.is_some()
+        || s.picker.is_some()
         || s.search.is_some()
         || s.properties.is_some()
         || s.unsaved_prompt.is_some()
@@ -221,15 +222,17 @@ impl Dialogs {
         let Some(mut dialog) = self.open.take() else {
             return;
         };
-        let esc = ctx.input(|i| i.key_pressed(Key::Escape));
-        let enter = ctx.input(|i| i.key_pressed(Key::Enter));
+        // The picker on top owns Esc and Enter.
+        let esc = ctx.input(|i| i.key_pressed(Key::Escape)) && s.picker.is_none();
+        let enter = ctx.input(|i| i.key_pressed(Key::Enter)) && s.picker.is_none();
         let focus = std::mem::take(&mut self.focus_next);
         let keep = match &mut dialog {
             Dialog::Subtitle { path } => {
+                take_picked(s, "dialog.subtitle", path);
                 let verdict = fm_engine::media_subtitle_cmds::validate_path(path)
                     .map(|_| ())
                     .map_err(|error| error.to_string());
-                let (go, cancel) = name_dialog(
+                let (go, cancel, browse) = name_dialog_browse(
                     ctx,
                     tokens,
                     "Load subtitles (SRT, WebVTT, ASS or SSA)",
@@ -237,7 +240,11 @@ impl Dialogs {
                     &verdict,
                     focus,
                     false,
+                    true,
                 );
+                if browse {
+                    open_picker(s, "dialog.subtitle", "file", "Choose a subtitle file", path);
+                }
                 if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice("media.subtitle.load", &json!({"uri": path.as_str()}));
                     false
@@ -246,6 +253,7 @@ impl Dialogs {
                 }
             }
             Dialog::Playlist { save, path } => {
+                take_picked(s, "dialog.playlist", path);
                 let verdict = fm_engine::media_playlist_cmds::validate_path(path, *save)
                     .map(|_| ())
                     .map_err(|error| error.to_string());
@@ -254,7 +262,11 @@ impl Dialogs {
                 } else {
                     "Load playlist (M3U, M3U8 or PLS)"
                 };
-                let (go, cancel) = name_dialog(ctx, tokens, title, path, &verdict, focus, false);
+                let (go, cancel, browse) =
+                    name_dialog_browse(ctx, tokens, title, path, &verdict, focus, false, !*save);
+                if browse {
+                    open_picker(s, "dialog.playlist", "file", "Choose a playlist", path);
+                }
                 if !cancel && !esc && (go || enter) && verdict.is_ok() {
                     s.dispatch_or_notice(
                         if *save {
@@ -409,6 +421,7 @@ impl Dialogs {
                 sources,
                 dest,
             } => {
+                take_picked(s, "dialog.destination", dest);
                 // Typed like the location bar: `\\nas\share` on Windows means the app's
                 // connection when there is one, `This PC`/`D:`/`~` work.
                 let resolved = s.resolve_absolute(dest);
@@ -423,7 +436,17 @@ impl Dialogs {
                 } else {
                     "Move to"
                 };
-                let (go, cancel) = name_dialog(ctx, tokens, title, dest, &verdict, focus, false);
+                let (go, cancel, browse) =
+                    name_dialog_browse(ctx, tokens, title, dest, &verdict, focus, false, true);
+                if browse {
+                    open_picker(
+                        s,
+                        "dialog.destination",
+                        "folder",
+                        "Choose the destination folder",
+                        dest,
+                    );
+                }
                 if !cancel
                     && !esc
                     && (go || enter)
@@ -452,6 +475,22 @@ pub(crate) fn frame(tokens: &Tokens) -> egui::Frame {
 }
 
 /// A text-entry dialog; returns `(confirmed, cancelled)`.
+/// A path the picker returned for this dialog replaces the text.
+fn take_picked(s: &mut Session, purpose: &str, text: &mut String) {
+    if s.picked.as_ref().is_some_and(|(p, _)| p == purpose)
+        && let Some((_, path)) = s.picked.take()
+    {
+        *text = path;
+    }
+}
+
+fn open_picker(s: &mut Session, purpose: &str, kind: &str, title: &str, start: &str) {
+    s.dispatch_or_notice(
+        "picker.open",
+        &json!({"purpose": purpose, "kind": kind, "title": title, "start": start.trim()}),
+    );
+}
+
 fn name_dialog(
     ctx: &Context,
     tokens: &Tokens,
@@ -461,14 +500,44 @@ fn name_dialog(
     focus: bool,
     select_all: bool,
 ) -> (bool, bool) {
-    let (mut go, mut cancel) = (false, false);
+    let (go, cancel, _) =
+        name_dialog_browse(ctx, tokens, title, text, verdict, focus, select_all, false);
+    (go, cancel)
+}
+
+/// `name_dialog` with an optional Browse… button; returns `(ok, cancel, browse)`.
+#[allow(clippy::too_many_arguments)]
+fn name_dialog_browse(
+    ctx: &Context,
+    tokens: &Tokens,
+    title: &str,
+    text: &mut String,
+    verdict: &Result<(), String>,
+    focus: bool,
+    select_all: bool,
+    can_browse: bool,
+) -> (bool, bool, bool) {
+    let (mut go, mut cancel, mut browse) = (false, false, false);
     let mut open = true;
     crate::dialog_style::window(ctx, tokens, title, &mut open)
         .id(Id::NULL.with("fm-name-dialog"))
         .show(ctx, |ui| {
             crate::dialog_style::apply(ui, tokens);
             let caption = ui.label(RichText::new(title).color(tokens.text));
-            let edit = ui.add(egui::TextEdit::singleline(text).desired_width(280.0));
+            let edit = ui
+                .horizontal(|ui| {
+                    let edit = ui.add(egui::TextEdit::singleline(text).desired_width(280.0));
+                    if can_browse
+                        && ui
+                            .button("Browse…")
+                            .on_hover_text("Choose it from a list instead of typing it")
+                            .clicked()
+                    {
+                        browse = true;
+                    }
+                    edit
+                })
+                .inner;
             let edit = edit.labelled_by(caption.id);
             if focus {
                 edit.request_focus();
@@ -502,7 +571,7 @@ fn name_dialog(
                 }
             });
         });
-    (go && open, cancel || !open)
+    (go && open, cancel || !open, browse)
 }
 
 /// Select by pattern: the pattern plus whether it replaces, extends or trims the selection.

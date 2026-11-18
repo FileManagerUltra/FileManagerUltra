@@ -5,12 +5,17 @@
 //! backends implement, and [`FmError`], the workspace error type (its `Display`
 //! redacts credentials — see [`redact`]).
 
+pub mod attrs;
 pub mod entry;
 pub mod error;
 pub mod redact;
 pub mod uri;
 pub mod vfs;
 
+pub use attrs::{
+    Acl, AttrCaps, AttrFailKind, AttrFailure, AttrGroup, AttrReport, AttrSet, Attrs, MAX_ACL_BYTES,
+    MAX_OWNER_NAME, MAX_XATTR_NAME, MAX_XATTR_VALUE, MAX_XATTRS,
+};
 pub use entry::{Entry, EntryKind};
 pub use error::FmError;
 pub use uri::{Authority, Scheme, VfsUri, display_form, native_path};

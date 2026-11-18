@@ -33,6 +33,32 @@ fn parse(params: &Params) -> Result<(PaneKind, Option<PaneId>, bool), FmError> {
 }
 
 /// `pane.kind.set {kind, pane?}`
+/// The folder highlighted in another Files pane, else that pane's folder, else home.
+fn selected_folder(s: &mut crate::Session, pane: fm_layout::PaneId) -> fm_vfs::VfsUri {
+    let others: Vec<_> = s
+        .layout
+        .panes()
+        .into_iter()
+        .filter(|id| *id != pane)
+        .filter(|id| {
+            s.layout.state(*id).is_some_and(|st| {
+                st.kind.is_files() && matches!(st.location.scheme(), fm_vfs::Scheme::File)
+            })
+        })
+        .collect();
+    for id in others {
+        if let Some(e) = s.cursor_entry(id)
+            && e.is_dir()
+        {
+            return e.uri;
+        }
+        if let Some(st) = s.layout.state(id) {
+            return st.location.clone();
+        }
+    }
+    crate::workspace::home_location()
+}
+
 pub fn set_kind() -> CommandSpec {
     CommandSpec {
         id: "pane.kind.set",
@@ -75,6 +101,22 @@ pub fn set_kind() -> CommandSpec {
                 // The Network tree has nothing to show for a local pane: back to home.
                 state.tree = fm_layout::TreeState::new(fm_vfs::VfsUri::root_file());
                 state.navigate(crate::workspace::home_location());
+            }
+            let stale_remote = kind == PaneKind::Files
+                && s.layout.state(pane).is_some_and(|st| {
+                    matches!(
+                        st.location.scheme(),
+                        fm_vfs::Scheme::Sftp | fm_vfs::Scheme::Smb
+                    ) && s.backends.get_for(&st.location).is_none()
+                });
+            if stale_remote {
+                // A remote location left over from earlier would ask to connect: open the
+                // folder selected in the other Files pane instead.
+                let target = selected_folder(s, pane);
+                if let Some(state) = s.layout.state_mut(pane) {
+                    state.tree = fm_layout::TreeState::new(fm_vfs::VfsUri::root_file());
+                    state.navigate(target);
+                }
             }
             match kind {
                 PaneKind::Files | PaneKind::Preview | PaneKind::Smb | PaneKind::Media => {}
@@ -144,6 +186,27 @@ mod tests {
             session.layout.state(second).expect("second").kind,
             PaneKind::Files
         );
+    }
+
+    #[test]
+    fn switching_a_preview_pane_with_a_stale_remote_location_to_files_stays_local() {
+        let mut session = crate::Session::new().expect("session");
+        let first = session.layout.focused();
+        let second = session
+            .layout
+            .split(first, fm_layout::Axis::Vertical, 0.5)
+            .expect("split");
+        let remote = fm_vfs::VfsUri::parse("sftp://root@192.0.2.1/root").expect("uri");
+        session
+            .layout
+            .state_mut(second)
+            .expect("pane")
+            .navigate(remote);
+        session
+            .dispatch("pane.kind.set", &json!({"kind": "files", "pane": second}))
+            .expect("files");
+        let state = session.layout.state(second).expect("second");
+        assert_eq!(state.location.scheme(), fm_vfs::Scheme::File);
     }
 
     #[test]
