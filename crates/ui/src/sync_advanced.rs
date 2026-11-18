@@ -8,8 +8,8 @@ use fm_sync::{CompareMethod, DeletePolicy, Side, SyncMode};
 use serde_json::{Value, json};
 
 use crate::sync::{
-    Command, Draft, RowFilterBar, caption, confirmation, folder_pair, grid_reserving, split_list,
-    status_bar,
+    self, Command, Draft, RowFilterBar, caption, confirmation, folder_pair, grid_reserving,
+    set_profile, split_list, status_bar,
 };
 use crate::sync_icons::{self, Icon};
 use crate::sync_wizard::FOOTER_HEIGHT;
@@ -20,7 +20,7 @@ use crate::theme::Tokens;
 pub(crate) const PAGE_HEIGHT: f32 = 708.0;
 const LABEL_WIDTH: f32 = 150.0;
 /// Room for the save row and the Synchronize button under the table.
-const BOTTOM_HEIGHT: f32 = 118.0;
+const BOTTOM_HEIGHT: f32 = 124.0;
 
 pub(crate) fn show(
     ui: &mut egui::Ui,
@@ -85,10 +85,9 @@ fn name_row(
     ui.horizontal(|ui| {
         let r = ui
             .add(
-                egui::TextEdit::singleline(&mut draft.name)
+                sync::input(&mut draft.name)
                     .hint_text("Name of this sync")
-                    .desired_width(260.0)
-                    .margin(egui::vec2(8.0, 6.0)),
+                    .desired_width(260.0),
             )
             .on_hover_text("Profile name");
         if r.lost_focus() && draft.name != state.profile.name {
@@ -286,7 +285,7 @@ fn goal(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState, commands: &mut Ve
                     (SyncMode::TwoWay, "TwoWay"),
                 ] {
                     if ui.selectable_label(p.mode == m, name(m)).clicked() {
-                        commands.push(("sync.profile.set", json!({ "patch": { "mode": key } })));
+                        set_profile(commands, json!({ "mode": key }));
                     }
                 }
             })
@@ -303,7 +302,7 @@ fn goal(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState, commands: &mut Ve
                 .on_hover_text("Direction: click to copy the other way round")
                 .clicked()
             {
-                commands.push(("sync.profile.set", json!({ "patch": { "source": next } })));
+                set_profile(commands, json!({ "source": next }));
             }
         }
     });
@@ -320,19 +319,13 @@ fn deleting(ui: &mut egui::Ui, state: &SyncState, label: egui::Id, commands: &mu
         .width(270.0)
         .show_ui(ui, |ui| {
             if ui.selectable_label(!permanent, "Move to trash").clicked() {
-                commands.push((
-                    "sync.profile.set",
-                    json!({ "patch": { "delete": Value::Null } }),
-                ));
+                set_profile(commands, json!({ "delete": Value::Null }));
             }
             if ui
                 .selectable_label(permanent, "Delete permanently")
                 .clicked()
             {
-                commands.push((
-                    "sync.profile.set",
-                    json!({ "patch": { "delete": "Permanent" } }),
-                ));
+                set_profile(commands, json!({ "delete": "Permanent" }));
             }
         })
         .response
@@ -356,7 +349,7 @@ fn compare_by(ui: &mut egui::Ui, state: &SyncState, label: egui::Id, commands: &
                 (CompareMethod::ChecksumAlways, "ChecksumAlways"),
             ] {
                 if ui.selectable_label(p.compare == m, name(m)).clicked() {
-                    commands.push(("sync.profile.set", json!({ "patch": { "compare": key } })));
+                    set_profile(commands, json!({ "compare": key }));
                 }
             }
         })
@@ -377,18 +370,17 @@ fn leave_out(
     }
     let r = ui
         .add(
-            egui::TextEdit::singleline(&mut draft.exclude)
+            sync::input(&mut draft.exclude)
                 .id(focus)
                 .hint_text("Ignore: *.tmp, .git")
-                .margin(egui::vec2(8.0, 6.0))
                 .desired_width(270.0),
         )
         .labelled_by(label);
     if r.lost_focus() {
-        commands.push((
-            "sync.profile.set",
-            json!({ "patch": { "filters": { "exclude": split_list(&draft.exclude) } } }),
-        ));
+        set_profile(
+            commands,
+            json!({ "filters": { "exclude": split_list(&draft.exclude) } }),
+        );
     }
 }
 
@@ -412,11 +404,11 @@ fn keep_in_sync(
                 .on_hover_text("Conflicts, permanent deletes and mass deletes wait for your review")
                 .changed()
             {
-                commands.push((
-                    "sync.profile.set",
-                    json!({ "patch": { "watch": {
-                        "enabled": watching, "poll_secs": p.watch.poll_secs } } }),
-                ));
+                set_profile(
+                    commands,
+                    json!({ "watch": {
+                        "enabled": watching, "poll_secs": p.watch.poll_secs } }),
+                );
                 commands.push((
                     if watching {
                         "sync.watch.start"

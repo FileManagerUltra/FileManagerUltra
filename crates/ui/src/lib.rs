@@ -41,6 +41,7 @@ pub mod subtitles;
 pub mod sync;
 mod sync_advanced;
 mod sync_icons;
+mod sync_table;
 mod sync_wizard;
 pub mod terminal;
 pub mod theme;

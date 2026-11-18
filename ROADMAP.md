@@ -38,8 +38,6 @@ What is already done on `main` but not released yet is listed under `[Unreleased
 ## Later
 
 - **Batch rename** with a before/after preview and safe handling of collisions.
-- **File synchronization**: compare two folders, review a plan of copies, updates and
-  deletions, then run it (one-way, mirror, two-way; saved folder-pair profiles).
 - **Archives**: browse and extract zip/tar as folders.
 - **Pane-layout restore policy** at startup: yes / no / ask, set in Preferences.
 - **Automation**: CLI / control channel on top of the command registry.

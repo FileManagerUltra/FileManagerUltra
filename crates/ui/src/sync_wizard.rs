@@ -8,7 +8,8 @@ use fm_sync::{CompareMethod, DeletePolicy, Side, SyncMode};
 use serde_json::{Value, json};
 
 use crate::sync::{
-    Command, Draft, caption, check_button, confirmation, folder_pair, grid_reserving, status_bar,
+    Command, Draft, caption, check_button, confirmation, folder_pair, grid_reserving, set_profile,
+    status_bar,
 };
 use crate::sync_icons::{self, Icon};
 use crate::theme::Tokens;
@@ -71,10 +72,6 @@ fn option(
         egui::Sense::click(),
     );
     r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
-}
-
-fn set(commands: &mut Vec<Command>, patch: Value) {
-    commands.push(("sync.profile.set", json!({ "patch": patch })));
 }
 
 pub(crate) fn show(
@@ -255,7 +252,7 @@ fn goal(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState, commands: &mut Ve
         "Files that are new or newer in the source are copied to the other folder. \
          Nothing is ever deleted.",
     ) {
-        set(commands, json!({ "mode": "Update" }));
+        set_profile(commands, json!({ "mode": "Update" }));
     }
     if option(
         ui,
@@ -266,7 +263,7 @@ fn goal(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState, commands: &mut Ve
         "The target ends up identical to the source. Files that exist only in the target \
          are deleted (the next question decides how).",
     ) {
-        set(commands, json!({ "mode": "Mirror" }));
+        set_profile(commands, json!({ "mode": "Mirror" }));
     }
     if option(
         ui,
@@ -277,7 +274,7 @@ fn goal(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState, commands: &mut Ve
         "Changes made in either folder are carried over to the other one. If a file changed \
          on both sides it is listed as a conflict and left alone.",
     ) {
-        set(commands, json!({ "mode": "TwoWay" }));
+        set_profile(commands, json!({ "mode": "TwoWay" }));
     }
     if p.mode != SyncMode::TwoWay {
         ui.add_space(4.0);
@@ -288,7 +285,7 @@ fn goal(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState, commands: &mut Ve
                 (Side::Right, "Right folder to left folder", "Right"),
             ] {
                 if ui.selectable_label(p.source == side, label).clicked() {
-                    set(commands, json!({ "source": key }));
+                    set_profile(commands, json!({ "source": key }));
                 }
             }
         });
@@ -309,7 +306,7 @@ fn deleting(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState, commands: &mu
         "You can restore them from the trash. Folders on another computer have no trash \
          and delete permanently.",
     ) {
-        set(commands, json!({ "delete": Value::Null }));
+        set_profile(commands, json!({ "delete": Value::Null }));
     }
     if option(
         ui,
@@ -319,7 +316,7 @@ fn deleting(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState, commands: &mu
         "Delete them permanently",
         "They cannot be restored. You are asked to confirm before this happens.",
     ) {
-        set(commands, json!({ "delete": "Permanent" }));
+        set_profile(commands, json!({ "delete": "Permanent" }));
     }
 }
 
@@ -346,7 +343,7 @@ fn compare_by(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState, commands: &
         ),
     ] {
         if option(ui, tokens, Icon::compare(m), p.compare == m, title, text) {
-            set(commands, json!({ "compare": key }));
+            set_profile(commands, json!({ "compare": key }));
         }
     }
 }
@@ -360,7 +357,7 @@ fn leave_out(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState, commands: &m
         &state.profile.filters.exclude,
         5.0,
     ) {
-        set(commands, json!({ "filters": { "exclude": list } }));
+        set_profile(commands, json!({ "filters": { "exclude": list } }));
     }
     crate::dialog_style::hint(
         ui,
@@ -384,7 +381,7 @@ fn keep_in_sync(
         "No, synchronize once",
         "The changes are applied one time when you press Start. Run it again whenever you like.",
     ) {
-        set(
+        set_profile(
             commands,
             json!({ "watch": { "enabled": false, "poll_secs": p.watch.poll_secs } }),
         );
@@ -398,7 +395,7 @@ fn keep_in_sync(
         "After the first run, later changes are applied automatically. Conflicts and large \
          deletes still wait for you. You can stop it from the Activity panel.",
     ) {
-        set(
+        set_profile(
             commands,
             json!({ "watch": { "enabled": true, "poll_secs": p.watch.poll_secs } }),
         );
@@ -484,9 +481,8 @@ fn save_card(
                     );
                     ui.horizontal(|ui| {
                         let r = ui.add(
-                            egui::TextEdit::singleline(&mut draft.name)
+                            crate::sync::input(&mut draft.name)
                                 .hint_text("Name")
-                                .margin(egui::vec2(8.0, 6.0))
                                 .desired_width(280.0),
                         );
                         if r.lost_focus() && draft.name != state.profile.name {
