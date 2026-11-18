@@ -4486,6 +4486,62 @@ fn sync_keep_in_sync_asks_for_confirmation_dark_light() {
 }
 
 #[test]
+fn sync_permanent_delete_dialog_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let mem = MemFs::new();
+        mem.mkdirs_str("/s/a").expect("mkdirs");
+        mem.mkdirs_str("/s/b").expect("mkdirs");
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        mem.put_file_at(&VfsUri::parse("/s/b/extra.txt").expect("uri"), b"x", at)
+            .expect("put");
+        let mut session = test_session();
+        session.registry =
+            fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+        session.backends.register(Arc::new(mem));
+        for (id, params) in [
+            ("sync.open", serde_json::json!({})),
+            ("sync.view", serde_json::json!({"mode": "advanced"})),
+            (
+                "sync.profile.set",
+                serde_json::json!({"patch": {
+                    "name": "Photos", "left": "/s/a", "right": "/s/b",
+                    "mode": "Mirror", "delete": "Permanent"}}),
+            ),
+            ("sync.compare", serde_json::json!({})),
+        ] {
+            session.dispatch(id, &params).expect(id);
+        }
+        wait_until(&mut session, |s| {
+            s.sync
+                .current_state()
+                .is_some_and(|st| !st.busy() && st.plan.is_some())
+        });
+        let _ = session.dispatch("sync.run", &serde_json::json!({}));
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(960.0, 560.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                fm_ui::sync::show(ui.ctx(), &mut session, &tokens);
+            });
+        harness.run();
+        harness.run_steps(3);
+        harness.snapshot(format!("dialog_sync_delete_confirm_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
+#[test]
 fn sync_wizard_goal_and_review_dark_light() {
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();

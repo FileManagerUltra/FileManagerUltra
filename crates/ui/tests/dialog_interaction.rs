@@ -1073,6 +1073,51 @@ fn sync_grid_lays_out_only_visible_rows_of_a_huge_plan() {
 }
 
 #[test]
+fn sync_permanent_deletes_ask_in_their_own_dialog() {
+    let mut s = sync_session(&[("b", "extra.txt", 1_000_000)], "Mirror");
+    s.dispatch(
+        "sync.profile.set",
+        &json!({"patch": {"delete": "Permanent"}}),
+    )
+    .expect("permanent");
+    s.dispatch("sync.compare", &json!({})).expect("compare");
+    for _ in 0..1000 {
+        s.poll();
+        if s.sync.current_state().is_some_and(|st| !st.busy()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    // Refused until confirmed: the state asks instead.
+    let _ = s.dispatch("sync.run", &json!({}));
+    assert!(s.sync.current_state().is_some_and(|st| st.confirm));
+    let mut h = harness(Tokens::dark(), s, fm_ui::sync::show);
+    h.run();
+    h.get_by_label("Delete permanently?");
+    h.get_by_label("Cancel").click();
+    h.run();
+    assert!(h.state().sync.current_state().is_some_and(|st| !st.confirm));
+    assert!(h.query_by_label("Delete permanently?").is_none());
+}
+
+#[test]
+fn advanced_offers_synchronize_now_after_keep_in_sync_was_stopped() {
+    let mut s = sync_session(&[("a", "x.txt", 2_000_000)], "Update");
+    s.dispatch(
+        "sync.profile.set",
+        &json!({"patch": {"watch": {"enabled": true, "poll_secs": 30}}}),
+    )
+    .expect("keep on");
+    // Stopping leaves the profile's preference set, but the checkbox and the button follow
+    // whether it is actually running.
+    s.dispatch("sync.watch.stop", &json!({})).expect("stop");
+    let mut h = harness(Tokens::dark(), s, fm_ui::sync::show);
+    h.run();
+    h.get_by_label("Synchronize now");
+    assert!(h.query_by_label("Start syncing").is_none());
+}
+
+#[test]
 fn sync_grid_headers_sort_and_the_window_minimizes_to_the_status_bar() {
     let s = sync_session(
         &[("a", "small.txt", 1), ("a", "much-bigger-name.txt", 1)],

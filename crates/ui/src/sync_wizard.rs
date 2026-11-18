@@ -8,8 +8,7 @@ use fm_sync::{CompareMethod, DeletePolicy, Side, SyncMode};
 use serde_json::{Value, json};
 
 use crate::sync::{
-    Command, Draft, caption, check_button, confirmation, folder_pair, grid_reserving, set_profile,
-    status_bar,
+    Command, Draft, caption, check_button, folder_pair, grid_reserving, set_profile, status_bar,
 };
 use crate::sync_icons::{self, Icon};
 use crate::theme::Tokens;
@@ -520,9 +519,6 @@ fn review(
         ui,
         BODY_HEIGHT - SAVE_CARD_HEIGHT - FOOTER_HEIGHT - 6.0,
         |ui| {
-            if state.confirm {
-                confirmation(ui, tokens, state, commands);
-            }
             grid_reserving(ui, tokens, state, commands, 0.0, true);
         },
     );

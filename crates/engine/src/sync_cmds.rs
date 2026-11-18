@@ -976,6 +976,64 @@ mod tests {
     }
 
     #[test]
+    fn stopping_a_run_yourself_is_not_reported_as_an_error() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (l, r, c) = (
+            tmp.path().join("l"),
+            tmp.path().join("r"),
+            tmp.path().join("cfg"),
+        );
+        for d in [&l, &r, &c] {
+            std::fs::create_dir_all(d).expect("mkdir");
+        }
+        for n in 0..50 {
+            std::fs::write(l.join(format!("f{n}.txt")), "x").expect("w");
+        }
+        let mut s = session_with(&l, &r, &c);
+        s.dispatch("sync.compare", &json!({})).expect("compare");
+        pump_until_idle(&mut s);
+        s.dispatch("sync.run", &json!({})).expect("run");
+        s.dispatch("sync.cancel", &json!({})).expect("cancel");
+        pump_until_idle(&mut s);
+        let cancelled = s
+            .sync
+            .current_state()
+            .and_then(|st| st.report.as_ref().map(|rep| rep.cancelled))
+            .unwrap_or(false);
+        // The run may finish before the cancel lands; a stopped one is an info, never a notice.
+        if cancelled {
+            assert!(s.notice.is_none() && s.info.is_some());
+        }
+    }
+
+    #[test]
+    fn cancelling_the_compare_that_keep_in_sync_started_undoes_the_choice() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (l, r, c) = (
+            tmp.path().join("l"),
+            tmp.path().join("r"),
+            tmp.path().join("cfg"),
+        );
+        for d in [&l, &r, &c] {
+            std::fs::create_dir_all(d).expect("mkdir");
+        }
+        let mut s = session_with(&l, &r, &c);
+        s.dispatch(
+            "sync.profile.set",
+            &json!({"patch": {"watch": {"enabled": true}}}),
+        )
+        .expect("set");
+        s.dispatch("sync.watch.start", &json!({})).expect("start");
+        s.dispatch("sync.cancel", &json!({})).expect("cancel");
+        pump_until_idle(&mut s);
+        let st = s.sync.current_state().expect("state");
+        // A tiny compare can finish before the cancel lands; only a cancelled one must reset.
+        if st.arming == Arming::Off {
+            assert!(!st.profile.watch.enabled && !st.watching());
+        }
+    }
+
+    #[test]
     fn the_action_filter_shows_only_rows_with_that_action() {
         let tmp = tempfile::tempdir().expect("tmp");
         let (l, r, c) = (

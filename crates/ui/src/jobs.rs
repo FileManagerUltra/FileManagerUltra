@@ -408,6 +408,9 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                             .truncate(),
                         );
                     });
+                    if !line.detail.is_empty() {
+                        card::detail(ui, tokens, &line.detail, None);
+                    }
                     card::buttons(ui, |ui| {
                         if card::primary(ui, tokens, "Show", true)
                             .on_hover_text("Open the Synchronize Folders window")

@@ -18,6 +18,7 @@ use fm_sync::{
 use fm_vfs::{FmError, Scheme};
 use notify::{RecursiveMode, Watcher as _};
 
+use crate::fileops::SpeedMeter;
 use crate::session::Session;
 
 const PROFILES_FILE: &str = "sync-profiles.json";
@@ -174,6 +175,21 @@ struct WatchState {
     _watchers: Vec<notify::RecommendedWatcher>,
 }
 
+/// How a running sync is going: time spent, smoothed speed and an estimate of what is left.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RunStats {
+    pub elapsed: Duration,
+    pub bytes_per_sec: Option<f64>,
+    pub eta_secs: Option<u64>,
+}
+
+/// Start time and speed sampling of the current run.
+#[derive(Debug, Default)]
+struct RunTiming {
+    started: Option<Instant>,
+    speed: SpeedMeter,
+}
+
 pub struct SyncState {
     /// Working copy; edited by `sync.profile.set`, stored by `sync.profile.save`.
     pub profile: Profile,
@@ -196,6 +212,7 @@ pub struct SyncState {
     pub view: View,
     /// Current wizard screen, `0..=WIZARD_REVIEW`.
     pub step: u8,
+    timing: RunTiming,
     task: Option<Task>,
     watch: Option<WatchState>,
 }
@@ -218,9 +235,26 @@ impl SyncState {
             arming: Arming::Off,
             view: View::Wizard,
             step: 0,
+            timing: RunTiming::default(),
             task: None,
             watch: None,
         }
+    }
+
+    /// Elapsed time, speed and time left while a run is in progress.
+    pub fn run_stats(&self) -> Option<RunStats> {
+        let Phase::Running(p) = &self.phase else {
+            return None;
+        };
+        let started = self.timing.started?;
+        Some(RunStats {
+            elapsed: started.elapsed(),
+            bytes_per_sec: self.timing.speed.bytes_per_sec(),
+            eta_secs: self
+                .timing
+                .speed
+                .eta_secs(p.bytes_total.saturating_sub(p.bytes_done)),
+        })
     }
 
     pub fn busy(&self) -> bool {
@@ -540,6 +574,10 @@ impl Session {
         if let Some(state) = self.sync.states.get_mut(id) {
             state.confirm = false;
             state.phase = Phase::Running(SyncProgress::default());
+            state.timing = RunTiming {
+                started: Some(Instant::now()),
+                speed: SpeedMeter::default(),
+            };
             state.task = Some(Task {
                 shared,
                 cancel,
@@ -628,6 +666,7 @@ impl Session {
         let ids: Vec<String> = self.sync.states.keys().cloned().collect();
         let mut follow: Vec<(String, Follow)> = Vec::new();
         let mut notices: Vec<String> = Vec::new();
+        let mut infos: Vec<String> = Vec::new();
         for id in &ids {
             let Some(state) = self.sync.states.get_mut(id) else {
                 continue;
@@ -639,9 +678,15 @@ impl Session {
                         (*left, *right) = g.scanned;
                         changed = true;
                     }
-                    Phase::Running(p) if *p != g.progress => {
-                        *p = g.progress;
-                        changed = true;
+                    Phase::Running(p) => {
+                        state
+                            .timing
+                            .speed
+                            .sample(Instant::now(), g.progress.bytes_done);
+                        if *p != g.progress {
+                            *p = g.progress;
+                            changed = true;
+                        }
                     }
                     _ => {}
                 }
@@ -667,6 +712,10 @@ impl Session {
                             }
                         }
                         TaskResult::Compared(Err(FmError::Cancelled)) => {
+                            // Cancelling the compare that "Keep in sync" started undoes the choice.
+                            if state.arming == Arming::Comparing {
+                                state.profile.watch.enabled = false;
+                            }
                             state.arming = Arming::Off;
                             state.phase = if state.plan.is_some() {
                                 Phase::Ready
@@ -675,6 +724,9 @@ impl Session {
                             };
                         }
                         TaskResult::Compared(Err(e)) => {
+                            if state.arming == Arming::Comparing {
+                                state.profile.watch.enabled = false;
+                            }
                             state.arming = Arming::Off;
                             state.phase = Phase::Failed(e.to_string());
                             if auto {
@@ -683,15 +735,15 @@ impl Session {
                         }
                         TaskResult::Ran(Ok(report)) => {
                             let bad = report.failed.len();
-                            if bad > 0 || report.cancelled {
-                                notices.push(format!(
-                                    "Sync \"{}\": {} copied, {} deleted, {} failed{}",
-                                    state.profile.name,
-                                    report.copied,
-                                    report.deleted,
-                                    bad,
-                                    if report.cancelled { " (cancelled)" } else { "" }
-                                ));
+                            let summary = format!(
+                                "Sync \"{}\": {} copied, {} deleted, {} failed",
+                                state.profile.name, report.copied, report.deleted, bad
+                            );
+                            if bad > 0 {
+                                notices.push(summary);
+                            } else if report.cancelled {
+                                // Stopping it yourself is not an error.
+                                infos.push(format!("{summary} (stopped)"));
                             }
                             state.report = Some(report);
                             state.plan = None;
@@ -699,6 +751,10 @@ impl Session {
                             state.phase = Phase::Idle;
                             // Show what is left after the run.
                             follow.push((id.clone(), Follow::Refresh));
+                        }
+                        TaskResult::Ran(Err(FmError::Cancelled)) => {
+                            state.phase = Phase::Idle;
+                            infos.push(format!("Sync \"{}\" stopped", state.profile.name));
                         }
                         TaskResult::Ran(Err(e)) => {
                             state.phase = Phase::Failed(e.to_string());
@@ -747,6 +803,9 @@ impl Session {
         }
         for n in notices {
             self.notice = Some(n);
+        }
+        if let Some(n) = infos.pop() {
+            self.info = Some((n, Instant::now()));
         }
         changed
     }

@@ -5,7 +5,7 @@
 use egui::{Color32, Context, Id, RichText};
 use fm_engine::Session;
 use fm_engine::item_cmds::display_path;
-use fm_engine::sync_hub::{Arming, Phase, RowFilter, SyncState, View};
+use fm_engine::sync_hub::{Arming, Phase, RowFilter, RunStats, SyncState, View};
 use fm_sync::{Action, Item, NodeKind, Side, Status, SyncMode};
 use serde_json::{Value, json};
 
@@ -173,11 +173,41 @@ fn summary_line(state: &SyncState) -> String {
     parts.join("  ·  ")
 }
 
+/// "1.2 GiB of 4 GiB · 38 MiB/s · 1m 5s left · 40 s elapsed" for a running sync.
+fn run_detail(p: &fm_sync::SyncProgress, stats: Option<RunStats>) -> String {
+    let mut parts = Vec::new();
+    if p.bytes_total > 0 {
+        parts.push(format!(
+            "{} of {}",
+            human_size(p.bytes_done),
+            human_size(p.bytes_total)
+        ));
+    }
+    if let Some(st) = stats {
+        let rate = crate::jobs::rate_text(st.bytes_per_sec, st.eta_secs);
+        if !rate.is_empty() {
+            parts.push(rate);
+        }
+        parts.push(format!("{} elapsed", duration_text(st.elapsed.as_secs())));
+    }
+    parts.join("  ·  ")
+}
+
+fn duration_text(secs: u64) -> String {
+    match secs {
+        s if s >= 3600 => format!("{}h {}m", s / 3600, (s % 3600) / 60),
+        s if s >= 60 => format!("{}m {}s", s / 60, s % 60),
+        s => format!("{s} s"),
+    }
+}
+
 /// A sync that is working, watching or minimised, as the Activity panel and status bar show it.
 pub struct Line {
     pub id: String,
     pub name: String,
     pub text: String,
+    /// Speed, elapsed and remaining time of a running sync.
+    pub detail: String,
     pub running: bool,
     pub watching: bool,
     /// Compared for "Keep in sync" and waiting for the user's go-ahead.
@@ -195,11 +225,13 @@ fn pending_changes(state: &SyncState) -> usize {
 
 fn line_for(id: &str, state: &SyncState) -> Line {
     let text: String;
+    let mut detail = String::new();
     let (mut running, mut attention, mut fraction) = (false, false, None);
     match &state.phase {
         Phase::Running(p) => {
             running = true;
             text = format!("Copying {} of {} items", p.items_done, p.items_total);
+            detail = run_detail(p, state.run_stats());
             fraction = Some(if p.bytes_total > 0 {
                 p.bytes_done as f32 / p.bytes_total as f32
             } else if p.items_total > 0 {
@@ -242,6 +274,7 @@ fn line_for(id: &str, state: &SyncState) -> Line {
         id: id.to_string(),
         name: state.profile.name.clone(),
         text,
+        detail,
         running,
         watching: state.watching(),
         confirming: state.arming == Arming::Confirm,
@@ -336,6 +369,13 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let mut esc = ctx.input(|i| i.key_pressed(egui::Key::Escape))
         && s.picker.is_none()
         && !egui::Popup::is_any_open(ctx);
+    if state.confirm {
+        confirm_dialog(ctx, tokens, state, &mut commands);
+        if esc {
+            commands.push(("sync.confirm.dismiss", Value::Null));
+            esc = false;
+        }
+    }
     if is_expanded(ctx) {
         if esc {
             set_expanded(ctx, false);
@@ -773,12 +813,9 @@ pub(crate) fn check_button(ui: &mut egui::Ui, tokens: &Tokens, label: &str) -> e
     crate::sync_icons::button(ui, tokens, Icon::Check, label, true)
 }
 
-pub(crate) fn confirmation(
-    ui: &mut egui::Ui,
-    tokens: &Tokens,
-    state: &SyncState,
-    commands: &mut Vec<Command>,
-) {
+/// The question that must be answered before deletes that cannot be undone (or a mass delete)
+/// run. A dialog of its own, above the sync window.
+fn confirm_dialog(ctx: &Context, tokens: &Tokens, state: &SyncState, commands: &mut Vec<Command>) {
     let Some(plan) = &state.plan else { return };
     let g = &plan.guards;
     let target = match (plan.summary.delete_left, plan.summary.delete_right) {
@@ -786,32 +823,50 @@ pub(crate) fn confirmation(
         (0, r) if r > 0 => display_path(&plan.right_root),
         _ => "both folders".to_string(),
     };
-    let how = if g.permanent {
-        "permanently (they cannot be restored)"
+    let (title, how) = if g.permanent {
+        (
+            "Delete permanently?",
+            "permanently. They cannot be restored.",
+        )
     } else {
-        "(a large share of the folder)"
+        ("Delete many items?", "(a large share of the folder).")
     };
-    egui::Frame::new()
-        .fill(tokens.diff_del_bg)
-        .corner_radius(tokens.corner_radius)
-        .inner_margin(8.0)
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new(format!(
-                    "{} item(s) in {target} will be deleted {how}.",
-                    g.deletes
-                ))
-                .color(tokens.text),
-            );
+    let mut open = true;
+    crate::dialog_style::sign_in_window(ctx, tokens, title, &mut open)
+        .id(Id::NULL.with("fm-sync-confirm"))
+        .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
+            ui.set_width(420.0);
             ui.horizontal(|ui| {
-                if ui.button("Delete and synchronize").clicked() {
-                    commands.push(("sync.run", json!({ "confirmed": true })));
-                }
+                sync_icons::icon(ui, tokens, Icon::Permanent, 32.0);
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "{} item(s) in {target} will be deleted {how}",
+                            g.deletes
+                        ))
+                        .color(tokens.text),
+                    );
+                    ui.label(
+                        RichText::new("Nothing has been changed yet.").color(tokens.text_muted),
+                    );
+                });
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
                 if ui.button("Cancel").clicked() {
                     commands.push(("sync.confirm.dismiss", Value::Null));
                 }
+                if sync_icons::button(ui, tokens, Icon::Trash, "Delete and synchronize", true)
+                    .clicked()
+                {
+                    commands.push(("sync.run", json!({ "confirmed": true })));
+                }
             });
         });
+    if !open {
+        commands.push(("sync.confirm.dismiss", Value::Null));
+    }
 }
 
 fn expanded_id() -> Id {
@@ -909,6 +964,7 @@ pub(crate) fn status_bar(
                 egui::ProgressBar::new(fraction.clamp(0.0, 1.0))
                     .text(format!("{} of {} items", p.items_done, p.items_total)),
             );
+            ui.label(RichText::new(run_detail(p, state.run_stats())).color(tokens.text_muted));
         }
         Phase::Comparing { left, right } => {
             ui.horizontal(|ui| {
@@ -969,5 +1025,33 @@ pub(crate) fn status_bar(
     }
     if let Some(note) = &state.watch_note {
         ui.label(RichText::new(note).color(tokens.warning));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_running_sync_reports_size_speed_and_time() {
+        let p = fm_sync::SyncProgress {
+            items_done: 1,
+            items_total: 4,
+            bytes_done: 1024,
+            bytes_total: 4096,
+        };
+        let stats = RunStats {
+            elapsed: std::time::Duration::from_secs(75),
+            bytes_per_sec: Some(512.0),
+            eta_secs: Some(6),
+        };
+        let text = run_detail(&p, Some(stats));
+        assert!(text.contains("1.0 KiB of 4.0 KiB"), "{text}");
+        assert!(
+            text.contains("512 B/s") && text.contains("6 s left"),
+            "{text}"
+        );
+        assert!(text.ends_with("1m 15s elapsed"), "{text}");
+        assert_eq!(run_detail(&fm_sync::SyncProgress::default(), None), "");
     }
 }

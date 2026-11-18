@@ -8,8 +8,8 @@ use fm_sync::{CompareMethod, DeletePolicy, Side, SyncMode};
 use serde_json::{Value, json};
 
 use crate::sync::{
-    self, Command, Draft, RowFilterBar, caption, confirmation, folder_pair, grid_reserving,
-    set_profile, split_list, status_bar,
+    self, Command, Draft, RowFilterBar, caption, folder_pair, grid_reserving, set_profile,
+    split_list, status_bar,
 };
 use crate::sync_icons::{self, Icon};
 use crate::sync_wizard::FOOTER_HEIGHT;
@@ -38,11 +38,7 @@ pub(crate) fn show(
         ("First folder (left)", "Second folder (right)"),
         commands,
     );
-    // A question that needs an answer takes the place of the settings, so the window stays the
-    // same size.
-    if state.confirm {
-        confirmation(ui, tokens, state, commands);
-    } else if state.plan.is_some() && !settings_open(ui, state) {
+    if state.plan.is_some() && !settings_open(ui, state) {
         summary_card(ui, tokens, state);
     } else {
         settings(ui, tokens, state, draft, commands);
@@ -471,7 +467,7 @@ fn synchronize_row(
     state: &SyncState,
     commands: &mut Vec<Command>,
 ) {
-    let keep = state.profile.watch.enabled || state.watching() || state.arming != Arming::Off;
+    let keep = state.watching() || state.arming != Arming::Off;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let has_work = state.plan.as_ref().is_some_and(|pl| !pl.is_empty_work());
         if state.watching() {
