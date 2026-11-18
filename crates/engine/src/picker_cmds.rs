@@ -217,6 +217,12 @@ fn open() -> CommandSpec {
                     folder = uri;
                 }
             }
+            // Decided before reading the folder: an unconnected server's sign-in dialog,
+            // opened by that read, must stay in front of the chooser waiting for it.
+            let nested = !s.parked_pickers.is_empty()
+                || s.picker.is_some()
+                || s.remote.sftp_prompt.is_some()
+                || s.remote.login_prompt.is_some();
             folder_target(s, &folder).or_else(|_| {
                 let home = crate::workspace::home_location();
                 folder = home.clone();
@@ -225,10 +231,6 @@ fn open() -> CommandSpec {
             if s.parked_pickers.len() >= MAX_PARKED {
                 return Err(FmError::Unsupported("too many choosers are open"));
             }
-            let nested = !s.parked_pickers.is_empty()
-                || s.picker.is_some()
-                || s.remote.sftp_prompt.is_some()
-                || s.remote.login_prompt.is_some();
             if let Some(open) = s.picker.take() {
                 s.parked_pickers.push(open);
             }
@@ -467,6 +469,23 @@ mod tests {
         s.dispatch("picker.navigate", &json!({"uri": "sftp://me@nas.example/"}))
             .expect("opens the sign-in popup");
         assert!(s.remote.sftp_prompt.is_some(), "sign-in popup opens");
+    }
+
+    #[test]
+    fn a_chooser_starting_on_an_unconnected_server_stays_behind_its_sign_in() {
+        let mut s = Session::new().expect("session");
+        s.dispatch("sync.open", &json!({})).expect("open");
+        s.dispatch(
+            "picker.open",
+            &json!({"purpose": "sync.right", "start": "sftp://demo@127.0.0.1:2222/backups/Photos"}),
+        )
+        .expect("open picker");
+        assert!(s.remote.sftp_prompt.is_some(), "sign-in dialog opens");
+        let picker = s.picker.as_ref().expect("chooser open");
+        assert!(
+            !picker.nested,
+            "the chooser must not be raised above the sign-in it waits for"
+        );
     }
 
     #[test]

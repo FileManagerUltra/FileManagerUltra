@@ -186,7 +186,9 @@ pub struct WindowGeometry {
     /// Native logical pixels, independent of application zoom.
     pub size: [f32; 2],
     /// Outer position in physical desktop pixels (unavailable on native Wayland).
+    #[serde(default)]
     pub position: Option<[f32; 2]>,
+    #[serde(default = "default_zoom")]
     pub scale_factor: f32,
 }
 
@@ -808,7 +810,7 @@ pub fn load(path: &Path) -> Prefs {
         Ok(text) => text,
         Err(_) => return Prefs::default(),
     };
-    let mut prefs: Prefs = toml::from_str(&text).unwrap_or_default();
+    let mut prefs: Prefs = toml::from_str(&text).unwrap_or_else(|_| salvage(&text));
     if let Err(error) = prefs.preview_filters.compile() {
         eprintln!("Invalid preview filename filters; restoring defaults: {error}");
         prefs.preview_filters = crate::preview_types::PreviewFilters::default();
@@ -821,6 +823,34 @@ pub fn load(path: &Path) -> Prefs {
     prefs.hints_seen.retain(|id| seen.insert(id.clone()));
     prefs.hints_seen.truncate(MAX_HINTS_SEEN);
     prefs
+}
+
+/// A file that does not load as a whole (a hand edit left out or mistyped one value):
+/// keep every top-level setting that is valid on its own and use the default only for
+/// the others, instead of resetting everything. Only key names are reported.
+fn salvage(text: &str) -> Prefs {
+    let Ok(table) = toml::from_str::<toml::Table>(text) else {
+        eprintln!("Preferences file is not valid TOML; using defaults");
+        return Prefs::default();
+    };
+    let mut kept = toml::Table::new();
+    let mut dropped = Vec::new();
+    for (key, value) in table {
+        let mut single = toml::Table::new();
+        single.insert(key.clone(), value.clone());
+        if toml::Value::Table(single).try_into::<Prefs>().is_ok() {
+            kept.insert(key, value);
+        } else {
+            dropped.push(key);
+        }
+    }
+    if !dropped.is_empty() {
+        eprintln!(
+            "Ignoring invalid preferences (defaults used): {}",
+            dropped.join(", ")
+        );
+    }
+    toml::Value::Table(kept).try_into().unwrap_or_default()
 }
 
 impl Prefs {
@@ -1186,6 +1216,46 @@ mod tests {
         assert_eq!(prefs.bookmarks.len(), MAX_BOOKMARKS);
         assert_eq!(prefs.bookmarks[0].name, "Photos");
         assert!(prefs.bookmarks.iter().all(Bookmark::is_valid));
+    }
+
+    #[test]
+    fn a_partial_window_geometry_keeps_every_other_setting() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join(PREFS_FILE);
+        std::fs::write(
+            &path,
+            "check_updates = false\ntheme = \"dark\"\n[window_geometry]\nsize = [1440.0, 900.0]\n",
+        )
+        .expect("write");
+        let prefs = load(&path);
+        assert!(!prefs.check_updates);
+        assert_eq!(prefs.theme, ThemePreference::Dark);
+        let geometry = prefs.window_geometry.expect("geometry kept");
+        assert_eq!(geometry.size, [1440.0, 900.0]);
+        assert_eq!((geometry.position, geometry.scale_factor), (None, 1.0));
+    }
+
+    #[test]
+    fn one_invalid_setting_falls_back_alone() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join(PREFS_FILE);
+        std::fs::write(
+            &path,
+            "check_updates = false\ntheme = \"no-such-theme\"\nzoom = \"big\"\n\
+             [window_geometry]\nposition = [1.0, 2.0]\n",
+        )
+        .expect("write");
+        let prefs = load(&path);
+        assert!(!prefs.check_updates, "valid setting kept");
+        let defaults = Prefs::default();
+        assert_eq!(prefs.theme, defaults.theme);
+        assert_eq!(prefs.zoom, defaults.zoom);
+        assert_eq!(
+            prefs.window_geometry, None,
+            "geometry without a size is dropped"
+        );
+        std::fs::write(&path, "theme = [unclosed").expect("write");
+        assert_eq!(load(&path), defaults, "unparsable file uses defaults");
     }
 
     #[test]

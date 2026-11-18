@@ -32,6 +32,10 @@ pub(crate) fn table(
                     format!("Scanning… {left} items on the left, {right} on the right")
                 }
                 Phase::Failed(e) => e.clone(),
+                _ if state.awaiting_login => {
+                    "Sign in to the server; the comparison starts once you are connected."
+                        .to_string()
+                }
                 _ => "Choose two folders and press Compare.".to_string(),
             };
             ui.label(RichText::new(msg).color(tokens.text_muted));

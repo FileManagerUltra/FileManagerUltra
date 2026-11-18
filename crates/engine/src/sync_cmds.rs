@@ -440,7 +440,15 @@ fn compare() -> CommandSpec {
         },
         run: |s, params| {
             let id = target(s, params)?;
-            s.sync_compare(&id, false)
+            let result = s.sync_compare(&id, false);
+            // Show why in the sync window too, not only in the Activity panel.
+            if let Err(e) = &result
+                && let Some(st) = s.sync.states.get_mut(&id)
+                && !st.busy()
+            {
+                st.phase = crate::sync_hub::Phase::Failed(e.to_string());
+            }
+            result
         },
     }
 }
@@ -666,6 +674,11 @@ fn watch_confirm() -> CommandSpec {
                 return Err(bad("compare first, then confirm"));
             }
             s.sync_watch(&id, true)?;
+            // Confirmed: no longer waiting, or the status line and Activity card keep
+            // asking to "Confirm to start syncing" with a stale Cancel.
+            if let Some(st) = s.sync.states.get_mut(&id) {
+                st.arming = Arming::Off;
+            }
             s.sync_apply_confirmed(&id);
             Ok(())
         },
@@ -930,6 +943,44 @@ mod tests {
     }
 
     #[test]
+    fn compare_with_an_unconnected_server_asks_to_sign_in_first() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (l, c) = (tmp.path().join("l"), tmp.path().join("cfg"));
+        for d in [&l, &c] {
+            std::fs::create_dir_all(d).expect("mkdir");
+        }
+        let mut s = session_with(&l, &l, &c);
+        s.dispatch(
+            "sync.profile.set",
+            &json!({"patch": {"mode": "Update", "right": "sftp://demo@127.0.0.1:2222/backups/Photos"}}),
+        )
+        .expect("set");
+        s.dispatch("sync.compare", &json!({}))
+            .expect("compare waits for the sign-in instead of failing");
+        let prompt = s
+            .remote
+            .sftp_prompt
+            .as_ref()
+            .expect("sign-in dialog opened");
+        assert_eq!(prompt.host, "127.0.0.1");
+        let st = s.sync.current_state().expect("state");
+        assert!(st.awaiting_login && !st.busy() && st.plan.is_none());
+        // Still waiting while the dialog is open.
+        s.poll();
+        assert!(s.sync.current_state().is_some_and(|st| st.awaiting_login));
+        // Cancelling the sign-in ends the wait with a message in the sync window.
+        s.remote.sftp_prompt = None;
+        s.poll();
+        let st = s.sync.current_state().expect("state");
+        assert!(!st.awaiting_login);
+        assert!(
+            matches!(&st.phase, crate::sync_hub::Phase::Failed(m) if m.contains("127.0.0.1")),
+            "{:?}",
+            st.phase
+        );
+    }
+
+    #[test]
     fn a_watched_edit_is_synced_without_reading_on_the_event_thread() {
         let tmp = tempfile::tempdir().expect("tmp");
         let (l, r, c) = (
@@ -955,7 +1006,12 @@ mod tests {
         assert!(!r.join("first.txt").exists());
         s.dispatch("sync.watch.confirm", &json!({}))
             .expect("confirm");
-        assert!(s.sync.current_state().is_some_and(|st| st.watching()));
+        assert!(
+            s.sync
+                .current_state()
+                .is_some_and(|st| st.watching() && st.arming == Arming::Off),
+            "confirming ends the confirm step"
+        );
         pump_until_idle(&mut s);
         assert_eq!(
             std::fs::read_to_string(r.join("first.txt")).expect("first"),

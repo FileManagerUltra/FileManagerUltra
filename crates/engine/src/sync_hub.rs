@@ -19,6 +19,7 @@ use fm_vfs::{FmError, Scheme};
 use notify::{RecursiveMode, Watcher as _};
 
 use crate::fileops::SpeedMeter;
+use crate::remote::ConnState;
 use crate::session::Session;
 
 const PROFILES_FILE: &str = "sync-profiles.json";
@@ -212,6 +213,8 @@ pub struct SyncState {
     pub view: View,
     /// Current wizard screen, `0..=WIZARD_REVIEW`.
     pub step: u8,
+    /// Compare pressed while a folder's server was not connected: it runs after sign-in.
+    pub awaiting_login: bool,
     timing: RunTiming,
     task: Option<Task>,
     watch: Option<WatchState>,
@@ -235,6 +238,7 @@ impl SyncState {
             arming: Arming::Off,
             view: View::Wizard,
             step: 0,
+            awaiting_login: false,
             timing: RunTiming::default(),
             task: None,
             watch: None,
@@ -475,6 +479,9 @@ impl Session {
                 "too many syncs are running; wait for one to finish".into(),
             ));
         }
+        if !auto && self.sync_sign_in_first(id)? {
+            return Ok(());
+        }
         let store = self.sync.store();
         let state = self
             .sync
@@ -657,12 +664,98 @@ impl Session {
         Ok(())
     }
 
+    /// A folder on a server that is not connected yet: open its sign-in (or reconnect
+    /// with remembered credentials) and remember to compare once it is connected,
+    /// instead of failing with "no backend registered". Returns whether it is waiting.
+    fn sync_sign_in_first(&mut self, id: &str) -> Result<bool, FmError> {
+        let Some(state) = self.sync.states.get(id) else {
+            return Err(FmError::NotFound("sync profile".into()));
+        };
+        let profile = state.profile.clone();
+        profile.validate()?;
+        let mut waiting = false;
+        for uri in [profile.left_uri()?, profile.right_uri()?] {
+            if self.needs_sftp_login_to(&uri, false) || self.needs_login_to(&uri, false) {
+                waiting = true;
+            }
+        }
+        if let Some(state) = self.sync.states.get_mut(id) {
+            state.awaiting_login = waiting;
+            if waiting {
+                state.phase = Phase::Idle;
+            }
+        }
+        Ok(waiting)
+    }
+
+    /// Start compares that were waiting for a sign-in once both folders are reachable;
+    /// a cancelled or failed sign-in ends the wait with an error in the sync window.
+    fn resume_compares_after_login(&mut self) -> bool {
+        let waiting: Vec<String> = self
+            .sync
+            .states
+            .iter()
+            .filter(|(_, st)| st.awaiting_login)
+            .map(|(id, _)| id.clone())
+            .collect();
+        if waiting.is_empty() {
+            return false;
+        }
+        let prompt_open = self.remote.login_prompt.is_some() || self.remote.sftp_prompt.is_some();
+        for id in waiting {
+            let Some(profile) = self.sync.states.get(&id).map(|st| st.profile.clone()) else {
+                continue;
+            };
+            let (Ok(lu), Ok(ru)) = (profile.left_uri(), profile.right_uri()) else {
+                if let Some(st) = self.sync.states.get_mut(&id) {
+                    st.awaiting_login = false;
+                }
+                continue;
+            };
+            let remote = |u: &fm_vfs::VfsUri| matches!(u.scheme(), Scheme::Sftp | Scheme::Smb);
+            let missing: Vec<&fm_vfs::VfsUri> = [&lu, &ru]
+                .into_iter()
+                .filter(|u| remote(u) && self.backends.get_for(u).is_none())
+                .collect();
+            if missing.is_empty() {
+                if let Some(st) = self.sync.states.get_mut(&id) {
+                    st.awaiting_login = false;
+                }
+                if let Err(e) = self.sync_compare(&id, false)
+                    && let Some(st) = self.sync.states.get_mut(&id)
+                {
+                    st.phase = Phase::Failed(e.to_string());
+                }
+                continue;
+            }
+            let connecting = missing.iter().any(|u| {
+                matches!(
+                    self.remote.state(u.scheme(), u.authority()),
+                    Some(ConnState::Connecting)
+                )
+            });
+            if !prompt_open && !connecting {
+                let host = missing
+                    .first()
+                    .map(|u| u.authority().host.clone())
+                    .unwrap_or_default();
+                if let Some(st) = self.sync.states.get_mut(&id) {
+                    st.awaiting_login = false;
+                    st.phase = Phase::Failed(format!(
+                        "Not connected to {host}: sign in, then press Compare again"
+                    ));
+                }
+            }
+        }
+        true
+    }
+
     /// Apply finished tasks and let watchers start new ones. Returns whether anything changed.
     pub(crate) fn pump_sync(&mut self) -> bool {
         if self.sync.states.is_empty() {
             return false;
         }
-        let mut changed = false;
+        let mut changed = self.resume_compares_after_login();
         let ids: Vec<String> = self.sync.states.keys().cloned().collect();
         let mut follow: Vec<(String, Follow)> = Vec::new();
         let mut notices: Vec<String> = Vec::new();

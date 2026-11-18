@@ -340,6 +340,9 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let mut open = true;
     let mut close = false;
     let watching = state.watching();
+    // Read before drawing: a menu inside the window closes itself on Escape while it is
+    // drawn, and would otherwise let the same key close the whole window too.
+    let popup_was_open = egui::Popup::is_any_open(ctx);
     crate::dialog_style::window(ctx, tokens, "Synchronize Folders", &mut open)
         .id(Id::NULL.with("fm-sync"))
         .resizable(true)
@@ -368,6 +371,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     // Escape closes only the topmost layer: an open picker, menu or the large table goes first.
     let mut esc = ctx.input(|i| i.key_pressed(egui::Key::Escape))
         && s.picker.is_none()
+        && !popup_was_open
         && !egui::Popup::is_any_open(ctx);
     if state.confirm {
         confirm_dialog(ctx, tokens, state, &mut commands);

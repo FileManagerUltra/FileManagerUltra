@@ -1335,6 +1335,35 @@ fn escape_closes_the_sync_window() {
 }
 
 #[test]
+fn escape_closes_an_open_action_menu_before_the_sync_window() {
+    let s = sync_session(&[("a", "x.txt", 1)], "Update");
+    let mut h = harness(Tokens::dark(), s, |ctx, s, tokens| {
+        s.poll();
+        fm_ui::sync::show(ctx, s, tokens);
+    });
+    h.run();
+    h.get_by_label("x.txt: Copy to the right").click();
+    h.run();
+    assert!(
+        h.query_by_label("Add to ignore list").is_some(),
+        "menu open"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(
+        h.query_by_label("Add to ignore list").is_none(),
+        "menu closed"
+    );
+    assert!(
+        h.state().sync.current_state().is_some(),
+        "the first Escape must leave the sync window open"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().sync.current_state().is_none());
+}
+
+#[test]
 fn sync_tree_folds_a_folder_and_shows_full_paths_for_the_selection() {
     let s = sync_session(
         &[("a", "docs/one.txt", 1), ("a", "docs/two.txt", 1)],
