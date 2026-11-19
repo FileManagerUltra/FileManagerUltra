@@ -66,6 +66,11 @@ opaque bytes: asyncssh's are a 4-byte big-endian counter, so from handle 128 on 
 256 files of a large SFTP copy or sync failed). The patch maps handle bytes one per `char`
 (Latin-1), so they round-trip exactly; the wire format is unchanged.
 
+Also `RawSession::close_nowait` in `src/client/rawsession.rs` decrements the open-handle
+counter with a `compare_exchange_weak` loop instead of `AtomicU64::fetch_update`, which Rust
+1.99 deprecates (its replacement `try_update` may be newer than the workspace MSRV 1.95).
+Same behaviour, no warning.
+
 Upstream fixed it on master (`bb2dff4`, 2026-11-17: `SftpHandle` keeps the bytes), not yet
 released. Drop this copy and the `[patch.crates-io]` entry when a release with that fix is
 out, adapting `fm-fs-sftp` to `SftpHandle`. Regression tests: `cargo test -p fm-fs-sftp`
