@@ -219,6 +219,17 @@ pub(crate) fn table(
     } else {
         0.0
     };
+    // The list takes the room the page gives it, but never less than two rows. When the
+    // details would not fit under it as well (Advanced with the settings open on a small
+    // screen) they wait for room instead of making the page, and with it the window, taller.
+    let room = ui.available_height() - reserve;
+    let list_min = LIST_MIN_ROWS * row_h;
+    let selected_item = selected_item.filter(|_| room - detail_h >= list_min);
+    let detail_h = if selected_item.is_some() {
+        detail_h
+    } else {
+        0.0
+    };
     let mut toggled: Option<String> = None;
     let mut picked: Option<u32> = None;
     // show_rows spaces rows by the outer item spacing; rows are drawn flush, so it must be zero.
@@ -226,7 +237,9 @@ pub(crate) fn table(
     let out = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-        .max_height((ui.available_height() - reserve - detail_h).max(120.0))
+        .max_height((room - detail_h).max(list_min))
+        // egui's default (64) would overrule `list_min` and push the page past its room.
+        .min_scrolled_height(list_min)
         .show_rows(ui, row_h, shown.len(), |ui, range| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             for n in range {
@@ -304,6 +317,8 @@ pub(crate) fn table(
 }
 
 const DETAIL_MARGIN: f32 = 6.0;
+/// The lowest the list's scroll area gets, in rows.
+const LIST_MIN_ROWS: f32 = 2.0;
 
 /// Folders the user has folded shut and the row whose details are shown below the table.
 #[derive(Clone, Default)]

@@ -415,6 +415,20 @@ pub(crate) fn save_illustration(ui: &mut Ui, tokens: &Tokens, size: f32, saved: 
     }
 }
 
+fn button_font(tokens: &Tokens, primary: bool) -> egui::FontId {
+    egui::FontId::proportional(tokens.font_size + if primary { 2.0 } else { 1.0 })
+}
+
+fn button_pad(primary: bool) -> f32 {
+    if primary { 11.0 } else { 8.0 }
+}
+
+/// The height of a [`button`], for rows that must be exactly that tall.
+pub(crate) fn button_height(ui: &Ui, tokens: &Tokens, primary: bool) -> f32 {
+    let row = ui.fonts_mut(|f| f.row_height(&button_font(tokens, primary)));
+    row + 2.0 * button_pad(primary) + 2.0
+}
+
 /// A button with an icon: filled with the accent colour when `primary`, plain otherwise.
 pub(crate) fn button(
     ui: &mut Ui,
@@ -423,14 +437,14 @@ pub(crate) fn button(
     label: &str,
     primary: bool,
 ) -> egui::Response {
-    let font = egui::FontId::proportional(tokens.font_size + if primary { 2.0 } else { 1.0 });
+    let font = button_font(tokens, primary);
     let enabled = ui.is_enabled();
     let fade = if enabled { 1.0 } else { 0.45 };
     let text_color = if primary { tokens.bg } else { tokens.text }.gamma_multiply(fade);
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_string(), font, text_color);
-    let pad = if primary { 11.0 } else { 8.0 };
+    let pad = button_pad(primary);
     let size = vec2(galley.size().x + 52.0, galley.size().y + 2.0 * pad + 2.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));

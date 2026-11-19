@@ -937,26 +937,30 @@ fn expanded_id() -> Id {
     Id::NULL.with("fm-sync-expanded")
 }
 
-/// Height a part (the list or a wizard step's body) of page `page` may take beyond its
-/// `designed` height when the user makes the window taller, so the list grows with it.
+/// Height for a part (the list or a wizard step's body) of page `page`: whatever is left of
+/// the window once the rest of the page is placed, but at least `min`. Until the page has
+/// been measured once it is `designed`.
 ///
 /// Each page records, on the previous frame (`measure_below`), the distance from the end of
 /// that part to an anchor row (the Back/Next buttons) and the height from the anchor to the
 /// end of the page. The anchor then lands at the window's bottom minus the tallest tail of
 /// any page in `group`, so the buttons stay in the same place on every page of a group,
-/// and the page never ends below the window (which would push the window larger).
-pub(crate) fn spare_height(
+/// and the page never ends below the window (which would push the window larger). That
+/// works both ways: a taller window grows the part, and a window smaller than the designed
+/// page (the default size on a small screen) shrinks it.
+pub(crate) fn part_height(
     ui: &egui::Ui,
     group: &'static str,
     page: &'static str,
     designed: f32,
+    min: f32,
 ) -> f32 {
     let get = |key: &'static str| ui.data(|d| d.get_temp::<f32>(grow_id(group, page, key)));
     let tail = ui.data(|d| d.get_temp::<f32>(grow_id(group, "", "tail-max")));
     let (Some(to_anchor), Some(tail)) = (get("to-anchor"), tail) else {
-        return 0.0;
+        return designed.max(min);
     };
-    (ui.available_height() - designed - to_anchor - tail - 1.0).max(0.0)
+    (ui.available_height() - to_anchor - tail - 1.0).max(min)
 }
 
 /// Record where page `page`'s anchor row started (`anchor_top`) relative to the end of the

@@ -1543,12 +1543,71 @@ fn list_grows_with_the_window(guided_review: bool) {
         "the list grew: {shown} -> {} rows",
         rows(&h)
     );
-    h.run_steps(12);
+    let grown = rows(&h);
+    h.run_steps(60);
     let settled = h.ctx.memory(|m| m.area_rect(id)).expect("window");
     assert!(
         (settled.size() - taller.size()).length() < 1.0,
         "{taller:?} -> {settled:?}"
     );
+    // The bottom row once took the rest of the window and counted as page height, so the
+    // list shrank a little on every frame after a resize.
+    assert_eq!(rows(&h), grown, "the list keeps its height");
+}
+
+/// Finding 12: with a row's path details showing, "Change settings" on a small screen made
+/// the page taller than the list could give up, so the window grew off screen.
+#[test]
+fn change_settings_with_a_row_selected_keeps_the_window_size() {
+    let names: Vec<String> = (0..60).map(|n| format!("f{n:02}.txt")).collect();
+    let files: Vec<(&str, &str, u64)> = names.iter().map(|n| ("a", n.as_str(), 1)).collect();
+    let s = sync_session(&files, "Update");
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1440.0, 900.0))
+        .build_ui_state(
+            |ui, s: &mut Session| {
+                let tokens = Tokens::dark();
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                fm_ui::sync::show(ui.ctx(), s, &tokens);
+            },
+            s,
+        );
+    let id = Id::NULL.with("fm-sync");
+    h.run_steps(6);
+    let initial = h.ctx.memory(|m| m.area_rect(id)).expect("window");
+    // Click the first row's name cell, left of its action button.
+    let marker = h.get_by_label("f00.txt: Copy to the right").rect();
+    let name = egui::pos2(marker.left() - 150.0, marker.center().y);
+    h.hover_at(name);
+    h.run_steps(2);
+    h.drag_at(name);
+    h.drop_at(name);
+    h.run_steps(6);
+    let details = |h: &Harness<'_, Session>| {
+        h.query_all_by_role(egui::accesskit::Role::Label).any(|n| {
+            let node = n.accesskit_node();
+            [node.label(), node.value()]
+                .into_iter()
+                .flatten()
+                .any(|t| t.starts_with("Left:"))
+        })
+    };
+    assert!(details(&h), "details shown");
+
+    h.get_by_label("Change settings").click();
+    h.run_steps(12);
+    assert!(h.query_by_label("Deleting").is_some(), "settings open");
+    let after = h.ctx.memory(|m| m.area_rect(id)).expect("window");
+    assert!(
+        (after.size() - initial.size()).length() < 1.0,
+        "the window keeps its size: {initial:?} -> {after:?}"
+    );
+    assert!(after.top() >= 0.0 && after.bottom() <= 900.0, "{after:?}");
+    assert!(h.query_by_label("Synchronize now").is_some());
+    assert!(!details(&h), "the details wait for room");
+    h.get_by_label("Hide settings").click();
+    h.run_steps(12);
+    assert!(details(&h), "and come back with it");
 }
 
 #[test]

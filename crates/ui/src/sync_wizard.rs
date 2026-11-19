@@ -95,9 +95,11 @@ pub(crate) fn show(
         review(ui, tokens, state, draft, commands);
         return;
     }
-    // A taller window gives every step the same extra room, so Back/Next stay put.
-    let extra = crate::sync::spare_height(ui, "wizard", "step", BODY_HEIGHT);
-    fixed_body(ui, BODY_HEIGHT + extra, |ui| {
+    // A taller window gives every step the same extra room, so Back/Next stay put. Never
+    // less than designed: the review page's taller tail is only known once it was shown, and
+    // shrinking by it later would move the buttons.
+    let body = crate::sync::part_height(ui, "wizard", "step", BODY_HEIGHT, BODY_HEIGHT);
+    let body_end = fixed_body(ui, body, |ui| {
         ui.add_enabled_ui(!state.busy(), |ui| match step {
             0 => folders(ui, tokens, state, draft, commands),
             1 => goal(ui, tokens, state, commands),
@@ -111,7 +113,6 @@ pub(crate) fn show(
         .get(usize::from(step) + 1)
         .copied()
         .unwrap_or("Review");
-    let body_end = ui.cursor().top();
     let anchor = footer(ui, tokens, step, state, next, commands);
     crate::sync::measure_below(ui, "wizard", "step", body_end, anchor);
 }
@@ -123,13 +124,20 @@ const SAVE_CARD_HEIGHT: f32 = 121.0;
 /// The comparison result below the list in the review step.
 pub(crate) const FOOTER_HEIGHT: f32 = 60.0;
 
-fn fixed_body(ui: &mut egui::Ui, height: f32, contents: impl FnOnce(&mut egui::Ui)) {
-    egui::ScrollArea::vertical()
-        .id_salt("fm-sync-wizard-body")
-        .max_height(height)
-        .min_scrolled_height(height)
-        .auto_shrink([false, false])
-        .show(ui, contents);
+/// Returns where the body ends: its own edge, so the spacing after it counts as page height
+/// for [`crate::sync::measure_below`].
+fn fixed_body(ui: &mut egui::Ui, height: f32, contents: impl FnOnce(&mut egui::Ui)) -> f32 {
+    ui.scope(|ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("fm-sync-wizard-body")
+            .max_height(height)
+            .min_scrolled_height(height)
+            .auto_shrink([false, false])
+            .show(ui, contents);
+    })
+    .response
+    .rect
+    .bottom()
 }
 
 fn steps_bar(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState, step: u8) {
@@ -524,11 +532,10 @@ fn review(
     let keep = state.profile.watch.enabled;
     let designed = BODY_HEIGHT - SAVE_CARD_HEIGHT - FOOTER_HEIGHT - 6.0;
     // The list takes whatever a taller window adds.
-    let extra = crate::sync::spare_height(ui, "wizard", "review", designed);
-    fixed_body(ui, designed + extra, |ui| {
+    let body = crate::sync::part_height(ui, "wizard", "review", designed, designed);
+    let body_end = fixed_body(ui, body, |ui| {
         grid_reserving(ui, tokens, state, commands, 0.0, true);
     });
-    let body_end = ui.cursor().top();
     // Outside the scrolling body so the result of the comparison is always in view.
     egui::Frame::new()
         .fill(tokens.hover_bg)

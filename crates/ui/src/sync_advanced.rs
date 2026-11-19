@@ -47,12 +47,18 @@ pub(crate) fn show(
     RowFilterBar::show(ui, state, commands, false, tokens);
     let used = ui.cursor().top() - top;
     let designed = (PAGE_HEIGHT - used - FOOTER_HEIGHT - BOTTOM_HEIGHT).max(60.0);
-    // The list takes whatever a taller window adds.
-    let table = designed + sync::spare_height(ui, "advanced", "advanced", designed);
+    // The list takes what the window leaves: more in a taller window, less on a small screen.
+    let table = sync::part_height(ui, "advanced", "advanced", designed, 60.0);
     let width = ui.available_width();
-    ui.allocate_ui(egui::vec2(width, table), |ui| {
-        grid_reserving(ui, tokens, state, commands, 0.0, false);
-    });
+    let table_end = ui
+        .allocate_ui(egui::vec2(width, table), |ui| {
+            grid_reserving(ui, tokens, state, commands, 0.0, false);
+        })
+        .response
+        .rect
+        .bottom();
+    // From the list's own edge, so the spacing after it counts as page height too (measured
+    // from the cursor the page ended 6 points below the window, which then grew).
     let below = ui.cursor().top();
     // The same footer as the guided review: the result of the comparison is always in view.
     egui::Frame::new()
@@ -72,7 +78,7 @@ pub(crate) fn show(
     ui.separator();
     name_row(ui, tokens, state, draft, commands);
     synchronize_row(ui, tokens, state, commands);
-    sync::measure_below(ui, "advanced", "advanced", below, below);
+    sync::measure_below(ui, "advanced", "advanced", table_end, below);
 }
 
 fn name_row(
@@ -472,60 +478,70 @@ fn synchronize_row(
     commands: &mut Vec<Command>,
 ) {
     let keep = state.watching() || state.arming != Arming::Off;
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let has_work = state.plan.as_ref().is_some_and(|pl| !pl.is_empty_work());
-        if state.watching() {
-            if crate::sync::check_button(ui, tokens, "Stop syncing").clicked() {
-                commands.push(("sync.watch.stop", Value::Null));
+    // Exactly one button tall: a bare `with_layout` takes the rest of the window, centres the
+    // button in it and counts as page height, so the list shrank a little every frame.
+    let size = egui::vec2(
+        ui.available_width(),
+        crate::sync_icons::button_height(ui, tokens, true),
+    );
+    ui.allocate_ui_with_layout(
+        size,
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            let has_work = state.plan.as_ref().is_some_and(|pl| !pl.is_empty_work());
+            if state.watching() {
+                if crate::sync::check_button(ui, tokens, "Stop syncing").clicked() {
+                    commands.push(("sync.watch.stop", Value::Null));
+                }
+            } else if keep {
+                let ready = state.arming == Arming::Confirm;
+                ui.add_enabled_ui(ready, |ui| {
+                    if crate::sync::check_button(ui, tokens, "Start syncing")
+                        .on_hover_text(
+                            "Apply the listed changes now, then apply later ones automatically",
+                        )
+                        .clicked()
+                    {
+                        commands.push(("sync.watch.confirm", Value::Null));
+                    }
+                });
+            } else {
+                ui.add_enabled_ui(!state.busy() && has_work, |ui| {
+                    if crate::sync::check_button(ui, tokens, "Synchronize now")
+                        .on_hover_text("Carry out the listed actions")
+                        .clicked()
+                    {
+                        commands.push(("sync.run", Value::Null));
+                    }
+                });
             }
-        } else if keep {
-            let ready = state.arming == Arming::Confirm;
-            ui.add_enabled_ui(ready, |ui| {
-                if crate::sync::check_button(ui, tokens, "Start syncing")
+            if keep {
+                if ui
+                    .button("Minimize to Activity panel")
                     .on_hover_text(
-                        "Apply the listed changes now, then apply later ones automatically",
+                        "Keep syncing in the background; progress shows in the Activity panel",
                     )
                     .clicked()
                 {
-                    commands.push(("sync.watch.confirm", Value::Null));
+                    commands.push(("sync.minimize", Value::Null));
                 }
-            });
-        } else {
-            ui.add_enabled_ui(!state.busy() && has_work, |ui| {
-                if crate::sync::check_button(ui, tokens, "Synchronize now")
-                    .on_hover_text("Carry out the listed actions")
-                    .clicked()
-                {
-                    commands.push(("sync.run", Value::Null));
+                if state.arming == Arming::Confirm && ui.button("Cancel").clicked() {
+                    commands.push(("sync.watch.cancel", Value::Null));
                 }
-            });
-        }
-        if keep {
-            if ui
-                .button("Minimize to Activity panel")
-                .on_hover_text(
-                    "Keep syncing in the background; progress shows in the Activity panel",
-                )
-                .clicked()
-            {
-                commands.push(("sync.minimize", Value::Null));
             }
-            if state.arming == Arming::Confirm && ui.button("Cancel").clicked() {
-                commands.push(("sync.watch.cancel", Value::Null));
-            }
-        }
-        // The explanation shares the row, so the page height never changes.
-        let text = if keep {
-            if state.arming == Arming::Confirm {
-                "Applies the listed changes now, then later ones automatically."
+            // The explanation shares the row, so the page height never changes.
+            let text = if keep {
+                if state.arming == Arming::Confirm {
+                    "Applies the listed changes now, then later ones automatically."
+                } else {
+                    ""
+                }
             } else {
-                ""
+                "Synchronize: carry out the listed actions."
+            };
+            if !text.is_empty() {
+                ui.add(egui::Label::new(RichText::new(text).color(tokens.text_muted)).truncate());
             }
-        } else {
-            "Synchronize: carry out the listed actions."
-        };
-        if !text.is_empty() {
-            ui.add(egui::Label::new(RichText::new(text).color(tokens.text_muted)).truncate());
-        }
-    });
+        },
+    );
 }

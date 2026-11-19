@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Saved workspaces no longer count as changed right after opening, so quitting without touching anything no longer asks to save them.
 - Closing the last tab opens your default workspace again, as intended.
+- Synchronize Folders: after resizing the window the list no longer slowly shrinks, and on a small screen the window now fits instead of running off the top and bottom.
+- Synchronize Folders (Advanced): pressing Change settings with a row selected no longer makes the window grow off screen; the row's details return when you hide the settings.
 
 ## [0.3.0] - 2026-11-19
 
