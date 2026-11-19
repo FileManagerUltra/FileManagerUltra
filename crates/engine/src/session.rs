@@ -105,6 +105,17 @@ pub struct Session {
     /// Images of the Markdown preview (own worker pools, byte-capped memory cache).
     pub md_images: crate::md_images::MdImageService,
     pub md_diagrams: crate::md_diagrams::MdDiagramService,
+    /// PDF pages, text and signature checks (own worker pool, byte-capped cache).
+    pub pdf: crate::pdf_service::PdfService,
+    pub(crate) pdf_inbox: crate::pdf_view::PdfInbox,
+    /// Raised when quitting or closing a pane would lose unsaved PDF changes.
+    pub pdf_unsaved: Option<crate::pdf_form_cmds::PdfUnsaved>,
+    /// What to do once the saves the user asked for at that prompt finish.
+    pub(crate) pdf_after_save: Option<crate::pdf_form_cmds::PdfAfter>,
+    /// Remembered visual signatures (loaded on request) and their folder.
+    pub pdf_saved: Vec<crate::pdf_sign_cmds::SavedSignature>,
+    pub pdf_saved_loading: bool,
+    pub pdf_signatures_dir: Option<std::path::PathBuf>,
     /// Text a command wants on the system clipboard; the app shell drains it.
     pub clipboard_out: Option<String>,
     /// Pixels a command wants on the system clipboard; the app shell drains it.
@@ -115,6 +126,8 @@ pub struct Session {
     pub pending_kind: Option<(PaneId, fm_layout::PaneKind)>,
     /// `app.about` raises this flag; the UI shows the dialog and clears it.
     pub about_open: bool,
+    /// `app.licenses` raises this flag; the UI shows the third-party licences and clears it.
+    pub licenses_open: bool,
     /// Non-blocking release check and its dismissible notification.
     pub updates: crate::updates::Updates,
     pub ffmpeg: crate::ffmpeg_install::Ffmpeg,
@@ -223,11 +236,19 @@ impl Default for Session {
             thumbs: Default::default(),
             md_images: Default::default(),
             md_diagrams: Default::default(),
+            pdf: Default::default(),
+            pdf_inbox: Default::default(),
+            pdf_unsaved: None,
+            pdf_after_save: None,
+            pdf_saved: Vec::new(),
+            pdf_saved_loading: false,
+            pdf_signatures_dir: crate::pdf_sign_cmds::default_dir(),
             clipboard_out: None,
             clipboard_image: None,
             image_clip: Default::default(),
             pending_kind: None,
             about_open: false,
+            licenses_open: false,
             updates: Default::default(),
             ffmpeg: Default::default(),
             preferences_open: false,
@@ -427,6 +448,7 @@ impl Session {
             || self.playlist_job.is_busy()
             || self.media_source.is_busy()
             || self.thumbs.is_busy()
+            || self.pdf.is_busy()
             || self.image_clip.is_busy()
             || self.fileops.jobs().iter().any(|j| j.state.is_running())
     }
@@ -452,6 +474,7 @@ impl Session {
         self.normalize_sftp_panes();
         self.remote_tick();
         changed |= self.refresh_previews();
+        changed |= self.pump_pdf();
         self.note_files_dir();
         changed |= self.media_tick();
         changed |= self.media_store_tick();

@@ -4,3 +4,4 @@
 /corpus
 **/*.rs.bk
 .DS_Store
+/tests

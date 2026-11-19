@@ -1,0 +1,46 @@
+[package]
+name = "fm-pdf"
+description = "PDF document model over bytes: rendering, text, forms, incremental writing, signing and verification (no I/O, no UI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+fm-vfs.workspace = true
+hayro.workspace = true
+lopdf.workspace = true
+zeroize = { workspace = true, features = ["alloc"] }
+ttf-parser.workspace = true
+image = { workspace = true, features = ["png", "jpeg"] }
+flate2 = { workspace = true, features = ["rust_backend"] }
+der.workspace = true
+spki.workspace = true
+x509-cert.workspace = true
+cms.workspace = true
+pkcs12.workspace = true
+pkcs5.workspace = true
+pkcs8.workspace = true
+rsa.workspace = true
+p256.workspace = true
+p384.workspace = true
+p521.workspace = true
+signature.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+des.workspace = true
+rc2.workspace = true
+cbc.workspace = true
+getrandom.workspace = true
+
+[features]
+# Generated test PDFs, for this crate's tests and the engine/UI tests.
+fixtures = ["x509-cert/builder"]
+
+[dev-dependencies]
+x509-cert = { workspace = true, features = ["builder"] }

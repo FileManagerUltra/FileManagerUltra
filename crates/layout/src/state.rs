@@ -437,6 +437,10 @@ impl ListingState {
     }
 }
 
+/// Folders kept in each direction of a pane's history; the oldest go first. Bounds memory
+/// in long sessions.
+pub const MAX_HISTORY: usize = 100;
+
 /// Per-pane back/forward navigation history.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct History {
@@ -460,6 +464,18 @@ impl History {
     pub fn push(&mut self, to: VfsUri) {
         self.back.push(to);
         self.forward.clear();
+        self.trim();
+    }
+
+    /// Keep at most [`MAX_HISTORY`] entries each way.
+    fn trim(&mut self) {
+        if let Some(extra) = self.back.len().checked_sub(MAX_HISTORY) {
+            self.back.drain(..extra);
+        }
+        // Both stacks end at the nearest step: drop from the far end.
+        if let Some(extra) = self.forward.len().checked_sub(MAX_HISTORY) {
+            self.forward.drain(..extra);
+        }
     }
 
     pub fn can_back(&self) -> bool {
@@ -590,6 +606,10 @@ pub struct PaneState {
     pub location: VfsUri,
     pub tree: TreeState,
     pub listing: ListingState,
+    /// Back/forward for this session only: never saved, so every start (and every new
+    /// pane) begins without history. [`Layout::validate`](crate::Layout::validate) starts
+    /// it at the restored location.
+    #[serde(skip)]
     pub history: History,
     /// Width of the tree column in px (drag-resized, persisted per pane).
     #[serde(default = "default_tree_width")]
@@ -777,6 +797,24 @@ impl PaneState {
         pane
     }
 
+    /// How the pane is set up, without where it is or what is picked: location, history,
+    /// the tree's root, expanded and focused nodes, the selection and cursor, scrolling and
+    /// the media cursor are reset. The kind, sort, widths, zoom, preview source and collapsed
+    /// Places sections stay. A workspace counts as changed only when this differs:
+    /// navigating is using the pane, not editing the workspace.
+    pub fn setup_only(&self) -> Self {
+        let mut pane = Self::new_rooted(VfsUri::root_file(), VfsUri::root_file());
+        pane.kind = self.kind;
+        pane.listing.sort = self.listing.sort.clone();
+        pane.tree_width = self.tree_width;
+        pane.col_widths = self.col_widths;
+        pane.preview_source = self.preview_source;
+        pane.places = self.places;
+        pane.term_scale = self.term_scale;
+        pane.view_scale = self.view_scale;
+        pane
+    }
+
     /// This terminal's text zoom, bounded; a hostile or corrupt stored value reads as 100%.
     pub fn term_scale(&self) -> f32 {
         if self.term_scale.is_finite() {
@@ -825,6 +863,10 @@ impl PaneState {
     pub fn navigate(&mut self, to: VfsUri) {
         if to == self.location {
             return;
+        }
+        // A pane restored without history (it is never saved) starts it where it is.
+        if self.history.current().is_none() {
+            self.history = History::new(self.location.clone());
         }
         self.history.push(to.clone());
         self.location = to;
@@ -928,6 +970,64 @@ pub struct Focus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_is_not_saved_and_a_restored_pane_starts_it_where_it_is() {
+        let uri = |s: &str| VfsUri::parse(s).expect("uri");
+        let mut pane = PaneState::new(uri("/a"));
+        pane.navigate(uri("/b"));
+        let text = serde_json::to_string(&pane).expect("save");
+        assert!(!text.contains("history"), "{text}");
+        let mut restored: PaneState = serde_json::from_str(&text).expect("load");
+        assert!(!restored.can_go_back() && !restored.can_go_forward());
+        restored.navigate(uri("/c"));
+        assert!(restored.go_back());
+        assert_eq!(
+            restored.location,
+            uri("/b"),
+            "back to where it was restored"
+        );
+    }
+
+    #[test]
+    fn setup_only_ignores_navigation_and_keeps_settings() {
+        let uri = |s: &str| VfsUri::parse(s).expect("uri");
+        let start = PaneState::new_rooted(uri("/home/u"), VfsUri::root_file());
+        let mut used = start.clone();
+        used.navigate(uri("/tmp/elsewhere"));
+        used.go_back();
+        used.tree.expand(uri("/usr"));
+        used.tree.focused = Some(uri("/usr"));
+        used.tree.active = true;
+        used.tree.root = uri("/tmp");
+        used.listing.select_only(Some("a.txt"), 3);
+        used.listing.on_parent = true;
+        used.listing.scroll = 120.0;
+        used.media.selected = Some(2);
+        assert_eq!(
+            start.setup_only(),
+            used.setup_only(),
+            "using a pane is no edit"
+        );
+
+        let mut set_up = start.clone();
+        set_up.listing.sort.header_click(SortKey::Size);
+        assert_ne!(start.setup_only(), set_up.setup_only(), "sort counts");
+        let mut set_up = start.clone();
+        set_up.set_col_width(0, 200.0);
+        assert_ne!(
+            start.setup_only(),
+            set_up.setup_only(),
+            "column widths count"
+        );
+        let mut set_up = start.clone();
+        set_up.kind = PaneKind::Terminal;
+        assert_ne!(
+            start.setup_only(),
+            set_up.setup_only(),
+            "the pane's kind counts"
+        );
+    }
 
     #[test]
     fn rooted_pane_keeps_the_tree_at_the_root_and_reveals_the_location() {
@@ -1426,21 +1526,22 @@ mod tests {
             assert!(h.can_back());
             assert!(!h.can_forward());
         }
-        // Drain to the start without underflowing.
+        // Drain to the start without underflowing; only the last MAX_HISTORY are kept.
         let mut backs = 0;
         while h.back().is_some() {
             backs += 1;
             assert!(backs <= 1000);
         }
-        assert_eq!(backs, 1000);
+        assert_eq!(backs, MAX_HISTORY - 1);
         assert!(!h.can_back());
-        assert_eq!(h.current(), Some(&uri("/a")));
+        assert_eq!(h.current(), Some(&uri("/p900")));
         // Forward to the end and one step beyond.
         let mut fwds = 0;
         while h.forward().is_some() {
             fwds += 1;
         }
-        assert_eq!(fwds, 1000);
+        assert_eq!(fwds, MAX_HISTORY - 1);
+        assert_eq!(h.current(), Some(&uri("/p999")));
         assert!(!h.can_forward());
         // Push from the middle clears the forward stack.
         let mut h2 = History::new(uri("/a"));

@@ -257,9 +257,13 @@ pub fn clean_name(raw: &str) -> Result<String, FmError> {
     Ok(name.to_string())
 }
 
-/// The snapshot without view noise (scroll offsets, including the media queue's, and
-/// one-shot "scroll to" flags), so merely scrolling does not count as a change. Pane ids are renumbered from 1 first:
-/// every restore moves a workspace to a fresh id range, which is not a change either.
+/// What "unsaved changes" compares: the workspace's set-up, not where its panes are.
+/// Structure (panes, splits, zoomed pane, pane kinds) and settings (sort, widths, pane zoom,
+/// preview options, collapsed Places) count. Navigation and momentary state do not: the
+/// folder shown, history, tree expansion and focus, selection, cursor, focused pane,
+/// scrolling (see [`fm_layout::Layout::setup_only`]); keeping those is what Auto-save is for,
+/// and a workspace without it reopens where it was explicitly saved. Pane ids are renumbered
+/// from 1 first: every restore moves a workspace to a fresh id range, which is not a change.
 fn fingerprint(value: &Value) -> String {
     fn strip(v: &mut Value) {
         match v {
@@ -273,18 +277,20 @@ fn fingerprint(value: &Value) -> String {
             _ => {}
         }
     }
-    let mut v = canonical_ids(value).unwrap_or_else(|| value.clone());
+    let mut v = comparable(value).unwrap_or_else(|| value.clone());
     strip(&mut v);
     v.to_string()
 }
 
-/// `value` with its panes renumbered from 1 in tree order (`None` when it is no snapshot).
-fn canonical_ids(value: &Value) -> Option<Value> {
+/// `value`'s set-up with its panes renumbered from 1 in tree order (`None` when it is no
+/// snapshot).
+fn comparable(value: &Value) -> Option<Value> {
     let Snapshot {
         mut layout,
         previews,
     } = serde_json::from_value(value.clone()).ok()?;
     let map = layout.relabel(1);
+    let layout = layout.setup_only();
     let previews = previews
         .into_iter()
         .filter_map(|(old, settings)| map.get(&old).map(|new| (*new, settings)))
@@ -773,18 +779,59 @@ impl Session {
             .get(ix)
             .ok_or_else(|| FmError::NotFound(format!("workspace tab {}", ix + 1)))?;
         if self.compute_dirty(ix) {
-            self.unsaved_prompt = Some(UnsavedPrompt {
-                after: AfterPrompt::Close(tab.uid),
-                names: vec![tab.name.clone()],
-            });
-            return Ok(());
+            let (uid, name) = (tab.uid, tab.name.clone());
+            if !self.answer_unsaved_unasked(&[uid]) {
+                self.unsaved_prompt = Some(UnsavedPrompt {
+                    after: AfterPrompt::Close(uid),
+                    names: vec![name],
+                });
+                return Ok(());
+            }
+            let Some(ix) = self.workspaces.tabs.iter().position(|t| t.uid == uid) else {
+                return Ok(());
+            };
+            return self.workspace_close_now(ix);
         }
         self.workspace_close_now(ix)
+    }
+
+    /// Apply the remembered answer to "Unsaved workspace changes" (`unsaved_workspaces`)
+    /// to tabs `uids`. False when the question must be asked: no answer remembered, or
+    /// saving failed (the notice says why), so nothing is lost without asking.
+    fn answer_unsaved_unasked(&mut self, uids: &[u64]) -> bool {
+        match self.prefs.unsaved_workspaces {
+            crate::prefs::UnsavedWorkspaces::Ask => false,
+            crate::prefs::UnsavedWorkspaces::Discard => true,
+            crate::prefs::UnsavedWorkspaces::Save => match self.save_tabs(uids) {
+                Ok(()) => true,
+                Err(err) => {
+                    self.notice = Some(format!("Could not save the workspace: {err}"));
+                    false
+                }
+            },
+        }
+    }
+
+    fn save_tabs(&mut self, uids: &[u64]) -> Result<(), FmError> {
+        for uid in uids {
+            if let Some(ix) = self.workspaces.tabs.iter().position(|t| t.uid == *uid) {
+                self.workspace_save(ix, None)?;
+            }
+        }
+        Ok(())
     }
 
     /// `app.quit` (and closing the window): ask first when work is still running in the
     /// background, then when workspaces have unsaved changes, else stop now.
     pub fn request_quit(&mut self) {
+        if self.pdf_guard(crate::pdf_form_cmds::PdfAfter::Quit) {
+            return;
+        }
+        self.quit_after_pdf_check();
+    }
+
+    /// The quit once no PDF holds unsaved changes: running work and workspaces still ask.
+    pub(crate) fn quit_after_pdf_check(&mut self) {
         let busy = self.background_work();
         if !busy.is_empty() {
             self.busy_quit = Some(busy);
@@ -797,7 +844,8 @@ impl Session {
     pub fn quit_checking_workspaces(&mut self) {
         self.busy_quit = None;
         let unsaved = self.workspace_unsaved();
-        if unsaved.is_empty() {
+        let uids: Vec<u64> = unsaved.iter().map(|(uid, _)| *uid).collect();
+        if unsaved.is_empty() || self.answer_unsaved_unasked(&uids) {
             self.running = false;
             return;
         }
@@ -807,10 +855,21 @@ impl Session {
         });
     }
 
-    /// Answer the unsaved-changes dialog: `save`, `discard` or `cancel`.
-    pub fn workspace_resolve_prompt(&mut self, choice: &str) -> Result<(), FmError> {
+    /// Answer the unsaved-changes dialog: `save`, `discard` or `cancel`. `remember`
+    /// ("Don't ask again") keeps a save or discard answer for later quits and closes;
+    /// cancel is not an answer and remembers nothing.
+    pub fn workspace_resolve_prompt(
+        &mut self,
+        choice: &str,
+        remember: bool,
+    ) -> Result<(), FmError> {
         let Some(prompt) = self.unsaved_prompt.clone() else {
             return Ok(());
+        };
+        let remembered = match choice {
+            "save" => crate::prefs::UnsavedWorkspaces::Save,
+            "discard" => crate::prefs::UnsavedWorkspaces::Discard,
+            _ => crate::prefs::UnsavedWorkspaces::Ask,
         };
         match choice {
             "cancel" => {}
@@ -824,11 +883,7 @@ impl Session {
                         .map(|(uid, _)| uid)
                         .collect(),
                 };
-                for uid in uids {
-                    if let Some(ix) = self.workspaces.tabs.iter().position(|t| t.uid == uid) {
-                        self.workspace_save(ix, None)?;
-                    }
-                }
+                self.save_tabs(&uids)?;
                 self.after_prompt(&prompt.after)?;
             }
             other => {
@@ -836,6 +891,9 @@ impl Session {
                     "choice must be save, discard or cancel, not {other:?}"
                 )));
             }
+        }
+        if remember && choice != "cancel" {
+            self.prefs.unsaved_workspaces = remembered;
         }
         self.unsaved_prompt = None;
         Ok(())

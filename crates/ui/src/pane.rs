@@ -34,6 +34,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let location = state.location.clone();
     let tree_width = state.tree_width;
     let kind = state.kind;
+    if kind.is_files() {
+        mouse_history(ui, s, pane, area);
+    }
 
     let mut open = None;
     crate::dnd::note_pane(ui.ctx(), pane, area);
@@ -92,6 +95,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                                 }
                                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                                     if kind.is_files() {
+                                        history_buttons(ui, s, pane, tokens);
                                         crate::locationbar::show_label(
                                             ui, s, pane, tokens, focused,
                                         );
@@ -400,6 +404,114 @@ fn zoom_button(ui: &mut Ui, tokens: &Tokens, percent: &str, zoomed: bool) -> egu
     } else {
         "Zoom".to_string()
     };
+    response.on_hover_text(hint)
+}
+
+/// The mouse's back and forward (thumb) buttons step through the history of the pane under
+/// the pointer, focused or not, like a browser's tab.
+fn mouse_history(ui: &Ui, s: &mut Session, pane: PaneId, area: egui::Rect) {
+    let Some(back) = ui.input(|i| {
+        let over = i.pointer.interact_pos().is_some_and(|p| area.contains(p));
+        if !over {
+            None
+        } else if i.pointer.button_pressed(egui::PointerButton::Extra1) {
+            Some(true)
+        } else if i.pointer.button_pressed(egui::PointerButton::Extra2) {
+            Some(false)
+        } else {
+            None
+        }
+    }) else {
+        return;
+    };
+    // Not through a window or popup lying over the pane.
+    let on_top = ui
+        .input(|i| i.pointer.interact_pos())
+        .and_then(|p| ui.ctx().layer_id_at(p))
+        .is_none_or(|layer| layer == ui.layer_id());
+    if on_top {
+        let id = if back { "nav.back" } else { "nav.forward" };
+        s.dispatch_or_notice(id, &serde_json::json!({ "pane": pane }));
+    }
+}
+
+/// Back and forward arrows before the path, greyed out when there is nowhere to go. History
+/// lasts for this session only (it is not saved with workspaces).
+fn history_buttons(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
+    let (can_back, can_forward) = s
+        .layout
+        .state(pane)
+        .map_or((false, false), |st| (st.can_go_back(), st.can_go_forward()));
+    let spacing = ui.spacing().item_spacing.x;
+    ui.spacing_mut().item_spacing.x = 0.0;
+    let back = history_button(
+        ui,
+        tokens,
+        crate::sync_icons::Icon::Back,
+        "Back",
+        "Back (Alt+Left or the mouse's back button)",
+        can_back,
+    );
+    let forward = history_button(
+        ui,
+        tokens,
+        crate::sync_icons::Icon::Next,
+        "Forward",
+        "Forward (Alt+Right or the mouse's forward button)",
+        can_forward,
+    );
+    ui.spacing_mut().item_spacing.x = spacing;
+    ui.add_space(spacing);
+    let id = if back.clicked() {
+        "nav.back"
+    } else if forward.clicked() {
+        "nav.forward"
+    } else {
+        return;
+    };
+    let _ = s.layout.focus_pane(pane);
+    s.dispatch_or_notice(id, &serde_json::json!({ "pane": pane }));
+}
+
+/// One header arrow: a 24×24 target (WCAG 2.5.8), a hover background, a focus ring, and
+/// `text_muted` with no response while disabled.
+fn history_button(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    icon: crate::sync_icons::Icon,
+    name: &str,
+    hint: &str,
+    enabled: bool,
+) -> egui::Response {
+    use crate::theme::MIN_TARGET;
+    let size = egui::vec2(MIN_TARGET, ui.spacing().interact_size.y.max(MIN_TARGET));
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(size, sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if enabled && response.hovered() {
+            painter.rect_filled(rect, tokens.corner_radius, tokens.hover_bg);
+        }
+        if response.has_focus() {
+            painter.rect_stroke(
+                rect,
+                tokens.corner_radius,
+                egui::Stroke::new(2.0, tokens.accent_text),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let color = if enabled {
+            tokens.text
+        } else {
+            tokens.text_muted
+        };
+        crate::sync_icons::paint(painter, icon, rect.center(), 16.0, color);
+    }
     response.on_hover_text(hint)
 }
 

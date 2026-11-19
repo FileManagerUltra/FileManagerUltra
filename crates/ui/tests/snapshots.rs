@@ -801,30 +801,44 @@ fn about_dialog_dark_light() {
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();
     for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
-        for case in ["closed", "licence"] {
+        // About alone; the Third-party Licences window; the same with the ELK text open.
+        for case in ["closed", "licenses", "licence"] {
             let Some(renderer) = renderer_or_skip() else {
                 return;
             };
+            let about = case == "closed";
             let mut harness = Harness::builder()
                 .with_size(egui::vec2(760.0, 820.0))
                 .renderer(renderer)
-                .build_ui(move |ui| {
-                    theme::apply_to(ui.ctx(), &tokens);
-                    ui.ctx().set_theme(if tokens.dark {
-                        egui::Theme::Dark
-                    } else {
-                        egui::Theme::Light
-                    });
-                    let mut open = true;
-                    fm_ui::about::dialog_with_version(
-                        ui.ctx(),
-                        &tokens,
-                        &mut open,
-                        "Version 9.9.9 · build fixture",
-                    );
-                });
+                .build_ui_state(
+                    move |ui, licenses: &mut bool| {
+                        theme::apply_to(ui.ctx(), &tokens);
+                        ui.ctx().set_theme(if tokens.dark {
+                            egui::Theme::Dark
+                        } else {
+                            egui::Theme::Light
+                        });
+                        let mut open = about;
+                        fm_ui::about::dialog_with_version(
+                            ui.ctx(),
+                            &tokens,
+                            &mut open,
+                            licenses,
+                            "Version 9.9.9 · build fixture",
+                        );
+                        let mut shown = !about;
+                        fm_ui::about::licenses_dialog(ui.ctx(), &tokens, &mut shown);
+                    },
+                    false,
+                );
             harness.run_steps(3);
             if case == "licence" {
+                harness
+                    .get_all_by_label("View licence")
+                    .last()
+                    .expect("ELK row")
+                    .scroll_to_me();
+                harness.run();
                 harness
                     .get_all_by_label("View licence")
                     .last()
@@ -833,7 +847,17 @@ fn about_dialog_dark_light() {
                 harness.run();
                 harness.get_by_label_contains("Eclipse Public License - v 2.0");
             }
-            harness.snapshot(format!("dialog_about_{case}_{theme}"));
+            let name = if case == "licenses" {
+                format!("dialog_licenses_{theme}")
+            } else {
+                format!("dialog_about_{case}_{theme}")
+            };
+            harness.snapshot(name);
+            if about {
+                harness.get_by_label("Third-party licences…").click();
+                harness.run_steps(2);
+                assert!(*harness.state(), "the About button opens the licences");
+            }
             results.extend_harness(&mut harness);
         }
     }
@@ -2392,6 +2416,180 @@ fn preview_cards_dark_light() {
             results.extend_harness(&mut harness);
         }
     }
+}
+
+/// PDF: rendered pages with the PDF toolbar, the password card of an encrypted file, and
+/// Fill & Sign over a form. Page text uses the fonts bundled with the renderer, so the
+/// snapshots do not depend on the machine's fonts.
+#[test]
+fn pdf_preview_pages_password_and_fill_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    // (case, file, commands dispatched once the PDF is shown: id and fit/colour mode)
+    type Commands = &'static [(&'static str, &'static str)];
+    let cases: [(&str, Vec<u8>, Commands); 4] = [
+        ("pdf_pages", fm_pdf::fixtures::text_pages(3), &[]),
+        (
+            "pdf_dark_outline",
+            fm_pdf::fixtures::text_pages(3),
+            &[
+                ("preview.pdf.colors", "dark"),
+                ("preview.pdf.outline.toggle", ""),
+            ],
+        ),
+        ("pdf_locked", fm_pdf::fixtures::encrypted("pw"), &[]),
+        (
+            "pdf_fill",
+            fm_pdf::fixtures::form(),
+            &[("pdf.form.edit", "")],
+        ),
+    ];
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        for (case, bytes, commands) in &cases {
+            let Some(renderer) = renderer_or_skip() else {
+                return;
+            };
+            let (session, pane) = preview_fixture("doc.pdf", bytes, false);
+            let mut h = Harness::builder()
+                .renderer(renderer)
+                .with_accessibility_check(false)
+                .with_size(egui::vec2(720.0, 560.0))
+                .build_ui_state(
+                    move |ui, session: &mut Session| {
+                        theme::apply_to(ui.ctx(), &tokens);
+                        ui.ctx().set_theme(if tokens.dark {
+                            egui::Theme::Dark
+                        } else {
+                            egui::Theme::Light
+                        });
+                        fm_ui::preview::show(ui, session, pane, &tokens);
+                    },
+                    session,
+                );
+            h.run_steps(3);
+            for (id, mode) in commands.iter() {
+                let params = if mode.is_empty() {
+                    serde_json::json!({"pane": pane})
+                } else {
+                    serde_json::json!({"pane": pane, "mode": mode})
+                };
+                h.state_mut().dispatch(id, &params).expect(id);
+            }
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let mut quiet = 0;
+            while quiet < 5 {
+                h.state_mut().poll();
+                h.step();
+                std::thread::sleep(Duration::from_millis(10));
+                let s = h.state();
+                let opening = s
+                    .pdf_view(pane)
+                    .and_then(|v| v.fill.as_ref())
+                    .is_some_and(|f| f.state == fm_engine::pdf_form_cmds::FillState::Opening);
+                quiet = if s.pdf.is_busy() || opening {
+                    0
+                } else {
+                    quiet + 1
+                };
+                assert!(Instant::now() < deadline, "PDF preview never settled");
+            }
+            h.run_steps(3);
+            h.snapshot(format!("preview_{case}_{theme}"));
+            results.extend_harness(&mut h);
+        }
+    }
+}
+
+/// The large Fill & Sign button on the pages starts filling, then heads the action tiles.
+#[test]
+fn pdf_fill_and_sign_button_starts_filling() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let Some(renderer) = renderer_or_skip() else {
+        return;
+    };
+    let mut results = SnapshotResults::new();
+    let (session, pane) = preview_fixture("form.pdf", &fm_pdf::fixtures::form(), false);
+    let tokens = Tokens::light();
+    let mut h = Harness::builder()
+        .renderer(renderer)
+        .with_accessibility_check(false)
+        .with_size(egui::vec2(720.0, 560.0))
+        .build_ui_state(
+            move |ui, session: &mut Session| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(egui::Theme::Light);
+                fm_ui::preview::show(ui, session, pane, &tokens);
+            },
+            session,
+        );
+    h.run_steps(3);
+    h.get_by_label("Fill & Sign").click();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        h.state_mut().poll();
+        h.step();
+        let ready = h
+            .state()
+            .pdf_view(pane)
+            .and_then(|v| v.fill.as_ref())
+            .is_some_and(|f| f.editing && f.state == fm_engine::pdf_form_cmds::FillState::Ready);
+        if ready {
+            break;
+        }
+        assert!(Instant::now() < deadline, "Fill & Sign never opened");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    h.run_steps(2);
+    // The button now heads the action tiles; it folds them away and back.
+    for tile in ["Signature", "Save copy", "Save as…", "Replace", "Close"] {
+        h.get_by_label(tile);
+    }
+    assert!(
+        h.query_by_label("Place").is_none(),
+        "Place needs a signature first"
+    );
+    h.get_by_label("Fill & Sign").click();
+    h.run_steps(2);
+    assert!(h.query_by_label("Save copy").is_none(), "tiles folded");
+    h.get_by_label("Fill & Sign").click();
+    h.run_steps(2);
+    h.get_by_label("Save copy");
+    // Replace asks in the strip under the toolbar before anything is written.
+    h.state_mut()
+        .dispatch(
+            "pdf.form.set",
+            &serde_json::json!({"field": "name", "value": "Jane", "pane": pane}),
+        )
+        .expect("set");
+    // Wait for the filled preview to be built and drawn.
+    let mut quiet = 0;
+    for _ in 0..2000 {
+        h.state_mut().poll();
+        h.step();
+        let built = h
+            .state()
+            .pdf_view(pane)
+            .and_then(|v| v.fill.as_ref())
+            .is_some_and(|f| f.built.is_some());
+        quiet = if built && !h.state().pdf.is_busy() {
+            quiet + 1
+        } else {
+            0
+        };
+        if quiet >= 5 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(quiet >= 5, "the filled preview never settled");
+    h.run_steps(3);
+    // Changed: the save tiles light up in their colours.
+    h.snapshot("preview_pdf_fill_changed_light");
+    h.get_by_label("Replace").click();
+    h.run_steps(2);
+    h.get_by_label_contains("Replace the original file");
+    results.extend_harness(&mut h);
 }
 
 /// SVG: the drawing over the checkerboard, its source after Preview is turned off, and the

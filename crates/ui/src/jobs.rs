@@ -94,6 +94,9 @@ pub fn indicator_text(s: &Session) -> String {
             [one] => return format!("Sync {}: {}", one.name, one.text),
             many => return format!("{} syncs need attention", many.len()),
         }
+        if let Some(x) = syncs.iter().find(|x| x.confirming) {
+            return format!("Sync {}: waiting for Start syncing", x.name);
+        }
         let watching: Vec<_> = syncs.iter().filter(|x| x.watching).collect();
         let jobs_attention = s.fileops.jobs().iter().any(|j| {
             matches!(j.state, OpState::Failed(_))
@@ -181,7 +184,7 @@ pub fn icon_button(ui: &mut Ui, s: &Session, tokens: &Tokens) {
         });
     let syncs = crate::sync::activity(s);
     let attention = attention || syncs.iter().any(|x| x.attention);
-    let busy = s.fileops.running() > 0 || syncs.iter().any(|x| x.running);
+    let busy = s.fileops.running() > 0 || syncs.iter().any(|x| x.running || x.confirming);
     let color = if open || response.hovered() {
         tokens.accent_text
     } else {
@@ -426,7 +429,11 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                         {
                             sync_action = Some(("sync.restore", json!({ "id": line.id })));
                         }
-                        if line.confirming && card::secondary(ui, "Cancel").clicked() {
+                        if line.confirming
+                            && card::secondary(ui, "Cancel")
+                                .on_hover_text("Don't start keeping these folders in sync")
+                                .clicked()
+                        {
                             sync_action = Some(("sync.watch.cancel", json!({ "id": line.id })));
                         }
                         if line.watching

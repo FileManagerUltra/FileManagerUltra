@@ -124,6 +124,8 @@ impl Layout {
             }
         };
         for st in self.states.values_mut() {
+            // History is not saved: back/forward start at the restored folder.
+            st.history = History::new(st.location.clone());
             f(&mut st.tree.scroll);
             f(&mut st.listing.scroll);
             if !st.tree_width.is_finite() {
@@ -308,6 +310,24 @@ impl Layout {
     /// Leaf ids in painting order.
     pub fn panes(&self) -> Vec<PaneId> {
         self.root.panes()
+    }
+
+    /// The layout's set-up without navigation (see [`PaneState::setup_only`]): the pane tree,
+    /// split ratios and zoomed pane stay; every pane drops where it is, and which pane has
+    /// focus is reset to the first.
+    pub fn setup_only(&self) -> Self {
+        let mut layout = self.clone();
+        for state in layout.states.values_mut() {
+            *state = state.setup_only();
+        }
+        if let Some(first) = layout.panes().first().copied() {
+            layout.focus = Focus {
+                focused: first,
+                previous: None,
+                last_files: None,
+            };
+        }
+        layout
     }
 
     /// Keep the first Media pane in painting order and demote any restored duplicates.

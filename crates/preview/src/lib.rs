@@ -15,6 +15,7 @@ pub mod log;
 pub mod markdown;
 pub mod mermaid;
 pub mod notices;
+pub mod pdf_prev;
 pub mod platform;
 pub mod player;
 pub mod raw_prev;
@@ -270,6 +271,8 @@ pub enum Preview {
     Dir(DirDoc),
     Log(log::LogDoc),
     Meta(MetaDoc),
+    /// A PDF document (pages rendered by the engine's PDF pool).
+    Pdf(pdf_prev::PdfDoc),
     Error(String),
 }
 
@@ -400,13 +403,7 @@ fn render_inner(
         Kind::Svg => svg::render(vfs, entry, limits).map(Preview::Svg),
         Kind::Video => Ok(video::render(entry, limits)),
         Kind::Audio => audio::render(entry, limits),
-        Kind::Pdf => Ok(Preview::Meta(MetaDoc {
-            rows: base_meta(entry),
-            hint: Some(kind.hint().into()),
-            poster: None,
-            video: None,
-            audio: None,
-        })),
+        Kind::Pdf => pdf_prev::render(vfs, entry),
         Kind::Binary => hex::render(vfs, entry, limits).map(Preview::Hex),
     }
 }

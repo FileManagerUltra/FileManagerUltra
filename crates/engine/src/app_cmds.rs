@@ -93,6 +93,22 @@ pub fn about() -> CommandSpec {
     }
 }
 
+/// `app.licenses` — raise the Third-party Licences window flag (the UI renders and clears it).
+pub fn licenses() -> CommandSpec {
+    CommandSpec {
+        id: "app.licenses",
+        label: "Third-party Licences",
+        menu: &["Help", "Third-party Licences"],
+        shortcut: None,
+        params: "none",
+        enabled: |_session| true,
+        run: |session, _params: &Params| {
+            session.licenses_open = true;
+            Ok(())
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

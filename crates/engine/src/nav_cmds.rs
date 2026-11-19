@@ -115,53 +115,64 @@ pub fn up() -> CommandSpec {
     }
 }
 
-/// `nav.back` — step back in the focused pane's history.
+/// The pane `nav.back`/`nav.forward` act on: `{pane}` (a header button or the mouse's
+/// back/forward button over it) or the focused pane.
+fn history_pane(s: &Session, params: &Params) -> Result<fm_layout::PaneId, FmError> {
+    let pane = match crate::file_cmds::object(params)?.and_then(|m| m.get("pane")) {
+        None | Some(Params::Null) => return Ok(s.layout.focused()),
+        Some(v) => v
+            .as_u64()
+            .ok_or_else(|| FmError::InvalidParams("pane must be a number".to_string()))?,
+    };
+    if s.layout.state(pane).is_none() {
+        return Err(FmError::NotFound(format!("pane {pane}")));
+    }
+    Ok(pane)
+}
+
+/// One step through `pane`'s history; nothing happens at either end or on a pane that is
+/// not a Files pane.
+fn step(s: &mut Session, params: &Params, back: bool) -> Result<(), FmError> {
+    let pane = history_pane(s, params)?;
+    let moved = s
+        .layout
+        .state_mut(pane)
+        .filter(|p| p.kind.is_files())
+        .is_some_and(|p| {
+            let moved = if back { p.go_back() } else { p.go_forward() };
+            expand_unless_tree_driven(p);
+            moved
+        });
+    if moved && let Some(loc) = s.layout.state(pane).map(|p| p.location.clone()) {
+        s.note_visit(&loc);
+        s.ensure_read(loc)?;
+    }
+    Ok(())
+}
+
+/// `nav.back` — step back in a pane's history (this session only; not saved).
 pub fn back() -> CommandSpec {
     CommandSpec {
         id: "nav.back",
         label: "Back",
         menu: &["Go", "Back"],
         shortcut: Some("Alt+Left"),
-        params: "none",
+        params: "{pane?: number} — default the focused pane",
         enabled: |s| focused_pane(s).is_some_and(|p| p.can_go_back()),
-        run: |s, _p: &Params| {
-            let focused = s.layout.focused();
-            let moved = s.layout.state_mut(focused).is_some_and(|p| {
-                let moved = p.go_back();
-                expand_unless_tree_driven(p);
-                moved
-            });
-            if moved && let Some(loc) = s.layout.state(focused).map(|p| p.location.clone()) {
-                s.note_visit(&loc);
-                s.ensure_read(loc)?;
-            }
-            Ok(())
-        },
+        run: |s, p: &Params| step(s, p, true),
     }
 }
 
-/// `nav.forward` — step forward in the focused pane's history.
+/// `nav.forward` — step forward in a pane's history.
 pub fn forward() -> CommandSpec {
     CommandSpec {
         id: "nav.forward",
         label: "Forward",
         menu: &["Go", "Forward"],
         shortcut: Some("Alt+Right"),
-        params: "none",
+        params: "{pane?: number} — default the focused pane",
         enabled: |s| focused_pane(s).is_some_and(|p| p.can_go_forward()),
-        run: |s, _p: &Params| {
-            let focused = s.layout.focused();
-            let moved = s.layout.state_mut(focused).is_some_and(|p| {
-                let moved = p.go_forward();
-                expand_unless_tree_driven(p);
-                moved
-            });
-            if moved && let Some(loc) = s.layout.state(focused).map(|p| p.location.clone()) {
-                s.note_visit(&loc);
-                s.ensure_read(loc)?;
-            }
-            Ok(())
-        },
+        run: |s, p: &Params| step(s, p, false),
     }
 }
 
@@ -247,6 +258,39 @@ mod tests {
         // The pane stays where it was until the connection lands.
         assert_eq!(s.layout.state(1).expect("pane").location, home);
         assert!(s.notice.is_none());
+    }
+
+    #[test]
+    fn back_and_forward_act_on_the_given_pane_and_reject_bad_ones() {
+        let (mut s, _mem, home) = mem_session();
+        let (docs, pics) = (
+            home.join("docs").expect("uri"),
+            home.join("pics").expect("uri"),
+        );
+        (open().run)(&mut s, &Params::String(docs.to_string())).expect("docs");
+        (open().run)(&mut s, &Params::String(pics.to_string())).expect("pics");
+        let a = s.layout.focused();
+        let b = s
+            .layout
+            .split(a, fm_layout::Axis::Horizontal, 0.5)
+            .expect("split");
+        assert_eq!(s.layout.focused(), b);
+        (back().run)(&mut s, &serde_json::json!({ "pane": a })).expect("back");
+        assert_eq!(s.layout.state(a).expect("a").location, docs);
+        assert_eq!(s.layout.state(b).expect("b").location, pics, "b stays");
+        assert_eq!(s.layout.focused(), b, "focus stays");
+        (forward().run)(&mut s, &serde_json::json!({ "pane": a })).expect("fwd");
+        assert_eq!(s.layout.state(a).expect("a").location, pics);
+
+        for bad in [
+            serde_json::json!({ "pane": 999_999 }),
+            serde_json::json!({ "pane": "one" }),
+            serde_json::json!({ "pane": -1 }),
+            serde_json::json!("junk"),
+        ] {
+            assert!((back().run)(&mut s, &bad).is_err(), "{bad}");
+            assert!((forward().run)(&mut s, &bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

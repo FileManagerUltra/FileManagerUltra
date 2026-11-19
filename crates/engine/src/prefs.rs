@@ -152,6 +152,19 @@ pub enum WorkspaceTabOrder {
     Cycle,
 }
 
+/// What quitting or closing a tab does with workspaces that have unsaved changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UnsavedWorkspaces {
+    /// Ask with Save / Don't save / Cancel.
+    #[default]
+    Ask,
+    /// Save them without asking ("Don't ask again" with Save).
+    Save,
+    /// Leave them unsaved without asking ("Don't ask again" with Don't save).
+    Discard,
+}
+
 /// How file sizes are written.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -259,6 +272,8 @@ pub struct Prefs {
     /// The order Ctrl+Tab / Ctrl+Shift+Tab switch workspace tabs in.
     #[serde(default)]
     pub workspace_tab_order: WorkspaceTabOrder,
+    #[serde(default)]
+    pub unsaved_workspaces: UnsavedWorkspaces,
     /// Seconds the audiobook skip-back and skip-forward buttons jump.
     #[serde(default = "default_skip_back")]
     pub media_skip_back_secs: u64,
@@ -362,6 +377,12 @@ pub struct Prefs {
     /// Behind SVG pictures in Preview.
     #[serde(default)]
     pub svg_background: SvgBackground,
+    /// How PDF pages are sized in Preview.
+    #[serde(default)]
+    pub pdf_fit: crate::pdf_view::PdfFit,
+    /// PDF page colours (original, dark, high contrast).
+    #[serde(default)]
+    pub pdf_colors: crate::pdf_view::PdfColors,
 }
 
 pub const FONT_SIZE_RANGE: std::ops::RangeInclusive<f32> = 9.0..=24.0;
@@ -628,6 +649,7 @@ impl Default for Prefs {
             windows_renderer: WindowsRenderer::default(),
             windows_renderer_fallback: None,
             workspace_tab_order: WorkspaceTabOrder::default(),
+            unsaved_workspaces: UnsavedWorkspaces::default(),
             media_skip_back_secs: default_skip_back(),
             media_skip_forward_secs: default_skip_forward(),
             media_open_audio: MediaOpenTarget::default(),
@@ -665,6 +687,8 @@ impl Default for Prefs {
             thumb_cache_dir: None,
             preview_time_secs: default_preview_secs(),
             svg_background: SvgBackground::default(),
+            pdf_fit: Default::default(),
+            pdf_colors: Default::default(),
         }
     }
 }
@@ -1137,6 +1161,8 @@ mod tests {
                 "media_open_video",
                 "media_skip_back_secs",
                 "media_skip_forward_secs",
+                "pdf_colors",
+                "pdf_fit",
                 "preview_audio_autoplay",
                 "preview_filters",
                 "preview_mermaid",
@@ -1161,6 +1187,7 @@ mod tests {
                 "theme",
                 "thumb_disk_mib",
                 "thumb_memory_mib",
+                "unsaved_workspaces",
                 "window_geometry",
                 "window_maximized",
                 "windows_renderer",

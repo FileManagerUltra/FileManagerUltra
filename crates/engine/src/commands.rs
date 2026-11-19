@@ -28,6 +28,7 @@ pub fn specs() -> Vec<CommandSpec> {
         app_cmds::quit(),
         app_cmds::quit_busy(),
         app_cmds::about(),
+        app_cmds::licenses(),
         prefs_cmds::preferences(),
         prefs_cmds::retarget_links(),
         prefs_cmds::recursive_preview(),
@@ -57,6 +58,9 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(crate::md_diagrams::specs());
     specs.extend(crate::preview_text_cmds::specs());
     specs.extend(crate::preview_find_cmds::specs());
+    specs.extend(crate::pdf_view_cmds::specs());
+    specs.extend(crate::pdf_form_cmds::specs());
+    specs.extend(crate::pdf_sign_cmds::specs());
     specs.extend(crate::preview_code_cmds::specs());
     specs.extend(crate::preview_open_cmds::specs());
     specs.extend(crate::preview_scale_cmds::specs());

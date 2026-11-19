@@ -547,6 +547,96 @@ fn quitting_with_background_work_asks_first() {
 }
 
 #[test]
+fn pane_back_forward_arrows_and_mouse_thumb_buttons_walk_the_history() {
+    use egui_kittest::kittest::Queryable;
+    let fs = fm_testkit::MemFs::new();
+    fs.mkdirs_str("/h/a").expect("mkdirs");
+    fs.mkdirs_str("/h/b").expect("mkdirs");
+    let mut s = Session::new().expect("session");
+    s.backends.register(std::sync::Arc::new(fs));
+    s.dispatch("nav.open", &json!("/h/a")).expect("a");
+    s.dispatch("nav.open", &json!("/h/b")).expect("b");
+    let pane = s.layout.focused();
+    let tokens = Tokens::dark();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(800.0, 400.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                s.poll();
+                fm_ui::pane::show(ui, s, pane, &tokens);
+            },
+            s,
+        );
+    h.run();
+    let at =
+        |h: &Harness<'_, Session>| h.state().layout.state(pane).expect("pane").location.clone();
+    let uri = |p: &str| VfsUri::parse(p).expect("uri");
+    assert!(
+        h.get_by_label("Forward").accesskit_node().is_disabled(),
+        "nothing to go forward to yet"
+    );
+    h.get_by_label("Back").click();
+    h.run();
+    assert_eq!(at(&h), uri("/h/a"));
+
+    // The mouse's forward button over the pane, then its back button.
+    let over = egui::pos2(400.0, 250.0);
+    for (button, expect) in [
+        (egui::PointerButton::Extra2, "/h/b"),
+        (egui::PointerButton::Extra1, "/h/a"),
+    ] {
+        h.event(egui::Event::PointerMoved(over));
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: over,
+                button,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.run();
+        }
+        assert_eq!(at(&h), uri(expect), "{button:?}");
+    }
+}
+
+#[test]
+fn unsaved_workspaces_dont_ask_again_remembers_the_answer() {
+    use fm_engine::prefs::UnsavedWorkspaces;
+    let tokens = Tokens::dark();
+    let mut s = Session::new().expect("session");
+    s.dispatch("workspace.new", &json!({})).expect("new");
+    s.dispatch("workspace.save", &json!({"name": "Work"}))
+        .expect("save");
+    s.dispatch("pane.split.horizontal", &json!({}))
+        .expect("edit");
+    s.dispatch("app.quit", &json!({})).expect("quit");
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 800.0))
+        .build_ui_state(
+            move |ui, (dialogs, s): &mut (Dialogs, Session)| {
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                dialogs.show(ui.ctx(), s, &tokens);
+            },
+            (Dialogs::default(), s),
+        );
+    h.run();
+    assert!(h.query_by_label("Unsaved workspace changes").is_some());
+    h.get_by_label("Don't ask again").click();
+    h.run();
+    assert!(
+        h.query_by_label_contains("Preferences › Workspaces")
+            .is_some()
+    );
+    h.get_by_label("Quit without saving").click();
+    h.run();
+    let s = &h.state().1;
+    assert!(!s.running, "quits");
+    assert_eq!(s.prefs.unsaved_workspaces, UnsavedWorkspaces::Discard);
+    assert!(s.unsaved_prompt.is_none());
+}
+
+#[test]
 fn closing_jobs_hides_without_dismissing_update_and_indicator_reopens() {
     for tokens in [Tokens::dark(), Tokens::light()] {
         let mut s = Session::new().expect("session");
@@ -1224,6 +1314,82 @@ fn sync_grid_headers_sort_and_the_window_minimizes_to_the_status_bar() {
     assert!(h.state().sync.minimized);
     assert!(h.query_by_label("Synchronize Folders").is_none());
     assert!(fm_ui::jobs::indicator_text(h.state()).contains("New sync"));
+}
+
+#[test]
+fn the_wizard_keeps_its_start_button_after_switching_views_and_stopping() {
+    let mut s = sync_session(&[("a", "x.txt", 10)], "Update");
+    s.dispatch(
+        "sync.profile.set",
+        &json!({"patch": {"watch": {"enabled": true, "poll_secs": 30}}}),
+    )
+    .expect("keep on");
+    s.dispatch("sync.wizard.go", &json!({"step": 6}))
+        .expect("review");
+    let wait = |s: &mut Session, done: &dyn Fn(&fm_engine::sync_hub::SyncState) -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while !s.sync.current_state().is_some_and(done) {
+            s.poll();
+            assert!(std::time::Instant::now() < deadline, "timed out");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    wait(&mut s, &|st| {
+        st.arming == fm_engine::sync_hub::Arming::Confirm
+    });
+    let mut h = harness(Tokens::dark(), s, fm_ui::sync::show);
+    h.run();
+    h.get_by_label("Start and keep in sync");
+
+    h.get_by_label("Advanced").click();
+    h.run();
+    h.get_by_label("Start syncing");
+    h.get_by_label("Guided setup").click();
+    h.run();
+    h.get_by_label("Start and keep in sync");
+
+    // Started, then stopped (as from the Activity card): Start comes back, not "already match".
+    h.get_by_label("Start and keep in sync").click();
+    h.run();
+    wait(h.state_mut(), &|st| st.watching() && !st.busy());
+    h.state_mut()
+        .dispatch("sync.watch.stop", &json!({}))
+        .expect("stop");
+    h.run();
+    h.get_by_label("Start and keep in sync");
+    assert!(h.query_by_label("The folders already match.").is_none());
+}
+
+#[test]
+fn waiting_for_start_syncing_is_not_an_activity_card_while_the_window_asks() {
+    let mut s = sync_session(&[("a", "x.txt", 10)], "Update");
+    s.dispatch("sync.watch.start", &json!({})).expect("watch");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while s
+        .sync
+        .current_state()
+        .is_some_and(|st| st.arming != fm_engine::sync_hub::Arming::Confirm)
+    {
+        s.poll();
+        assert!(std::time::Instant::now() < deadline, "compare timed out");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // The window shows Start syncing: no card, no status-bar text.
+    assert!(fm_ui::sync::activity(&s).is_empty());
+    assert!(!fm_ui::jobs::indicator_text(&s).contains("New sync"));
+
+    // Minimised, the card stands in for the window: neutral, and says what it waits for.
+    s.dispatch("sync.minimize", &json!({})).expect("minimize");
+    let lines = fm_ui::sync::activity(&s);
+    let [line] = lines.as_slice() else {
+        panic!("one card, got {}", lines.len());
+    };
+    assert!(line.confirming && !line.attention);
+    assert_eq!(line.text, "Waiting for Start syncing · 1 change");
+    assert_eq!(
+        fm_ui::jobs::indicator_text(&s),
+        "Sync New sync: waiting for Start syncing"
+    );
 }
 
 #[test]

@@ -617,11 +617,20 @@ impl eframe::App for App {
         fm_ui::picker::show(&ctx, &mut self.session, &tokens);
         fm_ui::remote::host_key_alert(&ctx, &mut self.session, &tokens);
 
-        fm_ui::about::dialog(&ctx, &tokens, &mut self.session.about_open);
+        fm_ui::about::dialog(
+            &ctx,
+            &tokens,
+            &mut self.session.about_open,
+            &mut self.session.licenses_open,
+        );
+        fm_ui::about::licenses_dialog(&ctx, &tokens, &mut self.session.licenses_open);
 
         if !self.session.running {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        } else if self.session.unsaved_prompt.is_some() || self.session.busy_quit.is_some() {
+        } else if self.session.unsaved_prompt.is_some()
+            || self.session.pdf_unsaved.is_some()
+            || self.session.busy_quit.is_some()
+        {
             ctx.request_repaint();
         }
         // Textures and pictures of panes that were not drawn this frame (closed workspaces
@@ -907,6 +916,9 @@ impl App {
         session
             .md_diagrams
             .set_waker(move || diagram_ctx.request_repaint());
+        // Rendered PDF pages, extracted text and signature checks show on the next frame.
+        let pdf_ctx = cc.egui_ctx.clone();
+        session.pdf.set_waker(move || pdf_ctx.request_repaint());
         // Video is drawn when a frame is ready, not on a 16 ms timer, and only while a
         // player is on screen.
         let frame_ctx = cc.egui_ctx.clone();

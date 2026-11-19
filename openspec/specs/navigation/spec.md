@@ -23,7 +23,19 @@ Opening a directory, going to the parent, back, forward and refreshing SHALL eac
 - **THEN** the location and history are unchanged and only the cached entries are re-read
 
 ### Requirement: Each pane keeps back/forward history
-History SHALL be per pane: forward commits push onto the back stack and clear the forward stack; `nav.back`/`nav.forward` move through it without re-reading when the target is already cached.
+History SHALL be per pane: forward commits push onto the back stack and clear the forward stack; `nav.back`/`nav.forward` move through it without re-reading when the target is already cached. They act on the focused pane, or on `{pane}` when given (an unknown pane or a non-numeric `pane` is an `Err`). History lasts for the session only: it is never saved with a workspace, so every start and restored workspace begins without history (a split copies the history of the pane it splits, closing a pane drops its history), and each direction keeps at most 100 folders (the oldest are dropped).
+
+#### Scenario: Arrows in the header
+- **WHEN** a Files pane is shown
+- **THEN** its header has Back and Forward arrows before the path, greyed out and inert when there is nowhere to go, at least 24×24 px, with the shortcuts in their tooltips; clicking one focuses that pane and steps its history
+
+#### Scenario: Mouse back and forward buttons
+- **WHEN** the mouse's back (or forward) thumb button is pressed over a Files pane, focused or not, and no window or popup lies over it
+- **THEN** that pane steps back (or forward) and keyboard focus stays where it was
+
+#### Scenario: Not saved
+- **WHEN** a workspace with a pane that has history is saved and reopened
+- **THEN** the pane is at its saved folder with no back or forward history
 
 #### Scenario: Back returns to the previous directory
 - **WHEN** the user navigates A → B and triggers `nav.back`

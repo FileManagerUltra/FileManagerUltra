@@ -679,25 +679,25 @@ fn watch_start() -> CommandSpec {
     }
 }
 
+/// Start keeping in sync from the listed comparison: waiting after "Keep in sync", or a
+/// compared sync that was stopped (Stop syncing keeps the list, like Synchronize now).
+fn can_confirm(st: &crate::sync_hub::SyncState) -> bool {
+    !st.busy()
+        && !st.watching()
+        && (st.arming == Arming::Confirm || (st.arming == Arming::Off && st.plan.is_some()))
+}
+
 fn watch_confirm() -> CommandSpec {
     CommandSpec {
         id: "sync.watch.confirm",
         label: "Start Syncing",
         menu: &["File", "Synchronize Folders", "Start Syncing"],
         shortcut: None,
-        params: r#"{ id?: string } — after the first compare: apply it and keep the folders in sync"#,
-        enabled: |s| {
-            s.sync
-                .current_state()
-                .is_some_and(|st| st.arming == Arming::Confirm && !st.busy())
-        },
+        params: r#"{ id?: string } — after a compare: apply the listed changes and keep the folders in sync"#,
+        enabled: |s| s.sync.current_state().is_some_and(can_confirm),
         run: |s, params| {
             let id = target(s, params)?;
-            let waiting = s
-                .sync
-                .states
-                .get(&id)
-                .is_some_and(|st| st.arming == Arming::Confirm && !st.busy());
+            let waiting = s.sync.states.get(&id).is_some_and(can_confirm);
             if !waiting {
                 return Err(bad("compare first, then confirm"));
             }
@@ -1110,6 +1110,12 @@ mod tests {
         );
         s.dispatch("sync.watch.stop", &json!({})).expect("stop");
         assert!(s.sync.current_state().is_some_and(|st| !st.watching()));
+        // Stopped, the listed comparison can start keeping in sync again.
+        pump_until_idle(&mut s);
+        s.dispatch("sync.watch.confirm", &json!({}))
+            .expect("start again");
+        assert!(s.sync.current_state().is_some_and(|st| st.watching()));
+        s.dispatch("sync.watch.stop", &json!({})).expect("stop");
     }
 
     #[test]

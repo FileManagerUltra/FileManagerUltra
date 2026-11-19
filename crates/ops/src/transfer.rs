@@ -521,14 +521,14 @@ impl<'a, 'b> Runner<'a, 'b> {
     }
 }
 
-fn temp_name(prefix: &str) -> String {
+pub(crate) fn temp_name(prefix: &str) -> String {
     let n = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
     format!("{prefix}-{}-{n}", std::process::id())
 }
 
 /// Move the finished temp into place. Overwrites keep the old file as a backup until the
 /// new one is in position, so a failed commit never loses the destination.
-fn commit(
+pub(crate) fn commit(
     vfs: &dyn Vfs,
     tmp: &VfsUri,
     dst: &VfsUri,

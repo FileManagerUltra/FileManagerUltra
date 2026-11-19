@@ -24,6 +24,8 @@ pub enum ThumbKind {
     Video,
     /// SVG or SVGZ, drawn by the safe SVG renderer.
     Svg,
+    /// The first page of a PDF.
+    Pdf,
     Other,
 }
 
@@ -37,6 +39,7 @@ pub fn classify(name: &str) -> ThumbKind {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" => ThumbKind::Image,
         raw if crate::raw_prev::RAW_EXTENSIONS.contains(&raw) => ThumbKind::Image,
         "svg" | "svgz" => ThumbKind::Svg,
+        "pdf" => ThumbKind::Pdf,
         "mp4" | "m4v" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "flv" | "mpg" | "mpeg" | "3gp"
         | "ogv" | "vob" | "m2ts" | "mts" => ThumbKind::Video,
         _ => ThumbKind::Other,
@@ -104,6 +107,7 @@ pub fn make_as(vfs: &dyn Vfs, entry: &Entry, edge: u32, kind: ThumbKind) -> Opti
         }
         ThumbKind::Video => video::thumbnail(entry, edge)?,
         ThumbKind::Svg => return crate::svg::thumbnail(vfs, entry, edge),
+        ThumbKind::Pdf => return crate::pdf_prev::thumbnail(vfs, entry, edge),
         ThumbKind::Other => return None,
     };
     let (rgba, _) = doc.frames.into_iter().next()?;

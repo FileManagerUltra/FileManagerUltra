@@ -62,6 +62,33 @@ pub struct Tokens {
     /// The two squares behind transparent pictures (SVG drawings). Light in both themes so
     /// dark artwork stays visible, as in image editors.
     pub checker: [Color32; 2],
+    /// PDF preview: the backdrop between pages and the hairline around each page.
+    pub pdf_gap: Color32,
+    pub pdf_page_border: Color32,
+    /// PDF form fields while filling: translucent fill over the page, and the focus ring.
+    pub field_fill: Color32,
+    pub field_focus: Color32,
+    /// PDF signature states: valid, changed after signing, broken or unverifiable.
+    pub sig_valid: Color32,
+    pub sig_changed: Color32,
+    pub sig_broken: Color32,
+    /// Ink on the signature pad and signature previews (drawn on a light pad in both themes).
+    pub sig_ink: Color32,
+    /// PDF Fill & Sign action tiles: their text and icon colour, and one fill per action
+    /// (sign, place, remember, neutral, save, save as, replace, discard). Every fill keeps
+    /// at least 4.5:1 contrast with `action_text` (tested).
+    pub action_text: Color32,
+    pub action_sign: Color32,
+    pub action_place: Color32,
+    pub action_remember: Color32,
+    pub action_neutral: Color32,
+    pub action_save: Color32,
+    pub action_save_as: Color32,
+    pub action_replace: Color32,
+    pub action_discard: Color32,
+    /// "High contrast" PDF pages: text colour and page colour.
+    pub pdf_contrast_fg: Color32,
+    pub pdf_contrast_bg: Color32,
     /// Virtualized listing row height (px).
     pub row_height: f32,
     /// Generic inner padding (px).
@@ -127,6 +154,25 @@ impl Tokens {
                 Color32::from_rgb(0xd4, 0xd6, 0xda),
                 Color32::from_rgb(0xb4, 0xb8, 0xbe),
             ],
+            pdf_gap: Color32::from_rgb(0x0e, 0x10, 0x13),
+            pdf_page_border: Color32::from_rgb(0x44, 0x4a, 0x55),
+            field_fill: Color32::from_rgba_unmultiplied(0x5c, 0xb2, 0xff, 0x38),
+            field_focus: Color32::from_rgb(0x5c, 0xb2, 0xff),
+            sig_valid: Color32::from_rgb(0x63, 0xc1, 0x74),
+            sig_changed: Color32::from_rgb(0xff, 0xc8, 0x57),
+            sig_broken: Color32::from_rgb(0xff, 0x6b, 0x6b),
+            sig_ink: Color32::from_rgb(0x10, 0x1a, 0x3a),
+            action_text: Color32::from_rgb(0x10, 0x12, 0x16),
+            action_sign: Color32::from_rgb(0xb3, 0x9d, 0xff),
+            action_place: Color32::from_rgb(0x6f, 0xe3, 0xd0),
+            action_remember: Color32::from_rgb(0xff, 0x9b, 0xd2),
+            action_neutral: Color32::from_rgb(0xb8, 0xbe, 0xc6),
+            action_save: Color32::from_rgb(0x63, 0xc1, 0x74),
+            action_save_as: Color32::from_rgb(0xa5, 0xd8, 0x8a),
+            action_replace: Color32::from_rgb(0xff, 0xc8, 0x57),
+            action_discard: Color32::from_rgb(0xff, 0x8a, 0x8a),
+            pdf_contrast_fg: Color32::from_rgb(0xff, 0xff, 0x00),
+            pdf_contrast_bg: Color32::from_rgb(0x00, 0x00, 0x00),
             row_height: 24.0,
             padding: 6.0,
             corner_radius: 6.0,
@@ -196,6 +242,25 @@ impl Tokens {
                 Color32::from_rgb(0xff, 0xff, 0xff),
                 Color32::from_rgb(0xe2, 0xe4, 0xe8),
             ],
+            pdf_gap: Color32::from_rgb(0xdc, 0xdf, 0xe4),
+            pdf_page_border: Color32::from_rgb(0xb4, 0xb9, 0xc1),
+            field_fill: Color32::from_rgba_unmultiplied(0x0b, 0x62, 0xd6, 0x26),
+            field_focus: Color32::from_rgb(0x0b, 0x62, 0xd6),
+            sig_valid: Color32::from_rgb(0x1f, 0x7a, 0x33),
+            sig_changed: Color32::from_rgb(0x9a, 0x67, 0x00),
+            sig_broken: Color32::from_rgb(0xc2, 0x2b, 0x2b),
+            sig_ink: Color32::from_rgb(0x10, 0x1a, 0x3a),
+            action_text: Color32::from_rgb(0xff, 0xff, 0xff),
+            action_sign: Color32::from_rgb(0x5b, 0x3c, 0xc4),
+            action_place: Color32::from_rgb(0x0a, 0x6e, 0x6e),
+            action_remember: Color32::from_rgb(0xa8, 0x24, 0x6e),
+            action_neutral: Color32::from_rgb(0x55, 0x5d, 0x69),
+            action_save: Color32::from_rgb(0x1f, 0x7a, 0x33),
+            action_save_as: Color32::from_rgb(0x2c, 0x5e, 0x3c),
+            action_replace: Color32::from_rgb(0x8f, 0x55, 0x00),
+            action_discard: Color32::from_rgb(0xc2, 0x2b, 0x2b),
+            pdf_contrast_fg: Color32::from_rgb(0x00, 0x00, 0x00),
+            pdf_contrast_bg: Color32::from_rgb(0xff, 0xff, 0xff),
             row_height: 24.0,
             padding: 6.0,
             corner_radius: 6.0,
@@ -817,6 +882,25 @@ mod tests {
                 subtitle_text,
                 subtitle_outline,
                 checker,
+                pdf_gap,
+                pdf_page_border,
+                field_fill,
+                field_focus,
+                sig_valid,
+                sig_changed,
+                sig_broken,
+                sig_ink,
+                action_text,
+                action_sign,
+                action_place,
+                action_remember,
+                action_neutral,
+                action_save,
+                action_save_as,
+                action_replace,
+                action_discard,
+                pdf_contrast_fg,
+                pdf_contrast_bg,
                 row_height,
                 padding,
                 corner_radius,
@@ -863,6 +947,25 @@ mod tests {
                 ("subtitle_outline", subtitle_outline),
                 ("checker light", checker[0]),
                 ("checker dark", checker[1]),
+                ("pdf_gap", pdf_gap),
+                ("pdf_page_border", pdf_page_border),
+                ("field_fill", field_fill),
+                ("field_focus", field_focus),
+                ("sig_valid", sig_valid),
+                ("sig_changed", sig_changed),
+                ("sig_broken", sig_broken),
+                ("sig_ink", sig_ink),
+                ("action_text", action_text),
+                ("action_sign", action_sign),
+                ("action_place", action_place),
+                ("action_remember", action_remember),
+                ("action_neutral", action_neutral),
+                ("action_save", action_save),
+                ("action_save_as", action_save_as),
+                ("action_replace", action_replace),
+                ("action_discard", action_discard),
+                ("pdf_contrast_fg", pdf_contrast_fg),
+                ("pdf_contrast_bg", pdf_contrast_bg),
             ] {
                 assert_ne!(color.a(), 0, "{name} must be opaque");
             }
@@ -876,6 +979,30 @@ mod tests {
         }
         check(Tokens::dark());
         check(Tokens::light());
+    }
+
+    #[test]
+    fn fill_and_sign_tiles_are_readable() {
+        for t in [Tokens::dark(), Tokens::light()] {
+            for (name, fill) in [
+                ("action_sign", t.action_sign),
+                ("action_place", t.action_place),
+                ("action_remember", t.action_remember),
+                ("action_neutral", t.action_neutral),
+                ("action_save", t.action_save),
+                ("action_save_as", t.action_save_as),
+                ("action_replace", t.action_replace),
+                ("action_discard", t.action_discard),
+                ("accent", t.accent),
+            ] {
+                let ratio = contrast(t.action_text, fill);
+                assert!(
+                    ratio >= 4.5,
+                    "{name} ({}): {ratio:.2}:1",
+                    if t.dark { "dark" } else { "light" }
+                );
+            }
+        }
     }
 
     #[test]

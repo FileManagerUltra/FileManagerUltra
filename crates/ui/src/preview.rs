@@ -22,6 +22,8 @@ mod find;
 mod markdown;
 #[path = "preview_mermaid.rs"]
 pub mod mermaid_ui;
+mod pdf;
+mod pdf_sign;
 #[path = "preview_time.rs"]
 mod time;
 
@@ -182,6 +184,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let mut open: Option<fm_vfs::VfsUri> = None;
     let mut published: Option<fm_engine::file_cmds::GridSelection> = None;
     toolbar(ui, s, pane, tokens, &mut actions);
+    pdf_sign::dialog(ui.ctx(), s, pane, tokens, &mut actions);
     find::bar(ui, s, pane, tokens, &mut actions);
     find::begin(ui, s, pane);
     ui.separator();
@@ -245,6 +248,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     }
                     ui.ctx()
                         .request_repaint_after(std::time::Duration::from_millis(100));
+                }
+                Body::Static(p) if matches!(&**p, Preview::Pdf(_)) => {
+                    pdf::body(ui, s, pane, tokens, &mut actions);
                 }
                 Body::Static(p) if matches!(&**p, Preview::Dir(_)) => {
                     if let Preview::Dir(d) = &**p {
@@ -454,7 +460,7 @@ fn centered(ui: &mut Ui, tokens: &Tokens, msg: &str) {
     ui.centered_and_justified(|ui| ui.label(tokens.muted(msg)));
 }
 
-fn paged_scroll(
+pub(super) fn paged_scroll(
     ui: &mut Ui,
     area: ScrollArea,
     salt: impl std::hash::Hash + std::fmt::Debug,
@@ -521,7 +527,7 @@ fn paged_scroll(
     }
 }
 
-fn remember_scroll<R>(ui: &Ui, output: &egui::scroll_area::ScrollAreaOutput<R>) {
+pub(super) fn remember_scroll<R>(ui: &Ui, output: &egui::scroll_area::ScrollAreaOutput<R>) {
     let bottom = (output.content_size.y - output.inner_rect.height()).max(0.0);
     ui.data_mut(|d| d.insert_temp(output.id.with("pv-bottom"), bottom));
 }
@@ -546,7 +552,7 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
                 .add_enabled(can_find, egui::Button::new("Find"))
                 .on_hover_text("Find in loaded text (Ctrl+F)")
                 .on_disabled_hover_text(
-                    "Find is available for text, structured and Markdown previews.",
+                    "Find is available for text, structured, Markdown and PDF previews.",
                 )
                 .clicked()
             {
@@ -609,6 +615,7 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
                         svg_background_picker(ui, pane, s.prefs.svg_background, actions);
                     }
                 }
+                Preview::Pdf(_) => pdf::toolbar_options(ui, s, pane, tokens, actions),
                 Preview::Dir(_) => thumb_toolbar(
                     ui,
                     pane,
@@ -1046,6 +1053,7 @@ fn static_body(
         Preview::Svg(d) => svg(ui, pane, tokens, p, d, zoom, wrap),
         Preview::Hex(h) => hex(ui, tokens, h),
         Preview::Dir(d) => scrolled(ui, pane, "dir", |ui| dir_card(ui, tokens, d)),
+        Preview::Pdf(d) => scrolled(ui, pane, "pdf", |ui| card_rows(ui, tokens, "pdf", &d.rows)),
         Preview::Meta(m) => scrolled(ui, pane, "meta", |ui| {
             meta_card(ui, tokens, m);
             if let Some(poster) = &m.poster {

@@ -162,6 +162,8 @@ pub struct PreviewSlot {
     /// Playback of a video shown by this pane.
     pub video: Option<crate::video_cmds::VideoState>,
     pub audio: Option<crate::preview_audio_cmds::AudioState>,
+    /// View state of a shown PDF (pages, fit, colours, Fill & Sign).
+    pub pdf: Option<crate::pdf_view::PdfView>,
     /// The Files pane being previewed (for the header).
     pub target: Option<PaneId>,
     /// Something changed inside the previewed folder; re-render it in place.
@@ -203,6 +205,7 @@ impl PreviewSlot {
             thumb_window: None,
             video: None,
             audio: None,
+            pdf: None,
             target: None,
             stale: false,
             updates_available: false,
@@ -246,6 +249,16 @@ impl PreviewSlot {
             Body::Log(l) => Some(l),
             _ => None,
         }
+    }
+
+    /// Show a file the app just wrote (a saved PDF) in place of the cursor's file; the
+    /// render key stays the cursor's, so the next cursor move replaces it as usual.
+    pub(crate) fn show_saved(&mut self, entry: Entry, body: Body) {
+        self.pending = None;
+        self.token = 0;
+        self.subjects = vec![entry.clone()];
+        self.subject = Some(entry);
+        self.body = body;
     }
 
     fn busy(&self) -> bool {
@@ -443,6 +456,15 @@ impl Session {
         let Some(slot) = self.previews.slots.get_mut(&pane) else {
             return false;
         };
+        if slot
+            .pdf
+            .as_ref()
+            .is_some_and(crate::pdf_view::PdfView::holds)
+        {
+            // Unsaved PDF changes keep the pane on its document (design D12).
+            slot.pending = None;
+            return false;
+        }
         match desired.as_slice() {
             [] => {
                 if slot.key.is_some() || slot.pending.is_some() {

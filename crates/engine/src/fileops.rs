@@ -81,12 +81,47 @@ pub enum OpRequest {
         sources: Vec<VfsUri>,
         mode: u32,
     },
+    /// Write a buffer the app produced (a filled or signed PDF) through a temp file.
+    WriteBytes {
+        dest: VfsUri,
+        bytes: SharedBytes,
+        mode: WriteMode,
+    },
     /// Fetch a remote file to a private temp folder and hand it to the default application.
     OpenRemote {
         uri: VfsUri,
         name: String,
         size: Option<u64>,
     },
+}
+
+/// Bytes shared with a job; compared by identity (they can be large).
+#[derive(Clone)]
+pub struct SharedBytes(pub std::sync::Arc<[u8]>);
+
+impl std::fmt::Debug for SharedBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SharedBytes({} bytes)", self.0.len())
+    }
+}
+
+impl PartialEq for SharedBytes {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for SharedBytes {}
+
+/// How [`OpRequest::WriteBytes`] treats an existing target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteMode {
+    /// Ask through the conflict prompt.
+    Ask,
+    /// Use the first free name (`name 2.pdf`, …).
+    Numbered,
+    /// Replace it, but only if it still holds exactly these bytes.
+    Replace { original: SharedBytes },
 }
 
 fn items(n: usize) -> String {
@@ -112,7 +147,7 @@ impl OpRequest {
             Self::NewFile { .. } => OpKind::NewFile,
             Self::Rename { .. } => OpKind::Rename,
             Self::Undo(_) | Self::Chmod { .. } => return None,
-            Self::OpenRemote { .. } => return None,
+            Self::OpenRemote { .. } | Self::WriteBytes { .. } => return None,
         })
     }
 
@@ -134,6 +169,7 @@ impl OpRequest {
                 format!("Set permissions {mode:o} on {}", items(sources.len()))
             }
             Self::OpenRemote { name, .. } => format!("Open {name}"),
+            Self::WriteBytes { dest, .. } => format!("Save {}", leaf(dest)),
         }
     }
 
@@ -149,6 +185,7 @@ impl OpRequest {
             Self::Rename { uri, .. } => Some(uri.clone()),
             Self::Undo(record) => undo_uris(record).into_iter().next(),
             Self::OpenRemote { uri, .. } => Some(uri.clone()),
+            Self::WriteBytes { dest, .. } => Some(dest.clone()),
         }
     }
 
@@ -168,6 +205,7 @@ impl OpRequest {
             Self::Rename { uri, .. } => vec![uri.clone()],
             Self::Undo(record) => undo_uris(record),
             Self::OpenRemote { uri, .. } => vec![uri.clone()],
+            Self::WriteBytes { dest, .. } => vec![dest.clone()],
         }
     }
 
@@ -195,6 +233,7 @@ impl OpRequest {
             Self::Mkdir { parent, .. } | Self::NewFile { parent, .. } => add(Some(parent.clone())),
             Self::Rename { uri, .. } => add(uri.parent()),
             Self::OpenRemote { .. } => {}
+            Self::WriteBytes { dest, .. } => add(dest.parent()),
             Self::Undo(record) => undo_uris(record).iter().for_each(|u| add(u.parent())),
         }
         dirs
@@ -506,6 +545,24 @@ fn run(
         OpRequest::Chmod { sources, mode } => {
             fm_ops::set_permissions(backends, sources, *mode, &octx)
         }
+        OpRequest::WriteBytes { dest, bytes, mode } => {
+            let (target, replace) = match mode {
+                WriteMode::Ask => (dest.clone(), false),
+                WriteMode::Numbered => (fm_ops::free_name(backends, dest)?, false),
+                WriteMode::Replace { original } => {
+                    fm_ops::verify_unchanged(backends, dest, &original.0)?;
+                    (dest.clone(), true)
+                }
+            };
+            let report = fm_ops::write_bytes(backends, &target, &bytes.0, replace, &mut octx);
+            if let Some((_, e)) = report.failed.first() {
+                // A single write: its failure is the job's failure.
+                let message = e.to_string();
+                lock(shared).report = Some(report);
+                return Err(FmError::backend("save", message));
+            }
+            report
+        }
         OpRequest::OpenRemote { .. } => return Ok(()),
     };
     let cancelled = report.cancelled;
@@ -698,6 +755,13 @@ impl Session {
         job.state = state;
         job.conflict = None;
         job.summary = report.as_ref().map(OpSummary::from);
+        let pdf_outcome = (
+            job.state.clone(),
+            report
+                .as_ref()
+                .map(|r| r.created.clone())
+                .unwrap_or_default(),
+        );
         let kind = job.kind;
         let touched = std::mem::take(&mut job.touched);
         // Only a delete that finished whole is known to have removed every source.
@@ -716,6 +780,7 @@ impl Session {
             }
         }
         self.leave_removed_folders(&removed);
+        self.pdf_save_finished(id, &pdf_outcome.0, &pdf_outcome.1);
         self.fileops.trim();
         true
     }

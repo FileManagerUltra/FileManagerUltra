@@ -13,6 +13,7 @@ use fm_ui::dialogs::{Dialogs, dialog_for};
 pub const PREFERENCES: &str = "app.preferences";
 pub const QUIT: &str = "app.quit";
 pub const ABOUT: &str = "app.about";
+pub const LICENSES: &str = "app.licenses";
 pub const CHECK_UPDATES: &str = "app.updates.check";
 pub const DIAGNOSTICS_FOLDER: &str = "app.diagnostics.folder";
 pub const THEME_DARK: &str = "view.theme.dark";
@@ -48,6 +49,17 @@ pub const PREVIEW_FIND: &str = "preview.find.open";
 pub const PREVIEW_SCALE_IN: &str = "preview.scale.in";
 pub const PREVIEW_SCALE_OUT: &str = "preview.scale.out";
 pub const PREVIEW_SCALE_RESET: &str = "preview.scale.reset";
+pub const PDF_FIRST: &str = "preview.pdf.first";
+pub const PDF_PREV: &str = "preview.pdf.prev";
+pub const PDF_NEXT: &str = "preview.pdf.next";
+pub const PDF_LAST: &str = "preview.pdf.last";
+pub const PDF_FIT: &str = "preview.pdf.fit";
+pub const PDF_COLORS: &str = "preview.pdf.colors";
+pub const PDF_OUTLINE: &str = "preview.pdf.outline.toggle";
+pub const PDF_SIGNATURES: &str = "preview.pdf.signatures.toggle";
+pub const PDF_FILL: &str = "pdf.form.edit";
+pub const PDF_SAVE: &str = "pdf.save";
+pub const PDF_DISCARD: &str = "pdf.discard";
 pub const DIFF_NEXT: &str = "preview.diff.next";
 pub const DIFF_PREV: &str = "preview.diff.prev";
 pub const LOG_FOLLOW: &str = "preview.log.follow";
@@ -122,6 +134,7 @@ pub fn all_ids() -> &'static [&'static str] {
     &[
         QUIT,
         ABOUT,
+        LICENSES,
         CHECK_UPDATES,
         DIAGNOSTICS_FOLDER,
         PREFERENCES,
@@ -159,6 +172,17 @@ pub fn all_ids() -> &'static [&'static str] {
         PREVIEW_SCALE_IN,
         PREVIEW_SCALE_OUT,
         PREVIEW_SCALE_RESET,
+        PDF_FIRST,
+        PDF_PREV,
+        PDF_NEXT,
+        PDF_LAST,
+        PDF_FIT,
+        PDF_COLORS,
+        PDF_OUTLINE,
+        PDF_SIGNATURES,
+        PDF_FILL,
+        PDF_SAVE,
+        PDF_DISCARD,
         LOG_FOLLOW,
         LOG_COLUMNS,
         LOG_MARK,
@@ -888,6 +912,24 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
                 item(ui, session, dialogs, PREVIEW_SOURCE);
                 item(ui, session, dialogs, PREVIEW_WRAP);
                 item(ui, session, dialogs, PREVIEW_FIND);
+                ui.menu_button("PDF", |ui| {
+                    for id in [
+                        PDF_FIRST,
+                        PDF_PREV,
+                        PDF_NEXT,
+                        PDF_LAST,
+                        PDF_FIT,
+                        PDF_COLORS,
+                        PDF_OUTLINE,
+                        PDF_SIGNATURES,
+                    ] {
+                        item(ui, session, dialogs, id);
+                    }
+                    ui.separator();
+                    item(ui, session, dialogs, PDF_FILL);
+                    item(ui, session, dialogs, PDF_SAVE);
+                    item(ui, session, dialogs, PDF_DISCARD);
+                });
                 ui.separator();
                 item(ui, session, dialogs, THUMBS_TOGGLE);
                 item(ui, session, dialogs, THUMBS_SIZE);
@@ -925,6 +967,7 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
         ui.menu_button("Help", |ui| {
             item(ui, session, dialogs, CHECK_UPDATES);
             item(ui, session, dialogs, DIAGNOSTICS_FOLDER);
+            item(ui, session, dialogs, LICENSES);
             item(ui, session, dialogs, ABOUT);
         });
     });

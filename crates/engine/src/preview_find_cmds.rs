@@ -15,6 +15,8 @@ use crate::{CommandSpec, Params, Session, preview_cmds::Body};
 
 pub const MAX_QUERY: usize = 1024;
 pub const MAX_MATCHES: usize = 10_000;
+/// PDF pages Find searches at most (text is extracted page by page first).
+pub const MAX_PDF_FIND_PAGES: usize = 2_000;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Options {
@@ -69,7 +71,7 @@ pub fn searchable(p: &Preview) -> bool {
     matches!(
         p,
         Preview::Text(_) | Preview::Structured(_) | Preview::Markdown(_)
-    )
+    ) || matches!(p, Preview::Pdf(d) if d.document().is_some())
 }
 
 pub fn available(s: &Session) -> bool {
@@ -183,6 +185,17 @@ fn segments(p: &Preview, pretty: bool, diagrams: &[usize], visit: &mut impl FnMu
         ),
         Preview::Markdown(doc) if pretty => text(&doc.source, visit),
         Preview::Markdown(doc) => markdown(&doc.blocks, diagrams, &mut 0, visit),
+        Preview::Pdf(doc) => {
+            let pages = doc.document().map_or(0, |d| d.page_count());
+            for page in 0..pages.min(MAX_PDF_FIND_PAGES) {
+                visit(
+                    doc.text
+                        .get(page)
+                        .map(|t| t.text.clone())
+                        .unwrap_or_default(),
+                );
+            }
+        }
         _ => {}
     }
 }
@@ -219,7 +232,9 @@ fn search_skipping(
         capped: false,
     };
     let mut segment = 0;
+    let mut any_text = false;
     segments(p, pretty, diagrams, &mut |text| {
+        any_text |= !text.trim().is_empty();
         if !result.capped {
             for hit in re.find_iter(&text).filter(|hit| !hit.is_empty()) {
                 if result.hits.len() == MAX_MATCHES {
@@ -234,11 +249,55 @@ fn search_skipping(
         }
         segment += 1;
     });
+    if let Preview::Pdf(_) = p
+        && !any_text
+    {
+        return Err("This PDF has no searchable text. It may be a scanned image of pages.".into());
+    }
     Ok(result)
 }
 
 /// Poll/start at most one bounded search worker per pane; stale results are discarded.
 pub fn prepare(s: &mut Session, pane: PaneId) {
+    if !pdf_text_ready(s, pane) {
+        if let Some(slot) = s.previews.slots.get_mut(&pane) {
+            slot.find.busy = true;
+        }
+        return;
+    }
+    prepare_ready(s, pane);
+}
+
+/// A PDF is searched once the text of its pages is extracted (on the PDF pool).
+fn pdf_text_ready(s: &Session, pane: PaneId) -> bool {
+    let Some(slot) = s.previews.slots.get(&pane) else {
+        return true;
+    };
+    let Body::Static(p) = &slot.body else {
+        return true;
+    };
+    let Preview::Pdf(d) = &**p else {
+        return true;
+    };
+    let Some(doc) = d.document() else {
+        return true;
+    };
+    let f = &slot.find;
+    if !f.open || f.options.query.is_empty() || f.matches.is_some() || f.error.is_some() {
+        return true;
+    }
+    let n = doc.page_count().min(MAX_PDF_FIND_PAGES);
+    let mut ready = true;
+    for page in 0..n {
+        if !s.pdf.text_done(d.id, &d.text, page) {
+            s.pdf.want_text(d.id, doc, &d.text, page);
+            ready = false;
+        }
+    }
+    ready
+}
+
+fn prepare_ready(s: &mut Session, pane: PaneId) {
     let diagrams = match s.previews.slots.get(&pane) {
         Some(slot) => match &slot.body {
             Body::Static(p) => {
@@ -378,7 +437,7 @@ fn change(s: &mut Session, params: &Params, mode: &str) -> Result<(), FmError> {
         && !matches!(&slot.body, Body::Static(p) if searchable(p))
     {
         return Err(FmError::Unsupported(
-            "Find is available in text, structured, Markdown and log previews",
+            "Find is available in text, structured, Markdown, PDF and log previews",
         ));
     }
     if matches!(&slot.body, Body::Log(_)) && !matches!(mode, "open" | "close") {

@@ -93,6 +93,9 @@ pub fn close() -> CommandSpec {
                     .ok_or_else(|| FmError::InvalidParams("pane: pane id".to_string()))?,
                 None => s.layout.focused(),
             };
+            if s.pdf_guard(crate::pdf_form_cmds::PdfAfter::ClosePane(target)) {
+                return Ok(());
+            }
             s.layout.close(target)?;
             s.drop_terminal(target);
             s.media_visibility_changed();

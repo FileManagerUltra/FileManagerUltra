@@ -100,11 +100,9 @@ Planned next; each becomes its own OpenSpec proposal. All render off the UI thre
 bounded for hostile input like the existing previews, and follow the Preview pane's
 zoom, Find and theme conventions.
 
-- **PDF view with form-fill and signing**: read PDFs page by page, fill AcroForm fields
-  and add a signature (drawn, typed or image) and save a copy. Deliberately not a full
-  editor: no text/page editing. The proposal must settle the pure-Rust renderer
-  (the no-FFI rule applies), saving to a new file by default, and digital signatures
-  versus visual signatures only.
+- **PDF view with form-fill and signing**: implemented by the OpenSpec change
+  `add-pdf-preview` (hayro renderer, lopdf editing, visual and PAdES digital signatures,
+  signature verification); see `docs/architecture.md` §12c.
 - **CSV / TSV table view**: delimiter detection, header row, virtualized rows and
   columns for large files, column sorting and Find. Read-only first.
 - **draw.io diagram view**: render `.drawio` / `.dio` files (including compressed

@@ -23,6 +23,7 @@ fm-ops.workspace = true
 fm-sync.workspace = true
 fm-term.workspace = true
 fm-preview.workspace = true
+fm-pdf.workspace = true
 fm-media.workspace = true
 opener.workspace = true
 reqwest.workspace = true
@@ -47,6 +48,7 @@ image = { workspace = true, features = ["png"] }
 plist.workspace = true
 
 [dev-dependencies]
+fm-pdf = { workspace = true, features = ["fixtures"] }
 plist.workspace = true
 flate2 = { workspace = true, features = ["rust_backend"] }
 fm-testkit.workspace = true

@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 fm-vfs.workspace = true
 fm-media.workspace = true
+fm-pdf.workspace = true
 regex.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 serde.workspace = true
@@ -29,5 +30,6 @@ merman.workspace = true
 merman-export.workspace = true
 
 [dev-dependencies]
+fm-pdf = { workspace = true, features = ["fixtures"] }
 tempfile.workspace = true
 fm-testkit.workspace = true

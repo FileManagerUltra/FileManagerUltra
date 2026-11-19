@@ -28,7 +28,9 @@ fn view() -> CommandSpec {
             if st.busy() {
                 return Err(bad("wait for the running sync to finish"));
             }
-            if st.arming != Arming::Off && !st.watching() {
+            // A compared sync waiting for Start keeps waiting in the other view: the list
+            // and the plan are the same. Only a wizard step before the review has no Start.
+            if mode == View::Wizard && st.step < WIZARD_REVIEW && !st.watching() {
                 st.arming = Arming::Off;
             }
             st.view = mode;
@@ -185,6 +187,12 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         assert_eq!(s.sync.current_state().expect("st").arming, Arming::Confirm);
+        // Switching views keeps waiting for Start: the list is the same.
+        for mode in ["advanced", "wizard"] {
+            s.dispatch("sync.view", &json!({ "mode": mode }))
+                .expect("view");
+            assert_eq!(s.sync.current_state().expect("st").arming, Arming::Confirm);
+        }
         // Going back abandons the pending start.
         s.dispatch("sync.wizard.go", &json!({"step": 5}))
             .expect("back");

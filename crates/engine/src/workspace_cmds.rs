@@ -242,9 +242,17 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Answer Unsaved Workspaces Prompt",
             menu: &["Workspace", "Unsaved changes"],
             shortcut: None,
-            params: "{choice: save|discard|cancel}",
+            params: "{choice: save|discard|cancel, remember?: bool (\"Don't ask again\": later quits and closes save or discard without asking)}",
             enabled: |s| s.unsaved_prompt.is_some(),
-            run: |s, p| s.workspace_resolve_prompt(required_text(p, "choice")?),
+            run: |s, p| {
+                let remember = match p.get("remember") {
+                    None | Some(serde_json::Value::Null) => false,
+                    Some(v) => v.as_bool().ok_or_else(|| {
+                        FmError::InvalidParams("remember must be true or false".into())
+                    })?,
+                };
+                s.workspace_resolve_prompt(required_text(p, "choice")?, remember)
+            },
         },
     ]
 }
@@ -382,6 +390,87 @@ mod tests {
             run(&mut s, "workspace.prompt", json!({"choice": "x"})).is_err()
                 || s.unsaved_prompt.is_none()
         );
+    }
+
+    /// Using a workspace is no edit: going to other folders, back, selecting, expanding the
+    /// tree and focusing another pane leave it unchanged (Auto-save keeps those); its
+    /// set-up (here the sort) still counts.
+    #[test]
+    fn navigating_is_not_an_unsaved_change_but_settings_are() {
+        let mut s = session();
+        run(&mut s, "pane.split.horizontal", Params::Null).expect("split");
+        run(&mut s, "workspace.save", json!({"name": "Work"})).expect("save");
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dir = tmp.path().to_string_lossy().to_string();
+        run(&mut s, "nav.open", json!({"uri": dir})).expect("go");
+        run(&mut s, "nav.up", Params::Null).expect("up");
+        run(&mut s, "nav.back", Params::Null).expect("back");
+        let focused = s.layout.focused();
+        if let Some(st) = s.layout.state_mut(focused) {
+            st.listing.select_only(Some("x.txt"), 2);
+            st.tree.expand(fm_vfs::VfsUri::root_file());
+        }
+        run(&mut s, "pane.focus.next", Params::Null).expect("focus");
+        assert!(s.workspace_unsaved().is_empty(), "navigation is no change");
+
+        run(&mut s, "view.sort.size", Params::Null).expect("sort");
+        assert_eq!(s.workspace_unsaved().len(), 1, "the sort is set-up");
+    }
+
+    #[test]
+    fn dont_ask_again_remembers_save_or_discard_but_not_cancel() {
+        use crate::prefs::UnsavedWorkspaces;
+        let mut s = session();
+        run(&mut s, "workspace.new", Params::Null).expect("new");
+        run(&mut s, "workspace.save", json!({"name": "Work"})).expect("save");
+        run(&mut s, "pane.split.horizontal", Params::Null).expect("split");
+
+        // Cancel is not an answer: nothing is remembered.
+        run(&mut s, "app.quit", Params::Null).expect("quit");
+        run(
+            &mut s,
+            "workspace.prompt",
+            json!({"choice": "cancel", "remember": true}),
+        )
+        .expect("cancel");
+        assert_eq!(s.prefs.unsaved_workspaces, UnsavedWorkspaces::Ask);
+        assert!(
+            run(
+                &mut s,
+                "workspace.prompt",
+                json!({"choice": "save", "remember": "yes"})
+            )
+            .is_err()
+                || s.unsaved_prompt.is_none()
+        );
+
+        // Save + Don't ask again: closing the next changed tab saves it without asking.
+        run(&mut s, "workspace.close", Params::Null).expect("close");
+        run(
+            &mut s,
+            "workspace.prompt",
+            json!({"choice": "save", "remember": true}),
+        )
+        .expect("save");
+        assert_eq!(s.prefs.unsaved_workspaces, UnsavedWorkspaces::Save);
+        run(&mut s, "workspace.open", json!({"name": "work"})).expect("reopen");
+        run(&mut s, "pane.close", Params::Null).expect("edit");
+        run(&mut s, "workspace.close", Params::Null).expect("close");
+        assert!(s.unsaved_prompt.is_none(), "not asked again");
+        let saved = s.workspaces.saved.iter().find(|w| w.name == "Work");
+        assert!(
+            saved.is_some_and(|w| !w.snapshot.to_string().contains("Split")),
+            "the edit was saved"
+        );
+
+        // Don't save + Don't ask again: quitting leaves changes unsaved and stops at once.
+        s.prefs.unsaved_workspaces = UnsavedWorkspaces::Discard;
+        run(&mut s, "workspace.open", json!({"name": "work"})).expect("reopen");
+        run(&mut s, "pane.split.horizontal", Params::Null).expect("edit");
+        run(&mut s, "app.quit", Params::Null).expect("quit");
+        assert!(!s.running && s.unsaved_prompt.is_none());
+        let saved = s.workspaces.saved.iter().find(|w| w.name == "Work");
+        assert!(saved.is_some_and(|w| !w.snapshot.to_string().contains("Split")));
     }
 
     /// Opening saved workspaces is not an edit: restoring renumbers the panes (closing up

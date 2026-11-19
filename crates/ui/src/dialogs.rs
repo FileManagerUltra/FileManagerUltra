@@ -85,12 +85,14 @@ pub fn queue(ctx: &Context, dialog: Dialog) {
 pub fn window_owns_keyboard(s: &Session) -> bool {
     s.preferences_open
         || s.about_open
+        || s.licenses_open
         || s.open_with.is_some()
         || s.compare.is_some()
         || s.picker.is_some()
         || s.search.is_some()
         || s.properties.is_some()
         || s.unsaved_prompt.is_some()
+        || s.pdf_unsaved.is_some()
         || s.busy_quit.is_some()
         || s.remote.sftp_prompt.is_some()
         || s.remote.login_prompt.is_some()
@@ -218,6 +220,7 @@ impl Dialogs {
         kind_switch_dialog(ctx, s, tokens);
         busy_quit_dialog(ctx, s, tokens);
         unsaved_dialog(ctx, s, tokens);
+        pdf_unsaved_dialog(ctx, s, tokens);
         if let Some(Some(dialog)) = ctx.data_mut(|d| d.remove_temp::<Option<Dialog>>(queue_id())) {
             self.request(dialog);
         }
@@ -682,6 +685,59 @@ fn busy_quit_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     }
 }
 
+/// Quitting or closing a pane would lose filled-in PDF values or placed signatures.
+fn pdf_unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    let Some(prompt) = s.pdf_unsaved.clone() else {
+        return;
+    };
+    let quitting = prompt.after == fm_engine::pdf_form_cmds::PdfAfter::Quit;
+    let mut choice: Option<&str> = None;
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Unsaved PDF changes", &mut open)
+        .id(Id::NULL.with("fm-unsaved-pdf"))
+        .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
+            ui.label(
+                RichText::new("Filled-in fields or signatures in these PDFs are not saved:")
+                    .color(tokens.text),
+            );
+            for name in &prompt.names {
+                ui.label(RichText::new(format!("  {name}")).color(tokens.warning));
+            }
+            crate::dialog_style::hint(
+                ui,
+                tokens,
+                "Save writes a copy next to each original; the originals are not changed.",
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button("Save copies").clicked() {
+                    choice = Some("save");
+                }
+                if ui
+                    .button(if quitting {
+                        "Quit without saving"
+                    } else {
+                        "Close without saving"
+                    })
+                    .clicked()
+                {
+                    choice = Some("discard");
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some("cancel");
+                }
+            });
+        });
+    if !open || ctx.input(|i| i.key_pressed(Key::Escape)) {
+        choice = Some("cancel");
+    }
+    if let Some(choice) = choice {
+        s.dispatch_or_notice("pdf.unsaved.resolve", &json!({ "choice": choice }));
+        s.pdf_unsaved = None;
+    }
+}
+
 /// Quitting or closing a workspace tab that has changes the user has not saved.
 fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let Some(prompt) = s.unsaved_prompt.clone() else {
@@ -690,6 +746,8 @@ fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     let quitting = prompt.after == fm_engine::workspace::AfterPrompt::Quit;
     let mut choice: Option<&str> = None;
     let mut open = true;
+    let remember_id = Id::NULL.with("fm-unsaved-remember");
+    let mut remember = ctx.data(|d| d.get_temp::<bool>(remember_id).unwrap_or(false));
     crate::dialog_style::window(ctx, tokens, "Unsaved workspace changes", &mut open)
         .id(Id::NULL.with("fm-unsaved-workspaces"))
         .show(ctx, |ui| {
@@ -703,6 +761,17 @@ fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             for name in &prompt.names {
                 ui.label(RichText::new(format!("  {name}")).color(tokens.warning));
             }
+            ui.add_space(4.0);
+            ui.checkbox(&mut remember, "Don't ask again")
+                .on_hover_text("Remember Save or Don't save for later quits and closed tabs");
+            if remember {
+                crate::dialog_style::hint(
+                    ui,
+                    tokens,
+                    "Your answer is used from now on. Change it in Preferences › Workspaces.",
+                );
+            }
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if ui.button("Save").clicked() {
                     choice = Some("save");
@@ -725,8 +794,14 @@ fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     if !open || ctx.input(|i| i.key_pressed(Key::Escape)) {
         choice = Some("cancel");
     }
+    ctx.data_mut(|d| d.insert_temp(remember_id, remember));
     if let Some(choice) = choice {
-        s.dispatch_or_notice("workspace.prompt", &json!({ "choice": choice }));
+        // The next question starts unticked again.
+        ctx.data_mut(|d| d.remove_temp::<bool>(remember_id));
+        s.dispatch_or_notice(
+            "workspace.prompt",
+            &json!({ "choice": choice, "remember": remember }),
+        );
         if s.unsaved_prompt.is_some() && choice == "save" {
             // Saving failed (the notice says why); do not leave the dialog stuck open.
             s.unsaved_prompt = None;

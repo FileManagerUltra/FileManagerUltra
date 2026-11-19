@@ -24,7 +24,7 @@ impl Kind {
         match self {
             Kind::Video => "Video playback needs ffmpeg; metadata is shown instead.",
             Kind::Audio => "Audio metadata is not available in this build.",
-            Kind::Pdf => "PDF preview shows file information only.",
+            Kind::Pdf => "PDF document.",
             _ => "",
         }
     }

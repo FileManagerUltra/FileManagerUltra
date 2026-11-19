@@ -223,6 +223,14 @@ fn pending_changes(state: &SyncState) -> usize {
     })
 }
 
+fn changes_text(n: usize) -> String {
+    match n {
+        0 => "no changes".to_string(),
+        1 => "1 change".to_string(),
+        n => format!("{n} changes"),
+    }
+}
+
 fn line_for(id: &str, state: &SyncState) -> Line {
     let text: String;
     let mut detail = String::new();
@@ -253,8 +261,8 @@ fn line_for(id: &str, state: &SyncState) -> Line {
             let pending = pending_changes(state);
             let failed = state.report.as_ref().map_or(0, |r| r.failed.len());
             if state.arming == Arming::Confirm {
-                attention = true;
-                text = format!("Confirm to start syncing ({pending} change(s))");
+                // Not a problem, just the user's turn: neutral, and worded as waiting.
+                text = format!("Waiting for Start syncing · {}", changes_text(pending));
             } else if conflicts > 0 {
                 attention = true;
                 text = format!("{conflicts} conflict(s) need a decision");
@@ -284,14 +292,17 @@ fn line_for(id: &str, state: &SyncState) -> Line {
 }
 
 /// Syncs worth showing outside their window: working, keeping in sync, or minimised.
+/// A sync waiting for Start syncing is listed only while its window is not on screen:
+/// the window already asks, and a second card reads like an error.
 pub fn activity(s: &Session) -> Vec<Line> {
     s.sync
         .states
         .iter()
         .filter(|(id, st)| {
+            let on_screen = !s.sync.minimized && s.sync.current.as_deref() == Some(id.as_str());
             st.busy()
                 || st.watching()
-                || st.arming == Arming::Confirm
+                || (st.arming == Arming::Confirm && !on_screen)
                 || (s.sync.minimized && s.sync.current.as_deref() == Some(id.as_str()))
         })
         .map(|(id, st)| line_for(id, st))

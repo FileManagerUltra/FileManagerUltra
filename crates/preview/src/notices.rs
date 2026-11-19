@@ -1,6 +1,8 @@
-//! Third-party parts built into the app whose licence asks to be shown with it (anything
-//! not under the app's own Apache-2.0 or a permissive MIT/BSD-style licence). The About
-//! dialog lists them, so every installer carries the notice inside the program.
+//! Third-party parts built into the app whose licence asks to be shown with it: anything
+//! not under the app's own Apache-2.0 or a permissive MIT-style crate licence, and bundled
+//! data (fonts, CMaps) whose BSD licence asks for its notice in binaries. Help ▸
+//! Third-party Licences lists them, so every installer carries the notice inside the
+//! program.
 
 /// One bundled third-party part.
 #[derive(Clone, Copy, Debug)]
@@ -24,6 +26,27 @@ pub const NOTICES: &[Notice] = &[
         licence: "OFL-1.1",
         source: "https://github.com/google/fonts/tree/main/ofl/atkinsonhyperlegible",
         text: include_str!("../assets/fonts/OFL.txt"),
+    },
+    Notice {
+        name: "Dancing Script",
+        purpose: "Typed visual signatures in PDFs (drawn as outlines, never embedded)",
+        licence: "OFL-1.1",
+        source: "https://github.com/googlefonts/DancingScript",
+        text: fm_pdf::visual::SIGNATURE_FONT_LICENSE,
+    },
+    Notice {
+        name: "Foxit standard fonts (from PDFium)",
+        purpose: "Drawing text in PDFs that do not embed their fonts",
+        licence: "BSD-3-Clause",
+        source: "https://pdfium.googlesource.com/pdfium/",
+        text: fm_pdf::FOXIT_FONTS_LICENSE,
+    },
+    Notice {
+        name: "Adobe CMap resources",
+        purpose: "Chinese, Japanese and Korean text in PDFs",
+        licence: "BSD-3-Clause",
+        source: "https://github.com/adobe-type-tools/cmap-resources",
+        text: fm_pdf::ADOBE_CMAPS_LICENSE,
     },
     Notice {
         name: "Eclipse ELK layout",

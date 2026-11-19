@@ -42,9 +42,23 @@ On start, saved workspaces flagged Open at startup SHALL open; else the Default 
 ### Requirement: Unsaved changes prompt
 Quitting or closing a non-auto-save workspace with unsaved changes (or a never-saved user tab) SHALL prompt Save / Discard / Cancel. Auto-save workspaces never prompt.
 
+A workspace has unsaved changes only when its set-up differs from how it was saved or opened: the pane tree, split ratios, zoomed pane, pane kinds, sort, column and tree widths, pane zoom, preview options and collapsed Places sections. Navigation and momentary state SHALL NOT count: the folder a pane shows, its history, tree expansion and focus, the selection and cursor, which pane has focus, scrolling, and pane id renumbering on restore. A workspace without Auto-save keeps the folders it was explicitly saved with; Auto-save keeps where its panes are.
+
+#### Scenario: Navigating is no change
+- **WHEN** the user opens a saved workspace, goes to other folders, selects files, expands the tree or focuses another pane, and quits
+- **THEN** no prompt appears and the saved workspace still opens at its saved folders
+
+#### Scenario: Set-up is a change
+- **WHEN** the user changes a pane's sort, splits a pane or resizes a column
+- **THEN** the tab is marked unsaved and quitting prompts
+
 #### Scenario: Cancel
 - **WHEN** the user cancels the quit prompt
 - **THEN** the app keeps running with all tabs intact
+
+#### Scenario: Don't ask again
+- **WHEN** the user ticks "Don't ask again" and answers Save or Don't save
+- **THEN** later quits and tab closes apply that answer without prompting, until the user sets "When quitting or closing a tab" back to Ask in Preferences › Workspaces; Cancel remembers nothing, and a remembered Save that fails prompts instead
 
 ### Requirement: Persistence is private
 `workspaces.json` SHALL contain no credentials, SHALL be written atomically with owner-only permissions, and SHALL be size-capped when read.

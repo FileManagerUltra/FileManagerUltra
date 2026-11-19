@@ -1024,6 +1024,8 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
         Topic::Workspaces => {
             section_heading(ui, tokens, "Switching");
             tab_order_row(ui, s, tokens);
+            section_heading(ui, tokens, "Unsaved changes");
+            unsaved_row(ui, s, tokens);
             section_heading(ui, tokens, "Saved workspaces");
             crate::workspaces::prefs_section(ui, s, tokens);
         }
@@ -1114,6 +1116,45 @@ fn tab_order_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
             }
             WorkspaceTabOrder::Cycle => {
                 "Ctrl+Tab goes to the tab on the right, Ctrl+Shift+Tab to the left, wrapping around."
+            }
+        },
+    );
+}
+
+/// What quitting or closing a tab does with unsaved workspaces ("Don't ask again" sets it).
+fn unsaved_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
+    use fm_engine::prefs::UnsavedWorkspaces;
+    if let Some(value) = choose(
+        ui,
+        tokens,
+        "unsaved_workspaces",
+        "When quitting or closing a tab",
+        &[
+            ("Ask", UnsavedWorkspaces::Ask),
+            ("Save", UnsavedWorkspaces::Save),
+            ("Don't save", UnsavedWorkspaces::Discard),
+        ],
+        s.prefs.unsaved_workspaces,
+    ) {
+        let value = match value {
+            UnsavedWorkspaces::Ask => "ask",
+            UnsavedWorkspaces::Save => "save",
+            UnsavedWorkspaces::Discard => "discard",
+        };
+        set(s, "unsaved_workspaces", json!(value));
+    }
+    crate::dialog_style::hint(
+        ui,
+        tokens,
+        match s.prefs.unsaved_workspaces {
+            UnsavedWorkspaces::Ask => {
+                "Workspaces with unsaved changes ask whether to save them. Auto-save workspaces never ask."
+            }
+            UnsavedWorkspaces::Save => {
+                "Changed workspaces are saved without asking. If saving fails, you are asked."
+            }
+            UnsavedWorkspaces::Discard => {
+                "Changes to workspaces are left unsaved without asking. Auto-save workspaces still save."
             }
         },
     );
@@ -1558,6 +1599,30 @@ mod tests {
         assert_eq!(
             h.state().prefs.windows_renderer,
             fm_engine::prefs::WindowsRenderer::Opengl
+        );
+    }
+
+    #[test]
+    fn the_unsaved_changes_row_switches_the_preference() {
+        let tokens = Tokens::dark();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(700.0, 200.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| unsaved_row(ui, s, &tokens),
+                Session::new().expect("session"),
+            );
+        h.run();
+        h.get_by_label("Don't save").click();
+        h.run();
+        assert_eq!(
+            h.state().prefs.unsaved_workspaces,
+            fm_engine::prefs::UnsavedWorkspaces::Discard
+        );
+        h.get_by_label("Ask").click();
+        h.run();
+        assert_eq!(
+            h.state().prefs.unsaved_workspaces,
+            fm_engine::prefs::UnsavedWorkspaces::Ask
         );
     }
 

@@ -1,5 +1,6 @@
-//! Help ▸ About: who the app is (logo, name, version, build, licence) and the third-party
-//! parts built into it (`fm_preview::notices`), with their licence texts one at a time.
+//! Help ▸ About: who the app is (logo, name, version, build, licence), with a button to
+//! Help ▸ Third-party Licences: the parts built into the app (`fm_preview::notices`), with
+//! their licence texts one at a time.
 
 use egui::{Align, Context, Id, Layout, RichText, ScrollArea, Stroke, Ui, vec2};
 
@@ -26,18 +27,25 @@ fn logo(ctx: &Context) -> Option<egui::TextureHandle> {
     Some(texture)
 }
 
-/// The About window while `open` is true; the close button clears it.
-pub fn dialog(ctx: &Context, tokens: &Tokens, open: &mut bool) {
+/// The About window while `open` is true; the close button clears it. Its licences
+/// button sets `licenses`.
+pub fn dialog(ctx: &Context, tokens: &Tokens, open: &mut bool, licenses: &mut bool) {
     let version = format!(
         "Version {} · build {}",
         env!("CARGO_PKG_VERSION"),
         fm_engine::diag::build_commit()
     );
-    dialog_with_version(ctx, tokens, open, &version);
+    dialog_with_version(ctx, tokens, open, licenses, &version);
 }
 
 /// [`dialog`] with the version line given, so snapshots do not change with every release.
-pub fn dialog_with_version(ctx: &Context, tokens: &Tokens, open: &mut bool, version: &str) {
+pub fn dialog_with_version(
+    ctx: &Context,
+    tokens: &Tokens,
+    open: &mut bool,
+    licenses: &mut bool,
+    version: &str,
+) {
     if !*open {
         return;
     }
@@ -46,8 +54,30 @@ pub fn dialog_with_version(ctx: &Context, tokens: &Tokens, open: &mut bool, vers
         ui.set_width(WIDTH);
         identity(ui, tokens, version);
         ui.add_space(tokens.padding * 2.0);
-        third_party(ui, tokens);
+        ui.horizontal(|ui| {
+            if ui
+                .button("Third-party licences…")
+                .on_hover_text("Fonts and other parts built into the app, with their licences")
+                .clicked()
+            {
+                *licenses = true;
+            }
+        });
     });
+}
+
+/// The Third-party Licences window while `open` is true; the close button clears it.
+pub fn licenses_dialog(ctx: &Context, tokens: &Tokens, open: &mut bool) {
+    if !*open {
+        return;
+    }
+    crate::dialog_style::window(ctx, tokens, "Third-party Licences", open)
+        .id(Id::NULL.with("fm-licenses-window"))
+        .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
+            ui.set_width(WIDTH);
+            third_party(ui, tokens);
+        });
 }
 
 fn identity(ui: &mut Ui, tokens: &Tokens, version: &str) {
@@ -81,51 +111,60 @@ fn open_id() -> Id {
 pub fn third_party(ui: &mut Ui, tokens: &Tokens) {
     let notices = fm_preview::notices::NOTICES;
     let mut shown: Option<usize> = ui.data(|d| d.get_temp(open_id())).flatten();
-    ui.label(
-        RichText::new("Third-party licences")
-            .size(tokens.font_size * 1.15)
-            .strong(),
-    );
     ui.label(quiet(
         tokens,
         "Parts built into the app that come with their own licence.",
     ));
     ui.add_space(4.0);
-    egui::Frame::NONE
-        .stroke(Stroke::new(tokens.border_width, tokens.border))
-        .corner_radius(tokens.corner_radius)
+    // A fixed height, so opening a licence never moves the row that was clicked.
+    let list_height = 340.0;
+    ScrollArea::vertical()
+        .id_salt("fm-licenses-list")
+        .max_height(list_height)
+        .auto_shrink([false, true])
         .show(ui, |ui| {
-            for (n, notice) in notices.iter().enumerate() {
-                if n > 0 {
-                    let y = ui.cursor().top();
-                    let x = ui.max_rect().x_range();
-                    ui.painter()
-                        .hline(x, y, Stroke::new(tokens.border_width, tokens.border));
-                }
-                egui::Frame::NONE.inner_margin(10.0).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 2.0;
-                            ui.set_width((ui.available_width() - 210.0).max(120.0));
-                            ui.add(egui::Label::new(RichText::new(notice.name).strong()).wrap());
-                            ui.add(egui::Label::new(quiet(tokens, notice.purpose)).wrap());
+            egui::Frame::NONE
+                .stroke(Stroke::new(tokens.border_width, tokens.border))
+                .corner_radius(tokens.corner_radius)
+                .show(ui, |ui| {
+                    for (n, notice) in notices.iter().enumerate() {
+                        if n > 0 {
+                            let y = ui.cursor().top();
+                            let x = ui.max_rect().x_range();
+                            ui.painter().hline(
+                                x,
+                                y,
+                                Stroke::new(tokens.border_width, tokens.border),
+                            );
+                        }
+                        egui::Frame::NONE.inner_margin(10.0).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 2.0;
+                                    ui.set_width((ui.available_width() - 240.0).max(120.0));
+                                    ui.add(
+                                        egui::Label::new(RichText::new(notice.name).strong())
+                                            .wrap(),
+                                    );
+                                    ui.add(egui::Label::new(quiet(tokens, notice.purpose)).wrap());
+                                });
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let open = shown == Some(n);
+                                    let label = if open { "Hide licence" } else { "View licence" };
+                                    if ui
+                                        .add(egui::Button::new(label).selected(open))
+                                        .on_hover_text(format!("{} licence text", notice.licence))
+                                        .clicked()
+                                    {
+                                        shown = if open { None } else { Some(n) };
+                                    }
+                                    ui.label(RichText::new(notice.licence).monospace());
+                                });
+                            });
                         });
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let open = shown == Some(n);
-                            let label = if open { "Hide licence" } else { "View licence" };
-                            if ui
-                                .add(egui::Button::new(label).selected(open))
-                                .on_hover_text(format!("{} licence text", notice.licence))
-                                .clicked()
-                            {
-                                shown = if open { None } else { Some(n) };
-                            }
-                            ui.label(RichText::new(notice.licence).monospace());
-                        });
-                    });
+                    }
                 });
-            }
         });
     if let Some(notice) = shown.and_then(|n| notices.get(n)) {
         ui.add_space(tokens.padding);
@@ -198,9 +237,19 @@ mod tests {
         );
         let buttons = harness.get_all_by_label("View licence").count();
         assert_eq!(buttons, fm_preview::notices::NOTICES.len());
+        let elk = fm_preview::notices::NOTICES
+            .iter()
+            .position(|n| n.licence == "EPL-2.0")
+            .expect("ELK notice");
         harness
             .get_all_by_label("View licence")
-            .nth(1)
+            .nth(elk)
+            .expect("ELK row")
+            .scroll_to_me();
+        harness.run();
+        harness
+            .get_all_by_label("View licence")
+            .nth(elk)
             .expect("ELK row")
             .click();
         harness.run();

@@ -76,10 +76,13 @@ pub fn specs() -> Vec<CommandSpec> {
             menu: &["Preview", "Select All Text"],
             shortcut: Some("Ctrl+A"),
             params: "none",
-            enabled: |s| document(s).is_some(),
+            enabled: |s| document(s).is_some() || crate::pdf_view_cmds::pdf_focused(s),
             run: |s, params| {
                 if !params.is_null() {
                     return Err(FmError::InvalidParams("no parameters expected".into()));
+                }
+                if crate::pdf_view_cmds::pdf_focused(s) {
+                    return crate::pdf_view_cmds::select_all(s, s.layout.focused());
                 }
 
                 let (pane, p, pretty) =
@@ -98,10 +101,18 @@ pub fn specs() -> Vec<CommandSpec> {
             menu: &["Preview", "Copy Text"],
             shortcut: Some("Ctrl+C"),
             params: "none",
-            enabled: |s| selected(s, s.layout.focused()),
+            enabled: |s| {
+                let pane = s.layout.focused();
+                selected(s, pane)
+                    || (crate::pdf_view_cmds::pdf_focused(s)
+                        && s.pdf_view(pane).is_some_and(|v| v.selection.is_some()))
+            },
             run: |s, params: &Params| {
                 if !params.is_null() {
                     return Err(FmError::InvalidParams("no parameters expected".into()));
+                }
+                if crate::pdf_view_cmds::pdf_focused(s) {
+                    return crate::pdf_view_cmds::copy(s, s.layout.focused());
                 }
                 if !selected(s, s.layout.focused()) {
                     return Err(FmError::Unsupported("no preview text selection"));

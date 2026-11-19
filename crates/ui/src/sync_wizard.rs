@@ -581,7 +581,9 @@ fn review(
                     if check_button(ui, tokens, "Stop syncing").clicked() {
                         commands.push(("sync.watch.stop", Value::Null));
                     }
-                } else if keep && state.arming == Arming::Confirm {
+                } else if keep && !comparing && state.plan.is_some() {
+                    // Also after Stop syncing or a switch of view, which end the wait for
+                    // Start but keep the list: Start picks it up again.
                     if check_button(ui, tokens, "Start and keep in sync").clicked() {
                         commands.push(("sync.watch.confirm", Value::Null));
                     }

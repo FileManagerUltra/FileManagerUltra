@@ -16,6 +16,7 @@ fm-engine.workspace = true
 fm-layout.workspace = true
 fm-media.workspace = true
 fm-preview.workspace = true
+fm-pdf.workspace = true
 fm-sync.workspace = true
 fm-term.workspace = true
 fm-vfs.workspace = true
@@ -25,6 +26,7 @@ egui_extras.workspace = true
 jiff.workspace = true
 
 [dev-dependencies]
+fm-pdf = { workspace = true, features = ["fixtures"] }
 egui_kittest.workspace = true
 flate2 = { workspace = true, features = ["rust_backend"] }
 fm-testkit.workspace = true

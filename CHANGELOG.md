@@ -7,12 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Files panes have Back and Forward arrows before the path, and the mouse's back and forward buttons work over any Files pane. History lasts until you quit or close the pane.
+- PDFs open in the Preview pane: pages scroll continuously, with page numbers and labels, bookmarks, working links, Find, text selection and copy. Pages can fit the width, fit the page or show at 100%, and can be shown as dark pages or in high contrast for easier reading (the file itself is not changed). Password-protected PDFs ask for the password, which is kept only while the document is shown. Folder thumbnails show the first page of PDFs.
+- Fill & Sign for PDFs, from the large Fill & Sign button at the top right of the pages (it shows how many fields a form has). It opens a column of coloured action buttons below it (Signature, Place, Remember, Reset, Save copy, Save as, Replace, Discard), which you can fold away by clicking Fill & Sign again: fill in form fields (text, checkboxes, radio buttons, lists), add a drawn, typed or image signature and place it on a page or in a signature field, or sign digitally with a certificate file (.p12/.pfx). Nothing is written until you save: Save copy puts "… (filled).pdf" or "… (signed).pdf" next to the original, or use Save as or Replace original (refused if the file changed meanwhile). Quitting or closing the pane with unsaved changes asks first. Signatures you make can be remembered on this computer.
+- Signed PDFs show whether their signatures are intact, changed after signing or broken, with signer, time and reason, in a Signatures panel.
+- The "Unsaved workspace changes" question has a "Don't ask again" checkbox: tick it and your Save or Don't save answer is used from then on when quitting or closing a tab. Change it back under Preferences › Workspaces › Unsaved changes.
+
+### Changed
+
+- Third-party licences have their own window, Help ▸ Third-party Licences (also reachable from About), so About stays short. The list now includes the fonts and character maps the PDF viewer uses.
+- Only changes to a workspace's set-up (panes, splits, sort, column widths, zoom and such) count as unsaved. Going to other folders, selecting files or expanding the tree no longer does: a workspace reopens at the folders you saved it with, unless Auto-save is on.
+- Back/forward history is no longer saved with workspaces.
+
 ### Fixed
 
 - Saved workspaces no longer count as changed right after opening, so quitting without touching anything no longer asks to save them.
 - Closing the last tab opens your default workspace again, as intended.
 - Synchronize Folders: after resizing the window the list no longer slowly shrinks, and on a small screen the window now fits instead of running off the top and bottom.
 - Synchronize Folders (Advanced): pressing Change settings with a row selected no longer makes the window grow off screen; the row's details return when you hide the settings.
+- Synchronize Folders: turning on Keep in sync no longer puts a red card in the Activity panel while the window waits for you to press Start syncing. If you minimize the window at that point, the card now says it is waiting for Start syncing instead of looking like an error.
+- Synchronize Folders: the Start button of Keep in sync no longer disappears after switching between Guided setup and Advanced, or after pressing Stop syncing; the review said the folders already match even when there were changes.
 
 ## [0.3.0] - 2026-11-19
 

@@ -11,6 +11,7 @@ pub mod symlink;
 pub mod transfer;
 pub mod trash;
 pub mod undo;
+pub mod write;
 
 use std::io::Write;
 
@@ -29,6 +30,7 @@ pub use trash::{
     empty_trash, list_trash, list_trash_dir, purge_trash, restore_trash, restore_trash_child,
 };
 pub use undo::{UndoRecord, UndoStack};
+pub use write::{free_name, verify_unchanged, write_bytes};
 
 /// What to do when the destination already exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

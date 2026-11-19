@@ -15,7 +15,7 @@ use crate::session::Session;
 const KEYS: &str = "accent (\"default\"|\"#rrggbb\"), density (compact|normal|comfortable), \
     font_size 9-24, terminal_font_size 9-24, terminal_scrollback_rows 5000-1000000, size_units (binary|decimal|bytes), \
     date_format (iso|isoseconds|us|eu), show_hidden, single_click_open, confirm_delete, \
-    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), media_hardware_decoding (bool), media_autoplay_on_add (bool), diagnostics_log (bool), windows_renderer (direct3d|opengl), workspace_tab_order (recent|cycle), media_skip_back_secs 5-300, media_skip_forward_secs 5-300, thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
+    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), media_hardware_decoding (bool), media_autoplay_on_add (bool), diagnostics_log (bool), windows_renderer (direct3d|opengl), workspace_tab_order (recent|cycle), unsaved_workspaces (ask|save|discard), media_skip_back_secs 5-300, media_skip_forward_secs 5-300, thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
 
 fn bad(key: &str, expect: &str) -> FmError {
     FmError::InvalidParams(format!("{key} must be {expect}"))
@@ -129,6 +129,14 @@ pub fn set(s: &mut Session, key: &str, value: &Value) -> Result<(), FmError> {
             s.prefs.workspace_tab_order = match choice(key, value, &["recent", "cycle"])? {
                 "cycle" => crate::prefs::WorkspaceTabOrder::Cycle,
                 _ => crate::prefs::WorkspaceTabOrder::Recent,
+            };
+        }
+        "unsaved_workspaces" => {
+            use crate::prefs::UnsavedWorkspaces;
+            s.prefs.unsaved_workspaces = match choice(key, value, &["ask", "save", "discard"])? {
+                "save" => UnsavedWorkspaces::Save,
+                "discard" => UnsavedWorkspaces::Discard,
+                _ => UnsavedWorkspaces::Ask,
             };
         }
         "media_skip_back_secs" => {
@@ -284,6 +292,12 @@ mod tests {
         assert_eq!(s.prefs.workspace_tab_order, WorkspaceTabOrder::Cycle);
         set_via(&mut s, "workspace_tab_order", json!("recent")).expect("recent");
         assert_eq!(s.prefs.workspace_tab_order, WorkspaceTabOrder::Recent);
+        use crate::prefs::UnsavedWorkspaces;
+        assert_eq!(s.prefs.unsaved_workspaces, UnsavedWorkspaces::Ask);
+        set_via(&mut s, "unsaved_workspaces", json!("discard")).expect("discard");
+        assert_eq!(s.prefs.unsaved_workspaces, UnsavedWorkspaces::Discard);
+        set_via(&mut s, "unsaved_workspaces", json!("ask")).expect("ask");
+        assert_eq!(s.prefs.unsaved_workspaces, UnsavedWorkspaces::Ask);
         set_via(&mut s, "media_hardware_decoding", json!(false)).expect("hardware off");
         assert!(!s.prefs.media_hardware_decoding);
         set_via(&mut s, "media_hardware_decoding", json!(true)).expect("hardware on");
@@ -342,6 +356,8 @@ mod tests {
             ("windows_renderer", json!("vulkan")),
             ("windows_renderer", json!(true)),
             ("workspace_tab_order", json!("random")),
+            ("unsaved_workspaces", json!("never")),
+            ("unsaved_workspaces", json!(true)),
             ("workspace_tab_order", json!(1)),
             ("media_hardware_decoding", json!(null)),
             ("thumb_memory_mib", json!(1)),
