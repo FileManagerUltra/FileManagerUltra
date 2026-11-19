@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
 ### Added
 - Synchronize Folders (File menu, starting from the folder you have highlighted): compare two folders (local, network share or SFTP), review what would be copied or deleted, change any item's action, then synchronize. Choose Update (copy new and newer files), Mirror (make one folder identical to the other) or Two-way (changes go both ways, conflicts are left for you). Deletes that cannot be undone ask for confirmation first. A target folder that does not exist yet is created by the first sync. The window can be minimized to the Activity panel with a status in the status bar (also when you close it while "Keep in sync" is on), and the grid can be sorted by name, size, modified time or action. Profiles can be saved, and "Keep in sync" first compares and asks you to confirm what it will do, then re-compares and applies safe changes while the app is open (conflicts and deletes wait for your review); it can be stopped from the Activity panel, and folders are shown as normal OS paths. A new sync starts in a guided setup that asks a few questions (folders, goal, deleting, comparing, what to ignore, keep in sync) and ends with a review of the changes before anything happens; an Advanced view offers every option at once, and both explain what each button does. Both views show the same choices (changing one updates the other), use the same icons and colors, and have a button to swap the two folders; the guided setup saves the profile on the last step and shows the source and target folders above the list of changes. Deletes that cannot be undone ask in their own warning dialog. While syncing, the window and the Activity panel show the amount done, speed, elapsed and remaining time. In Advanced, "Keep in sync" now ends in "Start syncing" and a "Minimize to Activity panel" button.
 - The Browse… chooser has a sidebar with your places, bookmarks, devices, the file system (This PC on Windows), Network and Saved servers for faster browsing; picking a server that is not connected yet opens its sign-in dialog right from the chooser.
 - Browse… buttons choose a folder or file from a list (local, network share or SFTP) instead of typing it: on both sync folders, the copy/move destination and the subtitle and playlist dialogs.
 
 ### Changed
+- Quitting while a copy, move, delete or folder sync is still running asks first ("Keep running" or "Quit anyway"). Closing the window with its close button now asks the same questions as File ▸ Quit, including about unsaved workspaces.
 - macOS: the disk image and the app are now signed with an Apple Developer ID and notarized by Apple, so they open without Gatekeeper warnings or quarantine workarounds. The app has a new identifier (`com.filemanagerultra.mac`), so macOS asks once more for folder permissions you granted before; settings are kept.
 - The folder chooser is tidier: Up, New folder and a new Show hidden button are icon buttons with tooltips, the path box lines up with them, and the places list runs the full height.
 - Synchronize Folders: the action filter in the list is cleared whenever you start a new comparison.
@@ -29,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Advanced folder sync view now follows the same order as the guided setup (folders, goal, deleting, compare by, leave out, keep in sync) on one page, in a window the same size as the guided setup, with Synchronize in the far corner.
 
 ### Fixed
+- Copying or synchronizing many files to an SFTP server no longer fails part-way with "Invalid file handle" on servers that use binary file handles (such as asyncssh-based ones); every file now arrives.
+- A preferences file with one missing or mistyped setting (for example after editing it by hand) no longer resets every setting to its default; only that setting falls back.
 - Ctrl+R in a Preview pane no longer shows an "unsupported" error; it refreshes the folder the preview is showing.
 - Synchronize Folders now starts from the folder you selected (or the current folder), not the one the cursor happens to rest on.
 - The large "Changes" window now fills its whole table, and opening it from the guided setup no longer crashes the app.
@@ -265,7 +270,8 @@ First public release (beta).
 
 - macOS install notes: clear the quarantine flag on the downloaded `.dmg` (`xattr -d com.apple.quarantine`), as the app is not yet signed or notarized.
 
-[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.1...v0.2.2
