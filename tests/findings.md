@@ -208,3 +208,23 @@ and changed files to `sftp://demo@127.0.0.1:2222/backups/Photos`, Compare (sign-
 prompts opened as expected), Synchronize now: "Last run: 2059 copied, 0 deleted, 0 failed" in
 about 15 s, 2,053 files on the server, `diff -r` byte-identical, and a new Compare shows all equal.
 (The cause was russh-sftp decoding handles as UTF-8, not the two-channel guess above.)
+
+## 12. Advanced: "Change settings" after a compare grows the window past the screen
+
+**Severity:** cosmetic; the title bar or the Synchronize button ends up off screen on short displays.
+
+**Build:** v0.3.0 (`1cedf35`), release build, Xvfb 1440×900, found while retaking the site's sync
+screenshots on 2026-11-19.
+
+**Steps**
+1. Synchronize Folders, drag the window to the top-left and its resize grip to fill the 1440×900
+   screen (about 1408×893).
+2. Advanced, two local folders, Compare. The settings fold into one line and the window fits.
+3. Press *Change settings*.
+
+**Expected:** the list shrinks to make room for the settings and the window keeps its size.
+
+**Actual:** the window grows by about 65 px: its top moves about 19 px above the screen (title
+bar half hidden) and its bottom about 46 px below (Synchronize now is cut off). *Hide settings*
+brings it back. The list is already down to about two rows, so the list's minimum height plus the
+settings seems to be more than the window has.
