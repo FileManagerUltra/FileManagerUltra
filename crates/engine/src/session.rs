@@ -65,6 +65,9 @@ pub struct Session {
     pub workspaces: crate::workspace::Workspaces,
     /// Raised when quitting or closing a tab would lose unsaved workspace changes.
     pub unsaved_prompt: Option<crate::workspace::UnsavedPrompt>,
+    /// Raised when quitting would stop work still running in the background: one line per
+    /// copy, move or delete job and per sync that is running or keeping folders in sync.
+    pub busy_quit: Option<Vec<String>>,
     /// The focused thumbnail grid's selection, published by the UI each frame.
     pub grid_selection: Option<crate::file_cmds::GridSelection>,
     /// Files cut or copied for a later paste.
@@ -200,6 +203,7 @@ impl Default for Session {
             layout: first_layout.clone(),
             workspaces: crate::workspace::Workspaces::new(&first_layout),
             unsaved_prompt: None,
+            busy_quit: None,
             grid_selection: None,
             clipboard: None,
             clipboard_outbox: None,

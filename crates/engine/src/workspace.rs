@@ -765,8 +765,20 @@ impl Session {
         self.workspace_close_now(ix)
     }
 
-    /// `app.quit`: stop now, or ask when workspaces have unsaved changes.
+    /// `app.quit` (and closing the window): ask first when work is still running in the
+    /// background, then when workspaces have unsaved changes, else stop now.
     pub fn request_quit(&mut self) {
+        let busy = self.background_work();
+        if !busy.is_empty() {
+            self.busy_quit = Some(busy);
+            return;
+        }
+        self.quit_checking_workspaces();
+    }
+
+    /// The quit after the background-work question: unsaved workspaces still ask.
+    pub fn quit_checking_workspaces(&mut self) {
+        self.busy_quit = None;
         let unsaved = self.workspace_unsaved();
         if unsaved.is_empty() {
             self.running = false;

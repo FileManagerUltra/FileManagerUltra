@@ -519,6 +519,34 @@ fn clear_all_keeps_the_activity_panel_still_under_the_pointer() {
 }
 
 #[test]
+fn quitting_with_background_work_asks_first() {
+    for tokens in [Tokens::dark(), Tokens::light()] {
+        let mut s = Session::new().expect("session");
+        s.busy_quit = Some(vec!["Keeping \u{201c}Photos\u{201d} in sync".into()]);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1000.0, 800.0))
+            .build_ui_state(
+                move |ui, (dialogs, s): &mut (Dialogs, Session)| {
+                    fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                    dialogs.show(ui.ctx(), s, &tokens);
+                },
+                (Dialogs::default(), s),
+            );
+        h.run();
+        assert!(h.query_by_label("Quit while work is running?").is_some());
+        assert!(h.query_by_label_contains("Photos").is_some());
+        h.get_by_label("Keep running").click();
+        h.run();
+        assert!(h.state().1.busy_quit.is_none() && h.state().1.running);
+        h.state_mut().1.busy_quit = Some(vec!["Copying 3 items".into()]);
+        h.run();
+        h.get_by_label("Quit anyway").click();
+        h.run();
+        assert!(!h.state().1.running, "quits after confirming");
+    }
+}
+
+#[test]
 fn closing_jobs_hides_without_dismissing_update_and_indicator_reopens() {
     for tokens in [Tokens::dark(), Tokens::light()] {
         let mut s = Session::new().expect("session");

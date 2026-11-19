@@ -91,6 +91,7 @@ pub fn window_owns_keyboard(s: &Session) -> bool {
         || s.search.is_some()
         || s.properties.is_some()
         || s.unsaved_prompt.is_some()
+        || s.busy_quit.is_some()
         || s.remote.sftp_prompt.is_some()
         || s.remote.login_prompt.is_some()
 }
@@ -215,6 +216,7 @@ impl Dialogs {
     pub fn show(&mut self, ctx: &Context, s: &mut Session, tokens: &Tokens) {
         conflict_dialog(ctx, s, tokens);
         kind_switch_dialog(ctx, s, tokens);
+        busy_quit_dialog(ctx, s, tokens);
         unsaved_dialog(ctx, s, tokens);
         if let Some(Some(dialog)) = ctx.data_mut(|d| d.remove_temp::<Option<Dialog>>(queue_id())) {
             self.request(dialog);
@@ -632,6 +634,52 @@ fn pattern_dialog(
             });
         });
     (go && open, cancel || !open)
+}
+
+/// Quitting while copies or syncs are still running in the background.
+fn busy_quit_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    let Some(work) = s.busy_quit.clone() else {
+        return;
+    };
+    let mut choice: Option<&str> = None;
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Quit while work is running?", &mut open)
+        .id(Id::NULL.with("fm-busy-quit"))
+        .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
+            ui.set_max_width(460.0);
+            ui.label(RichText::new("This is still running:").color(tokens.text));
+            for line in work.iter().take(8) {
+                ui.label(RichText::new(format!("  {line}")).color(tokens.warning));
+            }
+            if work.len() > 8 {
+                ui.label(
+                    RichText::new(format!("  and {} more", work.len() - 8))
+                        .color(tokens.text_muted),
+                );
+            }
+            ui.label(
+                RichText::new(
+                    "Quitting stops it: a copy keeps the files finished so far, and keeping \
+                     folders in sync stops until you start it again.",
+                )
+                .color(tokens.text_muted),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("Keep running").clicked() {
+                    choice = Some("cancel");
+                }
+                if ui.button("Quit anyway").clicked() {
+                    choice = Some("quit");
+                }
+            });
+        });
+    if !open || ctx.input(|i| i.key_pressed(Key::Escape)) {
+        choice = Some("cancel");
+    }
+    if let Some(choice) = choice {
+        s.dispatch_or_notice("app.quit.busy", &json!({ "choice": choice }));
+    }
 }
 
 /// Quitting or closing a workspace tab that has changes the user has not saved.

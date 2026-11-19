@@ -26,6 +26,7 @@ use crate::workspace_cmds;
 pub fn specs() -> Vec<CommandSpec> {
     let mut specs = vec![
         app_cmds::quit(),
+        app_cmds::quit_busy(),
         app_cmds::about(),
         prefs_cmds::preferences(),
         prefs_cmds::retarget_links(),

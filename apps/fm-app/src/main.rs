@@ -386,6 +386,14 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // The window's close button quits like File > Quit: running copies, syncs and
+        // unsaved workspaces ask first. Once the session has stopped, the close we send
+        // ourselves goes through.
+        if self.session.running && ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.session
+                .dispatch_or_notice(menu::QUIT, &serde_json::Value::Null);
+        }
         self.window.reposition(&ctx);
         window::capture(&ctx, &mut self.session.prefs);
         if self.window.save_due(&ctx, &self.session.prefs)
@@ -613,7 +621,7 @@ impl eframe::App for App {
 
         if !self.session.running {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        } else if self.session.unsaved_prompt.is_some() {
+        } else if self.session.unsaved_prompt.is_some() || self.session.busy_quit.is_some() {
             ctx.request_repaint();
         }
         // Textures and pictures of panes that were not drawn this frame (closed workspaces

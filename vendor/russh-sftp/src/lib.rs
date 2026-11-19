@@ -27,7 +27,7 @@ pub mod client;
 pub mod de;
 mod error;
 pub mod extensions;
-/// FileManagerUltra patch: handles keep their exact bytes.
+/// Local patch: handles keep their exact bytes.
 pub mod handle_bytes;
 /// Protocol implementation
 pub mod protocol;

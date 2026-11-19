@@ -1,4 +1,4 @@
-//! FileManagerUltra patch (see `vendor/FM-VENDORED.md`).
+//! Local patch (see `vendor/FM-VENDORED.md` in the workspace).
 //!
 //! SFTP handles are opaque bytes chosen by the server, but this release keeps them as
 //! `String` and decoded them as lossy UTF-8. A server whose handles contain bytes of 0x80 or

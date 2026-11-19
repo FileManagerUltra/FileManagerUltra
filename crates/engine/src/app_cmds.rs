@@ -1,5 +1,7 @@
 //! Application commands: quit, about.
 
+use fm_vfs::FmError;
+
 use crate::registry::{CommandSpec, Params};
 
 /// `app.quit` — ask the shell to stop (the eframe loop observes `running == false`); with
@@ -16,6 +18,62 @@ pub fn quit() -> CommandSpec {
             session.request_quit();
             Ok(())
         },
+    }
+}
+
+/// `app.quit.busy` — answer "Quit while work is running?": `quit` stops the work and goes on
+/// quitting (unsaved workspaces still ask), `cancel` keeps everything running.
+pub fn quit_busy() -> CommandSpec {
+    CommandSpec {
+        id: "app.quit.busy",
+        label: "Quit While Work Is Running",
+        menu: &["File", "Quit While Work Is Running"],
+        shortcut: None,
+        params: r#"{ choice: "quit"|"cancel" }"#,
+        enabled: |session| session.busy_quit.is_some(),
+        run: |session, params: &Params| {
+            let choice = params
+                .as_object()
+                .and_then(|m| m.get("choice"))
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| FmError::InvalidParams("choice: quit or cancel".into()))?;
+            match choice {
+                "cancel" => session.busy_quit = None,
+                "quit" => session.quit_checking_workspaces(),
+                other => {
+                    return Err(FmError::InvalidParams(format!(
+                        "choice must be quit or cancel, not {other:?}"
+                    )));
+                }
+            }
+            Ok(())
+        },
+    }
+}
+
+impl crate::session::Session {
+    /// Work that quitting would stop, one readable line each.
+    pub fn background_work(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .fileops
+            .jobs()
+            .iter()
+            .filter(|j| j.state.is_running())
+            .map(|j| j.label.clone())
+            .collect();
+        for st in self.sync.states.values() {
+            let name = if st.profile.name.trim().is_empty() {
+                "Unnamed sync"
+            } else {
+                st.profile.name.as_str()
+            };
+            if st.busy() {
+                out.push(format!("Synchronizing \u{201c}{name}\u{201d}"));
+            } else if st.watching() {
+                out.push(format!("Keeping \u{201c}{name}\u{201d} in sync"));
+            }
+        }
+        out
     }
 }
 

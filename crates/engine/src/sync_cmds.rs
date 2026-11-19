@@ -752,10 +752,12 @@ fn watch_stop() -> CommandSpec {
         label: "Stop Continuous Sync",
         menu: MENU,
         shortcut: None,
-        params: r#"{ id?: string }"#,
+        params: r#"{ id?: string } — stops keeping the folders in sync and cancels a run in progress"#,
         enabled: |s| s.sync.current_state().is_some_and(|st| st.watching()),
         run: |s, params| {
             let id = target(s, params)?;
+            // "Stop syncing" stops everything: also the copy that is already running.
+            s.sync_cancel(&id);
             s.sync_watch(&id, false)
         },
     }
@@ -1021,6 +1023,45 @@ mod tests {
     }
 
     #[test]
+    fn stop_syncing_also_stops_the_run_in_progress() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (l, r, c) = (
+            tmp.path().join("l"),
+            tmp.path().join("r"),
+            tmp.path().join("cfg"),
+        );
+        for d in [&l, &r, &c] {
+            std::fs::create_dir_all(d).expect("mkdir");
+        }
+        for n in 0..2000 {
+            std::fs::write(l.join(format!("f{n:04}.bin")), [7u8; 1024]).expect("w");
+        }
+        let mut s = session_with(&l, &r, &c);
+        s.dispatch(
+            "sync.profile.set",
+            &json!({"patch": {"mode": "Update", "watch": {"enabled": true}}}),
+        )
+        .expect("set");
+        s.dispatch("sync.watch.start", &json!({})).expect("watch");
+        pump_until_idle(&mut s);
+        s.dispatch("sync.watch.confirm", &json!({}))
+            .expect("start syncing");
+        assert!(
+            s.sync.current_state().is_some_and(|st| st.busy()),
+            "running"
+        );
+        s.dispatch("sync.watch.stop", &json!({})).expect("stop");
+        pump_until_idle(&mut s);
+        let st = s.sync.current_state().expect("state");
+        assert!(!st.watching() && !st.busy());
+        let copied = std::fs::read_dir(&r).expect("r").count();
+        assert!(
+            copied < 2000,
+            "the run went on after Stop syncing: {copied} copied"
+        );
+    }
+
+    #[test]
     fn a_watched_edit_is_synced_without_reading_on_the_event_thread() {
         let tmp = tempfile::tempdir().expect("tmp");
         let (l, r, c) = (
@@ -1166,6 +1207,45 @@ mod tests {
         assert!(!r.join("old.txt").exists());
         assert!(r.join("new.txt").exists());
         s.dispatch("sync.watch.stop", &json!({})).expect("stop");
+    }
+
+    #[test]
+    fn quitting_while_keeping_in_sync_asks_first() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (l, r, c) = (
+            tmp.path().join("l"),
+            tmp.path().join("r"),
+            tmp.path().join("cfg"),
+        );
+        for d in [&l, &r, &c] {
+            std::fs::create_dir_all(d).expect("mkdir");
+        }
+        let mut s = session_with(&l, &r, &c);
+        s.dispatch(
+            "sync.profile.set",
+            &json!({"patch": {"name": "Photos", "mode": "Update", "watch": {"enabled": true}}}),
+        )
+        .expect("set");
+        s.dispatch("sync.watch.start", &json!({})).expect("watch");
+        pump_until_idle(&mut s);
+        s.dispatch("sync.watch.confirm", &json!({}))
+            .expect("start syncing");
+        pump_until_idle(&mut s);
+        s.dispatch("app.quit", &json!({})).expect("quit");
+        let work = s.busy_quit.clone().expect("asks first");
+        assert!(s.running);
+        assert!(work.iter().any(|w| w.contains("Photos")), "{work:?}");
+        for bad in [json!({}), json!({"choice": "later"}), json!({"choice": 1})] {
+            assert!(s.dispatch("app.quit.busy", &bad).is_err(), "{bad}");
+        }
+        s.dispatch("app.quit.busy", &json!({"choice": "cancel"}))
+            .expect("keep running");
+        assert!(s.running && s.busy_quit.is_none());
+        assert!(s.sync.current_state().is_some_and(|st| st.watching()));
+        s.dispatch("app.quit", &json!({})).expect("quit again");
+        s.dispatch("app.quit.busy", &json!({"choice": "quit"}))
+            .expect("quit anyway");
+        assert!(!s.running);
     }
 
     #[test]
