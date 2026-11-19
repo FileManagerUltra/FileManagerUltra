@@ -157,6 +157,9 @@ debug = 1
 # Image/text decoding is unusably slow unoptimised; keep dev builds usable on large files.
 [profile.dev.package."*"]
 opt-level = 3
+# No debug info for third-party crates: it made target/debug grow past 100 GB. Our own
+# crates keep line tables (debug = 1 above); remove this line to step into dependencies.
+debug = false
 
 # Decoding/resizing is generic and inlined into this crate, so it needs optimising too.
 [profile.dev.package.fm-preview]
