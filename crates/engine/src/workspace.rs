@@ -257,13 +257,14 @@ pub fn clean_name(raw: &str) -> Result<String, FmError> {
     Ok(name.to_string())
 }
 
-/// The snapshot without view noise (scroll offsets and one-shot "scroll to" flags), so
-/// merely scrolling does not count as a change.
+/// The snapshot without view noise (scroll offsets, including the media queue's, and
+/// one-shot "scroll to" flags), so merely scrolling does not count as a change. Pane ids are renumbered from 1 first:
+/// every restore moves a workspace to a fresh id range, which is not a change either.
 fn fingerprint(value: &Value) -> String {
     fn strip(v: &mut Value) {
         match v {
             Value::Object(map) => {
-                for key in ["scroll", "reveal", "scroll_focus"] {
+                for key in ["scroll", "reveal", "scroll_focus", "queue_scroll"] {
                     map.remove(key);
                 }
                 map.values_mut().for_each(strip);
@@ -272,9 +273,23 @@ fn fingerprint(value: &Value) -> String {
             _ => {}
         }
     }
-    let mut v = value.clone();
+    let mut v = canonical_ids(value).unwrap_or_else(|| value.clone());
     strip(&mut v);
     v.to_string()
+}
+
+/// `value` with its panes renumbered from 1 in tree order (`None` when it is no snapshot).
+fn canonical_ids(value: &Value) -> Option<Value> {
+    let Snapshot {
+        mut layout,
+        previews,
+    } = serde_json::from_value(value.clone()).ok()?;
+    let map = layout.relabel(1);
+    let previews = previews
+        .into_iter()
+        .filter_map(|(old, settings)| map.get(&old).map(|new| (*new, settings)))
+        .collect();
+    serde_json::to_value(Snapshot { layout, previews }).ok()
 }
 
 /// One Files pane at home, with the tree rooted at the filesystem root.
@@ -516,15 +531,20 @@ impl Session {
         Ok(layout)
     }
 
-    /// A brand-new tab layout: the default workspace when one is marked, else a single
+    /// A brand-new tab layout: the default workspace when one is marked (and not open in a
+    /// tab other than `replacing`, the one this layout takes the place of), else a single
     /// files pane at home.
-    fn fresh_layout(&mut self) -> (Layout, Option<u64>) {
+    fn fresh_layout(&mut self, replacing: Option<u64>) -> (Layout, Option<u64>) {
         let default = self
             .workspaces
             .default_saved()
             .map(|s| (s.snapshot.clone(), s.uid));
         if let Some((value, uid)) = default
-            && !self.workspaces.tabs.iter().any(|t| t.uid == uid)
+            && !self
+                .workspaces
+                .tabs
+                .iter()
+                .any(|t| t.uid == uid && Some(t.uid) != replacing)
             && let Ok(layout) = self.restore(&value)
         {
             return (layout, Some(uid));
@@ -538,15 +558,11 @@ impl Session {
         let name = name
             .or_else(|| self.workspaces.saved_for(uid).map(|s| s.name.clone()))
             .unwrap_or_else(|| self.workspaces.fresh_name());
-        let baseline = self
-            .workspaces
-            .saved_for(uid)
-            .map(|s| fingerprint(&s.snapshot))
-            .or_else(|| {
-                serde_json::to_value(self.capture(&layout))
-                    .ok()
-                    .map(|v| fingerprint(&v))
-            })
+        // The state as opened, not the saved text: restoring repairs and migrates the
+        // snapshot (fresh pane ids, tree roots, folded panes), and none of that is an edit.
+        let baseline = serde_json::to_value(self.capture(&layout))
+            .ok()
+            .map(|v| fingerprint(&v))
             .unwrap_or_default();
         self.workspaces.tabs.push(Tab {
             uid,
@@ -703,7 +719,8 @@ impl Session {
         self.sync_autosaved();
         let active = self.workspaces.active;
         if self.workspaces.tabs.len() == 1 {
-            let (layout, uid) = self.fresh_layout();
+            let closing = self.workspaces.tabs.first().map(|t| t.uid);
+            let (layout, uid) = self.fresh_layout(closing);
             let old = std::mem::replace(&mut self.layout, layout);
             self.forget_layout(&old);
             let fresh_name = self.workspaces.fresh_name();

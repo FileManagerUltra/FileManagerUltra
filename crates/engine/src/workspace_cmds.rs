@@ -384,6 +384,50 @@ mod tests {
         );
     }
 
+    /// Opening saved workspaces is not an edit: restoring renumbers the panes (closing up
+    /// gaps), roots local trees at `/` again and repairs values, and the media queue's
+    /// scroll offset is rewritten by the UI. None of that may raise the quit prompt.
+    #[test]
+    fn restored_workspaces_start_without_unsaved_changes() {
+        let mut s = session();
+        let first = s.layout.focused();
+        let middle = s
+            .layout
+            .split(first, fm_layout::Axis::Horizontal, 0.5)
+            .expect("split");
+        s.layout
+            .split(middle, fm_layout::Axis::Horizontal, 0.5)
+            .expect("split");
+        s.layout.close(middle).expect("close");
+        let tmp = fm_vfs::VfsUri::parse("/tmp").expect("uri");
+        if let Some(st) = s.layout.state_mut(first) {
+            st.tree = fm_layout::TreeState::new(tmp);
+        }
+        run(&mut s, "workspace.save", json!({"name": "Gap"})).expect("save");
+        run(&mut s, "workspace.startup", Params::Null).expect("startup");
+        run(&mut s, "workspace.new", json!({"name": "Second"})).expect("new");
+        run(&mut s, "workspace.save", Params::Null).expect("save");
+        run(&mut s, "workspace.startup", Params::Null).expect("startup");
+        let text = s.workspace_tick().expect("file");
+        assert!(text.contains("/tmp"), "the saved text keeps the tree root");
+
+        let mut t = session();
+        assert!(t.workspace_startup(&text).is_none());
+        assert_eq!(t.workspaces.tabs.len(), 2);
+        assert!(t.workspace_unsaved().is_empty(), "nothing changed yet");
+        for id in t.layout.panes() {
+            if let Some(st) = t.layout.state_mut(id) {
+                st.media.queue_scroll += 40.0;
+            }
+        }
+        run(&mut t, "workspace.next", Params::Null).expect("switch");
+        run(&mut t, "workspace.next", Params::Null).expect("switch back");
+        assert!(t.workspace_unsaved().is_empty(), "scrolling is no change");
+
+        run(&mut t, "pane.split.vertical", Params::Null).expect("split");
+        assert_eq!(t.workspace_unsaved().len(), 1, "a real edit still counts");
+    }
+
     #[test]
     fn autosave_follows_the_layout_and_never_prompts() {
         let mut s = session();
@@ -439,6 +483,10 @@ mod tests {
         t.workspace_startup(&text);
         assert_eq!(t.layout.panes().len(), 2);
         run(&mut t, "workspace.close", Params::Null).expect("close last");
+        assert!(
+            t.unsaved_prompt.is_none(),
+            "an untouched workspace closes without asking"
+        );
         assert_eq!(
             t.layout.panes().len(),
             2,

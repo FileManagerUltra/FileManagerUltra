@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Saved workspaces no longer count as changed right after opening, so quitting without touching anything no longer asks to save them.
+- Closing the last tab opens your default workspace again, as intended.
+
 ## [0.3.0] - 2026-11-19
 
 ### Added
