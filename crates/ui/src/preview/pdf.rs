@@ -516,6 +516,9 @@ fn signatures(
                                 ui.label(RichText::new(format!("• {w}")).color(tokens.text_muted));
                             }
                         }
+                        if let SigStatus::Broken(why) = &r.status {
+                            ui.label(RichText::new(sentence(why)).color(tokens.text));
+                        }
                         let row = |ui: &mut Ui, k: &str, v: &Option<String>| {
                             if let Some(v) = v {
                                 ui.label(RichText::new(format!("{k}: {v}")).color(tokens.text));
@@ -523,9 +526,20 @@ fn signatures(
                         };
                         row(ui, "Signed by", &r.signer.as_ref().map(|c| c.name.clone()));
                         if let Some(c) = &r.signer {
+                            if c.self_signed {
+                                ui.label(
+                                    RichText::new(
+                                        "Self-signed certificate: the signer vouches for themselves.",
+                                    )
+                                    .color(tokens.sig_changed),
+                                );
+                            }
                             ui.collapsing("Certificate", |ui| {
+                                let valid = c.validity_text();
                                 for (k, v) in [
+                                    ("Subject", &c.subject),
                                     ("Issuer", &c.issuer),
+                                    ("Valid", &valid),
                                     ("Serial", &c.serial),
                                     ("SHA-256 fingerprint", &c.fingerprint),
                                 ] {
@@ -557,6 +571,19 @@ fn signatures(
                 );
             }
         });
+}
+
+/// `the file was rebuilt…` → `The file was rebuilt….`
+fn sentence(text: &str) -> String {
+    let mut chars = text.chars();
+    let mut out: String = chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default();
+    if !out.ends_with('.') {
+        out.push('.');
+    }
+    out
 }
 
 /// Fit scale for the pane, before the pane's zoom.
@@ -2100,13 +2127,12 @@ fn signature_alert(
 
 /// Warning triangle with an exclamation mark, centred on `c`.
 fn warning_triangle(painter: &egui::Painter, c: Pos2, t: f32, line: Stroke, ink: Color32) {
-    painter.add(egui::Shape::convex_polygon(
+    painter.add(egui::Shape::closed_line(
         vec![
             c + vec2(0.0, -t),
             c + vec2(t * 1.1, t * 0.85),
             c + vec2(-t * 1.1, t * 0.85),
         ],
-        Color32::TRANSPARENT,
         line,
     ));
     painter.line_segment([c + vec2(0.0, -t * 0.35), c + vec2(0.0, t * 0.3)], line);

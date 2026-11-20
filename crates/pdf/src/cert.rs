@@ -59,6 +59,8 @@ pub struct CertInfo {
     pub fingerprint: String,
     pub not_before: SystemTime,
     pub not_after: SystemTime,
+    /// Issuer and subject are the same: the signer vouches for themselves.
+    pub self_signed: bool,
 }
 
 impl CertInfo {
@@ -74,7 +76,17 @@ impl CertInfo {
             fingerprint: hex(&digest, ":"),
             not_before: tbs.validity().not_before.to_system_time(),
             not_after: tbs.validity().not_after.to_system_time(),
+            self_signed: tbs.subject() == tbs.issuer(),
         }
+    }
+
+    /// The validity period, human readable (`2019-08-29 08:27 UTC to 2029-08-29 08:27 UTC`).
+    pub fn validity_text(&self) -> String {
+        format!(
+            "{} to {}",
+            crate::sign::human_date(self.not_before),
+            crate::sign::human_date(self.not_after)
+        )
     }
 }
 
@@ -507,6 +519,19 @@ mod tests {
 
     fn now() -> SystemTime {
         SystemTime::now()
+    }
+
+    #[test]
+    fn self_signed_is_recognized() {
+        let (_, signer, ca) = certs::material(&P12Spec::default());
+        assert!(!CertInfo::of(&signer).self_signed);
+        let ca = CertInfo::of(&ca);
+        assert!(ca.self_signed);
+        assert!(
+            ca.validity_text().contains(" UTC to "),
+            "{}",
+            ca.validity_text()
+        );
     }
 
     #[test]

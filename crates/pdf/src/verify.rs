@@ -300,14 +300,7 @@ fn check(bytes: &[u8], f: &Found, r: &mut SignatureReport) -> Result<usize, Stri
     if end > bytes.len() {
         return Err(malformed("the byte range points past the end of the file"));
     }
-    // The gap must be exactly the hex string of /Contents.
-    let gap = bytes.get(b..c).ok_or_else(|| malformed("byte range"))?;
-    if gap.first() != Some(&b'<') || gap.last() != Some(&b'>') {
-        return Err(malformed(
-            "the byte range does not exclude exactly the signature",
-        ));
-    }
-    if f.contents.len() > MAX_CMS_BYTES || gap.len() > MAX_CMS_BYTES * 2 + 2 {
+    if f.contents.len() > MAX_CMS_BYTES || c - b > MAX_CMS_BYTES * 2 + 2 {
         return Err(malformed("the signature data is too large"));
     }
     let cms = trim_der(&f.contents);
@@ -337,6 +330,29 @@ fn check(bytes: &[u8], f: &Found, r: &mut SignatureReport) -> Result<usize, Stri
     let digest_oid = si.digest_alg.oid;
     if digest_oid == OID_SHA1 {
         r.weak.push("SHA-1 digest".into());
+    }
+    // Who signed and when is read before the byte checks, so a broken signature still
+    // shows its signer.
+    if let Some(t) = si.signed_attrs.as_ref().and_then(|attrs| {
+        attrs
+            .iter()
+            .find(|a| a.oid == OID_SIGNING_TIME)
+            .and_then(|a| a.values.iter().next())
+            .and_then(|v| v.decode_as::<x509_cert::time::Time>().ok())
+    }) {
+        let when = t.to_system_time();
+        r.time = Some(crate::sign::human_date(when));
+        check_cert_time(&info, when, r);
+    }
+    // The gap must be exactly the hex string of /Contents.
+    let gap = bytes.get(b..c).ok_or_else(|| malformed("byte range"))?;
+    if gap.first() != Some(&b'<') || gap.last() != Some(&b'>') {
+        if contents_elsewhere(bytes, cms) {
+            return Err(rebuilt(end, bytes.len()));
+        }
+        return Err(malformed(
+            "the byte range does not exclude exactly the signature",
+        ));
     }
     let data = [
         bytes.get(..b).unwrap_or(&[]),
@@ -379,16 +395,6 @@ fn check(bytes: &[u8], f: &Found, r: &mut SignatureReport) -> Result<usize, Stri
             if md.as_bytes() != expected.as_slice() {
                 return Err("document content does not match the signature".into());
             }
-            if let Some(t) = attrs
-                .iter()
-                .find(|a| a.oid == OID_SIGNING_TIME)
-                .and_then(|a| a.values.iter().next())
-                .and_then(|v| v.decode_as::<x509_cert::time::Time>().ok())
-            {
-                let when = t.to_system_time();
-                r.time = Some(crate::sign::human_date(when));
-                check_cert_time(&info, when, r);
-            }
             let der = attrs.to_der().map_err(|_| malformed("signed attributes"))?;
             let pre = hash(digest_oid, &[&der]).ok_or_else(|| malformed("digest"))?;
             (der, pre)
@@ -408,6 +414,41 @@ fn check(bytes: &[u8], f: &Found, r: &mut SignatureReport) -> Result<usize, Stri
         r,
     )?;
     Ok(end)
+}
+
+/// The signature value is in the file, just not where its byte range says: the file was
+/// written out again (merged, optimized, re-saved) and the signed bytes are gone.
+fn contents_elsewhere(bytes: &[u8], cms: &[u8]) -> bool {
+    let probe = cms.get(..cms.len().min(32)).unwrap_or(&[]);
+    if probe.len() < 16 {
+        return false;
+    }
+    let lower: String = probe.iter().map(|b| format!("{b:02x}")).collect();
+    [lower.clone(), lower.to_ascii_uppercase()]
+        .iter()
+        .any(|h| crate::doc::find(bytes, h.as_bytes()).is_some())
+}
+
+fn rebuilt(signed: usize, total: usize) -> String {
+    format!(
+        "the file was rebuilt after signing (for example merged with other PDFs or re-saved \
+         by another program), so the signed content is no longer present; the signature \
+         covers {} of the current {}",
+        size_text(signed),
+        size_text(total)
+    )
+}
+
+/// Decimal sizes: `167 KB`, `15.2 MB`.
+fn size_text(n: usize) -> String {
+    let n = n as f64;
+    if n < 1_000.0 {
+        format!("{n} bytes")
+    } else if n < 1_000_000.0 {
+        format!("{:.0} KB", n / 1_000.0)
+    } else {
+        format!("{:.1} MB", n / 1_000_000.0)
+    }
 }
 
 fn check_cert_time(info: &CertInfo, when: SystemTime, r: &mut SignatureReport) {
@@ -747,6 +788,44 @@ mod tests {
             r[0].status,
             SigStatus::Broken("document content does not match the signature".into())
         );
+    }
+
+    #[test]
+    fn rebuilt_file_is_explained_and_keeps_its_signer() {
+        let mut bytes = signed();
+        // Re-saving shifts every object: the byte range no longer lands on /Contents.
+        let at = crate::doc::find(&bytes, b"\n").expect("header") + 1;
+        bytes.splice(at..at, b"% re-saved\n".iter().copied());
+        let r = reports(bytes);
+        match &r[0].status {
+            SigStatus::Broken(w) => {
+                assert!(w.contains("rebuilt after signing"), "{w}");
+                assert!(w.contains("covers"), "{w}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            r[0].signer.as_ref().map(|c| c.name.as_str()),
+            Some("Test Signer")
+        );
+        assert!(r[0].time.is_some());
+    }
+
+    #[test]
+    fn tampered_signature_keeps_its_signer() {
+        let mut bytes = signed();
+        let at = crate::doc::find(&bytes, b"Application form").expect("text");
+        bytes[at] = b'X';
+        let r = reports(bytes);
+        assert!(matches!(r[0].status, SigStatus::Broken(_)));
+        assert!(r[0].signer.is_some());
+    }
+
+    #[test]
+    fn sizes_are_readable() {
+        assert_eq!(size_text(999), "999 bytes");
+        assert_eq!(size_text(167_344), "167 KB");
+        assert_eq!(size_text(15_232_462), "15.2 MB");
     }
 
     #[test]

@@ -94,7 +94,14 @@ and SHA-256 certificate fingerprint, and one status:
 - **Valid, changed after signing**: the signed revision is intact and later changes
   exist; they are summarized (form fields filled, signatures added, other changes).
 - **Broken**: digest or signature mismatch, malformed structure, or an unsupported
-  algorithm (named).
+  algorithm (named). The reason SHALL be shown. When the signature value is present in
+  the file but its byte range no longer lands on it, the file was rebuilt after signing
+  (merged or re-saved by another program): the reason SHALL say so and give the signed
+  size against the file size, not call the signature malformed. Signer, signing time and
+  certificate details SHALL be shown for a broken signature whenever its signature data
+  can be read.
+A self-signed certificate (issuer equals subject) SHALL be marked as such, and the
+certificate details SHALL include its subject and validity period.
 Weak algorithms (SHA-1, RSA under 2048 bits) SHALL be flagged on any status. Each
 entry SHALL state that the signer identity was not checked against a trust list.
 Verification SHALL be offline and run off the UI thread within 5 seconds per
@@ -103,6 +110,11 @@ document. If verification takes longer, the panel SHALL say so.
 #### Scenario: Tampered document
 - **WHEN** a signed PDF has a byte changed inside its signed range
 - **THEN** the panel reports Broken with "document content does not match the signature"
+
+#### Scenario: Merged after signing
+- **WHEN** a signed PDF was combined with other PDFs, shifting every object
+- **THEN** the panel reports Broken, says the file was rebuilt after signing and how much
+  of it the signature covers, and still shows the signer
 
 #### Scenario: Form filled after signing
 - **WHEN** a signed PDF was later filled and saved incrementally

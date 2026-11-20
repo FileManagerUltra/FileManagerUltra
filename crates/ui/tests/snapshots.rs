@@ -2631,6 +2631,17 @@ fn signature_square(label: &str, tamper: bool, snapshot: &str) {
         h.query_by_label(label).is_none(),
         "the alert steps aside while the panel shows the details"
     );
+    if tamper {
+        assert!(
+            h.query_by_label("Document content does not match the signature.")
+                .is_some(),
+            "a broken signature says why"
+        );
+        assert!(
+            h.query_by_label("Signed by: Test Signer").is_some(),
+            "a broken signature still shows its signer"
+        );
+    }
 }
 
 /// A form with scripts says in one short line to use a PDF application.
