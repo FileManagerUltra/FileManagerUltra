@@ -569,12 +569,15 @@ Manual, on Windows (the OLE drag cannot run in CI; `cargo check --target x86_64-
 
 Windows releases are to be Authenticode-signed for free through the
 [SignPath Foundation](https://signpath.org/) open-source programme. The public policy
-is [code-signing-policy.md](code-signing-policy.md); the steps are in
-`.github/workflows/release.yml` (job `package`, "SignPath enabled?" onward).
+is [code-signing-policy.md](code-signing-policy.md).
 
-**Status (2026-11-18): prepared, not yet applied for.** The workflow steps are in place
-but inactive: without the `SIGNPATH_API_TOKEN` secret, tag builds stay unsigned exactly
-as before. Organization 2FA is already required.
+**Status (2026-11-20): prepared, not yet applied for; workflow steps removed.** The
+signing steps were written (commit `1052626`, job `package`, "SignPath enabled?" onward)
+but are not in `release.yml`: the repository's Actions allow-list does not include
+`signpath/github-action-submit-signing-request`, and GitHub refuses to start a workflow
+that names a disallowed action, even in a skipped step. Restore them with
+`git show 1052626 -- .github/workflows/release.yml | git apply` once the action is on
+the allow-list (step 4 below). Organization 2FA is already required.
 
 How it works: on a tag build, the program (`filemanagerultra.exe`) is uploaded as an
 artifact and signed by SignPath before `cargo packager` builds the NSIS installer, so the
@@ -593,8 +596,8 @@ Remaining steps:
    project slug (`FileManagerUltra`), policy slug (`release-signing`) and the action's
    version and inputs in `release.yml` match what SignPath and the action's README say.
 4. Add `signpath/github-action-submit-signing-request` to the repository's Actions
-   allow-list, the `SIGNPATH_API_TOKEN` repository secret and the
-   `SIGNPATH_ORGANIZATION_ID` repository variable.
+   allow-list **before** restoring the workflow steps, then the `SIGNPATH_API_TOKEN`
+   repository secret and the `SIGNPATH_ORGANIZATION_ID` repository variable.
 5. Link the policy from the README, update `docs/install.md` (no more SmartScreen
    "Run anyway" for signed releases) and add a CHANGELOG line with the first signed
    release.
