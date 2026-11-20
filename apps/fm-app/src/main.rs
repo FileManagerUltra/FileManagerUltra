@@ -919,6 +919,11 @@ impl App {
         // Rendered PDF pages, extracted text and signature checks show on the next frame.
         let pdf_ctx = cc.egui_ctx.clone();
         session.pdf.set_waker(move || pdf_ctx.request_repaint());
+        // Table rows, indexing progress and filter/sort results show on the next frame.
+        let table_ctx = cc.egui_ctx.clone();
+        session
+            .tables
+            .set_waker(move || table_ctx.request_repaint());
         // Video is drawn when a frame is ready, not on a 16 ms timer, and only while a
         // player is on screen.
         let frame_ctx = cc.egui_ctx.clone();

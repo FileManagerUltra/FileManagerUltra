@@ -318,15 +318,19 @@ fn custom_structured_text_and_media_filters_reach_workers() {
     assert!(
         matches!(&*r.wait_static(), Preview::Structured(doc) if doc.format == fm_preview::Format::Json)
     );
-    for (name, lang) in [("b.custom", "html"), ("c.custom", "csv")] {
-        r.cursor(name);
-        let pane = r.preview;
-        assert!(pump(
-            &mut r.s,
-            |s| matches!(s.preview_slot(pane).map(|slot| &slot.body),
-            Some(Body::Static(preview)) if matches!(&**preview, Preview::Text(doc) if doc.lang == lang))
-        ));
-    }
+    r.cursor("b.custom");
+    let pane = r.preview;
+    assert!(pump(
+        &mut r.s,
+        |s| matches!(s.preview_slot(pane).map(|slot| &slot.body),
+        Some(Body::Static(preview)) if matches!(&**preview, Preview::Text(doc) if doc.lang == "html"))
+    ));
+    // CSV associations open the table view.
+    r.cursor("c.custom");
+    assert!(pump(&mut r.s, |s| s
+        .preview_slot(pane)
+        .and_then(|slot| slot.table())
+        .is_some_and(|t| t.doc.columns.len() == 2)));
     r.cursor("d.custom");
     let pane = r.preview;
     assert!(pump(
@@ -1542,4 +1546,48 @@ fn closing_the_last_thumbnail_workspace_gives_back_thumbnail_memory() {
     assert!(r.s.thumbs.memory_bytes() > 0);
     r.s.workspace_close_now(0).expect("close");
     assert_eq!(r.s.thumbs.memory_bytes(), 0);
+}
+
+#[test]
+fn csv_files_open_as_a_live_table_that_sorts() {
+    let mut csv = b"id;name;price\r\n".to_vec();
+    for i in 0..3000 {
+        csv.extend_from_slice(format!("{i};\"item\n{i}\";{},5\r\n", 3000 - i).as_bytes());
+    }
+    let mut r = rig(&[("export.csv", &csv), ("notes.txt", b"plain")]);
+    r.cursor("export.csv");
+    let preview = r.preview;
+    assert!(pump(&mut r.s, |s| s
+        .preview_slot(preview)
+        .and_then(|slot| slot.table())
+        .is_some_and(|t| t.indexing().is_none())));
+    let table =
+        r.s.preview_slot(preview)
+            .and_then(|s| s.table())
+            .expect("table");
+    assert_eq!(table.doc.dialect.delimiter, b';');
+    assert_eq!(table.total_rows(), 3000);
+    assert_eq!(table.doc.column_name(2), "price");
+    r.s.dispatch(
+        "preview.table.sort",
+        &json!({"column": 2, "order": "asc", "pane": preview}),
+    )
+    .expect("sort");
+    let mut first = None;
+    assert!(pump(&mut r.s, |s| {
+        first = s
+            .preview_slot(preview)
+            .and_then(|slot| slot.table())
+            .filter(|t| t.view_rows().is_some())
+            .and_then(|t| t.row(0))
+            .map(|(n, row)| (n, row.cell(0).to_string()));
+        first.is_some()
+    }));
+    // Prices are 3000,5 down to 1,5 (decimal commas): the cheapest is the last row.
+    assert_eq!(first, Some((2999, "2999".to_string())));
+    // Another file replaces the table.
+    r.cursor("notes.txt");
+    assert!(pump(&mut r.s, |s| s
+        .preview_slot(preview)
+        .is_some_and(|slot| matches!(slot.body, Body::Static(_)))));
 }

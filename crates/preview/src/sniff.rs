@@ -14,6 +14,8 @@ pub enum Kind {
     /// An SVG drawing: rendered, with its XML source one toggle away.
     Svg,
     Structured(Format),
+    /// Delimited text (CSV/TSV) shown as a table.
+    Table,
     /// Plain text with a highlighter language token (extension or name), possibly empty.
     Text(String),
     Binary,
@@ -199,6 +201,10 @@ pub fn sniff(path: &str, head: &[u8]) -> Kind {
     if ext == "bmp" && head.starts_with(b"BM") {
         return Kind::Image("bmp");
     }
+    // Spreadsheet exports are often Windows-1252: only NUL bytes make them binary.
+    if matches!(ext.as_str(), "csv" | "tsv" | "tab") && (is_text(head) || !head.contains(&0)) {
+        return Kind::Table;
+    }
     if !is_text(head) {
         return Kind::Binary;
     }
@@ -267,8 +273,14 @@ pub fn content(path: &str, head: &[u8]) -> Kind {
 pub fn configured(path: &str, head: &[u8], association: Option<Kind>) -> Kind {
     match association {
         Some(kind @ (Kind::Log | Kind::Svg)) if head.starts_with(&[0x1f, 0x8b]) => kind,
+        Some(Kind::Table) if is_text(head) || !head.contains(&0) => Kind::Table,
         Some(
-            kind @ (Kind::Log | Kind::Markdown | Kind::Svg | Kind::Structured(_) | Kind::Text(_)),
+            kind @ (Kind::Log
+            | Kind::Markdown
+            | Kind::Svg
+            | Kind::Structured(_)
+            | Kind::Table
+            | Kind::Text(_)),
         ) => {
             if is_text(head) {
                 kind

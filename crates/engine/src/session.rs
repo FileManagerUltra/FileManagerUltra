@@ -107,6 +107,8 @@ pub struct Session {
     pub md_diagrams: crate::md_diagrams::MdDiagramService,
     /// PDF pages, text and signature checks (own worker pool, byte-capped cache).
     pub pdf: crate::pdf_service::PdfService,
+    /// Shared state of table previews (the UI waker).
+    pub tables: crate::preview_table::TableHub,
     pub(crate) pdf_inbox: crate::pdf_view::PdfInbox,
     /// Raised when quitting or closing a pane would lose unsaved PDF changes.
     pub pdf_unsaved: Option<crate::pdf_form_cmds::PdfUnsaved>,
@@ -237,6 +239,7 @@ impl Default for Session {
             md_images: Default::default(),
             md_diagrams: Default::default(),
             pdf: Default::default(),
+            tables: Default::default(),
             pdf_inbox: Default::default(),
             pdf_unsaved: None,
             pdf_after_save: None,

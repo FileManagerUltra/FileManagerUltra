@@ -23,6 +23,7 @@ pub mod sniff;
 pub mod structured;
 pub mod subtitles;
 pub mod svg;
+pub mod table;
 pub mod text;
 pub mod thumbs;
 pub mod video;
@@ -273,6 +274,8 @@ pub enum Preview {
     Meta(MetaDoc),
     /// A PDF document (pages rendered by the engine's PDF pool).
     Pdf(pdf_prev::PdfDoc),
+    /// Delimited text; the engine opens the whole file in the background.
+    Table(Box<table::TableDoc>),
     Error(String),
 }
 
@@ -398,6 +401,7 @@ fn render_inner(
         Kind::Image(_) => image_prev::render(vfs, entry, limits),
         Kind::Log => log::open_doc_with(vfs, entry, limits, logs).map(Preview::Log),
         Kind::Text(lang) => text::render_text(vfs, entry, limits, &lang),
+        Kind::Table => table::render(vfs, entry, limits, table::TableOptions::default()),
         Kind::Structured(f) => structured::render(vfs, entry, limits, f),
         Kind::Markdown => markdown::render(vfs, entry, limits),
         Kind::Svg => svg::render(vfs, entry, limits).map(Preview::Svg),

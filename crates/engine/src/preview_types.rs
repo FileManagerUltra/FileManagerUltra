@@ -94,7 +94,7 @@ impl PreviewType {
             Self::Toml => "*.toml".into(),
             Self::Xml => "*.xml; *.xsd; *.xsl; *.xslt; *.plist; *.xhtml; *.csproj; *.wsdl".into(),
             Self::Html => "*.html; *.htm".into(),
-            Self::Csv => "*.csv; *.tsv".into(),
+            Self::Csv => "*.csv; *.tsv; *.tab".into(),
             Self::Text => "*.txt; *.text".into(),
         }
     }
@@ -113,7 +113,7 @@ impl PreviewType {
             Self::Toml => Kind::Structured(Format::Toml),
             Self::Xml => Kind::Structured(Format::Xml),
             Self::Html => Kind::Text("html".into()),
-            Self::Csv => Kind::Text("csv".into()),
+            Self::Csv => Kind::Table,
             Self::Text => Kind::Text("text".into()),
         }
     }

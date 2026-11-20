@@ -106,7 +106,7 @@ pub(crate) fn show(ui: &mut Ui, s: &mut Session, tokens: &Tokens) {
     hint(
         ui,
         tokens,
-        "Patterns match whole filenames and ignore case: * is any text, ? one character, [0-9] one character from a range; without these it is an exact name such as dmesg. Files that match no pattern are recognised by their content. HTML and CSV open as text.",
+        "Patterns match whole filenames and ignore case: * is any text, ? one character, [0-9] one character from a range; without these it is an exact name such as dmesg. Files that match no pattern are recognised by their content. HTML opens as text; CSV opens as a table.",
     );
     ui.add_space(4.0);
     if ui.button("Restore default file types").clicked()

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CSV and TSV files open as a table in the Preview pane, with a fixed header row, row numbers and columns you can resize. Click a column header to sort (Shift+click adds a second or third column); numbers sort by value. Filter rows by text in all columns or one, optionally as a regular expression, and add conditions such as "greater than" or "is empty" from a column's menu. The Record panel shows the selected row with every value in full, which helps with long descriptions. Copy a cell, a row or the column names, go to a row number, and hide columns you don't need. The delimiter and header row are detected automatically and can be changed in the toolbar. Large files open straight away and keep loading in the background, so files of several gigabytes stay quick, also on network shares and SFTP. The file's text is one click away.
+
 ### Changed
 
 - The Signatures panel explains why a signature is broken. A PDF that was merged with other PDFs or re-saved by another program after signing now says so, and shows how much of the current file the signature covers, instead of calling the signature malformed. Broken signatures still show who signed and when, self-signed certificates are marked as such, and the certificate details include its subject and validity period.

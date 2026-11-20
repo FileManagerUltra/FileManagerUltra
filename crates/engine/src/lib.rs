@@ -85,6 +85,8 @@ mod preview_prefs_cmds;
 pub mod preview_reload_cmds;
 pub mod preview_rotate_cmds;
 pub mod preview_scale_cmds;
+pub mod preview_table;
+pub mod preview_table_cmds;
 pub mod preview_text_cmds;
 pub mod preview_types;
 pub mod props_cmds;

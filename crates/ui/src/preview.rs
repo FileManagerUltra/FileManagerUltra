@@ -24,6 +24,8 @@ mod markdown;
 pub mod mermaid_ui;
 mod pdf;
 mod pdf_sign;
+#[path = "preview_table.rs"]
+mod table;
 #[path = "preview_time.rs"]
 mod time;
 
@@ -78,6 +80,12 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         && ui.ctx().memory(|m| m.is_above_modal_layer(ui.layer_id()))
         && !ui.any_popup_open();
     if find_keyboard {
+        if s.preview_slot(pane)
+            .is_some_and(|slot| slot.table().is_some() && !slot.source)
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F))
+        {
+            table::focus_filter(ui, pane);
+        }
         for (modifiers, key, id) in [
             (egui::Modifiers::COMMAND, egui::Key::F, "preview.find.open"),
             (
@@ -414,6 +422,8 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     }
                 }
                 Body::Grid(items) => multi_grid(ui, pane, tokens, items, &mut actions),
+                Body::Table(v) if slot.source => text_view(ui, pane, tokens, &v.doc.raw, slot.wrap),
+                Body::Table(v) => table::body(ui, pane, tokens, v, &mut actions),
                 Body::Log(v) => {
                     log_body(ui, pane, tokens, v, &mut actions);
                     let id = Id::NULL.with(("pv-logui", pane));
@@ -546,7 +556,7 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
         if diff.is_some_and(|d| d.active) {
             return;
         }
-        if !matches!(slot.body, Body::Log(_)) {
+        if !matches!(slot.body, Body::Log(_) | Body::Table(_)) {
             let can_find = matches!(&slot.body, Body::Static(p) if fm_engine::preview_find_cmds::searchable(p));
             if ui
                 .add_enabled(can_find, egui::Button::new("Find"))
@@ -627,6 +637,12 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
                     actions,
                 ),
                 _ => {}
+            }
+        }
+        if let Body::Table(v) = &slot.body {
+            table::toolbar_options(ui, v, slot.source, actions);
+            if slot.source {
+                wrap_pretty(ui, actions);
             }
         }
     };
@@ -761,6 +777,13 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
             });
         }
     });
+    if let Body::Table(v) = &slot.body
+        && !slot.source
+        && !diff.is_some_and(|d| d.active)
+    {
+        ui.separator();
+        table::filter_bar(ui, pane, tokens, v, actions);
+    }
     if let Body::Log(v) = &slot.body
         && ui
             .data(|d| d.get_temp::<LogUi>(Id::NULL.with(("pv-logui", pane))))
@@ -1017,6 +1040,8 @@ fn static_body(
 ) -> Option<usize> {
     match &**p {
         Preview::Text(d) => text_view(ui, pane, tokens, d, wrap),
+        // Several files at once: a table shows as its text.
+        Preview::Table(t) => text_view(ui, pane, tokens, &t.raw, wrap),
         Preview::Structured(d) => structured(ui, pane, tokens, d, pretty, wrap),
         Preview::Markdown(m) if source => text_view(ui, pane, tokens, &m.source, wrap),
         Preview::Markdown(m) => {

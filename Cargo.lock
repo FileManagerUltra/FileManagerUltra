@@ -2500,6 +2500,7 @@ dependencies = [
  "fm-testkit",
  "fm-vfs",
  "image",
+ "memchr",
  "merman",
  "merman-export",
  "pulldown-cmark 0.12.2",

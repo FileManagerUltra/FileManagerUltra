@@ -122,6 +122,8 @@ pub enum Body {
     Static(Arc<Preview>),
     Log(Box<LogView>),
     Grid(Vec<(Entry, Arc<Preview>)>),
+    /// Delimited text as a live table (rows read in the background).
+    Table(Box<crate::preview_table::TableView>),
 }
 
 type Key = (VfsUri, Option<SystemTime>, Option<u64>, bool, bool);
@@ -251,6 +253,20 @@ impl PreviewSlot {
         }
     }
 
+    pub fn table(&self) -> Option<&crate::preview_table::TableView> {
+        match &self.body {
+            Body::Table(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn table_mut(&mut self) -> Option<&mut crate::preview_table::TableView> {
+        match &mut self.body {
+            Body::Table(t) => Some(t),
+            _ => None,
+        }
+    }
+
     /// Show a file the app just wrote (a saved PDF) in place of the cursor's file; the
     /// render key stays the cursor's, so the next cursor move replaces it as usual.
     pub(crate) fn show_saved(&mut self, entry: Entry, body: Body) {
@@ -265,6 +281,7 @@ impl PreviewSlot {
         self.pending.is_some()
             || matches!(self.body, Body::Loading)
             || self.log().is_some_and(|l| l.busy || l.follow)
+            || self.table().is_some_and(|t| t.is_busy())
     }
 }
 
@@ -945,6 +962,15 @@ impl Session {
                     token,
                     preview,
                 } => {
+                    // A table opens the whole file in the background: it needs the
+                    // file's backend, looked up before the slot is borrowed.
+                    let table_vfs = match (&*preview, self.previews.slots.get(&pane)) {
+                        (Preview::Table(_), Some(slot)) => slot.subject.as_ref().and_then(|e| {
+                            self.backends.require(&e.uri).ok().map(|v| (v, e.clone()))
+                        }),
+                        _ => None,
+                    };
+                    let waker = self.tables.waker();
                     let Some(slot) = self.previews.slots.get_mut(&pane) else {
                         continue;
                     };
@@ -952,6 +978,14 @@ impl Session {
                         continue;
                     }
                     slot.body = match *preview {
+                        Preview::Table(doc) => match table_vfs {
+                            Some((vfs, entry)) => Body::Table(Box::new(
+                                crate::preview_table::TableView::open(vfs, entry, *doc, waker),
+                            )),
+                            None => Body::Static(Arc::new(Preview::Error(
+                                "the file's location is no longer available".into(),
+                            ))),
+                        },
                         Preview::Log(doc) => {
                             let mut view = LogView::new(doc);
                             if let Some((filter, _, expand, columns)) = &slot.saved_log {
@@ -1031,6 +1065,42 @@ impl Session {
 
     pub fn preview_slot(&self, pane: PaneId) -> Option<&PreviewSlot> {
         self.previews.slot(pane)
+    }
+
+    /// Read the shown table again with other dialect choices (delimiter, header).
+    pub(crate) fn rerender_table(
+        &mut self,
+        pane: PaneId,
+        options: fm_preview::table::TableOptions,
+    ) -> Result<(), FmError> {
+        let slot = self.previews.slots.get_mut(&pane).ok_or_else(no_preview)?;
+        if slot.table().is_none() {
+            return Err(FmError::InvalidParams(
+                "the preview is not showing a table".into(),
+            ));
+        }
+        let entry = slot.subject.clone().ok_or_else(no_preview)?;
+        let vfs = self.backends.require(&entry.uri)?;
+        let token = slot.token;
+        slot.body = Body::Loading;
+        let inbox = self.previews.inbox.clone();
+        self.jobs.submit(lane_for(entry.uri.scheme()), move |_ctx| {
+            let preview =
+                match fm_preview::table::render(&*vfs, &entry, &Limits::default(), options) {
+                    Ok(p) => p,
+                    Err(e) => Preview::Error(e.to_string()),
+                };
+            PreviewHub::push(
+                &inbox,
+                Msg::Rendered {
+                    pane,
+                    token,
+                    preview: Box::new(preview),
+                },
+            );
+            Ok(())
+        });
+        Ok(())
     }
 
     pub(crate) fn reload_preview(&mut self, params: &Params) -> Result<(), FmError> {
@@ -1150,10 +1220,10 @@ fn has_source_view(p: &Preview) -> bool {
 }
 
 fn has_markdown(s: &Session) -> bool {
-    s.previews
-        .slots
-        .values()
-        .any(|sl| matches!(&sl.body, Body::Static(p) if has_source_view(p)))
+    s.previews.slots.values().any(|sl| {
+        matches!(&sl.body, Body::Static(p) if has_source_view(p))
+            || matches!(sl.body, Body::Table(_))
+    })
 }
 
 fn has_log(s: &Session) -> bool {
@@ -1364,6 +1434,10 @@ pub fn toggle_source() -> CommandSpec {
                 .slots
                 .entry(pane)
                 .or_insert_with(PreviewSlot::new);
+            if matches!(slot.body, Body::Table(_)) {
+                slot.source = !slot.source;
+                return Ok(());
+            }
             let Body::Static(prev) = &slot.body else {
                 return Err(FmError::InvalidParams(
                     "nothing to show the source of".into(),

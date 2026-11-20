@@ -1184,7 +1184,9 @@ fn preview_fixture_with(
         let settled = s.preview_slot(pane).is_some_and(|slot| {
             matches!(
                 slot.body,
-                fm_engine::preview_cmds::Body::Static(_) | fm_engine::preview_cmds::Body::Log(_)
+                fm_engine::preview_cmds::Body::Static(_)
+                    | fm_engine::preview_cmds::Body::Log(_)
+                    | fm_engine::preview_cmds::Body::Table(_)
             )
         });
         if settled {
@@ -5533,4 +5535,148 @@ fn dialog_picker_dark_light() {
         harness.snapshot(format!("dialog_picker_{theme}"));
         results.extend_harness(&mut harness);
     }
+}
+
+const TABLE_CSV: &[u8] = b"Code,Country,Rate,Note\n\"NL-high\",NL,21.0000,\"standard\"\n\"NL-low\",NL,9.0000,\"food\nbooks\"\nBE,BE,21.0000,\nDE,DE,19.0000,\"Mehrwertsteuer\"\nAT,AT,20.0000,\nFR,FR,20.0000,\"TVA normal\"\n";
+
+/// Poll until the table's background work (index, view job, rows) settles.
+fn settle_table(h: &mut Harness<'_, Session>, pane: u64) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut quiet = 0;
+    while quiet < 4 {
+        h.state_mut().poll();
+        h.step();
+        std::thread::sleep(Duration::from_millis(10));
+        let busy = h
+            .state()
+            .preview_slot(pane)
+            .and_then(|slot| slot.table())
+            .is_none_or(|t| t.is_busy());
+        quiet = if busy { 0 } else { quiet + 1 };
+        assert!(Instant::now() < deadline, "table never settled");
+    }
+    h.run_steps(2);
+}
+
+/// CSV opens as a table: header, row numbers, right-aligned numbers, a multi-line cell
+/// marker and the filter bar, in both themes.
+#[test]
+fn table_preview_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let (session, pane) = preview_fixture("rates.csv", TABLE_CSV, false);
+        let mut h = Harness::builder()
+            .renderer(renderer)
+            .with_accessibility_check(false)
+            .with_size(egui::vec2(760.0, 360.0))
+            .build_ui_state(
+                move |ui, session: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    fm_ui::preview::show(ui, session, pane, &tokens);
+                },
+                session,
+            );
+        settle_table(&mut h, pane);
+        h.state_mut()
+            .dispatch(
+                "preview.table.select",
+                &serde_json::json!({ "pane": pane, "row": 1, "column": 3 }),
+            )
+            .expect("select");
+        settle_table(&mut h, pane);
+        results.add(h.try_snapshot(format!("preview_table_{theme}")));
+    }
+}
+
+/// Clicking a header sorts; the filter bar's conditions narrow the rows; the Record
+/// panel shows the selected row in full.
+#[test]
+fn table_header_sorts_and_record_shows_the_row() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let Some(renderer) = renderer_or_skip() else {
+        return;
+    };
+    let (session, pane) = preview_fixture("rates.csv", TABLE_CSV, false);
+    let tokens = Tokens::light();
+    let mut h = Harness::builder()
+        .renderer(renderer)
+        .with_accessibility_check(false)
+        .with_size(egui::vec2(900.0, 420.0))
+        .build_ui_state(
+            move |ui, session: &mut Session| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(egui::Theme::Light);
+                fm_ui::preview::show(ui, session, pane, &tokens);
+            },
+            session,
+        );
+    settle_table(&mut h, pane);
+    let table = |h: &Harness<'_, Session>| {
+        let slot = h.state().preview_slot(pane).expect("slot");
+        let t = slot.table().expect("table");
+        (t.sort.clone(), t.row_count(), t.record, t.selected)
+    };
+    h.get_by_label("Sort by Rate").click();
+    settle_table(&mut h, pane);
+    let (sort, rows, _, _) = table(&h);
+    assert_eq!(sort.len(), 1);
+    assert_eq!((sort[0].column, sort[0].descending), (2, false));
+    assert_eq!(rows, 6);
+    h.get_by_label("Sort by Rate").click();
+    settle_table(&mut h, pane);
+    assert!(table(&h).0[0].descending);
+    let first = h
+        .state()
+        .preview_slot(pane)
+        .and_then(|s| s.table())
+        .and_then(|t| t.row(0))
+        .map(|(_, r)| r.cell(0).to_string());
+    assert!(
+        matches!(first.as_deref(), Some("NL-high" | "BE")),
+        "{first:?}"
+    );
+    h.get_by_label("Sort by Rate").click();
+    settle_table(&mut h, pane);
+    assert!(table(&h).0.is_empty(), "third click returns to file order");
+    h.state_mut()
+        .dispatch(
+            "preview.table.condition.add",
+            &serde_json::json!({ "pane": pane, "column": 2, "op": "greater", "value": "20" }),
+        )
+        .expect("condition");
+    settle_table(&mut h, pane);
+    assert_eq!(table(&h).1, 2);
+    h.get_by_label_contains("Rate greater than 20");
+    h.get_by_label_contains("Rate greater than 20").click();
+    settle_table(&mut h, pane);
+    assert_eq!(table(&h).1, 6, "the chip removes its condition");
+    // Double-click a cell: it is selected and the Record panel opens.
+    let rect = h.get_by_label("Sort by Note").rect();
+    let at = egui::pos2(rect.center().x, rect.max.y + 30.0);
+    h.input_mut().events.push(egui::Event::PointerMoved(at));
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+    }
+    settle_table(&mut h, pane);
+    let (_, _, record, selected) = table(&h);
+    assert!(record, "double-click opens the Record panel");
+    assert_eq!(selected.map(|(_, c)| c), Some(3));
+    h.get_by_label_contains("Row ");
 }

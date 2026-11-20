@@ -49,7 +49,7 @@ fn defaults_cover_existing_types_logs_and_rotations() {
     );
     assert_eq!(rules.kind("photo.JPG"), Some(Kind::Image("image")));
     assert_eq!(rules.kind("page.htm"), Some(Kind::Text("html".into())));
-    assert_eq!(rules.kind("data.csv"), Some(Kind::Text("csv".into())));
+    assert_eq!(rules.kind("data.csv"), Some(Kind::Table));
     assert_eq!(
         rules.kind("data.json"),
         Some(Kind::Structured(Format::Json))
@@ -136,11 +136,11 @@ fn custom_patterns_priority_clear_and_validation() {
     assert_eq!(rules.kind("special"), Some(Kind::Log));
     assert_eq!(rules.kind("a.txt"), Some(Kind::Log));
     assert_eq!(rules.kind("a.log"), None);
-    assert_eq!(rules.kind("table.data"), Some(Kind::Text("csv".into())));
+    assert_eq!(rules.kind("table.data"), Some(Kind::Table));
     set(&mut filters, PreviewType::Logs, &[]);
     assert_eq!(
         filters.compile().expect("empty").kind("a.txt"),
-        Some(Kind::Text("csv".into()))
+        Some(Kind::Table)
     );
     // Reordering groups changes priority.
     set(&mut filters, PreviewType::Logs, &["*.txt"]);
@@ -148,7 +148,7 @@ fn custom_patterns_priority_clear_and_validation() {
     filters.0.push(logs);
     assert_eq!(
         filters.compile().expect("reordered").kind("a.txt"),
-        Some(Kind::Text("csv".into()))
+        Some(Kind::Table)
     );
     for bad in [
         vec![" ".to_string()],
