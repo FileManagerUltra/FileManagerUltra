@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The Signatures panel explains why a signature is broken. A PDF that was merged with other PDFs or re-saved by another program after signing now says so, and shows how much of the current file the signature covers, instead of calling the signature malformed. Broken signatures still show who signed and when, self-signed certificates are marked as such, and the certificate details include its subject and validity period.
 
+### Fixed
+
+- Opening a folder you have no permission to read no longer also adds a "Live refresh is unavailable" error to the Activity panel; the Files pane already says access was denied.
+
 ## [0.3.1] - 2026-11-20
 
 ### Added

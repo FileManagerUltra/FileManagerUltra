@@ -121,7 +121,7 @@ impl WatchWorker {
                         Cmd::Watch { key, path } => {
                             let result = watcher
                                 .watch(&path, RecursiveMode::NonRecursive)
-                                .map_err(|err| (err.to_string(), is_missing(&err, &path)));
+                                .map_err(|err| (err.to_string(), read_reports(&err, &path)));
                             if done_tx.send(Done { key, result }).is_err() {
                                 break;
                             }
@@ -396,13 +396,14 @@ impl Watcher {
                 shared.watched.remove(&done.key);
                 shared.dirty.remove(&done.key);
             }
-            Err((text, missing)) => {
+            Err((text, read_reports_it)) => {
                 lock(&self.shared).watched.remove(&done.key);
                 let previous = self.retries.get(&uri).copied();
                 self.retries
                     .insert(uri, Retry::after_failure(previous, now));
-                // A vanished folder is not a watcher problem; the read reports it.
-                if previous.is_none() && !missing {
+                // A vanished or unreadable folder is not a watcher problem; the read
+                // reports it in the pane.
+                if previous.is_none() && !read_reports_it {
                     *notice = Some(format!(
                         "Live refresh is unavailable for some folders ({text}); they refresh periodically instead."
                     ));
@@ -479,8 +480,22 @@ fn mark(shared: &Mutex<Shared>, event: &notify::Event) -> bool {
     marked
 }
 
-/// Whether a watch failed because the folder is gone or unreachable (the Windows backend
-/// reports this wrapped in a generic error), which the directory read reports itself.
+/// Whether a watch failed for a reason the directory read reports itself in the pane:
+/// the folder is gone or unreachable, or it may not be read.
+fn read_reports(err: &notify::Error, path: &Path) -> bool {
+    is_missing(err, path) || is_denied(err, path)
+}
+
+/// Permission denied (os error 13 on Unix, 5 on Windows), from the watcher or, when the
+/// backend wraps it, from reading the folder.
+fn is_denied(err: &notify::Error, path: &Path) -> bool {
+    let denied = |e: &std::io::Error| e.kind() == std::io::ErrorKind::PermissionDenied;
+    matches!(&err.kind, notify::ErrorKind::Io(e) if denied(e))
+        || std::fs::read_dir(path).is_err_and(|e| denied(&e))
+}
+
+/// The folder is gone or unreachable (the Windows backend reports this wrapped in a
+/// generic error).
 fn is_missing(err: &notify::Error, path: &Path) -> bool {
     matches!(err.kind, notify::ErrorKind::PathNotFound)
         || err.to_string().contains("PathNotFound")
@@ -714,6 +729,39 @@ mod tests {
             .add_path(PathBuf::new());
         assert!(!mark(&shared, &event));
         assert!(lock(&shared).dirty.is_empty());
+    }
+
+    #[test]
+    fn permission_denied_is_left_to_the_read() {
+        let io = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(read_reports(&notify::Error::io(io), Path::new(".")));
+        let other = notify::Error::io(std::io::Error::other("inotify limit"));
+        assert!(!read_reports(&other, Path::new(".")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_dir_falls_back_without_notice() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tmp");
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).expect("mkdir");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        // Root reads anything; then there is nothing to test.
+        if std::fs::read_dir(&locked).is_ok() {
+            return;
+        }
+        let u = uri(&locked);
+        let mut w = Watcher::new();
+        let mut notice = w.sync(std::slice::from_ref(&u), &[]);
+        let end = Instant::now() + Duration::from_secs(5);
+        while !w.inflight.is_empty() && Instant::now() < end {
+            notice = notice.or(w.sync(std::slice::from_ref(&u), &[]));
+        }
+        assert!(w.inflight.is_empty(), "the watch attempt finished");
+        let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700));
+        assert!(notice.is_none(), "{notice:?}");
+        assert!(!w.covers(&u));
     }
 
     #[test]
