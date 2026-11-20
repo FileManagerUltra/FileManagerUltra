@@ -994,6 +994,10 @@ mod tests {
                 ("action_replace", t.action_replace),
                 ("action_discard", t.action_discard),
                 ("accent", t.accent),
+                // The signature-problem square on the pages.
+                ("sig_valid", t.sig_valid),
+                ("sig_changed", t.sig_changed),
+                ("sig_broken", t.sig_broken),
             ] {
                 let ratio = contrast(t.action_text, fill);
                 assert!(

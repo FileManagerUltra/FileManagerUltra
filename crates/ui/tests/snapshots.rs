@@ -2500,6 +2500,191 @@ fn pdf_preview_pages_password_and_fill_dark_light() {
     }
 }
 
+/// A PDF without form fields has Fill & Sign in the preview bar, not on the pages.
+#[test]
+fn pdf_fill_and_sign_in_bar_on_plain_pdf() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let Some(renderer) = renderer_or_skip() else {
+        return;
+    };
+    let (session, pane) = preview_fixture("doc.pdf", &fm_pdf::fixtures::text_pages(2), false);
+    let tokens = Tokens::light();
+    let mut h = Harness::builder()
+        .renderer(renderer)
+        .with_accessibility_check(false)
+        .with_size(egui::vec2(720.0, 560.0))
+        .build_ui_state(
+            move |ui, session: &mut Session| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(egui::Theme::Light);
+                fm_ui::preview::show(ui, session, pane, &tokens);
+            },
+            session,
+        );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while h.query_by_label("Fill & Sign").is_none() {
+        h.state_mut().poll();
+        h.step();
+        assert!(Instant::now() < deadline, "bar button never shown");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let button = h.get_by_label("Fill & Sign").rect();
+    assert!(
+        button.max.y < 40.0 && button.height() < 40.0,
+        "plain PDFs get Fill & Sign in the bar, not on the pages: {button:?}"
+    );
+    h.get_by_label("Fill & Sign").click();
+    h.run_steps(1);
+    assert!(
+        h.state().pdf_view(pane).is_some_and(|v| v.fill.is_some()),
+        "the bar button starts Fill & Sign"
+    );
+}
+
+/// A broken signature shows a square on the pages, left of the Fill & Sign button of a
+/// form; it opens the Signatures panel and then steps aside.
+#[test]
+fn pdf_broken_signature_shows_alert_square() {
+    signature_square("Signature broken", true, "preview_pdf_sig_broken_light");
+}
+
+/// An intact signature shows the same kind of square, in the valid colour.
+#[test]
+fn pdf_intact_signature_shows_square() {
+    signature_square("Signature intact", false, "preview_pdf_sig_intact_light");
+}
+
+fn signature_square(label: &str, tamper: bool, snapshot: &str) {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let Some(renderer) = renderer_or_skip() else {
+        return;
+    };
+    let p12 = fm_pdf::fixtures::certs::p12(&fm_pdf::fixtures::certs::P12Spec::default());
+    let signer = fm_pdf::cert::load_pkcs12(
+        &p12,
+        &fm_pdf::Secret::new("test-pass"),
+        std::time::SystemTime::now(),
+    )
+    .expect("signer");
+    let mut bytes = fm_pdf::sign::sign(
+        &fm_pdf::fixtures::form(),
+        None,
+        &signer,
+        &fm_pdf::sign::Request::default(),
+    )
+    .expect("sign");
+    if tamper {
+        // Change a byte of page content inside the signed range.
+        let at = fm_pdf::doc::find(&bytes, b"Application form").expect("text");
+        bytes[at] = b'X';
+    }
+    let (session, pane) = preview_fixture("signed.pdf", &bytes, false);
+    let tokens = Tokens::light();
+    let mut h = Harness::builder()
+        .renderer(renderer)
+        .with_accessibility_check(false)
+        .with_size(egui::vec2(720.0, 560.0))
+        .build_ui_state(
+            move |ui, session: &mut Session| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(egui::Theme::Light);
+                fm_ui::preview::show(ui, session, pane, &tokens);
+            },
+            session,
+        );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while h.query_by_label(label).is_none() {
+        h.state_mut().poll();
+        h.step();
+        assert!(Instant::now() < deadline, "alert never shown");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let mut quiet = 0;
+    while quiet < 5 {
+        h.state_mut().poll();
+        h.step();
+        std::thread::sleep(Duration::from_millis(10));
+        quiet = if h.state().pdf.is_busy() {
+            0
+        } else {
+            quiet + 1
+        };
+        assert!(Instant::now() < deadline, "PDF preview never settled");
+    }
+    h.run_steps(2);
+    let alert = h.get_by_label(label).rect();
+    let fill = h.get_by_label("Fill & Sign").rect();
+    assert!(
+        alert.max.x <= fill.min.x && alert.max.y > 40.0,
+        "alert on the pages, left of Fill & Sign: {alert:?} {fill:?}"
+    );
+    h.snapshot(snapshot);
+    h.get_by_label(label).click();
+    h.run_steps(2);
+    assert!(
+        h.state().pdf_view(pane).is_some_and(|v| v.signatures_open),
+        "the alert opens the Signatures panel"
+    );
+    assert!(
+        h.query_by_label(label).is_none(),
+        "the alert steps aside while the panel shows the details"
+    );
+}
+
+/// A form with scripts says in one short line to use a PDF application.
+#[test]
+fn pdf_scripted_form_advises_a_full_pdf_application() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let Some(renderer) = renderer_or_skip() else {
+        return;
+    };
+    let (session, pane) = preview_fixture("form.pdf", &fm_pdf::fixtures::scripted_form(), false);
+    let tokens = Tokens::light();
+    let mut h = Harness::builder()
+        .renderer(renderer)
+        .with_accessibility_check(false)
+        .with_size(egui::vec2(720.0, 560.0))
+        .build_ui_state(
+            move |ui, session: &mut Session| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(egui::Theme::Light);
+                fm_ui::preview::show(ui, session, pane, &tokens);
+            },
+            session,
+        );
+    h.run_steps(3);
+    h.state_mut()
+        .dispatch("pdf.form.edit", &serde_json::json!({ "pane": pane }))
+        .expect("edit");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        h.state_mut().poll();
+        h.step();
+        let ready = h
+            .state()
+            .pdf_view(pane)
+            .and_then(|v| v.fill.as_ref())
+            .is_some_and(|f| f.state == fm_engine::pdf_form_cmds::FillState::Ready);
+        if ready {
+            break;
+        }
+        assert!(Instant::now() < deadline, "Fill & Sign never opened");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    h.run_steps(2);
+    assert!(
+        h.state()
+            .pdf_view(pane)
+            .and_then(|v| v.fill.as_ref())
+            .is_some_and(|f| f.scripts),
+        "the fixture's script is detected"
+    );
+    h.get_by_label_contains("Use a PDF app for this form");
+}
+
 /// The large Fill & Sign button on the pages starts filling, then heads the action tiles.
 #[test]
 fn pdf_fill_and_sign_button_starts_filling() {
@@ -3440,8 +3625,9 @@ fn preview_toolbar_keeps_controls_on_one_row_and_logs_have_only_filter() {
     }
 }
 
+/// The previewed file's name is in the pane header, where a Files pane shows its path.
 #[test]
-fn preview_toolbar_folder_path_dark_light() {
+fn preview_header_shows_the_file_name_dark_light() {
     let _gpu = lock_gpu();
     let mut results = SnapshotResults::new();
     for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
@@ -3475,12 +3661,12 @@ fn preview_toolbar_folder_path_dark_light() {
                 } else {
                     egui::Theme::Light
                 });
-                fm_ui::preview::show(ui, &mut session, pane, &tokens);
+                fm_ui::pane::show(ui, &mut session, pane, &tokens);
             });
         for width in [1400, 800, 360] {
             harness.set_size(egui::vec2(width as f32, 180.0));
             harness.run();
-            harness.snapshot(format!("preview_folder_path_{width}_{theme}"));
+            harness.snapshot(format!("preview_header_name_{width}_{theme}"));
         }
         results.extend_harness(&mut harness);
     }
@@ -4284,7 +4470,8 @@ fn volume_preview_dark_light() {
             h.get_by_label("Volume");
             h.get_by_label("USB backup");
             assert!(h.query_by_label("Outer volume").is_none());
-            assert_eq!(h.query_all_by_label("/home/alice").count(), 2);
+            // Once in the volume card; the folder of the title is in the pane header.
+            assert_eq!(h.query_all_by_label("/home/alice").count(), 1);
             h.get_by_label("96.0 GiB");
             h.get_by_label("Folder summary");
             h.get_by_label("Subfolders");

@@ -99,6 +99,8 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                                         crate::locationbar::show_label(
                                             ui, s, pane, tokens, focused,
                                         );
+                                    } else if kind == PaneKind::Preview {
+                                        crate::preview::header_title(ui, s, pane, tokens, focused);
                                     } else {
                                         ui.label(kind.label());
                                     }

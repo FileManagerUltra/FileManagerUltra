@@ -50,9 +50,13 @@ missing glyphs.
 ### Requirement: Scripts and XFA
 Form JavaScript (calculate, format, validate, keystroke and other actions) SHALL NOT
 run. Fields that carry such scripts SHALL show a note that calculated values are not
-updated. XFA-only forms SHALL show an explanation and no fill mode. Hybrid forms SHALL
+updated and that such forms are best opened in a PDF application. XFA-only forms SHALL show an explanation and no fill mode. Hybrid forms SHALL
 be filled through their AcroForm fields, and the saved copy SHALL drop the XFA data,
 telling the user once when saving.
+
+#### Scenario: Form with scripts
+- **WHEN** the user opens Fill & Sign on a local form whose fields have calculate scripts
+- **THEN** the scripts are not run, and a one-line note says totals do not update and advises a PDF application
 
 #### Scenario: Hybrid XFA form
 - **WHEN** the user fills and saves a form that has both XFA and AcroForm data

@@ -633,7 +633,10 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
     ui.horizontal(|ui| {
         source_picker(ui, s, pane, actions);
         let plain_text = !matches!(&slot.body, Body::Static(p) if has_source_view(p));
-        if let Some(d) = diff.filter(|d| d.is_pair() || plain_text) {
+        let pdf = matches!(&slot.body, Body::Static(p) if matches!(&**p, Preview::Pdf(_)));
+        // A text diff of a PDF says nothing, so PDFs hide Diff (unless it is already showing).
+        let diff_button = diff.filter(|d| !pdf || d.active);
+        if let Some(d) = diff_button.filter(|d| d.is_pair() || plain_text) {
             // Two files, or anything but Markdown (the only view with a source toggle): one compact toggle.
             let resp = ui
                 .add(egui::Button::selectable(d.active, "Diff"))
@@ -647,7 +650,7 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
             if resp.clicked() {
                 actions.push(("preview.diff.toggle", json!({ "show": !d.active })));
             }
-        } else if let Some(d) = diff {
+        } else if let Some(d) = diff_button {
             let markdown = matches!(&slot.body, Body::Static(p) if has_source_view(p));
             let svg = matches!(&slot.body, Body::Static(p) if matches!(&**p, Preview::Svg(_)));
             for (label, show) in [("Preview", false), ("Diff", true)] {
@@ -710,36 +713,51 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
             options(&mut sizing, &mut Vec::new());
             sizing.min_rect().width() + 24.0
         };
-        let inline = needed + 60.0 <= ui.available_width();
-        let controls = if inline { needed } else { 36.0 };
-        let (title, folder) = if slot.subjects.len() > 1 {
-            (format!("{} selected files", slot.subjects.len()), None)
-        } else {
-            slot.subject.as_ref().map_or_else(
-                || (String::new(), None),
-                subject_title,
-            )
-        };
-        let title_width = (ui.available_width() - controls - ui.spacing().item_spacing.x).max(0.0);
-        toolbar_title(ui, &title, folder.as_deref(), title_width);
+        // Fill & Sign sits at the right end and never folds into the view-options menu.
+        let fill_sign = (pdf && pdf::bar_button_shown(s, pane)).then(|| {
+            let rect =
+                egui::Rect::from_min_size(ui.cursor().min, vec2(10_000.0, ui.available_height()));
+            let mut sizing = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .sizing_pass()
+                    .invisible(),
+            );
+            pdf::bar_button(&mut sizing, s, pane, tokens, &mut Vec::new());
+            sizing.min_rect().width() + 12.0
+        });
+        // The file name and folder are in the pane header (`header_title`), so the whole
+        // bar is for buttons.
+        let reserved = fill_sign.unwrap_or(0.0);
+        let inline = needed + reserved <= ui.available_width();
         if inline {
-            // Framed buttons so view options stand apart from the title.
-            ui.add_space(12.0);
-            ui.separator();
             options(ui, actions);
-        } else if needed > 24.0 {
+            if fill_sign.is_some() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    pdf::bar_button(ui, s, pane, tokens, actions);
+                });
+            }
+        } else if needed > 24.0 || fill_sign.is_some() {
+            // Right to left: the view-options menu is always the rightmost, Fill & Sign
+            // to its left.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let button = egui::Button::new("").min_size(vec2(28.0, 0.0));
-                let (response, _) = egui::containers::menu::MenuButton::from_button(button)
-                    .ui(ui, |ui| options(ui, actions));
-                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "View options"));
-                // The bundled fonts have no hamburger glyph: draw it.
-                let stroke = ui.style().interact(&response).fg_stroke;
-                let c = response.rect.center();
-                for dy in [-4.0, 0.0, 4.0] {
-                    ui.painter().hline(c.x - 7.0..=c.x + 7.0, c.y + dy, stroke);
+                if needed > 24.0 {
+                    let button = egui::Button::new("").min_size(vec2(28.0, 0.0));
+                    let (response, _) = egui::containers::menu::MenuButton::from_button(button)
+                        .ui(ui, |ui| options(ui, actions));
+                    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "View options"));
+                    // The bundled fonts have no hamburger glyph: draw it.
+                    let stroke = ui.style().interact(&response).fg_stroke;
+                    let c = response.rect.center();
+                    for dy in [-4.0, 0.0, 4.0] {
+                        ui.painter().hline(c.x - 7.0..=c.x + 7.0, c.y + dy, stroke);
+                    }
+                    response.on_hover_text("View options");
                 }
-                response.on_hover_text("View options");
+                if fill_sign.is_some() {
+                    pdf::bar_button(ui, s, pane, tokens, actions);
+                }
             });
         }
     });
@@ -757,108 +775,64 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
     }
 }
 
-fn subject_title(entry: &fm_vfs::Entry) -> (String, Option<String>) {
-    let folder = if entry.is_dir_like() {
-        Some(entry.uri.clone())
-    } else {
-        entry.uri.parent()
-    };
-    let title = if entry.name == "." {
-        String::new()
+/// The name shown for a previewed entry, and its full path for the tooltip. The current
+/// folder (".") is shown by its own name, or by its path when it has none (a root).
+fn subject_label(entry: &fm_vfs::Entry) -> (String, String) {
+    let path = fm_engine::item_cmds::display_path(&entry.uri);
+    let name = if entry.name == "." {
+        entry
+            .uri
+            .file_name()
+            .filter(|n| !n.is_empty())
+            .map_or_else(|| path.clone(), str::to_owned)
     } else {
         entry.display_name().to_owned()
     };
-    (
-        title,
-        folder.map(|uri| uri.local_path_string().unwrap_or_else(|| uri.to_string())),
-    )
+    (name, path)
 }
 
-fn toolbar_title(ui: &mut Ui, title: &str, folder: Option<&str>, width: f32) {
-    let height = ui.spacing().interact_size.y;
-    let Some(folder) = folder else {
-        ui.add_sized(
-            vec2(width, height),
-            egui::Label::new(RichText::new(title).strong()).truncate(),
-        )
-        .on_hover_text(title);
+/// The previewed file's name in the pane header, where a Files pane shows its path; the
+/// full path is in the tooltip. The pane-kind menu beside it already says "Preview".
+pub fn header_title(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, focused: bool) {
+    let label = s.preview_slot(pane).and_then(|slot| {
+        if slot.subjects.len() > 1 {
+            let n = slot.subjects.len();
+            let mut tip: Vec<String> = slot
+                .subjects
+                .iter()
+                .take(MAX_TIP_PATHS)
+                .map(|e| fm_engine::item_cmds::display_path(&e.uri))
+                .collect();
+            if n > MAX_TIP_PATHS {
+                tip.push(format!("and {} more", n - MAX_TIP_PATHS));
+            }
+            Some((format!("{n} selected files"), tip.join("\n")))
+        } else {
+            slot.subject.as_ref().map(subject_label)
+        }
+    });
+    let Some((name, tip)) = label else {
+        ui.label(RichText::new("Nothing selected").color(tokens.text_muted));
         return;
     };
-    let measure = |text: &str| {
-        egui::WidgetText::from(text)
-            .into_galley(
-                ui,
-                Some(egui::TextWrapMode::Extend),
-                f32::INFINITY,
-                egui::TextStyle::Body,
-            )
-            .size()
-            .x
-    };
-    let gap = if title.is_empty() {
-        0.0
+    let color = if focused {
+        tokens.accent_text
     } else {
-        ui.spacing().item_spacing.x.min(width)
+        tokens.text
     };
-    // Keep the folder intact until the name has shrunk to an ellipsis.
-    let min_name = if title.is_empty() {
-        0.0
-    } else {
-        measure("…")
-    };
-    let folder_width = measure(folder).min((width - gap - min_name).max(0.0));
-    let name_width = (width - gap - folder_width).max(0.0);
-    let displayed_folder = middle_ellipsis(folder, folder_width, measure);
+    let size = vec2(ui.available_width(), ui.spacing().interact_size.y);
     ui.allocate_ui_with_layout(
-        vec2(width, height),
+        size,
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            if !title.is_empty() {
-                ui.add_sized(
-                    vec2(name_width, height),
-                    egui::Label::new(RichText::new(title).strong()).truncate(),
-                )
-                .on_hover_text(title);
-            }
-            ui.add_sized(
-                vec2(folder_width, height),
-                egui::Label::new(RichText::new(displayed_folder).weak()).truncate(),
-            )
-            .on_hover_text(folder);
+            ui.add(egui::Label::new(RichText::new(name).strong().color(color)).truncate())
+                .on_hover_text(tip);
         },
     );
 }
 
-fn middle_ellipsis(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> String {
-    if measure(text) <= width {
-        return text.to_owned();
-    }
-    if measure("…") > width {
-        return String::new();
-    }
-    let chars = text.chars().count();
-    let abbreviated = |keep: usize| {
-        let head = keep.div_ceil(2);
-        let tail = keep / 2;
-        let mut result = String::with_capacity(text.len() + '…'.len_utf8());
-        result.extend(text.chars().take(head));
-        result.push('…');
-        result.extend(text.chars().skip(chars - tail));
-        result
-    };
-    let mut low = 0;
-    let mut high = chars.saturating_sub(1);
-    while low < high {
-        let keep = low + (high - low).div_ceil(2);
-        if measure(&abbreviated(keep)) <= width {
-            low = keep;
-        } else {
-            high = keep - 1;
-        }
-    }
-    abbreviated(low)
-}
+/// Paths listed in the header tooltip of a multiple selection.
+const MAX_TIP_PATHS: usize = 20;
 
 fn source_picker(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Action>) {
     let Some(state) = s.layout.state(pane) else {
@@ -3402,98 +3376,31 @@ mod tests {
     }
 
     #[test]
-    fn subject_title_identifies_files_folders_and_remote_paths() {
+    fn subject_label_names_files_folders_and_remote_paths() {
         use fm_vfs::{Entry, EntryKind};
-        for (uri, kind, expected) in [
-            ("/home/alice/notes.txt", EntryKind::File, "/home/alice"),
-            ("/home/alice/photos", EntryKind::Dir, "/home/alice/photos"),
-            ("/", EntryKind::Dir, "/"),
+        for (uri, kind, name) in [
+            ("/home/alice/notes.txt", EntryKind::File, "notes.txt"),
+            ("/home/alice/photos", EntryKind::Dir, "photos"),
             (
                 "sftp://alice@server/home/alice/notes.txt",
                 EntryKind::File,
-                "sftp://alice@server/home/alice",
+                "notes.txt",
             ),
-            (
-                "smb://server/share/photos",
-                EntryKind::Dir,
-                "smb://server/share/photos",
-            ),
+            ("smb://server/share/photos", EntryKind::Dir, "photos"),
         ] {
             let mut entry = Entry::new(VfsUri::parse(uri).expect("uri"), kind);
-            let expected_uri = VfsUri::parse(expected).expect("uri");
-            let expected = expected_uri
-                .local_path_string()
-                .unwrap_or_else(|| expected_uri.to_string());
-            assert_eq!(subject_title(&entry).1.as_deref(), Some(expected.as_str()));
+            let path = fm_engine::item_cmds::display_path(&entry.uri);
+            assert_eq!(subject_label(&entry), (name.to_string(), path.clone()));
+            // The current folder is named after itself.
             entry.name = ".".into();
-            assert!(subject_title(&entry).0.is_empty());
+            assert_eq!(subject_label(&entry).0, name);
         }
-        let mut link = Entry::new(
-            VfsUri::parse("/home/alice/photos").expect("uri"),
-            EntryKind::Symlink {
-                target: "/pictures".into(),
-            },
-        );
-        link.link_to_dir = true;
-        assert_eq!(subject_title(&link).1, link.uri.local_path_string());
-    }
-
-    #[test]
-    fn middle_ellipsis_preserves_both_ends_and_respects_the_width() {
-        let measure = |text: &str| text.chars().count() as f32;
-        assert_eq!(middle_ellipsis("/home/alice", 11.0, measure), "/home/alice");
-        assert_eq!(middle_ellipsis("/home/alice", 7.0, measure), "/ho…ice");
-        assert_eq!(middle_ellipsis("/写真/休暇/画像", 5.0, measure), "/写…画像");
-        assert_eq!(middle_ellipsis("abc", 1.0, measure), "…");
-        assert_eq!(middle_ellipsis("abc", 0.0, measure), "");
-        assert_eq!(middle_ellipsis("", 0.0, measure), "");
-    }
-
-    #[test]
-    fn toolbar_title_truncates_name_before_middle_of_folder_on_resize() {
-        fn texts(shape: &egui::Shape, output: &mut Vec<Arc<egui::Galley>>) {
-            match shape {
-                egui::Shape::Text(text) => output.push(text.galley.clone()),
-                egui::Shape::Vec(shapes) => {
-                    for shape in shapes {
-                        texts(shape, output);
-                    }
-                }
-                _ => {}
-            }
-        }
-        let name = "a-very-long-preview-filename-with-many-characters.txt";
-        let folder = "/home/alice/Pictures/Screenshots";
-        for tokens in [Tokens::dark(), Tokens::light()] {
-            let ctx = egui::Context::default();
-            crate::theme::apply_to(&ctx, &tokens);
-            for width in [1200.0, 320.0, 100.0, 8.0, 1200.0] {
-                let mut out = ctx.run_ui(egui::RawInput::default(), |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        ui.horizontal(|ui| toolbar_title(ui, name, Some(folder), width));
-                    });
-                });
-                let mut labels = Vec::new();
-                for shape in &out.shapes {
-                    texts(&shape.shape, &mut labels);
-                }
-                if width >= 320.0 {
-                    assert!(labels.iter().any(|g| g.text() == folder && !g.elided));
-                    let name_galley = labels.iter().find(|g| g.text() == name).expect("name");
-                    assert_eq!(name_galley.elided, width == 320.0);
-                } else if width == 100.0 {
-                    let path = labels
-                        .iter()
-                        .find(|g| g.text().contains('/'))
-                        .expect("path");
-                    assert!(path.text().contains('…'));
-                    assert!(path.text().starts_with('/'));
-                    assert!(path.text().ends_with('s'));
-                    assert!(path.size().x <= width);
-                }
-                out.textures_delta.clear();
-            }
-        }
+        // A root has no name of its own: its path stands in.
+        let mut root = Entry::new(VfsUri::parse("/").expect("uri"), EntryKind::Dir);
+        root.name = ".".into();
+        let (name, path) = subject_label(&root);
+        assert_eq!(name, path);
+        assert!(!name.is_empty());
     }
 
     #[test]

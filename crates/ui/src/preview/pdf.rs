@@ -192,7 +192,57 @@ pub(super) fn toolbar_options(
             actions.push(("preview.pdf.signatures.toggle", json!({})));
         }
     }
-    // Fill & Sign is the large button on the pages, so it never folds away here.
+    // Fill & Sign is on the pages (forms) or in the always-visible part of the bar.
+}
+
+/// The signature state shown as a square on the pages: broken, changed after signing,
+/// or all intact. Nothing while the check is running or when it timed out.
+fn sig_notice(s: &Session, doc: u64, signed: usize, tokens: &Tokens) -> Option<SigNotice> {
+    if signed == 0 {
+        return None;
+    }
+    let Some(VerifyState::Done(reports)) = s.pdf.verify_state(doc) else {
+        return None;
+    };
+    if reports
+        .iter()
+        .any(|r| matches!(r.status, SigStatus::Broken(_)))
+    {
+        Some(SigNotice {
+            word: "broken",
+            tip: "A signature in this PDF is broken: it does not match the document, or its signer cannot be checked. Click to show the signatures.",
+            fill: tokens.sig_broken,
+            ok: false,
+        })
+    } else if reports
+        .iter()
+        .any(|r| matches!(r.status, SigStatus::ChangedAfter(_)))
+    {
+        Some(SigNotice {
+            word: "changed",
+            tip: "This PDF was changed after it was signed. Click to show the signatures and what they cover.",
+            fill: tokens.sig_changed,
+            ok: false,
+        })
+    } else if !reports.is_empty() && reports.iter().all(|r| r.status == SigStatus::Valid) {
+        Some(SigNotice {
+            word: "intact",
+            tip: "The signed document is unchanged since it was signed. Who the signer is was not checked against trusted authorities. Click to show the signatures.",
+            fill: tokens.sig_valid,
+            ok: true,
+        })
+    } else {
+        None
+    }
+}
+
+struct SigNotice {
+    /// Second line under "Signature".
+    word: &'static str,
+    tip: &'static str,
+    fill: Color32,
+    /// Intact (a check mark) rather than a problem (a warning triangle).
+    ok: bool,
 }
 
 fn badge(s: &Session, doc: u64, signed: usize, tokens: &Tokens) -> (String, Color32) {
@@ -840,7 +890,7 @@ fn pages(
     ui.data_mut(|d| d.insert_temp(tex_key, used));
     crate::frame_cache::touch::<TexCache>(ui.ctx(), tex_key);
     super::remember_scroll(ui, &output);
-    fill_menu(
+    let head = fill_menu(
         ui,
         s,
         pane,
@@ -850,6 +900,15 @@ fn pages(
         info.forms.fields,
         actions,
     );
+    // The signature state gets its own square on the pages, left of a Fill & Sign button.
+    // It steps aside while Fill & Sign is open (its tiles use the space) or the
+    // Signatures panel already shows the details.
+    if view.fill.is_none() && !view.signatures_open {
+        let doc = s.pdf_doc(pane).map_or(shown.id, |d| d.id);
+        if let Some(notice) = sig_notice(s, doc, info.forms.signed, tokens) {
+            signature_alert(ui, pane, tokens, area_rect, head, &notice, actions);
+        }
+    }
     // Tell the engine what is on screen when it changes.
     let contrast = [rgb(tokens.pdf_contrast_fg), rgb(tokens.pdf_contrast_bg)];
     let report = json!({
@@ -1417,10 +1476,11 @@ fn fill_strip(
         );
     }
     if f.scripts {
+        // Scripts are never run (security): one short line pointing to a full PDF app.
         crate::dialog_style::hint(
             ui,
             tokens,
-            "The form's scripts are not run, so calculated fields do not update.",
+            "Form scripts don't run here, so totals won't update. Use a PDF app for this form.",
         );
     }
     if let Some(e) = &f.error {
@@ -1581,8 +1641,8 @@ fn summary(f: &PdfSession) -> String {
     }
 }
 
-/// The large Fill & Sign button floating at the top right of the pages, so filling and
-/// signing are hard to miss. While Fill & Sign is open it heads a column of coloured
+/// The Fill & Sign button floating at the top right of the pages: large on forms, so
+/// filling them is hard to miss; other PDFs have it in the preview bar (`bar_button`). While Fill & Sign is open it heads a column of coloured
 /// action tiles (wrapping into more columns when the pane is short).
 #[allow(clippy::too_many_arguments)]
 fn fill_menu(
@@ -1594,18 +1654,23 @@ fn fill_menu(
     view: &PdfView,
     fields: usize,
     actions: &mut Vec<Action>,
-) {
+) -> Option<Rect> {
     let z = tokens.zoom;
     let side = FILL_BUTTON * z;
     // Clear of the vertical scrollbar and the page edge.
     let margin = 20.0 * z;
-    if area.width() < side + 2.0 * margin || area.height() < side + 2.0 * margin {
-        return;
-    }
     let open = view
         .fill
         .as_ref()
         .filter(|f| f.editing && f.state == FillState::Ready);
+    // Most PDFs are not forms: their Fill & Sign button is in the preview bar
+    // (`bar_button`), so nothing covers the pages until Fill & Sign is open.
+    if open.is_none() && fields == 0 {
+        return None;
+    }
+    if area.width() < side + 2.0 * margin || area.height() < side + 2.0 * margin {
+        return None;
+    }
     let collapsed_key = id(pane, "menu-collapsed");
     let collapsed: bool = temp(ui, collapsed_key);
     let head = Rect::from_min_size(
@@ -1695,10 +1760,10 @@ fn fill_menu(
         }
     }
     let Some(f) = open else {
-        return;
+        return Some(head);
     };
     if collapsed {
-        return;
+        return Some(head);
     }
     let busy = f.is_saving();
     let dirty = f.is_dirty();
@@ -1875,6 +1940,177 @@ fn fill_menu(
             let _ = resp.on_hover_text(t.tip);
         }
     }
+    Some(head)
+}
+
+/// Whether the preview bar shows the Fill & Sign button for this pane.
+pub(super) fn bar_button_shown(s: &Session, pane: PaneId) -> bool {
+    let (Some(view), Some(shown)) = (s.pdf_view(pane), s.pdf_shown(pane)) else {
+        return false;
+    };
+    view.fill.is_none() && shown.doc.info().forms.fields == 0
+}
+
+/// The Fill & Sign button at the right end of the preview bar, for PDFs without form
+/// fields: an accent button with the pen icon that never folds into the view-options
+/// menu, so it is easy to find without covering the pages. Forms get
+/// the large button on the pages instead, and once Fill & Sign is open its actions are
+/// there too, so the bar button is shown only while nothing is being filled.
+pub(super) fn bar_button(
+    ui: &mut Ui,
+    s: &Session,
+    pane: PaneId,
+    tokens: &Tokens,
+    actions: &mut Vec<Action>,
+) {
+    if !bar_button_shown(s, pane) {
+        return;
+    }
+    let ink = tokens.action_text;
+    let h = ui.spacing().interact_size.y;
+    let icon = h * 0.7;
+    // Room on the left of the label for the painted pen, whose barrel reaches about 0.8
+    // of its size right of the centre.
+    let indent = icon * 1.3 + 6.0;
+    let label = RichText::new("Fill & Sign").color(ink).strong();
+    let galley = egui::WidgetText::from(label.clone()).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Button,
+    );
+    let pad = ui.spacing().button_padding.x;
+    let size = vec2(pad + indent + galley.size().x + pad, h);
+    let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Fill & Sign"));
+    let hovered = resp.hovered();
+    if hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let painter = ui.painter();
+    let radius = tokens.corner_radius;
+    painter.rect_filled(
+        r,
+        radius,
+        if hovered {
+            tokens.accent_text
+        } else {
+            tokens.accent
+        },
+    );
+    if resp.has_focus() {
+        focus_ring(painter, tokens, r, radius);
+    }
+    sign_icon(
+        painter,
+        pos2(r.min.x + pad + icon * 0.5, r.center().y - h * 0.04),
+        icon,
+        ink,
+    );
+    painter.galley(
+        pos2(r.min.x + pad + indent, r.center().y - galley.size().y * 0.5),
+        galley,
+        ink,
+    );
+    let tip = "Add your signature (drawn, typed, an image or a digital certificate). The original stays unchanged until you save.";
+    if resp.on_hover_text(tip).clicked() {
+        set_temp(ui, id(pane, "menu-collapsed"), false);
+        actions.push(("pdf.form.edit", json!({})));
+    }
+}
+
+/// A square on the pages in the signature-state colour, so a broken, changed or intact
+/// signature is seen straight away. Clicking it opens the Signatures panel.
+fn signature_alert(
+    ui: &mut Ui,
+    pane: PaneId,
+    tokens: &Tokens,
+    area: Rect,
+    head: Option<Rect>,
+    notice: &SigNotice,
+    actions: &mut Vec<Action>,
+) {
+    let z = tokens.zoom;
+    let side = FILL_BUTTON * z;
+    let margin = 20.0 * z;
+    let right = head.map_or(area.max.x - margin, |h| h.min.x - TILE_GAP * z);
+    let r = Rect::from_min_size(pos2(right - side, area.min.y + margin), vec2(side, side));
+    if r.min.x < area.min.x + margin || area.height() < side + 2.0 * margin {
+        return;
+    }
+    let resp = ui.interact(r, id(pane, "signature-alert"), Sense::click());
+    let label = format!("Signature {}", notice.word);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+    let hovered = resp.hovered();
+    if hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let painter = ui.painter().clone();
+    let radius = tokens.corner_radius * 2.0 * z;
+    shadow(&painter, tokens, r, radius);
+    painter.rect_filled(
+        r,
+        radius,
+        if hovered {
+            notice.fill.gamma_multiply(0.85)
+        } else {
+            notice.fill
+        },
+    );
+    if resp.has_focus() {
+        focus_ring(&painter, tokens, r, radius);
+    }
+    let ink = tokens.action_text;
+    let c = pos2(r.center().x, r.min.y + side * 0.32);
+    let t = side * 0.17;
+    let line = Stroke::new((2.0 * z).max(1.5), ink);
+    if notice.ok {
+        // A check mark in a circle.
+        painter.circle_stroke(c, t * 1.05, line);
+        painter.add(egui::Shape::line(
+            vec![
+                c + vec2(-t * 0.5, 0.0),
+                c + vec2(-t * 0.12, t * 0.4),
+                c + vec2(t * 0.55, -t * 0.38),
+            ],
+            line,
+        ));
+    } else {
+        warning_triangle(&painter, c, t, line, ink);
+    }
+    let font = egui::FontId::proportional((12.0 * z).max(8.0));
+    painter.text(
+        pos2(r.center().x, r.min.y + side * 0.66),
+        egui::Align2::CENTER_CENTER,
+        "Signature",
+        font.clone(),
+        ink,
+    );
+    painter.text(
+        pos2(r.center().x, r.min.y + side * 0.83),
+        egui::Align2::CENTER_CENTER,
+        notice.word,
+        font,
+        ink,
+    );
+    if resp.on_hover_text(notice.tip).clicked() {
+        actions.push(("preview.pdf.signatures.toggle", json!({})));
+    }
+}
+
+/// Warning triangle with an exclamation mark, centred on `c`.
+fn warning_triangle(painter: &egui::Painter, c: Pos2, t: f32, line: Stroke, ink: Color32) {
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            c + vec2(0.0, -t),
+            c + vec2(t * 1.1, t * 0.85),
+            c + vec2(-t * 1.1, t * 0.85),
+        ],
+        Color32::TRANSPARENT,
+        line,
+    ));
+    painter.line_segment([c + vec2(0.0, -t * 0.35), c + vec2(0.0, t * 0.3)], line);
+    painter.circle_filled(c + vec2(0.0, t * 0.58), (line.width * 0.65).max(1.0), ink);
 }
 
 fn shadow(painter: &egui::Painter, tokens: &Tokens, r: Rect, radius: f32) {

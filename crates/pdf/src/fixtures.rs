@@ -313,6 +313,33 @@ pub fn form() -> Vec<u8> {
     save(&mut form_doc())
 }
 
+/// [`form`] whose `name` field has a calculate script (`/AA /C`), which is never run.
+pub fn scripted_form() -> Vec<u8> {
+    let mut doc = form_doc();
+    let script = dictionary! {
+        "S" => "JavaScript",
+        "JS" => s("AFSimple_Calculate(\"SUM\", new Array(\"zip\"));"),
+    };
+    let ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter(|(_, o)| {
+            o.as_dict()
+                .ok()
+                .and_then(|d| d.get(b"T").ok())
+                .and_then(|t| t.as_str().ok())
+                == Some(b"name".as_slice())
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    for id in ids {
+        if let Ok(d) = doc.get_dictionary_mut(id) {
+            d.set("AA", dictionary! { "C" => script.clone() });
+        }
+    }
+    save(&mut doc)
+}
+
 /// [`form`] as a lopdf document.
 pub fn form_doc() -> Document {
     let mut b = Builder::new();

@@ -120,8 +120,11 @@ GoToR, JavaScript and submit actions are ignored.
 - Values go through `pdf.form.set {field, value}`, where `field` is the fully
   qualified name. Values are validated against the field type (options must exist,
   max length enforced, UTF-8 ≤ 32 KiB).
-- Fields with JavaScript calculate/format/validate actions get a note: "This form
-  uses scripts that are not run; check calculated fields yourself."
+- Fields with JavaScript calculate/format/validate actions get a one-line note:
+  "Form scripts don't run here, so totals won't update. Use a PDF app for this
+  form." (Open buttons were tried and dropped: too much room.) Recognising Acrobat's
+  standard calculations (AFSimple_Calculate, simplified field notation) without a
+  script engine was considered and deferred (2026-11-20).
 - XFA: XFA-only (dynamic) forms show an explanation and no fill mode. Hybrid forms
   are filled through AcroForm and the saved copy drops `/XFA` from `/AcroForm`, so
   XFA-preferring viewers show the filled values. Saving tells the user once.
