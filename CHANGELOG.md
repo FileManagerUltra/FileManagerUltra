@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stopping a Find Files search that also looks inside files now takes effect at once, instead of finishing the folder it was in first.
 - Saved workspaces no longer count as changed right after opening, so quitting without touching anything no longer asks to save them.
 - Closing the last tab opens your default workspace again, as intended.
 - Synchronize Folders: after resizing the window the list no longer slowly shrinks, and on a small screen the window now fits instead of running off the top and bottom.

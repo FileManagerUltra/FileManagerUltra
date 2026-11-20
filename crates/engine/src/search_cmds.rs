@@ -273,6 +273,12 @@ impl Walker<'_> {
             let (mut files, mut dirs) = (0u64, 0u64);
             let first_pushed = stack.len();
             for child in children {
+                // Checked per entry, not only per folder: after Stop, a large folder must
+                // not still open every remaining file (slow on Windows with real-time
+                // scanning and on network shares).
+                if self.cancel.load(Ordering::Relaxed) {
+                    break;
+                }
                 if !self.hidden && is_hidden(&child) {
                     continue;
                 }
@@ -303,6 +309,11 @@ impl Walker<'_> {
             let mut shared = lock(self.shared);
             shared.status.files += files;
             shared.status.dirs += dirs;
+            if self.cancel.load(Ordering::Relaxed) {
+                // Stopped: the window already shows the final results.
+                shared.status.stopped = true;
+                return;
+            }
             let room = MAX_RESULTS.saturating_sub(shared.results.len());
             if found.len() > room {
                 found.truncate(room);
@@ -420,6 +431,10 @@ impl LocalWalk<'_> {
         let mut found = Vec::new();
         let (mut files, mut dirs) = (0u64, 0u64);
         for child in children {
+            // Per entry, as in `Walker::run`: Stop must not wait for the rest of the folder.
+            if self.cancel.load(Ordering::Relaxed) {
+                break;
+            }
             let Ok(kind) = child.file_type() else {
                 continue;
             };
@@ -455,6 +470,11 @@ impl LocalWalk<'_> {
         let mut shared = lock(self.shared);
         shared.status.files += files;
         shared.status.dirs += dirs;
+        if self.cancel.load(Ordering::Relaxed) {
+            // Stopped: the window already shows the final results.
+            shared.status.stopped = true;
+            return (Vec::new(), true);
+        }
         shared.status.current = path.display().to_string();
         let room = MAX_RESULTS.saturating_sub(shared.results.len());
         if found.len() > room {
@@ -819,6 +839,12 @@ pub fn stop() -> CommandSpec {
             object(params)?;
             if let Some(run) = s.search.as_ref().and_then(|x| x.run.as_ref()) {
                 run.cancel.store(true, Ordering::Relaxed);
+                // The window shows the search as stopped at once; the walker threads
+                // finish the file they are reading in the background and add nothing more.
+                let mut shared = lock(&run.shared);
+                shared.status.running = false;
+                shared.status.stopped = true;
+                shared.status.current.clear();
             }
             Ok(())
         },
@@ -1014,6 +1040,46 @@ mod tests {
     }
 
     #[test]
+    fn stop_during_a_content_search_skips_the_rest_of_the_folder() {
+        use std::sync::atomic::AtomicUsize;
+        let mem = fm_testkit::MemFs::new();
+        mem.mkdirs_str("/big").expect("dir");
+        for i in 0..100 {
+            mem.put_str(&format!("/big/f{i:03}.txt"), b"nothing to find here")
+                .expect("file");
+        }
+        let vfs = fm_testkit::FaultFs::new(mem);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let reads = Arc::new(AtomicUsize::new(0));
+        {
+            let (cancel, reads) = (cancel.clone(), reads.clone());
+            // The user presses Stop while the first file is being read.
+            vfs.faults().read_hook = Some(Arc::new(move || {
+                reads.fetch_add(1, Ordering::Relaxed);
+                cancel.store(true, Ordering::Relaxed);
+            }));
+        }
+        let shared = Mutex::new(Shared::default());
+        Walker {
+            vfs: &vfs,
+            name: None,
+            needle: Needle::new("needle"),
+            hidden: false,
+            shared: &shared,
+            cancel: &cancel,
+        }
+        .run(&VfsUri::parse("/big").expect("uri"));
+        let shared = lock(&shared);
+        assert!(shared.status.stopped);
+        assert_eq!(reads.load(Ordering::Relaxed), 1, "one read, then stop");
+        assert!(
+            shared.status.files < 5,
+            "the remaining files were not visited: {}",
+            shared.status.files
+        );
+    }
+
+    #[test]
     fn a_cancelled_fast_walk_stops() {
         let tmp = tempfile::tempdir().expect("tmp");
         for i in 0..50 {
@@ -1129,6 +1195,32 @@ mod tests {
                 "{params}"
             );
         }
+    }
+
+    #[test]
+    fn stop_shows_the_search_stopped_at_once_and_adds_nothing_after() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        for i in 0..300 {
+            std::fs::create_dir_all(tmp.path().join(format!("d{i}"))).expect("dir");
+            std::fs::write(tmp.path().join(format!("d{i}/hit.txt")), b"needle").expect("w");
+        }
+        let root = tmp.path().to_str().expect("utf8").to_string();
+        let mut s = Session::new().expect("session");
+        s.dispatch(
+            "search.start",
+            &json!({"root": root, "name": "*.txt", "content": "needle"}),
+        )
+        .expect("start");
+        s.dispatch("search.stop", &Params::Null).expect("stop");
+        let status = s.search.as_ref().expect("search").status();
+        assert!(!status.running, "not running right after Stop");
+        assert!(status.stopped);
+        assert!(!s.command_enabled("search.stop"));
+        let found = status.found;
+        std::thread::sleep(Duration::from_millis(300));
+        let later = s.search.as_ref().expect("search").status();
+        assert_eq!(later.found, found, "nothing is added after Stop");
+        assert!(later.stopped && !later.running);
     }
 
     #[test]
