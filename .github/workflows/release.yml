@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  actions: read # SignPath verifies the run and fetches the unsigned artifact
 
 env:
   CARGO_TERM_COLOR: always
@@ -83,6 +84,44 @@ jobs:
           mkdir -p target/release
           cp target/${{ matrix.target }}/release/filemanagerultra* target/release/ || true
           rm -f target/release/*.d target/release/*.pdb
+      # Windows: Authenticode signing through SignPath Foundation (docs/code-signing-policy.md,
+      # setup in docs/development.md "Windows code signing"). Only tag builds are signed, and
+      # only once the SIGNPATH_API_TOKEN secret exists; until then this builds unsigned.
+      # SignPath cannot sign inside an NSIS installer, so the program is signed first and the
+      # installer after packaging. Each request waits for a manual approval in SignPath.
+      - name: SignPath enabled?
+        id: signpath
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "on=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No SignPath token: building unsigned" >&2
+          fi
+      - name: Upload unsigned program
+        id: unsigned-exe
+        if: steps.signpath.outputs.on == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-exe
+          path: target/release/filemanagerultra.exe
+          if-no-files-found: error
+      - name: Sign program
+        if: steps.signpath.outputs.on == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: FileManagerUltra
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: exe
+          github-artifact-id: ${{ steps.unsigned-exe.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: target/release
       # macOS: Developer ID signing and notarization. cargo-packager imports the certificate
       # into a temporary keychain, signs the app with the hardened runtime, notarizes and
       # staples it, then signs the DMG. The App Store Connect API key is only on disk for
@@ -138,6 +177,37 @@ jobs:
       - name: Remove the signing key
         if: always() && runner.os == 'macOS'
         run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+      - name: Upload unsigned installer
+        id: unsigned-setup
+        if: steps.signpath.outputs.on == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-setup
+          path: target/packager/*-setup.exe
+          if-no-files-found: error
+      - name: Sign installer
+        if: steps.signpath.outputs.on == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: FileManagerUltra
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.unsigned-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: target/packager
+      - name: Verify Windows signatures
+        if: steps.signpath.outputs.on == 'true'
+        shell: pwsh
+        run: |
+          $files = @(Get-Item target/release/filemanagerultra.exe) + @(Get-Item target/packager/*-setup.exe)
+          foreach ($f in $files) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            Write-Host "$($f.Name): $($s.Status) $($s.SignerCertificate.Subject)"
+            if ($s.Status -ne 'Valid') { exit 1 }
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: filemanagerultra-${{ matrix.name }}

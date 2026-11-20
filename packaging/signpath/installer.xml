@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration "installer": the NSIS *-setup.exe built by cargo-packager.
+     The GitHub artifact arrives as a ZIP with the installer at its root.
+     Paste into SignPath (this app's project > Artifact configurations, slug "installer"). -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="*-setup.exe">
+      <authenticode-sign/>
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
