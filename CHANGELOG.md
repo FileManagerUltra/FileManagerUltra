@@ -7,17 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-20
+
 ### Added
 
 - Files panes have Back and Forward arrows before the path, and the mouse's back and forward buttons work over any Files pane. History lasts until you quit or close the pane.
 - PDFs open in the Preview pane: pages scroll continuously, with page numbers and labels, bookmarks, working links, Find, text selection and copy. Pages can fit the width, fit the page or show at 100%, and can be shown as dark pages or in high contrast for easier reading (the file itself is not changed). Password-protected PDFs ask for the password, which is kept only while the document is shown. Folder thumbnails show the first page of PDFs.
 - Fill & Sign for PDFs, from the Fill & Sign button at the top right of the pages: large on forms (it shows how many fields they have), on other PDFs a coloured Fill & Sign button at the right end of the preview bar, always visible, so nothing covers the pages. It opens a column of coloured action buttons below it (Signature, Place, Remember, Reset, Save copy, Save as, Replace, Discard), which you can fold away by clicking Fill & Sign again: fill in form fields (text, checkboxes, radio buttons, lists), add a drawn, typed or image signature and place it on a page or in a signature field, or sign digitally with a certificate file (.p12/.pfx). Nothing is written until you save: Save copy puts "… (filled).pdf" or "… (signed).pdf" next to the original, or use Save as or Replace original (refused if the file changed meanwhile). Quitting or closing the pane with unsaved changes asks first. Signatures you make can be remembered on this computer. Forms that rely on scripts (for example calculated totals) suggest using a PDF application.
-- PDFs no longer show the Diff button, which only made sense for text.
 - Signed PDFs show whether their signatures are intact, changed after signing or broken, with signer, time and reason, in a Signatures panel. The signature state also shows as a square on the pages straight away (green when intact, amber when changed after signing, red when broken); clicking it opens the panel.
 - The "Unsaved workspace changes" question has a "Don't ask again" checkbox: tick it and your Save or Don't save answer is used from then on when quitting or closing a tab. Change it back under Preferences › Workspaces › Unsaved changes.
 
 ### Changed
 
+- PDFs no longer show the Diff button, which only made sense for text.
 - The Preview pane shows the file name in its header (the full path when you hover it), so the bar below has room for the buttons.
 - Third-party licences have their own window, Help ▸ Third-party Licences (also reachable from About), so About stays short. The list now includes the fonts and character maps the PDF viewer uses.
 - Only changes to a workspace's set-up (panes, splits, sort, column widths, zoom and such) count as unsaved. Going to other folders, selecting files or expanding the tree no longer does: a workspace reopens at the folders you saved it with, unless Auto-save is on.
@@ -296,7 +298,8 @@ First public release (beta).
 
 - macOS install notes: clear the quarantine flag on the downloaded `.dmg` (`xattr -d com.apple.quarantine`), as the app is not yet signed or notarized.
 
-[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.2...v0.2.3
