@@ -134,7 +134,7 @@ fn key_file_browse_uses_the_shared_picker_and_fills_the_field() {
             key_path: key.to_string_lossy().to_string(),
             ..Default::default()
         });
-        let both: fn(&egui::Context, &mut Session, &Tokens) = |ctx, s, t| {
+        let both: fn(&Context, &mut Session, &Tokens) = |ctx, s, t| {
             s.poll();
             fm_ui::sftp_popup::sftp_prompt_dialog(ctx, s, t);
             fm_ui::picker::show(ctx, s, t);
@@ -189,7 +189,7 @@ fn a_chooser_opened_from_the_sign_in_form_comes_to_the_front() {
         host: "example.test".into(),
         ..Default::default()
     });
-    let both: fn(&egui::Context, &mut Session, &Tokens) = |ctx, s, t| {
+    let both: fn(&Context, &mut Session, &Tokens) = |ctx, s, t| {
         s.poll();
         fm_ui::picker::show(ctx, s, t);
         fm_ui::sftp_popup::sftp_prompt_dialog(ctx, s, t);
@@ -230,7 +230,7 @@ fn a_sign_in_form_opened_by_a_chooser_appears_in_front_of_it() {
     let tokens = Tokens::dark();
     let dir = tempfile::tempdir().expect("tmp");
     let mut s = Session::new().expect("session");
-    let both: fn(&egui::Context, &mut Session, &Tokens) = |ctx, s, t| {
+    let both: fn(&Context, &mut Session, &Tokens) = |ctx, s, t| {
         s.poll();
         fm_ui::sftp_popup::sftp_prompt_dialog(ctx, s, t);
         fm_ui::picker::show(ctx, s, t);
@@ -877,6 +877,43 @@ fn sync_window_width_is_stable_across_frames() {
         let last = width(&h);
         assert!(first > 0.0, "{view}: window missing");
         assert!((last - first).abs() < 1.0, "{view}: {first} grew to {last}");
+    }
+}
+
+/// A large font on a small screen makes the page taller than the app window: the page then
+/// scrolls instead, so the window (and its Minimize/Close title bar) stays on screen.
+#[test]
+fn sync_window_stays_on_screen_with_a_large_font_on_a_small_screen() {
+    for (view, step) in [("wizard", 6), ("wizard", 0), ("advanced", 0)] {
+        let mut tokens = Tokens::dark();
+        tokens.font_size = 22.0;
+        let mut s = sync_session(&[("a", "x.txt", 1)], "TwoWay");
+        s.dispatch("sync.view", &json!({"mode": view}))
+            .expect("view");
+        if view == "wizard" {
+            s.dispatch("sync.wizard.go", &json!({"step": step}))
+                .expect("step");
+        }
+        let screen = egui::vec2(1000.0, 600.0);
+        let mut h = Harness::builder().with_size(screen).build_ui_state(
+            move |ui, s: &mut Session| {
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                fm_ui::sync::show(ui.ctx(), s, &tokens);
+            },
+            s,
+        );
+        h.run_steps(20);
+        let rect = h
+            .ctx
+            .memory(|m| m.area_rect(Id::NULL.with("fm-sync")))
+            .unwrap_or(egui::Rect::NOTHING);
+        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, screen).expand(0.5);
+        assert!(rect.is_positive(), "{view}/{step}: window missing");
+        assert!(
+            bounds.contains_rect(rect),
+            "{view}/{step}: window {rect:?} leaves the screen"
+        );
+        h.get_by_label("Close window");
     }
 }
 

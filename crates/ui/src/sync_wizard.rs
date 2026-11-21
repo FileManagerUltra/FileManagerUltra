@@ -98,7 +98,8 @@ pub(crate) fn show(
     // A taller window gives every step the same extra room, so Back/Next stay put. Never
     // less than designed: the review page's taller tail is only known once it was shown, and
     // shrinking by it later would move the buttons.
-    let body = crate::sync::part_height(ui, "wizard", "step", BODY_HEIGHT, BODY_HEIGHT);
+    let body =
+        crate::sync::part_height(ui, "wizard", "step", BODY_HEIGHT, body_min(ui, BODY_HEIGHT));
     let body_end = fixed_body(ui, body, |ui| {
         ui.add_enabled_ui(!state.busy(), |ui| match step {
             0 => folders(ui, tokens, state, draft, commands),
@@ -116,6 +117,19 @@ pub(crate) fn show(
     let anchor = footer(ui, tokens, step, state, next, commands);
     crate::sync::measure_below(ui, "wizard", "step", body_end, anchor);
 }
+
+/// A body never shrinks below its designed height, unless the page does not fit in the app
+/// window at all: then it gives that up so Back/Next and Start stay in view.
+fn body_min(ui: &egui::Ui, designed: f32) -> f32 {
+    if crate::sync::page_scrolls(ui) {
+        SMALL_BODY_HEIGHT.min(designed)
+    } else {
+        designed
+    }
+}
+
+/// The least a body takes on a screen too small for the designed page.
+const SMALL_BODY_HEIGHT: f32 = 120.0;
 
 /// Every step has the same body height, so the Back/Next buttons never move.
 const BODY_HEIGHT: f32 = 400.0;
@@ -532,7 +546,7 @@ fn review(
     let keep = state.profile.watch.enabled;
     let designed = BODY_HEIGHT - SAVE_CARD_HEIGHT - FOOTER_HEIGHT - 6.0;
     // The list takes whatever a taller window adds.
-    let body = crate::sync::part_height(ui, "wizard", "review", designed, designed);
+    let body = crate::sync::part_height(ui, "wizard", "review", designed, body_min(ui, designed));
     let body_end = fixed_body(ui, body, |ui| {
         grid_reserving(ui, tokens, state, commands, 0.0, true);
     });

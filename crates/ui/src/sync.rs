@@ -368,15 +368,17 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 None => {}
             }
             ui.separator();
-            workflow_switch(ui, tokens, state, &profiles, &mut commands);
-            match state.view {
-                View::Wizard => {
-                    crate::sync_wizard::show(ui, tokens, state, &mut draft, &mut commands);
+            fitted_page(ui, tokens, |ui| {
+                workflow_switch(ui, tokens, state, &profiles, &mut commands);
+                match state.view {
+                    View::Wizard => {
+                        crate::sync_wizard::show(ui, tokens, state, &mut draft, &mut commands);
+                    }
+                    View::Advanced => {
+                        crate::sync_advanced::show(ui, tokens, state, &mut draft, &mut commands);
+                    }
                 }
-                View::Advanced => {
-                    crate::sync_advanced::show(ui, tokens, state, &mut draft, &mut commands);
-                }
-            }
+            });
         });
     ctx.data_mut(|d| d.insert_temp(draft_id(), draft));
     // Escape closes only the topmost layer: an open picker, menu or the large table goes first.
@@ -425,6 +427,48 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             s.notice = Some(e.to_string());
         }
     }
+}
+
+/// Everything below the title bar. The window grows to fit the page; a page that cannot fit
+/// in the app window (a small screen or a large font) scrolls instead, so the window, its
+/// title bar, Minimize and Close stay on screen.
+fn fitted_page(ui: &mut egui::Ui, tokens: &Tokens, page: impl FnOnce(&mut egui::Ui)) {
+    let ctx = ui.ctx().clone();
+    let screen = ctx.content_rect().size();
+    let key = Id::NULL.with("fm-sync-scrolls");
+    // Scrolling, once needed, holds for this screen size and font: the window then fits, so
+    // its size can no longer tell.
+    let here = (screen, tokens.font_size);
+    let stored = ctx.data(|d| d.get_temp::<(egui::Vec2, f32)>(key));
+    let too_big = ctx
+        .memory(|m| m.area_rect(Id::NULL.with("fm-sync")))
+        .is_some_and(|r| r.width() > screen.x + 0.5 || r.height() > screen.y + 0.5);
+    let scrolls = stored == Some(here) || too_big;
+    if scrolls && stored != Some(here) {
+        ctx.data_mut(|d| d.insert_temp(key, here));
+    } else if !scrolls && stored.is_some() {
+        ctx.data_mut(|d| d.remove_temp::<(egui::Vec2, f32)>(key));
+    }
+    ctx.data_mut(|d| d.insert_temp(scrolling_id(), scrolls));
+    if scrolls {
+        egui::ScrollArea::both()
+            .id_salt("fm-sync-page")
+            .auto_shrink([false, false])
+            .show(ui, page);
+    } else {
+        page(ui);
+    }
+}
+
+fn scrolling_id() -> Id {
+    Id::NULL.with("fm-sync-page-scrolling")
+}
+
+/// Whether the page is too big for the app window and scrolls: its parts then give up their
+/// designed minimum so the buttons stay in view as far as possible.
+pub(crate) fn page_scrolls(ui: &egui::Ui) -> bool {
+    ui.data(|d| d.get_temp::<bool>(scrolling_id()))
+        .unwrap_or(false)
 }
 
 /// One saved sync as a card: name, what it does, and which folder goes where.
@@ -832,7 +876,7 @@ pub(crate) fn row_counts(state: &SyncState) -> [usize; 4] {
 
 /// A primary button with a painted check mark (no glyph needed from the font).
 pub(crate) fn check_button(ui: &mut egui::Ui, tokens: &Tokens, label: &str) -> egui::Response {
-    crate::sync_icons::button(ui, tokens, Icon::Check, label, true)
+    sync_icons::button(ui, tokens, Icon::Check, label, true)
 }
 
 /// The question that must be answered before deletes that cannot be undone (or a mass delete)
