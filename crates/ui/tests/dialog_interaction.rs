@@ -780,7 +780,7 @@ fn compare_with_lists_the_folder_picks_a_file_and_cancels() {
         h.run();
         assert_eq!(
             h.state().compare.as_ref().and_then(|c| c.selected.clone()),
-            Some(b.clone())
+            Some(b)
         );
         h.get_by_label("Cancel").click();
         h.run();

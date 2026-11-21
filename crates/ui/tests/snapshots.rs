@@ -2901,7 +2901,7 @@ fn svg_thumbnails_dark_light() {
             .collect();
         let mem = Arc::new(mem);
         let mut session = with_fixed_places(Session::new().expect("session"));
-        session.backends.register(mem.clone());
+        session.backends.register(mem);
         let dir = VfsUri::parse("/home/alice").expect("uri");
         {
             let st = session.layout.state_mut(1).expect("pane");
