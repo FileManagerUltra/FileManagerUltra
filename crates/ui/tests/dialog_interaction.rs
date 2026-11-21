@@ -386,23 +386,67 @@ fn properties_title_close_cancels_the_background_count() {
     }
 }
 
+/// A session with the Open With dialog over `apps` fake applications: the real scan
+/// depends on what the machine has installed (CI runners have hundreds).
+fn open_with_session(apps: usize) -> Session {
+    use fm_engine::openwith_cmds::{App, AppCatalog, OpenWith};
+    let catalog = AppCatalog {
+        apps: (0..apps)
+            .map(|i| App {
+                id: format!("app{i}.desktop"),
+                name: format!("Application {i}"),
+                exec: format!("app{i} %f"),
+                mime_types: if i % 3 == 0 {
+                    vec!["text/plain".to_string()]
+                } else {
+                    Vec::new()
+                },
+            })
+            .collect(),
+        globs: [("txt".to_string(), "text/plain".to_string())].into(),
+        defaults: Default::default(),
+    };
+    let mut s = Session::new().expect("session");
+    s.open_with = Some(OpenWith::with_catalog(
+        VfsUri::parse("/example.txt").expect("uri"),
+        catalog,
+    ));
+    s
+}
+
 #[test]
-#[cfg(not(windows))]
+fn open_with_window_keeps_its_size_with_many_applications() {
+    let id = Id::NULL.with("fm-open-with");
+    for apps in [3, 300] {
+        let mut h = harness(
+            Tokens::dark(),
+            open_with_session(apps),
+            fm_ui::open_with::show,
+        );
+        h.run_steps(5);
+        let first = h.ctx.memory(|m| m.area_rect(id)).expect("window");
+        h.run_steps(30);
+        let later = h.ctx.memory(|m| m.area_rect(id)).expect("window");
+        let screen = h.ctx.content_rect();
+        assert!(
+            (later.height() - first.height()).abs() < 1.0,
+            "{apps} apps: the window keeps growing: {first:?} -> {later:?}"
+        );
+        assert!(
+            later.height() <= 470.0 && screen.contains_rect(later),
+            "{apps} apps: the list must scroll inside the default-sized window: {later:?} on {screen:?}"
+        );
+        assert!(
+            h.query_by_label("Cancel").is_some(),
+            "{apps} apps: the buttons stay reachable"
+        );
+    }
+}
+
+#[test]
 fn open_with_title_close_does_not_launch_an_application() {
     for tokens in [Tokens::dark(), Tokens::light()] {
-        let mut s = Session::new().expect("session");
-        s.dispatch("file.open_with.dialog", &json!({"uri": "/example.txt"}))
-            .expect("open with");
-        // The app scan resizes the auto-sized window when it lands; let it finish first
-        // so the drag below measures the drag, not the resize.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while s.open_with.as_ref().is_some_and(|o| o.choices().is_none())
-            && std::time::Instant::now() < deadline
-        {
-            s.poll();
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        let mut h = harness(tokens, s, fm_ui::open_with::show);
+        let mut h = harness(tokens, open_with_session(300), fm_ui::open_with::show);
         drag(&mut h, Id::NULL.with("fm-open-with"));
         h.get_by_label("Close window").click();
         h.run();

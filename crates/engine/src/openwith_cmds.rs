@@ -67,6 +67,15 @@ pub struct AppChoice {
 }
 
 impl OpenWith {
+    /// A dialog over a ready-made catalog, without scanning the system: deterministic
+    /// contents for UI tests (the real catalog depends on what the machine has installed).
+    pub fn with_catalog(target: VfsUri, catalog: AppCatalog) -> Self {
+        Self {
+            target,
+            catalog: Arc::new(Mutex::new(Some(Arc::new(catalog)))),
+        }
+    }
+
     /// `None` while the scan is still running.
     pub fn choices(&self) -> Option<(Option<String>, Vec<AppChoice>)> {
         let catalog = self
