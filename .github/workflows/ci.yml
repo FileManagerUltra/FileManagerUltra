@@ -45,7 +45,7 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy (panics, unchecked indexing and string slicing denied)
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked --keep-going -- -D warnings
       - name: Layers and branding
         run: |
           cargo xtask layers
@@ -123,4 +123,4 @@ jobs:
           key: clippy
           cache-on-failure: true
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked --keep-going -- -D warnings

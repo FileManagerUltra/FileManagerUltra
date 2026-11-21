@@ -1,7 +1,7 @@
 //! Platform trash (design D6). Local files only; a failure is an error, never a silent
 //! downgrade to permanent deletion.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use fm_vfs::{FmError, Scheme, VfsUri};
 
@@ -133,6 +133,7 @@ pub struct TrashListing {
 ))]
 mod manage {
     use super::*;
+    use std::path::Path;
 
     fn entry(item: &trash::TrashItem) -> TrashEntry {
         TrashEntry {
