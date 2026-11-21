@@ -295,8 +295,13 @@ fn cd_here_quotes_hostile_directory_names() {
             wait_for(&mut s, term, &format!("{leaf}]"))
         }
     );
+    // An injected `echo pwned` prints `pwned` on a line of its own. The echoed command
+    // line also contains the word, and a row can wrap right after it (the prompt length
+    // depends on the host name), so match whole lines only.
     assert!(
-        !screen_text(&s, term).contains("pwned\n"),
+        !screen_text(&s, term)
+            .lines()
+            .any(|line| line.trim_end() == "pwned"),
         "no injected command ran"
     );
 }

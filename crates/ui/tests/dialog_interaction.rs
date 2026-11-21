@@ -377,6 +377,15 @@ fn open_with_title_close_does_not_launch_an_application() {
         let mut s = Session::new().expect("session");
         s.dispatch("file.open_with.dialog", &json!({"uri": "/example.txt"}))
             .expect("open with");
+        // The app scan resizes the auto-sized window when it lands; let it finish first
+        // so the drag below measures the drag, not the resize.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while s.open_with.as_ref().is_some_and(|o| o.choices().is_none())
+            && std::time::Instant::now() < deadline
+        {
+            s.poll();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let mut h = harness(tokens, s, fm_ui::open_with::show);
         drag(&mut h, Id::NULL.with("fm-open-with"));
         h.get_by_label("Close window").click();
