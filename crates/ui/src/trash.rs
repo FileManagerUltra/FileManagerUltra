@@ -383,7 +383,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
                         };
                         cmds.push((cmd, json!({"id": id, "path": path})));
                     } else {
-                        clicks.push((id.to_string(), path.clone(), ctrl));
+                        clicks.push((id.to_string(), path, ctrl));
                     }
                 }
             }

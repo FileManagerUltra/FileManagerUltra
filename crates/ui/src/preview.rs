@@ -3415,7 +3415,7 @@ mod tests {
         ] {
             let mut entry = Entry::new(VfsUri::parse(uri).expect("uri"), kind);
             let path = fm_engine::item_cmds::display_path(&entry.uri);
-            assert_eq!(subject_label(&entry), (name.to_string(), path.clone()));
+            assert_eq!(subject_label(&entry), (name.to_string(), path));
             // The current folder is named after itself.
             entry.name = ".".into();
             assert_eq!(subject_label(&entry).0, name);

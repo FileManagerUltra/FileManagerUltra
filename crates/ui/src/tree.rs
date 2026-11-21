@@ -77,7 +77,7 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
             DirState::Absent => RowState::Ready,
         };
         rows.push(Row {
-            uri: uri.clone(),
+            uri,
             name,
             depth,
             is_dir: true,
@@ -571,7 +571,7 @@ mod tests {
             let home = VfsUri::parse("/home/alice").expect("home");
             let docs = home.join("docs").expect("docs");
             let deep = docs.join("deep").expect("deep");
-            s.layout.state_mut(1).expect("pane").tree = fm_layout::TreeState::new(home.clone());
+            s.layout.state_mut(1).expect("pane").tree = fm_layout::TreeState::new(home);
             let mut h = Harness::builder()
                 .with_size(egui::vec2(500.0, 400.0))
                 .build_ui_state(
