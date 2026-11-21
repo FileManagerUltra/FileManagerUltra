@@ -85,56 +85,64 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 .iter()
                 .filter(|c| needle.is_empty() || c.name.to_lowercase().contains(&needle))
                 .collect();
-            let footer = tokens.row_height * 2.5;
-            egui::ScrollArea::vertical()
-                .id_salt("fm-open-with-list")
-                .max_height((ui.available_height() - footer).max(tokens.row_height * 4.0))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    let mut heading = None;
-                    for choice in &shown {
-                        let section = if choice.recommended {
-                            "Recommended"
-                        } else {
-                            "Other applications"
-                        };
-                        if heading != Some(section) {
-                            heading = Some(section);
-                            crate::dialog_style::section_heading(ui, tokens, section);
-                        }
-                        let label = if choice.default {
-                            format!("{}  (default)", choice.name)
-                        } else {
-                            choice.name.clone()
-                        };
-                        let selected = draft.selected.as_deref() == Some(choice.id.as_str());
-                        let r = ui.add(egui::Button::selectable(selected, label).truncate());
-                        if r.clicked() {
-                            draft.selected = Some(choice.id.clone());
-                        }
-                        if r.double_clicked() {
-                            launch = Some(choice.id.clone());
-                        }
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            // Buttons first, from the bottom up; the list then fills exactly what is left.
+            // A list sized from a guessed footer height overflowed the window by a few
+            // pixels each frame and the window grew until the whole list fit, past the
+            // screen on systems with many applications.
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                ui.horizontal(|ui| {
+                    let some = draft.selected.is_some();
+                    if ui
+                        .add_enabled(some, egui::Button::new("Open"))
+                        .on_hover_text("Open the file with the selected application (Enter)")
+                        .clicked()
+                        || (enter && some)
+                    {
+                        launch = draft.selected.clone();
                     }
-                    if shown.is_empty() {
-                        crate::dialog_style::hint(ui, tokens, "No applications found");
+                    if ui.button("Cancel").on_hover_text("Close (Esc)").clicked() {
+                        cancel = true;
                     }
                 });
-            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-            ui.separator();
-            ui.horizontal(|ui| {
-                let some = draft.selected.is_some();
-                if ui
-                    .add_enabled(some, egui::Button::new("Open"))
-                    .on_hover_text("Open the file with the selected application (Enter)")
-                    .clicked()
-                    || (enter && some)
-                {
-                    launch = draft.selected.clone();
-                }
-                if ui.button("Cancel").on_hover_text("Close (Esc)").clicked() {
-                    cancel = true;
-                }
+                ui.separator();
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("fm-open-with-list")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let mut heading = None;
+                            for choice in &shown {
+                                let section = if choice.recommended {
+                                    "Recommended"
+                                } else {
+                                    "Other applications"
+                                };
+                                if heading != Some(section) {
+                                    heading = Some(section);
+                                    crate::dialog_style::section_heading(ui, tokens, section);
+                                }
+                                let label = if choice.default {
+                                    format!("{}  (default)", choice.name)
+                                } else {
+                                    choice.name.clone()
+                                };
+                                let selected =
+                                    draft.selected.as_deref() == Some(choice.id.as_str());
+                                let r =
+                                    ui.add(egui::Button::selectable(selected, label).truncate());
+                                if r.clicked() {
+                                    draft.selected = Some(choice.id.clone());
+                                }
+                                if r.double_clicked() {
+                                    launch = Some(choice.id.clone());
+                                }
+                            }
+                            if shown.is_empty() {
+                                crate::dialog_style::hint(ui, tokens, "No applications found");
+                            }
+                        });
+                });
             });
         });
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
