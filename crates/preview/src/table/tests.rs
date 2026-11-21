@@ -34,7 +34,7 @@ impl ByteSource for Chunky {
     fn len(&self) -> u64 {
         self.0.len() as u64
     }
-    fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>, fm_vfs::FmError> {
+    fn read_at(&self, offset: u64, len: usize) -> Result<Vec<u8>, FmError> {
         let start = (offset as usize).min(self.0.len());
         let end = (start + len.min(7)).min(self.0.len());
         Ok(self.0[start..end].to_vec())
@@ -439,7 +439,7 @@ fn render_through_a_vfs() {
     vfs.put_str("/t/data.csv", b"a,b\n1,2\n3,4\n")
         .expect("write");
     let uri = fm_vfs::VfsUri::parse("/t/data.csv").expect("uri");
-    let entry = fm_vfs::Vfs::stat(&vfs, &uri).expect("stat");
+    let entry = Vfs::stat(&vfs, &uri).expect("stat");
     match crate::render(&vfs, &entry, &Limits::default()) {
         Preview::Table(t) => {
             assert_eq!(t.columns.len(), 2);

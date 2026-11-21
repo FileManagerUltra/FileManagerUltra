@@ -117,7 +117,7 @@ pub fn text_pages(n: usize) -> Vec<u8> {
     for i in 0..n {
         b.page(&text_content(i + 1), Dictionary::new());
     }
-    let last = |i: usize| b.pages[i.min(n - 1)];
+    let last = |i: usize| b.pages.get(i.min(n - 1)).copied().unwrap_or_default();
     let (p0, p1, p3, p4) = (last(0), last(1), last(3), last(4));
     let goto = b.doc.add_object(dictionary! {
         "Type" => "Annot", "Subtype" => "Link",
@@ -437,7 +437,7 @@ pub fn form_doc() -> Document {
         doc,
         dictionary! {
             "Type" => "Annot", "Subtype" => "Widget", "P" => page,
-            "FT" => "Ch", "T" => s("colors"), "Ff" => 2_097_152, "DA" => da.clone(),
+            "FT" => "Ch", "T" => s("colors"), "Ff" => 2_097_152, "DA" => da,
             "Opt" => vec![s("Red"), s("Green"), s("Blue")],
             "Rect" => rect([100, 450, 300, 510]), "F" => 4,
         },

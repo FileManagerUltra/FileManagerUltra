@@ -918,7 +918,9 @@ fn line_job(
     cuts.sort_unstable();
     cuts.dedup();
     for w in cuts.windows(2) {
-        let (a, b) = (w[0], w[1]);
+        let &[a, b] = w else {
+            continue;
+        };
         let Some(piece) = text.get(a..b) else {
             continue;
         };
@@ -1111,7 +1113,7 @@ mod tests {
     fn harness(s: Session, pane: PaneId) -> Harness<'static, Session> {
         let tokens = Tokens::dark();
         Harness::builder()
-            .with_size(egui::vec2(800.0, 400.0))
+            .with_size(vec2(800.0, 400.0))
             .build_ui_state(
                 move |ui, s: &mut Session| {
                     crate::theme::apply_to(ui.ctx(), &tokens);
@@ -1362,7 +1364,7 @@ mod folder_tests {
         assert!(s.pane_diff(pane).is_some_and(|d| d.active));
         let tokens = Tokens::dark();
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(800.0, 400.0))
+            .with_size(vec2(800.0, 400.0))
             .build_ui_state(
                 move |ui, s: &mut Session| {
                     crate::theme::apply_to(ui.ctx(), &tokens);

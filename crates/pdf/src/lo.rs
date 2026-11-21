@@ -74,9 +74,9 @@ pub fn get_rect(doc: &Document, d: &Dictionary, key: &[u8]) -> Option<[f64; 4]> 
         return None;
     }
     let mut r = [0.0; 4];
-    for (i, o) in a.iter().enumerate() {
-        r[i] = num(deref(doc, o)?)?;
-        if !r[i].is_finite() {
+    for (slot, o) in r.iter_mut().zip(a) {
+        *slot = num(deref(doc, o)?)?;
+        if !slot.is_finite() {
             return None;
         }
     }
@@ -151,8 +151,8 @@ pub fn geometry(doc: &Document, page_id: ObjectId) -> Result<Geometry, PdfError>
             return None;
         }
         let mut r = [0.0; 4];
-        for (i, o) in a.iter().enumerate() {
-            r[i] = num(deref(doc, o)?)?;
+        for (slot, o) in r.iter_mut().zip(a) {
+            *slot = num(deref(doc, o)?)?;
         }
         Some([
             r[0].min(r[2]),

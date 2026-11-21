@@ -5,7 +5,8 @@
 UI dialogs follow the [dialog style guide](style-guide.md), with shared chrome and
 typography in `fm-ui::dialog_style`.
 
-- `cargo fmt` (default settings) is law; `cargo clippy --all-targets -- -D warnings` must be clean.
+- `cargo fmt` (default settings) is law; `cargo clippy --workspace --all-targets --all-features -- -D warnings` must be clean. Run `cargo xtask hooks` once so commits and pushes check this for you (see [development.md](development.md#quality-gate-ci-and-git-hooks)).
+- Bounds-checked access only outside tests: `get()`, slice patterns, `split_once`/`strip_prefix` instead of `v[i]` and `&s[a..b]` (clippy denies `indexing_slicing` and `string_slice`).
 - No `unsafe`, no `unwrap`/`expect`/`panic`/`todo!` outside `#[cfg(test)]` — see `AGENTS.md` golden rules.
 - Errors: one workspace error type per layer (`FmError`), always with context (typed variants, not string soup); its `Display` redacts credentials.
 - Comments explain *why*, not *what*. Keep public APIs documented with `///`; private helpers do not need prose.

@@ -845,9 +845,9 @@ mod tests {
         assert_eq!(names(&loaded), ["song.mp3"]);
         // Disc images play in place, so a remote one is refused up front.
         let remote = VfsUri::parse("sftp://host/films/Movie.iso").expect("uri");
-        let error = crate::media_cmds::validate_media_source(&remote).expect_err("remote iso");
+        let error = validate_media_source(&remote).expect_err("remote iso");
         assert!(error.to_string().contains("on this computer"));
-        assert!(crate::media_cmds::validate_media_source(&uri("/d/Movie.iso")).is_ok());
+        assert!(validate_media_source(&uri("/d/Movie.iso")).is_ok());
     }
 
     #[test]

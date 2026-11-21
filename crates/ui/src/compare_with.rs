@@ -46,7 +46,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         .unwrap_or_default();
     if draft.folder != folder_text {
         draft.folder = folder_text.clone();
-        draft.path = folder_text.clone();
+        draft.path = folder_text;
     }
     let state = s.dirs.state(&picker.folder);
     let rows = s

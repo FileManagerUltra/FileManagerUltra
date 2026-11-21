@@ -474,7 +474,7 @@ mod tests {
             Ok(())
         });
         let path = rx
-            .recv_timeout(std::time::Duration::from_secs(10))
+            .recv_timeout(Duration::from_secs(10))
             .expect("job ran")
             .expect("download");
         assert_eq!(std::fs::read(&path).expect("read"), b"remote bytes");
@@ -570,10 +570,10 @@ mod tests {
         let mut s = Session::new().expect("session");
         let folder = VfsUri::parse(&dir.path().to_string_lossy()).expect("uri");
         s.ensure_read(folder.clone()).expect("read");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while s.dirs.entries(&folder).is_none() && std::time::Instant::now() < deadline {
             s.poll();
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            std::thread::sleep(Duration::from_millis(2));
         }
         let song = folder.join("song.mp3").expect("join");
         let film = folder.join("film.mkv").expect("join");
@@ -616,7 +616,7 @@ mod tests {
         ] {
             assert!(s.dispatch("file.open", &p).is_err(), "{p}");
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(100));
         assert!(!marker.exists(), "nothing may run without confirmation");
 
         s.dispatch(
@@ -624,10 +624,10 @@ mod tests {
             &serde_json::json!({"uri": uri, "mode": "run", "confirm": true}),
         )
         .expect("run");
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let end = std::time::Instant::now() + Duration::from_secs(10);
         while !marker.exists() && std::time::Instant::now() < end {
             s.poll();
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::thread::sleep(Duration::from_millis(20));
         }
         assert!(marker.exists(), "the script ran in its own folder");
     }

@@ -685,12 +685,14 @@ fn pages(
         ScrollArea::both().auto_shrink([false, false]),
         ("pv-pdf", pane),
     );
+    // Top of page `p` in content coordinates (`tops` has one more entry than pages).
+    let top_of = |p: usize| tops.get(p).copied().unwrap_or(content_h);
     if let Some(goto) = view.goto
         && temp::<u64>(ui, goto_key) != goto.seq
     {
         set_temp(ui, goto_key, goto.seq);
         let page = goto.page.min(n - 1);
-        let off = tops[page] - GAP + goto.top.unwrap_or(0.0).max(0.0) * scale;
+        let off = top_of(page) - GAP + goto.top.unwrap_or(0.0).max(0.0) * scale;
         area = area.vertical_scroll_offset(off.max(0.0));
     }
     let find = s.preview_slot(pane).map(|sl| &sl.find);
@@ -713,7 +715,7 @@ fn pages(
                     .map(|r| r[1])
             })
             .unwrap_or(0.0);
-        let off = tops[page] - GAP + (top * scale - ui.available_height() * 0.3).max(0.0);
+        let off = top_of(page) - GAP + (top * scale - ui.available_height() * 0.3).max(0.0);
         area = area.vertical_scroll_offset(off.max(0.0));
     }
     let tex_key = id(pane, "textures");
@@ -738,8 +740,9 @@ fn pages(
             .partition_point(|t| *t < viewport.min.y)
             .saturating_sub(1);
         let mut i = first;
-        while i < n && tops[i] < viewport.max.y {
-            if tops[i + 1] > viewport.min.y && visible.len() < fm_engine::pdf_view_cmds::MAX_VISIBLE
+        while i < n && top_of(i) < viewport.max.y {
+            if top_of(i + 1) > viewport.min.y
+                && visible.len() < fm_engine::pdf_view_cmds::MAX_VISIBLE
             {
                 visible.push(i);
             }
@@ -756,10 +759,12 @@ fn pages(
             .union(Rect::from_min_size(origin, vec2(width, content_h)));
         painter.rect_filled(bg, 0.0, tokens.pdf_gap);
         for &p in &visible {
-            let (w, h) = sizes[p];
+            let Some(&(w, h)) = sizes.get(p) else {
+                continue;
+            };
             let x = origin.x + ((width - w * scale) / 2.0).max(GAP);
             let page_rect =
-                Rect::from_min_size(pos2(x, origin.y + tops[p]), vec2(w * scale, h * scale));
+                Rect::from_min_size(pos2(x, origin.y + top_of(p)), vec2(w * scale, h * scale));
             let page_bg = match view.colors {
                 PdfColors::Original => tokens.checker[0],
                 PdfColors::Dark => tokens.panel,
@@ -2000,7 +2005,7 @@ pub(super) fn bar_button(
     // of its size right of the centre.
     let indent = icon * 1.3 + 6.0;
     let label = RichText::new("Fill & Sign").color(ink).strong();
-    let galley = egui::WidgetText::from(label.clone()).into_galley(
+    let galley = egui::WidgetText::from(label).into_galley(
         ui,
         Some(egui::TextWrapMode::Extend),
         f32::INFINITY,

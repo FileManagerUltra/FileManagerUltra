@@ -506,7 +506,7 @@ fn is_missing(err: &notify::Error, path: &Path) -> bool {
 mod tests {
     use super::*;
 
-    fn uri(path: &std::path::Path) -> VfsUri {
+    fn uri(path: &Path) -> VfsUri {
         VfsUri::parse(&path.to_string_lossy()).expect("local uri")
     }
 

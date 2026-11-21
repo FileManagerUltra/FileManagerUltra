@@ -1778,8 +1778,8 @@ fn video(
 const PLAYING_TICK: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Where the frame number in which a playing player was last drawn is kept.
-fn player_drawn_id() -> egui::Id {
-    egui::Id::NULL.with("fm-playing-player-drawn")
+fn player_drawn_id() -> Id {
+    Id::NULL.with("fm-playing-player-drawn")
 }
 
 /// Called each frame a playing player (Media pane or Preview) is drawn.
@@ -2688,7 +2688,7 @@ mod tests {
         let pane = s.media_pane().expect("media");
         let tokens = Tokens::dark();
         let uri = fm_vfs::VfsUri::parse("/tmp/new.mp3").expect("uri");
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = seen.clone();
         let mut h = Harness::builder()
             .with_size(egui::vec2(640.0, 480.0))

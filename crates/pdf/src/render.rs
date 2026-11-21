@@ -157,9 +157,9 @@ pub fn apply_colors(rgba: &mut [u8], mode: ColorMode) {
                 // Smooth step keeps anti-aliased edges instead of jagged thresholding.
                 let t = ((y - 110.0) / (210.0 - 110.0)).clamp(0.0, 1.0);
                 let t = t * t * (3.0 - 2.0 * t);
-                for c in 0..3 {
-                    let v = f32::from(fg[c]) + (f32::from(bg[c]) - f32::from(fg[c])) * t;
-                    px[c] = v.round().clamp(0.0, 255.0) as u8;
+                for ((channel, f), b) in px.iter_mut().zip(fg).zip(bg).take(3) {
+                    let v = f32::from(f) + (f32::from(b) - f32::from(f)) * t;
+                    *channel = v.round().clamp(0.0, 255.0) as u8;
                 }
             }
         }

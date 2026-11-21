@@ -896,12 +896,12 @@ mod tests {
     }
 
     fn type_text(h: &mut Harness<'_, Session>, text: &str, enter: bool) {
-        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        h.key_press(egui::Key::Backspace);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+        h.key_press(Key::Backspace);
         h.run();
         h.get_by_role(Role::TextInput).type_text(text);
         if enter {
-            h.key_press(egui::Key::Enter);
+            h.key_press(Key::Enter);
         }
         h.run();
     }
@@ -928,14 +928,14 @@ mod tests {
         h.get_by_label("*.log").click();
         h.run();
         assert!(selected(&h, "*.log"));
-        h.key_press(egui::Key::ArrowDown);
+        h.key_press(Key::ArrowDown);
         h.run();
         assert!(selected(&h, "*.log.gz"));
         assert!(!selected(&h, "*.log"));
-        h.key_press(egui::Key::ArrowDown);
+        h.key_press(Key::ArrowDown);
         h.run();
         assert!(selected(&h, "*.log.[0-9]*"));
-        h.key_press(egui::Key::ArrowUp);
+        h.key_press(Key::ArrowUp);
         h.run();
         assert!(selected(&h, "*.log.gz"));
         h.get_by_label("Remove selected pattern").click();
@@ -952,34 +952,34 @@ mod tests {
         // Left into the types, Down to the next type, Right back into its patterns.
         h.get_by_label("*.log").click();
         h.run();
-        h.key_press(egui::Key::ArrowLeft);
+        h.key_press(Key::ArrowLeft);
         h.run();
-        h.key_press(egui::Key::ArrowDown);
+        h.key_press(Key::ArrowDown);
         h.run();
         h.get_by_label("Filename patterns for Images");
-        h.key_press(egui::Key::ArrowRight);
+        h.key_press(Key::ArrowRight);
         h.run();
         assert!(selected(&h, "*.png"), "Right selects the first pattern");
-        h.key_press(egui::Key::ArrowDown);
+        h.key_press(Key::ArrowDown);
         h.run();
         assert!(selected(&h, "*.jpg"));
         assert!(!selected(&h, "*.jpeg"), "one step per key press");
         // Shift+Tab goes back to the types, Tab forward into the patterns and then on.
-        h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        h.key_press_modifiers(egui::Modifiers::SHIFT, Key::Tab);
         h.run();
-        h.key_press(egui::Key::ArrowDown);
+        h.key_press(Key::ArrowDown);
         h.run();
         h.get_by_label("Filename patterns for Video");
-        h.key_press(egui::Key::Tab);
+        h.key_press(Key::Tab);
         h.run();
         assert!(
             selected(&h, "*.mp4"),
             "Tab enters the patterns at the first one"
         );
-        h.key_press(egui::Key::ArrowDown);
+        h.key_press(Key::ArrowDown);
         h.run();
         assert!(selected(&h, "*.m4v"));
-        h.key_press(egui::Key::Tab);
+        h.key_press(Key::Tab);
         h.run();
         assert!(
             h.get_by_label("Restore default file types")
@@ -987,31 +987,31 @@ mod tests {
                 .is_focused(),
             "Tab leaves the lists instead of bouncing between them"
         );
-        h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        h.key_press_modifiers(egui::Modifiers::SHIFT, Key::Tab);
         h.run();
         assert!(
             h.get_by_label("*.m4v").accesskit_node().is_focused(),
             "Shift+Tab comes back to the selected pattern"
         );
-        h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        h.key_press_modifiers(egui::Modifiers::SHIFT, Key::Tab);
         h.run();
-        h.key_press(egui::Key::ArrowUp);
+        h.key_press(Key::ArrowUp);
         h.run();
         h.get_by_label("Filename patterns for Images");
         // Keys for the toolbar actions: Insert adds, F2 edits, Delete removes.
-        h.key_press(egui::Key::Tab);
+        h.key_press(Key::Tab);
         h.run();
-        h.key_press(egui::Key::Insert);
+        h.key_press(Key::Insert);
         h.run();
         h.get_by_role(Role::TextInput).type_text("*.heic");
-        h.key_press(egui::Key::Enter);
+        h.key_press(Key::Enter);
         h.run();
         assert!(patterns(&h, PreviewType::Images).contains(&"*.heic".to_string()));
         assert!(
             h.get_by_label("*.heic").accesskit_node().is_focused(),
             "after Enter the keyboard is back on the list, on the new pattern"
         );
-        h.key_press(egui::Key::Delete);
+        h.key_press(Key::Delete);
         h.run();
         assert!(!patterns(&h, PreviewType::Images).contains(&"*.heic".to_string()));
         assert!(
@@ -1060,7 +1060,7 @@ mod tests {
             h.get_by_label_contains("cannot be empty");
             // Escape abandons the edit.
             type_text(&mut h, "*.nope", false);
-            h.key_press(egui::Key::Escape);
+            h.key_press(Key::Escape);
             h.run();
             assert_eq!(patterns(&h, PreviewType::Pdf), ["*.pdfx"]);
             assert_eq!(h.query_all_by_role(Role::TextInput).count(), 0);
@@ -1077,7 +1077,7 @@ mod tests {
             type_text(&mut h, "a/b", true);
             assert_eq!(h.state().prefs.preview_filters, before);
             h.get_by_label_contains("without paths");
-            h.key_press(egui::Key::Escape);
+            h.key_press(Key::Escape);
             h.run();
 
             h.get_by_label("*.pdfx").click();

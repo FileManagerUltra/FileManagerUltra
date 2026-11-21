@@ -98,7 +98,7 @@ fn is_anchored(text: &str) -> bool {
     let b = text.as_bytes();
     text.starts_with(is_sep)
         || text.contains("://")
-        || (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':')
+        || matches!(b, [drive, b':', ..] if drive.is_ascii_alphabetic())
 }
 
 /// Resolve what the user typed into a uri: `~` is the home directory, relative paths are
@@ -138,7 +138,7 @@ pub fn resolve_with(
     let expanded;
     let text = if text == "~" || text.starts_with("~/") || text.starts_with("~\\") {
         let home = home_dir().ok_or_else(|| FmError::NotFound("home directory".to_string()))?;
-        expanded = format!("{home}{}", &text[1..]);
+        expanded = format!("{home}{}", text.strip_prefix('~').unwrap_or(text));
         expanded.as_str()
     } else {
         text

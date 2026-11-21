@@ -1765,14 +1765,8 @@ mod tests {
     #[test]
     #[allow(clippy::expect_used)]
     fn stale_renders_cannot_replace_cleared_or_reselected_previews() {
-        let a = Entry::new(
-            VfsUri::parse("/a.log").expect("uri"),
-            fm_vfs::EntryKind::File,
-        );
-        let b = Entry::new(
-            VfsUri::parse("/b.log").expect("uri"),
-            fm_vfs::EntryKind::File,
-        );
+        let a = Entry::new(VfsUri::parse("/a.log").expect("uri"), EntryKind::File);
+        let b = Entry::new(VfsUri::parse("/b.log").expect("uri"), EntryKind::File);
         let mut s = Session::default();
         let mut slot = PreviewSlot::new();
         slot.token = 7;
@@ -1824,11 +1818,11 @@ mod tests {
             vec![
                 Entry::new(
                     VfsUri::parse("sftp://alice@first/a.log").expect("uri"),
-                    fm_vfs::EntryKind::File,
+                    EntryKind::File,
                 ),
                 Entry::new(
                     VfsUri::parse("sftp://alice@second/b.log").expect("uri"),
-                    fm_vfs::EntryKind::File,
+                    EntryKind::File,
                 ),
             ],
             Instant::now(),

@@ -168,6 +168,7 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+unused_qualifications = "warn"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
@@ -177,6 +178,11 @@ unimplemented = "deny"
 todo = "deny"
 unreachable = "deny"
 dbg_macro = "warn"
+# Hostile input must not panic (golden rules 1 and 8): `get()` instead of `[i]`/`[a..b]`,
+# and no byte-range slicing of `str` that can split a UTF-8 character.
+indexing_slicing = "deny"
+string_slice = "deny"
+redundant_clone = "warn"
 
 [profile.dev]
 debug = 1

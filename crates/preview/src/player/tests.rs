@@ -792,7 +792,7 @@ fn platform_hardware_decoding_plays_and_reports_its_mode() {
 
 /// Interlaced PAL MPEG-2 (top field first, like a DVD) of a white bar racing across black:
 /// without deinterlacing every frame shows combs along the bar's edges.
-pub(crate) fn interlaced_clip(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+pub(crate) fn interlaced_clip(dir: &std::path::Path) -> Option<PathBuf> {
     let ff = find_tool("ffmpeg")?;
     let path = dir.join("interlaced.mpg");
     let made = Command::new(ff)
@@ -873,7 +873,7 @@ fn interlaced_video_is_deinterlaced_without_asking() {
         &PlaySpec {
             from: 0.0,
             still: false,
-            ..spec.clone()
+            ..spec
         },
         Gain::default(),
     )

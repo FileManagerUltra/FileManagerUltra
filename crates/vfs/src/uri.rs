@@ -157,11 +157,9 @@ impl VfsUri {
             return Err(FmError::invalid_uri("empty uri"));
         }
 
-        if let Some(scheme_end) = input.find("://") {
-            let scheme_str = &input[..scheme_end];
+        if let Some((scheme_str, rest)) = input.split_once("://") {
             let scheme = Scheme::parse(scheme_str)
                 .ok_or_else(|| FmError::invalid_uri(format!("unknown scheme {scheme_str}")))?;
-            let rest = &input[scheme_end + 3..];
             Self::parse_with_scheme(scheme, rest, input)
         } else {
             Self::parse_raw_path(input)
@@ -176,10 +174,10 @@ impl VfsUri {
 
     fn parse_with_scheme(scheme: Scheme, rest: &str, original: &str) -> Result<Self, FmError> {
         // Split authority from path at the first '/'.
-        let (auth_part, path_part) = match rest.find('/') {
-            Some(idx) => (&rest[..idx], &rest[idx..]),
-            None => (rest, ""),
-        };
+        let (auth_part, path_part) = rest
+            .find('/')
+            .and_then(|idx| rest.split_at_checked(idx))
+            .unwrap_or((rest, ""));
 
         let authority = match scheme {
             Scheme::File => {
@@ -228,11 +226,7 @@ impl VfsUri {
         // Windows drive: `C:\x` or `C:/x` (a bare `C:` or `C:no-slash` is drive-relative
         // and is rejected — we only accept fully-qualified paths).
         let bytes = input.as_bytes();
-        if bytes.len() >= 3
-            && bytes[0].is_ascii_alphabetic()
-            && bytes[1] == b':'
-            && matches!(bytes[2], b'/' | b'\\')
-        {
+        if matches!(bytes, [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic()) {
             let swapped = input.replace('\\', "/");
             let path = normalize_path(&format!("/{swapped}"))?;
             return Ok(Self {

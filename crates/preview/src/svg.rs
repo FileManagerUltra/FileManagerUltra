@@ -344,7 +344,7 @@ fn paint(tree: &usvg::Tree, scale: f32) -> Result<Thumb, String> {
 
 /// Whether `bytes` look like an SVG document (an `<svg` element near the start).
 pub fn looks_like_svg(bytes: &[u8]) -> bool {
-    let head = &bytes[..bytes.len().min(2048)];
+    let head = bytes.get(..2048).unwrap_or(bytes);
     head.windows(4).any(|w| w == b"<svg")
 }
 

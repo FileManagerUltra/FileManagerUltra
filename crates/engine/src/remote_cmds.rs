@@ -63,7 +63,7 @@ fn parse_connect_smb(s: &Session, params: &Params) -> Result<SmbParams, FmError>
         share: required("share")?,
         user: required("user")?,
         domain: text(map, "domain")?.filter(|d| !d.is_empty()),
-        password: fm_fs_smb::SecretString::from(required("password")?),
+        password: SecretString::from(required("password")?),
         timeout: std::time::Duration::from_secs(secs),
         require_encryption,
         anonymous_uri: false,
@@ -366,10 +366,11 @@ pub fn profile_save() -> CommandSpec {
                 share: text(map, "share")?.filter(|d| !d.is_empty()),
             };
             profile.validate()?;
-            let existing = s.prefs.profiles.iter().position(|p| p.name == profile.name);
+            let count = s.prefs.profiles.len();
+            let existing = s.prefs.profiles.iter_mut().find(|p| p.name == profile.name);
             match existing {
-                Some(ix) => s.prefs.profiles[ix] = profile,
-                None if s.prefs.profiles.len() >= crate::prefs::MAX_PROFILES => {
+                Some(slot) => *slot = profile,
+                None if count >= crate::prefs::MAX_PROFILES => {
                     return Err(FmError::InvalidParams(format!(
                         "at most {} profiles",
                         crate::prefs::MAX_PROFILES

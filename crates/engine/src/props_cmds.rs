@@ -416,8 +416,7 @@ mod tests {
         let file = share.join("a.mkv").expect("uri");
         fs.put_file(&file, b"x").expect("file");
         let mut s = Session::new().expect("session");
-        s.backends
-            .register_at(share.authority(), std::sync::Arc::new(fs));
+        s.backends.register_at(share.authority(), Arc::new(fs));
         s.dispatch("file.properties", &json!({"sources": [file.as_str()]}))
             .expect("open");
         settle(&mut s, |s| {
@@ -444,8 +443,7 @@ mod tests {
         fs.put_file(&movies.join("b.mkv").expect("uri"), &[0u8; 2])
             .expect("file");
         let mut s = Session::new().expect("session");
-        s.backends
-            .register_at(share.authority(), std::sync::Arc::new(fs));
+        s.backends.register_at(share.authority(), Arc::new(fs));
         s.dispatch("file.properties", &json!({"sources": [movies.as_str()]}))
             .expect("open");
         settle(&mut s, |s| {

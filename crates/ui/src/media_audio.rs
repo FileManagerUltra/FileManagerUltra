@@ -109,10 +109,12 @@ fn equalizer(ui: &mut Ui, s: &Session, actions: &mut Actions) {
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| {
                         let band_name = ui.label(band_label(*hz));
-                        let gain = eq.bands[band];
+                        let gain = eq.bands.get(band).copied().unwrap_or_default();
                         if let Some(new) = vertical_slider(ui, gain, &BAND, BAND_HEIGHT) {
                             let mut bands = eq.bands;
-                            bands[band] = new;
+                            if let Some(slot) = bands.get_mut(band) {
+                                *slot = new;
+                            }
                             actions.push(("media.eq", json!({"bands": bands})));
                         }
                         ui.small(format!("{gain:+.1}"));

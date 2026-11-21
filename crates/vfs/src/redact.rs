@@ -34,28 +34,40 @@ fn is_delim(b: u8) -> bool {
     )
 }
 
+/// The byte at `i`, or `None` past the end (bounds-checked; the scanner never indexes).
+fn at(buf: &[u8], i: usize) -> Option<u8> {
+    buf.get(i).copied()
+}
+
+/// True while `buf[i]` exists and satisfies `pred`.
+fn at_is(buf: &[u8], i: usize, pred: impl Fn(u8) -> bool) -> bool {
+    at(buf, i).is_some_and(pred)
+}
+
 /// `scheme://user:password@host` → mask the password between `:` and `@`.
 fn mask_uri_userinfo(buf: &mut [u8]) {
     let n = buf.len();
     let mut i = 0;
     while i + 3 <= n {
-        if &buf[i..i + 3] == b"://" {
+        if buf.get(i..i + 3) == Some(b"://".as_slice()) {
             // Authority spans from i+3 to the first delimiter.
             let start = i + 3;
             let mut end = start;
-            while end < n && !matches!(buf[end], b'/' | b'?' | b'#') && !is_delim(buf[end]) {
+            while at_is(buf, end, |b| {
+                !matches!(b, b'/' | b'?' | b'#') && !is_delim(b)
+            }) {
                 end += 1;
             }
             // Find the *last* '@' in the authority (userinfo may itself contain '@').
-            if let Some(at) = (start..end).rev().find(|&j| buf[j] == b'@') {
+            if let Some(at_sign) = (start..end).rev().find(|&j| at(buf, j) == Some(b'@')) {
                 // Find the *first* ':' before '@' — that starts the password.
-                if let Some(colon) = (start..at).find(|&j| buf[j] == b':') {
-                    mask_range(buf, colon + 1, at);
+                if let Some(colon) = (start..at_sign).find(|&j| at(buf, j) == Some(b':')) {
+                    mask_range(buf, colon + 1, at_sign);
                 }
-            } else if let Some(colon) = (start..end).find(|&j| buf[j] == b':') {
+            } else if let Some(colon) = (start..end).find(|&j| at(buf, j) == Some(b':')) {
                 // `scheme://user:password` with no host yet — but `host:2222` is a port.
-                let after = &buf[colon + 1..end];
-                if !after.is_empty() && !after.iter().all(|b| b.is_ascii_digit()) {
+                let after = buf.get(colon + 1..end).unwrap_or_default();
+                if !after.is_empty() && !after.iter().all(u8::is_ascii_digit) {
                     mask_range(buf, colon + 1, end);
                 }
             }
@@ -71,35 +83,41 @@ fn mask_uri_userinfo(buf: &mut [u8]) {
 /// the `@` by whitespace (`note: see @home`) is not userinfo.
 fn mask_bare_userinfo(buf: &mut [u8]) {
     let n = buf.len();
-    let mut at = 0;
-    while at < n {
-        if buf[at] == b'@' {
-            let mut lo = at;
-            while lo > 0 && !is_delim(buf[lo - 1]) && !matches!(buf[lo - 1], b'/' | b'?' | b'#') {
-                lo -= 1;
-            }
-            if let Some(colon) = (lo..at).find(|&j| buf[j] == b':') {
-                mask_range(buf, colon + 1, at);
-            }
+    for at_sign in 0..n {
+        if at(buf, at_sign) != Some(b'@') {
+            continue;
         }
-        at += 1;
+        let mut lo = at_sign;
+        while lo > 0
+            && at_is(buf, lo - 1, |b| {
+                !is_delim(b) && !matches!(b, b'/' | b'?' | b'#')
+            })
+        {
+            lo -= 1;
+        }
+        if let Some(colon) = (lo..at_sign).find(|&j| at(buf, j) == Some(b':')) {
+            mask_range(buf, colon + 1, at_sign);
+        }
     }
 }
 
+/// Overwrite `buf[from..to]` with `***` followed by `*` (out-of-range parts are skipped).
 fn mask_range(buf: &mut [u8], from: usize, to: usize) {
-    if from >= to {
+    let Some(range) = buf.get_mut(from..to) else {
         return;
-    }
-    let keep = MASK.len().min(to - from);
-    buf[from..from + keep].copy_from_slice(&MASK[..keep]);
-    for b in &mut buf[from + keep..to] {
-        *b = b'*';
+    };
+    for (slot, mask) in range
+        .iter_mut()
+        .zip(MASK.iter().chain(std::iter::repeat(&b'*')))
+    {
+        *slot = *mask;
     }
 }
 
 /// `password=hunter2`, `token: abc`, … → mask the value up to a delimiter.
 fn mask_key_values(buf: &mut [u8]) {
     let n = buf.len();
+    let blank = |b: u8| matches!(b, b' ' | b'\t');
     for key in SECRET_KEYS {
         let klen = key.len();
         if n < klen + 1 {
@@ -107,34 +125,31 @@ fn mask_key_values(buf: &mut [u8]) {
         }
         let mut start = 0;
         while start + klen <= n {
-            if matches_ascii_ci_eq(&buf[start..start + klen], key) {
-                let mut j = start + klen;
-                // Optional whitespace around the separator.
-                while j < n && matches!(buf[j], b' ' | b'\t') {
-                    j += 1;
-                }
-                if j < n && matches!(buf[j], b'=' | b':') {
-                    j += 1;
-                    while j < n && matches!(buf[j], b' ' | b'\t') {
-                        j += 1;
-                    }
-                    let vstart = j;
-                    while j < n && !is_delim(buf[j]) {
-                        j += 1;
-                    }
-                    if j > vstart {
-                        let keep = MASK.len().min(j - vstart);
-                        buf[vstart..vstart + keep].copy_from_slice(&MASK[..keep]);
-                        for b in &mut buf[vstart + keep..j] {
-                            *b = b'*';
-                        }
-                    }
-                    start = j;
-                } else {
-                    start += klen;
-                }
-            } else {
+            let hit = buf
+                .get(start..start + klen)
+                .is_some_and(|window| matches_ascii_ci_eq(window, key));
+            if !hit {
                 start += 1;
+                continue;
+            }
+            let mut j = start + klen;
+            // Optional whitespace around the separator.
+            while at_is(buf, j, blank) {
+                j += 1;
+            }
+            if at_is(buf, j, |b| matches!(b, b'=' | b':')) {
+                j += 1;
+                while at_is(buf, j, blank) {
+                    j += 1;
+                }
+                let vstart = j;
+                while at_is(buf, j, |b| !is_delim(b)) {
+                    j += 1;
+                }
+                mask_range(buf, vstart, j);
+                start = j;
+            } else {
+                start += klen;
             }
         }
     }

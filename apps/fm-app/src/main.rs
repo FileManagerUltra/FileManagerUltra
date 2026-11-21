@@ -573,7 +573,7 @@ impl eframe::App for App {
                         .clicked()
                     {
                         self.session
-                            .dispatch_or_notice("view.hidden.toggle", &fm_engine::Params::Null);
+                            .dispatch_or_notice("view.hidden.toggle", &Params::Null);
                     }
                 });
             });

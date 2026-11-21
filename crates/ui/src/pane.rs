@@ -41,12 +41,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     let mut open = None;
     crate::dnd::note_pane(ui.ctx(), pane, area);
     if kind.is_files() {
-        crate::dnd::register_zone(
-            ui.ctx(),
-            area,
-            location.clone(),
-            crate::dnd::ZONE_BACKGROUND,
-        );
+        crate::dnd::register_zone(ui.ctx(), area, location, crate::dnd::ZONE_BACKGROUND);
     }
     let frame = egui::Frame::NONE
         .fill(tokens.bg)

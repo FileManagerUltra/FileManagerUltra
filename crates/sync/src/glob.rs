@@ -88,32 +88,34 @@ fn tokens(src: &str) -> Vec<Tok> {
 /// Dynamic-programming match: `reach[j]` = pattern prefix matches the text prefix.
 fn run(toks: &[Tok], text: &str) -> bool {
     let chars: Vec<char> = text.chars().collect();
-    let mut reach = vec![false; chars.len() + 1];
-    reach[0] = true;
+    // `reach` always has `chars.len() + 1` slots; `reach[0]` is the empty text prefix.
+    let mut reach: Vec<bool> = std::iter::once(true)
+        .chain(chars.iter().map(|_| false))
+        .collect();
     for tok in toks {
-        let mut next = vec![false; chars.len() + 1];
-        match tok {
-            Tok::Lit(c) => {
-                for j in 0..chars.len() {
-                    next[j + 1] = reach[j] && chars[j] == *c;
-                }
-            }
-            Tok::One => {
-                for j in 0..chars.len() {
-                    next[j + 1] = reach[j] && chars[j] != '/';
-                }
-            }
+        // One character consumed: slot j+1 is reachable from slot j if `chars[j]` fits.
+        let step = |fits: &dyn Fn(char) -> bool| -> Vec<bool> {
+            std::iter::once(false)
+                .chain(reach.iter().zip(&chars).map(|(r, ch)| *r && fits(*ch)))
+                .collect()
+        };
+        reach = match tok {
+            Tok::Lit(c) => step(&|ch| ch == *c),
+            Tok::One => step(&|ch| ch != '/'),
             Tok::Star | Tok::Deep => {
-                next[0] = reach[0];
-                for j in 0..chars.len() {
-                    let crosses = matches!(tok, Tok::Deep) || chars[j] != '/';
-                    next[j + 1] = reach[j + 1] || (next[j] && crosses);
-                }
+                // Zero or more characters: carry reachability forward along the text.
+                let mut prev = reach.first().copied().unwrap_or(false);
+                std::iter::once(prev)
+                    .chain(reach.iter().skip(1).zip(&chars).map(|(r, ch)| {
+                        let crosses = matches!(tok, Tok::Deep) || *ch != '/';
+                        prev = *r || (prev && crosses);
+                        prev
+                    }))
+                    .collect()
             }
-        }
-        reach = next;
+        };
     }
-    reach[chars.len()]
+    reach.last().copied().unwrap_or(false)
 }
 
 #[cfg(test)]

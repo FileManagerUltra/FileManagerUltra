@@ -229,10 +229,10 @@ impl Writer<'_> {
                 .filter_map(|o| lo::deref(self.prev, o).and_then(lo::num))
                 .map(fmt_num)
                 .collect();
-            match n.len() {
-                1 => Some(format!("{} g", n[0])),
-                3 => Some(format!("{} rg", n.join(" "))),
-                4 => Some(format!("{} k", n.join(" "))),
+            match n.as_slice() {
+                [gray] => Some(format!("{gray} g")),
+                [_, _, _] => Some(format!("{} rg", n.join(" "))),
+                [_, _, _, _] => Some(format!("{} k", n.join(" "))),
                 _ => None,
             }
         };
@@ -615,11 +615,11 @@ mod tests {
     #[test]
     fn xref_stream_documents() {
         // Rewrite the fixture with an object stream + xref stream, then fill it.
-        let mut doc = lopdf::Document::load_mem(&fixtures::form()).expect("load");
+        let mut doc = Document::load_mem(&fixtures::form()).expect("load");
         let mut bytes = Vec::new();
         doc.save_modern(&mut bytes).expect("save modern");
         let original: Arc<[u8]> = bytes.into();
-        let mut f = FormDoc::open(original.clone(), None).expect("open");
+        let mut f = FormDoc::open(original, None).expect("open");
         f.set("name", FieldInput::Text("Modern".into()))
             .expect("set");
         let out = f.build(&[]).expect("build");

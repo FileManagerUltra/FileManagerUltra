@@ -432,7 +432,7 @@ impl russh_sftp::server::Handler for Sftp {
                     .map_err(|e| code(&e))?;
             }
             if let (Some(a), Some(m)) = (attrs.atime, attrs.mtime) {
-                let at = |s: u32| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s.into());
+                let at = |s: u32| std::time::UNIX_EPOCH + Duration::from_secs(s.into());
                 let f = fs::File::options()
                     .write(true)
                     .open(&p)

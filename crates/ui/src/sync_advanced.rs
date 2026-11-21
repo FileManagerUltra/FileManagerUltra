@@ -69,7 +69,7 @@ pub(crate) fn show(
             ui.set_width(ui.available_width());
             ui.set_min_height(FOOTER_HEIGHT - 16.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                crate::sync::expand_button(ui, tokens);
+                sync::expand_button(ui, tokens);
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                     status_bar(ui, tokens, state, commands);
                 });
@@ -482,7 +482,7 @@ fn synchronize_row(
     // button in it and counts as page height, so the list shrank a little every frame.
     let size = egui::vec2(
         ui.available_width(),
-        crate::sync_icons::button_height(ui, tokens, true),
+        sync_icons::button_height(ui, tokens, true),
     );
     ui.allocate_ui_with_layout(
         size,
@@ -490,13 +490,13 @@ fn synchronize_row(
         |ui| {
             let has_work = state.plan.as_ref().is_some_and(|pl| !pl.is_empty_work());
             if state.watching() {
-                if crate::sync::check_button(ui, tokens, "Stop syncing").clicked() {
+                if sync::check_button(ui, tokens, "Stop syncing").clicked() {
                     commands.push(("sync.watch.stop", Value::Null));
                 }
             } else if keep {
                 let ready = state.arming == Arming::Confirm;
                 ui.add_enabled_ui(ready, |ui| {
-                    if crate::sync::check_button(ui, tokens, "Start syncing")
+                    if sync::check_button(ui, tokens, "Start syncing")
                         .on_hover_text(
                             "Apply the listed changes now, then apply later ones automatically",
                         )
@@ -507,7 +507,7 @@ fn synchronize_row(
                 });
             } else {
                 ui.add_enabled_ui(!state.busy() && has_work, |ui| {
-                    if crate::sync::check_button(ui, tokens, "Synchronize now")
+                    if sync::check_button(ui, tokens, "Synchronize now")
                         .on_hover_text("Carry out the listed actions")
                         .clicked()
                     {

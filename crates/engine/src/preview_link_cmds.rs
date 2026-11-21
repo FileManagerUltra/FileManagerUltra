@@ -22,11 +22,12 @@ pub(crate) fn classify(url: &str) -> Result<Link<'_>, FmError> {
     if url.len() > MAX_URL || url.chars().any(char::is_control) {
         return refuse("The link is too long or contains control characters");
     }
-    let scheme_end = url
+    let scheme = url
         .find([':', '/', '?', '#'])
-        .filter(|i| url[*i..].starts_with(':'));
-    if let Some(end) = scheme_end {
-        let scheme = &url[..end];
+        .and_then(|i| url.split_at_checked(i))
+        .filter(|(_, rest)| rest.starts_with(':'))
+        .map(|(scheme, _)| scheme);
+    if let Some(scheme) = scheme {
         let valid = scheme
             .chars()
             .next()

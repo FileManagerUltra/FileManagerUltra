@@ -343,7 +343,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         draft.creating = None;
     }
     // A newly opened (or restored) chooser may sit under the dialog that asked for it.
-    let shown_for = (picker.purpose.clone(), s.parked_pickers.len());
+    let shown_for = (picker.purpose, s.parked_pickers.len());
     let deeper = draft
         .shown_for
         .as_ref()

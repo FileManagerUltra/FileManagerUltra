@@ -246,8 +246,8 @@ fn draw_tab(ui: &mut Ui, tokens: &Tokens, st: &mut State) -> Option<serde_json::
     let ink = Stroke::new(2.0, tokens.sig_ink);
     for stroke in &st.strokes {
         let pts: Vec<Pos2> = stroke.iter().map(|p| rect.min + vec2(p[0], p[1])).collect();
-        if pts.len() == 1 {
-            painter.circle_filled(pts[0], 1.0, ink.color);
+        if let [dot] = pts.as_slice() {
+            painter.circle_filled(*dot, 1.0, ink.color);
         } else {
             painter.add(egui::Shape::line(pts, ink));
         }
@@ -493,14 +493,17 @@ fn digital_tab(
             "password": st.password,
             "appearance": appearance,
         });
+        let mut extra = serde_json::Map::new();
         if !st.reason.trim().is_empty() {
-            params["reason"] = json!(st.reason.trim());
+            extra.insert("reason".into(), json!(st.reason.trim()));
         }
         if !st.location.trim().is_empty() {
-            params["location"] = json!(st.location.trim());
+            extra.insert("location".into(), json!(st.location.trim()));
         }
         match &st.field {
-            Some(f) => params["field"] = json!(f),
+            Some(f) => {
+                extra.insert("field".into(), json!(f));
+            }
             None if st.look != Look::Invisible => {
                 // A visible signature without a field: bottom right of the current page.
                 if let Some(shown) = s.pdf_shown(st.pane)
@@ -509,11 +512,14 @@ fn digital_tab(
                     let (w, h) = (180.0f32.min(p.width - 16.0), 54.0f32.min(p.height - 16.0));
                     let x1 = p.width - 36.0f32.min(p.width / 10.0);
                     let y1 = p.height - 36.0f32.min(p.height / 10.0);
-                    params["page"] = json!(view.page);
-                    params["rect"] = json!([x1 - w, y1 - h, x1, y1]);
+                    extra.insert("page".into(), json!(view.page));
+                    extra.insert("rect".into(), json!([x1 - w, y1 - h, x1, y1]));
                 }
             }
             None => {}
+        }
+        if let Some(obj) = params.as_object_mut() {
+            obj.extend(extra);
         }
         actions.push(("pdf.sign.digital", params));
         st.password.clear();

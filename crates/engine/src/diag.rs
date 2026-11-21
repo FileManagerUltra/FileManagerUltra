@@ -155,10 +155,19 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
+/// Running total of `counter` since start.
+fn total(counter: Counter) -> u64 {
+    COUNTS
+        .get(counter as usize)
+        .map_or(0, |slot| slot.load(Ordering::Relaxed))
+}
+
 /// Count one occurrence of `counter` (no-op while the log is off).
 pub fn count(counter: Counter) {
-    if enabled() {
-        COUNTS[counter as usize].fetch_add(1, Ordering::Relaxed);
+    if enabled()
+        && let Some(slot) = COUNTS.get(counter as usize)
+    {
+        slot.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -648,17 +657,16 @@ impl WriterState {
         } else {
             line.push_str(" ui=none");
         }
-        for (i, name) in COUNTER_NAMES.iter().enumerate() {
-            let now = COUNTS[i].load(Ordering::Relaxed);
-            let delta = now.saturating_sub(self.previous[i]);
-            self.previous[i] = now;
+        for ((name, count), previous) in COUNTER_NAMES.iter().zip(&COUNTS).zip(&mut self.previous) {
+            let now = count.load(Ordering::Relaxed);
+            let delta = now.saturating_sub(*previous);
+            *previous = now;
             line.push_str(&format!(" {name}={delta}"));
         }
         line.push_str(&format!(
             " tex_new_total={} dec_start_total={}",
-            COUNTS[Counter::TexCreated as usize].load(Ordering::Relaxed)
-                + COUNTS[Counter::TexResized as usize].load(Ordering::Relaxed),
-            COUNTS[Counter::DecoderStarts as usize].load(Ordering::Relaxed),
+            total(Counter::TexCreated) + total(Counter::TexResized),
+            total(Counter::DecoderStarts),
         ));
         line.push_str(&self.lost_events());
         self.dropped_seen = DROPPED.load(Ordering::Relaxed);
@@ -859,12 +867,9 @@ mod tests {
         // Wait for the second one instead of a fixed time: on a busy machine (Windows CI)
         // the first memory reading alone can take half a second. Samples are flushed as
         // they are written.
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = Instant::now() + Duration::from_secs(15);
         while !std::fs::read_to_string(&path).is_ok_and(|t| t.contains(" ui=none")) {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "no second sample within 15 s"
-            );
+            assert!(Instant::now() < deadline, "no second sample within 15 s");
             std::thread::sleep(Duration::from_millis(50));
         }
         stop();

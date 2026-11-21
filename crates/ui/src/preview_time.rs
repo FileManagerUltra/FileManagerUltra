@@ -448,8 +448,7 @@ mod tests {
                 picker.select_relative(seconds, selected).expect("preset");
                 assert!(picker.from.enabled && !picker.to.enabled);
                 let params = picker.params_at(applied).expect("params");
-                let from = fm_preview::log::parse_bound(params["from"].as_str().expect("from"))
-                    .expect("parsed");
+                let from = parse_bound(params["from"].as_str().expect("from")).expect("parsed");
                 assert_eq!(params["to"], "");
                 assert_eq!(applied.as_second() - from, seconds);
             }
@@ -492,8 +491,7 @@ mod tests {
         harness.run();
         let after = Timestamp::now().as_second();
         let (_, params) = harness.state().1.first().expect("Apply dispatch");
-        let from =
-            fm_preview::log::parse_bound(params["from"].as_str().expect("from")).expect("parsed");
+        let from = parse_bound(params["from"].as_str().expect("from")).expect("parsed");
         assert_eq!(params["to"], "");
         assert!((before - 900..=after - 900).contains(&from));
         assert!(!harness.state().0.open);

@@ -129,7 +129,10 @@ fn fit(s: &mut Session, params: &Params) -> Result<(), FmError> {
     let mode = match map.as_ref().and_then(|m| m.get("mode")) {
         None => {
             let i = PdfFit::ALL.iter().position(|f| *f == current).unwrap_or(0);
-            PdfFit::ALL[(i + 1) % PdfFit::ALL.len()]
+            PdfFit::ALL
+                .get((i + 1) % PdfFit::ALL.len())
+                .copied()
+                .unwrap_or(current)
         }
         Some(v) => v
             .as_str()
@@ -159,7 +162,10 @@ fn colors(s: &mut Session, params: &Params) -> Result<(), FmError> {
                 .iter()
                 .position(|c| *c == current)
                 .unwrap_or(0);
-            PdfColors::ALL[(i + 1) % PdfColors::ALL.len()]
+            PdfColors::ALL
+                .get((i + 1) % PdfColors::ALL.len())
+                .copied()
+                .unwrap_or(current)
         }
         Some(v) => v.as_str().and_then(PdfColors::from_id).ok_or_else(|| {
             FmError::InvalidParams("mode must be original, dark or high_contrast".into())
@@ -228,8 +234,8 @@ fn rgb(v: &Value) -> Option<[u8; 3]> {
         return None;
     }
     let mut out = [0u8; 3];
-    for (i, c) in a.iter().enumerate() {
-        out[i] = u8::try_from(c.as_u64()?).ok()?;
+    for (slot, c) in out.iter_mut().zip(a) {
+        *slot = u8::try_from(c.as_u64()?).ok()?;
     }
     Some(out)
 }
@@ -273,8 +279,10 @@ fn visible(s: &mut Session, params: &Params) -> Result<(), FmError> {
     let contrast = match map.get("contrast") {
         None => None,
         Some(v) => {
-            let a = v.as_array().filter(|a| a.len() == 2);
-            let pair = a.and_then(|a| Some((rgb(&a[0])?, rgb(&a[1])?)));
+            let pair = match v.as_array().map(Vec::as_slice) {
+                Some([fg, bg]) => rgb(fg).zip(rgb(bg)),
+                _ => None,
+            };
             Some(pair.ok_or_else(|| {
                 FmError::InvalidParams("contrast must be two [r, g, b] colours".into())
             })?)

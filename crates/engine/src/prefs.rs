@@ -1375,10 +1375,7 @@ mod tests {
                 user: "x".repeat(2000),
                 ..profile.clone()
             },
-            Profile {
-                port: 0,
-                ..profile.clone()
-            },
+            Profile { port: 0, ..profile },
         ] {
             assert!(bad.validate().is_err());
         }

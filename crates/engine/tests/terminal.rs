@@ -73,7 +73,7 @@ fn network_kind_roots_the_pane_at_the_network_folder() {
     assert_eq!(kind_of(&s), PaneKind::Network);
     let pane = s.layout.focused();
     let st = s.layout.state(pane).expect("pane");
-    assert_eq!(st.location, fm_vfs::VfsUri::network());
+    assert_eq!(st.location, VfsUri::network());
 }
 
 #[test]

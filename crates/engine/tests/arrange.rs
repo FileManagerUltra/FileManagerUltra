@@ -11,8 +11,11 @@ fn three() -> (Session, u64, u64, u64) {
         .expect("split");
     s.dispatch("pane.split.horizontal", &json!(null))
         .expect("split");
-    let p = s.layout.panes();
-    (s, p[0], p[1], p[2])
+    let panes = s.layout.panes();
+    let [a, b, c] = panes.as_slice() else {
+        panic!("expected three panes");
+    };
+    (s, *a, *b, *c)
 }
 
 #[test]

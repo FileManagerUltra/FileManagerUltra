@@ -673,7 +673,7 @@ mod tests {
             }
         );
         assert_eq!(handle_key(&row, Key::Enter), KeyOutcome::Open(uri));
-        let mut root = row.clone();
+        let mut root = row;
         root.depth = 0;
         assert_eq!(handle_key(&root, Key::ArrowLeft), KeyOutcome::CollapseAll);
         // Left on a collapsed child only moves the cursor to its parent.
@@ -879,14 +879,11 @@ mod tests {
         run_tree_frame(&ctx, &mut s, 1);
 
         let target = VfsUri::parse("/zz/target").expect("uri");
-        s.layout
-            .state_mut(1)
-            .expect("pane")
-            .navigate(target.clone());
+        s.layout.state_mut(1).expect("pane").navigate(target);
         for _ in 0..40 {
             s.poll();
             run_tree_frame(&ctx, &mut s, 1);
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::sleep(Duration::from_millis(5));
         }
         let scroll = s.layout.state(1).expect("pane").tree.scroll;
         assert!(scroll > 100.0, "tree scrolled to the folder, got {scroll}");
@@ -949,7 +946,7 @@ mod tests {
                 &ctx,
                 &mut s,
                 vec![egui::Event::Key {
-                    key: egui::Key::ArrowRight,
+                    key: Key::ArrowRight,
                     physical_key: None,
                     pressed: true,
                     repeat: false,
@@ -1013,7 +1010,7 @@ mod tests {
         for _ in 0..3 {
             frame(&mut s, vec![]);
         }
-        frame(&mut s, key(egui::Key::ArrowLeft));
+        frame(&mut s, key(Key::ArrowLeft));
         for _ in 0..3 {
             frame(&mut s, vec![]);
         }
@@ -1035,7 +1032,7 @@ mod tests {
             let pane = s.layout.state_mut(1).expect("pane");
             pane.tree = fm_layout::TreeState::new(home.clone());
             pane.location = home.clone();
-            pane.tree.focused = Some(x.clone());
+            pane.tree.focused = Some(x);
             pane.tree.active = true;
             pane.tree.expand(a.clone());
         }
@@ -1045,7 +1042,7 @@ mod tests {
         }
         let ctx = egui::Context::default();
         let tokens = Tokens::dark();
-        let frame = |s: &mut Session, k: Option<egui::Key>| {
+        let frame = |s: &mut Session, k: Option<Key>| {
             let events = k
                 .map(|key| egui::Event::Key {
                     key,
@@ -1076,7 +1073,7 @@ mod tests {
         for _ in 0..3 {
             frame(&mut s, None);
         }
-        frame(&mut s, Some(egui::Key::ArrowLeft));
+        frame(&mut s, Some(Key::ArrowLeft));
         for _ in 0..3 {
             frame(&mut s, None);
         }

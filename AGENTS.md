@@ -33,7 +33,7 @@ crates/
   ui           L4  egui widgets (tree, virtualized listing, dialogs, theme)
 apps/
   fm-app       L5  eframe shell: window, menus, shortcuts, wiring
-xtask/                layers | brand-check | ci | bench
+xtask/                layers | brand-check | ci | hooks | mess | bench
 ```
 
 **Layering is enforced by `cargo xtask layers`.** A crate may depend only on equal-or-lower layers. A new crate must be registered in `xtask/src/layers.rs`. Nothing below L4 names an egui type; nothing above L3 performs filesystem I/O except through `engine`.
@@ -54,11 +54,14 @@ xtask/                layers | brand-check | ci | bench
 
 ```sh
 cargo test  -p <crates you touched>
-cargo clippy -p <crates> --all-targets -- -D warnings
+cargo clippy -p <crates> --all-targets --all-features -- -D warnings
 cargo xtask layers
 cargo xtask brand-check
 cargo fmt --all -- --check
+cargo deny check                 # when you changed dependencies
 ```
+
+CI (`.github/workflows/ci.yml`) runs the full gate on every push and PR; `cargo xtask hooks` installs git hooks that run the fast part before each commit and push. Clippy denies unchecked indexing and `str` byte slicing in non-test code: use `get()`, slice patterns, `split_once`/`strip_prefix` or iterators. New licences need the user's approval and a scoped exception in `deny.toml`.
 
 If the change is visible to users (features, behaviour changes, fixes, removals, install notes), add a short, human-readable line under `## [Unreleased]` in `CHANGELOG.md`, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`). Write for users, not developers: no crate names, no internals. Skip purely internal work (refactors, tests, CI). On release, rename `[Unreleased]` to the version and date.
 

@@ -193,7 +193,7 @@ fn media_status_bar_time_dark_light() {
             .expect("enqueue");
         session.media.queue.select(0).expect("current");
         session.media.position = 83.0;
-        session.media.info = Some(std::sync::Arc::new(fm_media::AudioInfo {
+        session.media.info = Some(Arc::new(fm_media::AudioInfo {
             format: fm_media::AudioFormat::new(44_100, 2).expect("format"),
             duration: Some(296.0),
             tags: fm_media::AudioTags::default(),
@@ -1082,7 +1082,7 @@ fn media_open_hint_dark_light() {
             );
         harness.run();
         // The panel opens for messages that arrive while the app runs.
-        let song = fm_vfs::VfsUri::parse("/music/song.mp3").expect("uri");
+        let song = VfsUri::parse("/music/song.mp3").expect("uri");
         harness.state_mut().offer_media_open_hint(&song);
         harness.run();
         harness.snapshot(format!("media_open_hint_{theme}"));
@@ -1122,7 +1122,7 @@ fn activity_panel_cards_dark_light() {
             .state_mut()
             .messages
             .push("Cannot copy notes.txt: the disk is full (2 MiB free, 14 MiB needed).");
-        let song = fm_vfs::VfsUri::parse("/music/song.mp3").expect("uri");
+        let song = VfsUri::parse("/music/song.mp3").expect("uri");
         harness.state_mut().offer_media_open_hint(&song);
         harness.run();
         harness.snapshot(format!("activity_cards_{theme}"));
@@ -2564,12 +2564,9 @@ fn signature_square(label: &str, tamper: bool, snapshot: &str) {
         return;
     };
     let p12 = fm_pdf::fixtures::certs::p12(&fm_pdf::fixtures::certs::P12Spec::default());
-    let signer = fm_pdf::cert::load_pkcs12(
-        &p12,
-        &fm_pdf::Secret::new("test-pass"),
-        std::time::SystemTime::now(),
-    )
-    .expect("signer");
+    let signer =
+        fm_pdf::cert::load_pkcs12(&p12, &fm_pdf::Secret::new("test-pass"), SystemTime::now())
+            .expect("signer");
     let mut bytes = fm_pdf::sign::sign(
         &fm_pdf::fixtures::form(),
         None,
@@ -2580,7 +2577,7 @@ fn signature_square(label: &str, tamper: bool, snapshot: &str) {
     if tamper {
         // Change a byte of page content inside the signed range.
         let at = fm_pdf::doc::find(&bytes, b"Application form").expect("text");
-        bytes[at] = b'X';
+        *bytes.get_mut(at).expect("text byte") = b'X';
     }
     let (session, pane) = preview_fixture("signed.pdf", &bytes, false);
     let tokens = Tokens::light();
@@ -3674,7 +3671,7 @@ fn preview_header_shows_the_file_name_dark_light() {
                 } else {
                     egui::Theme::Light
                 });
-                fm_ui::pane::show(ui, &mut session, pane, &tokens);
+                pane::show(ui, &mut session, pane, &tokens);
             });
         for width in [1400, 800, 360] {
             harness.set_size(egui::vec2(width as f32, 180.0));

@@ -1174,7 +1174,7 @@ mod tests {
 
     #[test]
     fn legacy_smb_pane_restores_as_a_network_pane() {
-        let mut s = crate::Session::new().expect("session");
+        let mut s = Session::new().expect("session");
         let mut layout = home_layout(10);
         let focused = layout.focused();
         if let Some(st) = layout.state_mut(focused) {
@@ -1193,7 +1193,7 @@ mod tests {
 
     #[test]
     fn duplicate_media_panes_in_saved_workspace_restore_as_files() {
-        let mut s = crate::Session::new().expect("session");
+        let mut s = Session::new().expect("session");
         let mut layout = home_layout(10);
         let first = layout.focused();
         let second = layout
@@ -1220,7 +1220,7 @@ mod tests {
 
     #[test]
     fn restored_local_pane_roots_its_tree_at_the_filesystem_root() {
-        let mut s = crate::Session::new().expect("session");
+        let mut s = Session::new().expect("session");
         let loc = VfsUri::parse("/home/u/code").expect("uri");
         let layout = Layout::single_rooted(loc.clone(), VfsUri::parse("/home/u").expect("uri"), 10);
         let value = serde_json::to_value(Snapshot {

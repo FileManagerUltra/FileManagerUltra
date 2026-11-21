@@ -134,22 +134,25 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             }
             submit |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.columns(2, |cols| {
+                let [left, right] = cols else {
+                    return;
+                };
                 let r = field(
-                    &mut cols[0],
+                    left,
                     "Containing",
                     &mut draft.content,
                     "text inside files",
                     "Only files containing this text (case-insensitive; binary files are skipped)",
                 );
-                submit |= r.lost_focus() && cols[0].input(|i| i.key_pressed(egui::Key::Enter));
+                submit |= r.lost_focus() && left.input(|i| i.key_pressed(egui::Key::Enter));
                 let r = field(
-                    &mut cols[1],
+                    right,
                     "Look in",
                     &mut draft.root,
                     "folder",
                     "The folder to search below",
                 );
-                submit |= r.lost_focus() && cols[0].input(|i| i.key_pressed(egui::Key::Enter));
+                submit |= r.lost_focus() && right.input(|i| i.key_pressed(egui::Key::Enter));
             });
             ui.horizontal(|ui| {
                 ui.checkbox(&mut draft.hidden, "Include hidden")
@@ -341,8 +344,10 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             "content": draft.content,
             "hidden": draft.hidden,
         });
-        if !draft.root.trim().is_empty() {
-            params["root"] = json!(draft.root.trim());
+        if !draft.root.trim().is_empty()
+            && let Some(obj) = params.as_object_mut()
+        {
+            obj.insert("root".into(), json!(draft.root.trim()));
         }
         s.dispatch_or_notice("search.start", &params);
         draft.synced_root = s

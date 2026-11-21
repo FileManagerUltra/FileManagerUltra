@@ -97,7 +97,7 @@ pub enum OpRequest {
 
 /// Bytes shared with a job; compared by identity (they can be large).
 #[derive(Clone)]
-pub struct SharedBytes(pub std::sync::Arc<[u8]>);
+pub struct SharedBytes(pub Arc<[u8]>);
 
 impl std::fmt::Debug for SharedBytes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -107,7 +107,7 @@ impl std::fmt::Debug for SharedBytes {
 
 impl PartialEq for SharedBytes {
     fn eq(&self, other: &Self) -> bool {
-        std::sync::Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 

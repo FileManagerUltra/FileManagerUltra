@@ -634,7 +634,7 @@ mod tests {
         info.duration = 11.0;
         assert!(!show(&mut s, &info), "a refreshed probe keeps it paused");
         s.opened_elsewhere = None;
-        let mut other = info.clone();
+        let mut other = info;
         other.path.push_str(".other");
         assert!(show(&mut s, &other), "another video still autoplays");
     }

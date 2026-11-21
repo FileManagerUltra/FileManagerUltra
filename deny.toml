@@ -1,0 +1,65 @@
+# cargo-deny: dependency policy checked by `cargo xtask ci`, the pre-push hook and CI.
+# Run it by hand with `cargo deny check` (install: `cargo install cargo-deny --locked`).
+
+[graph]
+all-features = true
+
+# RustSec advisories. A vulnerability or yanked crate fails the check; an advisory that
+# does not affect us (or has no fix yet) goes in `ignore` with the reason.
+[advisories]
+yanked = "deny"
+ignore = [
+    # Marvin timing side channel in RSA decryption; no fixed `rsa` release exists. We
+    # only sign (SSH/SMB client auth) and verify (PDF signatures), never decrypt for an
+    # attacker who can time us repeatedly. Drop this once russh/sspi move to a fixed rsa.
+    { id = "RUSTSEC-2023-0071", reason = "no fix upstream; client-side signing/verification only" },
+    # Unmaintained, pulled in by winit, usvg and rustybuzz; nothing to replace it with
+    # until those crates move on.
+    { id = "RUSTSEC-2026-0192", reason = "transitive via winit/usvg; no maintained drop-in" },
+]
+
+# Licences. Permissive licences only (AGENTS.md §7): anything else needs the user's
+# approval first, then an exception below scoped to the one crate, plus its notice in
+# THIRD-PARTY-NOTICES.md.
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+exceptions = [
+    # Mermaid ELK layout, user-approved 2026-11-16 (AGENTS.md §7, fm_preview::notices).
+    { allow = ["EPL-2.0"], crate = "merman-elk-layered" },
+]
+
+[licenses.private]
+# Our own unpublished crates (and the vendored copies) are checked by review, not here.
+ignore = true
+
+[bans]
+# The tree is large; duplicate versions are normal and not worth failing a build over.
+multiple-versions = "allow"
+# `*` version requirements are not allowed, except path dependencies inside the workspace.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+# Only crates.io; a git or other-registry dependency must be added here deliberately.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

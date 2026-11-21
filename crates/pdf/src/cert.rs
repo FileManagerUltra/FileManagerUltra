@@ -458,7 +458,7 @@ fn decode_key(der: &[u8]) -> Result<(SignKey, String, Vec<u8>), PdfError> {
     let oid = info.algorithm.oid;
     if oid == OID_RSA {
         let key = rsa::RsaPrivateKey::from_pkcs8_der(der).map_err(|_| bad())?;
-        let bits = rsa::traits::PublicKeyParts::n(&key).bits();
+        let bits = rsa::traits::PublicKeyParts::n(&key).bit_width();
         if !(2048..=8192).contains(&bits) {
             return Err(PdfError::Certificate(format!(
                 "RSA keys of {bits} bits are not supported (2048–8192 are)"

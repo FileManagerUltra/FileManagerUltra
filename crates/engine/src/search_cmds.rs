@@ -1299,8 +1299,7 @@ mod tests {
             .expect("file");
         fs.put_file(&at("readme.txt"), b"nothing").expect("file");
         let mut s = Session::new().expect("session");
-        s.backends
-            .register_at(share.authority(), std::sync::Arc::new(fs));
+        s.backends.register_at(share.authority(), Arc::new(fs));
         (s, share)
     }
 

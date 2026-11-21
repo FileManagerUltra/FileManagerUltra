@@ -654,11 +654,11 @@ mod tests {
     #[test]
     fn chapters_parse_sorted_and_skip_garbage() {
         let raw = br#"{"chapters":[{"start_time":"10.0","end_time":"20.0","tags":{"title":"B"}},{"start_time":"0.0","end_time":"10.0"},{"start_time":"x","end_time":"1"},{"start_time":"5","end_time":"1"}]}"#;
-        let c = super::parse_chapters(raw);
+        let c = parse_chapters(raw);
         assert_eq!(c.len(), 2);
         assert_eq!(c[0].title, "Chapter 2");
         assert_eq!(c[1].title, "B");
-        assert!(super::parse_chapters(b"nope").is_empty());
+        assert!(parse_chapters(b"nope").is_empty());
     }
 
     use super::*;
@@ -687,7 +687,7 @@ mod tests {
 
     /// A 320×180 clip, left half red and right half white, stored with a 90° display
     /// rotation like an upright phone video: shown 180×320 with the red half at the bottom.
-    fn upright_phone_clip(dir: &Path) -> Option<std::path::PathBuf> {
+    fn upright_phone_clip(dir: &Path) -> Option<PathBuf> {
         let ff = find_tool("ffmpeg")?;
         let plain = dir.join("plain.mp4");
         let rotated = dir.join("upright.mp4");
@@ -770,9 +770,9 @@ mod tests {
             };
             let player =
                 crate::player::Player::start(&spec, fm_media::Gain::default()).expect("player");
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
-            while !player.finished() && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(5));
+            let deadline = Instant::now() + Duration::from_secs(8);
+            while !player.finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
             }
             let frame = player.latest().expect("frame");
             eprintln!("{hardware:?}: decoded with {:?}", player.decoding());

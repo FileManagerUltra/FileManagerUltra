@@ -343,11 +343,7 @@ impl Vfs for MemFs {
         }
     }
 
-    fn open_write(
-        &self,
-        uri: &VfsUri,
-        opts: WriteOpts,
-    ) -> Result<Box<dyn std::io::Write + Send>, FmError> {
+    fn open_write(&self, uri: &VfsUri, opts: WriteOpts) -> Result<Box<dyn Write + Send>, FmError> {
         let g = self.lock();
         let parent = uri
             .parent()

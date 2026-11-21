@@ -146,7 +146,7 @@ mod manage {
 
     /// Where a trashed item's data lives: `<trash>/info/<n>.trashinfo` -> `<trash>/files/<n>`,
     /// then down `path`. Refuses `..`, separators and symlinked folders on the way.
-    fn item_path(id: &str, path: &[String]) -> Result<std::path::PathBuf, FmError> {
+    fn item_path(id: &str, path: &[String]) -> Result<PathBuf, FmError> {
         let bad = || FmError::InvalidParams("not a trash entry".to_string());
         let info = Path::new(id);
         if info.extension().and_then(|e| e.to_str()) != Some("trashinfo") {
@@ -167,7 +167,7 @@ mod manage {
         Ok(dir)
     }
 
-    fn files_dir(id: &str, path: &[String]) -> Result<std::path::PathBuf, FmError> {
+    fn files_dir(id: &str, path: &[String]) -> Result<PathBuf, FmError> {
         let dir = item_path(id, path)?;
         let meta = std::fs::symlink_metadata(&dir)?;
         if !meta.is_dir() {

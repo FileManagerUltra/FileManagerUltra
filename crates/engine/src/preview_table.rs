@@ -463,9 +463,7 @@ impl TableView {
         if !self.wants_view() {
             *lock(&self.shared.state) = JobState::default();
             *lock(&self.shared.job) = None;
-            self.shared
-                .newest_job
-                .store(self.rev, std::sync::atomic::Ordering::Relaxed);
+            self.shared.newest_job.store(self.rev, Ordering::Relaxed);
             return;
         }
         let spec = ViewSpec {

@@ -143,8 +143,10 @@ fn drawn(strokes: &[Vec<[f32; 2]>], width: f32, height: f32) -> Result<Visual, P
     let mut out = format!("{INK} RG {INK} rg 1 J 1 j {} w\n", fmt_num(pen));
     for stroke in strokes.iter().filter(|s| !s.is_empty()) {
         let pts: Vec<(f64, f64)> = stroke.iter().map(|p| map(*p)).collect();
-        if pts.len() == 1 {
-            let (x, y) = pts[0];
+        let Some(&(x0, y0)) = pts.first() else {
+            continue;
+        };
+        if let [(x, y)] = *pts.as_slice() {
             out.push_str(&format!(
                 "{} {} m {} {} l S\n",
                 fmt_num(x),
@@ -154,13 +156,20 @@ fn drawn(strokes: &[Vec<[f32; 2]>], width: f32, height: f32) -> Result<Visual, P
             ));
             continue;
         }
-        out.push_str(&format!("{} {} m\n", fmt_num(pts[0].0), fmt_num(pts[0].1)));
+        out.push_str(&format!("{} {} m\n", fmt_num(x0), fmt_num(y0)));
         // Catmull-Rom through the points, as cubic Béziers: smooth without overshoot.
-        for i in 0..pts.len() - 1 {
-            let p0 = pts[i.saturating_sub(1)];
-            let p1 = pts[i];
-            let p2 = pts[i + 1];
-            let p3 = pts[(i + 2).min(pts.len() - 1)];
+        // Repeating the end points gives each segment its p0..p3 as one window.
+        let padded: Vec<(f64, f64)> = pts
+            .first()
+            .into_iter()
+            .chain(&pts)
+            .chain(pts.last())
+            .copied()
+            .collect();
+        for window in padded.windows(4) {
+            let &[p0, p1, p2, p3] = window else {
+                continue;
+            };
             let c1 = (p1.0 + (p2.0 - p0.0) / 6.0, p1.1 + (p2.1 - p0.1) / 6.0);
             let c2 = (p2.0 - (p3.0 - p1.0) / 6.0, p2.1 - (p3.1 - p1.1) / 6.0);
             out.push_str(&format!(

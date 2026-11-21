@@ -218,7 +218,7 @@ fn strip_parse_prefix(message: &str) -> &str {
     if trimmed.starts_with("Diagram parse error")
         && let Some(at) = trimmed.find("): ")
     {
-        return &trimmed[at + 3..];
+        return trimmed.get(at + 3..).unwrap_or(trimmed);
     }
     trimmed
 }
@@ -319,9 +319,9 @@ pub fn flatten(thumb: &Thumb, background: &str, pad: u32) -> Result<Thumb, Strin
             .zip(line.as_chunks::<4>().0)
         {
             let a = u16::from(src[3]);
-            for c in 0..3 {
-                let blended = (u16::from(src[c]) * a + u16::from(bg[c]) * (255 - a) + 127) / 255;
-                dst[c] = blended as u8;
+            for ((d, s), b) in dst.iter_mut().zip(src).zip(bg.iter()).take(3) {
+                let blended = (u16::from(*s) * a + u16::from(*b) * (255 - a) + 127) / 255;
+                *d = blended as u8;
             }
         }
     }
@@ -673,11 +673,11 @@ mod tests {
         assert!(!svg.contains("<image"), "no images");
         assert!(!svg.contains("@import"), "no stylesheet imports");
         for (at, _) in svg.match_indices("href=\"") {
-            let target = &svg[at + 6..];
+            let target = svg.get(at + 6..).unwrap_or_default();
             assert!(
                 target.starts_with('#'),
                 "only same-document links: {}",
-                &target[..target.len().min(40)]
+                target.chars().take(40).collect::<String>()
             );
         }
         assert!(

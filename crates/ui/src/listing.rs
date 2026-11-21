@@ -889,9 +889,9 @@ fn filter_bar(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
         changed = response.changed();
         let (esc, enter, down) = ui.input(|i| {
             (
-                i.key_pressed(egui::Key::Escape),
-                i.key_pressed(egui::Key::Enter),
-                i.key_pressed(egui::Key::ArrowDown),
+                i.key_pressed(Key::Escape),
+                i.key_pressed(Key::Enter),
+                i.key_pressed(Key::ArrowDown),
             )
         });
         if (response.has_focus() || response.lost_focus()) && esc {
@@ -933,7 +933,7 @@ fn esc_clears_filter(ui: &Ui, s: &mut Session, pane: PaneId) {
         .layout
         .state(pane)
         .is_some_and(|p| p.listing.filter.is_some());
-    if has_filter && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if has_filter && ui.input(|i| i.key_pressed(Key::Escape)) {
         s.dispatch_or_notice("view.filter.clear", &serde_json::Value::Null);
     }
 }

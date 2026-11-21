@@ -618,7 +618,7 @@ mod tests {
             for stream in listener.incoming().take(4) {
                 let Ok(mut stream) = stream else { continue };
                 let mut req = [0u8; 1024];
-                let _ = std::io::Read::read(&mut stream, &mut req);
+                let _ = Read::read(&mut stream, &mut req);
                 let head = format!(
                     "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()

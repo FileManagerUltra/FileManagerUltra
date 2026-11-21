@@ -204,7 +204,9 @@ impl Queue {
             self.cursor = Some(position);
         }
         self.record_play(index);
-        Ok(&self.items[index])
+        self.items.get(index).ok_or_else(|| {
+            FmError::InvalidParams(format!("media queue index out of range: {index}"))
+        })
     }
 
     pub fn remove(&mut self, index: usize) -> Result<VfsUri, FmError> {
@@ -254,9 +256,10 @@ impl Queue {
                 let next_position = old_play_cursor
                     .unwrap_or(0)
                     .min(self.order.len().saturating_sub(1));
-                let next = self.order[next_position];
-                self.record_play(next);
-                self.cursor = Some(next_position);
+                if let Some(&next) = self.order.get(next_position) {
+                    self.record_play(next);
+                    self.cursor = Some(next_position);
+                }
             } else {
                 self.history.clear();
                 self.history_cursor = None;
@@ -583,7 +586,7 @@ impl Queue {
             return Err(FmError::InvalidParams("folder range out of bounds".into()));
         }
         let id = self.create_group(name, dir)?;
-        for slot in &mut self.item_group[range] {
+        for slot in self.item_group.get_mut(range).unwrap_or_default() {
             *slot = Some(id);
         }
         self.normalize_groups();

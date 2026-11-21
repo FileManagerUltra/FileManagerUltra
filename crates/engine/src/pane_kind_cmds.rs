@@ -34,7 +34,7 @@ fn parse(params: &Params) -> Result<(PaneKind, Option<PaneId>, bool), FmError> {
 
 /// `pane.kind.set {kind, pane?}`
 /// The folder highlighted in another Files pane, else that pane's folder, else home.
-fn selected_folder(s: &mut crate::Session, pane: fm_layout::PaneId) -> fm_vfs::VfsUri {
+fn selected_folder(s: &mut crate::Session, pane: PaneId) -> fm_vfs::VfsUri {
     let others: Vec<_> = s
         .layout
         .panes()

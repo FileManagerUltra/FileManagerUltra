@@ -408,9 +408,8 @@ pub fn run_view(
                     )
                 })
                 .collect();
-            key_bytes += 48
-                + keys.len() * std::mem::size_of::<Key>()
-                + keys.iter().map(Key::heap).sum::<usize>();
+            key_bytes +=
+                48 + keys.len() * size_of::<Key>() + keys.iter().map(Key::heap).sum::<usize>();
             if key_bytes > SORT_BUDGET || keyed.len() >= MAX_VIEW_ROWS {
                 return Err(ViewError::TooLarge(
                     "too many rows to sort; filter the table first".into(),

@@ -18,8 +18,14 @@ cargo test -p fm-engine -- --exact <path::to::test>  # exactly one test
 cargo test -p fm-ui --test snapshots                 # egui_kittest snapshots (skip without a GPU/CPU adapter)
 UPDATE_SNAPSHOTS=1 cargo test -p fm-ui --test snapshots   # rewrite committed PNGs
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo xtask ci                                       # everything CI runs
+cargo xtask ci                                       # everything CI runs (needs cargo-deny, cargo-machete)
+cargo deny check                                     # licences/advisories/sources (deny.toml)
+cargo xtask mess                                     # report-only: long/complex functions
 ```
+
+- CI (`.github/workflows/ci.yml`) runs on every push to main and every PR. Git hooks
+  (`cargo xtask hooks`, scripts in `.githooks/`) run fmt/layers/brand on commit and
+  clippy/deny on push; `--no-verify` skips them.
 
 - Crate package names are `fm-<dir>` (`crates/fs-local` → `fm-fs-local`, `apps/fm-app` → `fm-app`).
 - Linux builds need `pkg-config` + `libasound2-dev` (audio via `cpal`).

@@ -164,17 +164,17 @@ pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
             mode: "replace",
         }),
         "file.mkdir" => Some(Dialog::Mkdir {
-            dir: dir.clone(),
+            dir,
             name: String::new(),
         }),
         "file.newfile" => Some(Dialog::NewFile {
-            dir: dir.clone(),
+            dir,
             name: String::new(),
         }),
         "file.rename" if selection.len() == 1 => {
             let current = selection.first()?.file_name()?.to_string();
             Some(Dialog::Rename {
-                dir: dir.clone(),
+                dir,
                 name: current.clone(),
                 current,
             })

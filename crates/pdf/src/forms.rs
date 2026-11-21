@@ -301,7 +301,7 @@ impl FormDoc {
         if value == field.value {
             self.values.remove(name);
         } else {
-            self.values.insert(field.name.clone(), value);
+            self.values.insert(field.name, value);
         }
         Ok(())
     }
@@ -759,14 +759,17 @@ fn parse_options(doc: &Document, opt: Option<&Object>) -> Vec<ChoiceOption> {
                     label: t,
                 })
             }
-            Object::Array(pair) if pair.len() == 2 => {
+            Object::Array(pair) => {
+                let [export, label] = pair.as_slice() else {
+                    return None;
+                };
                 let text = |o: &Object| match lo::deref(doc, o) {
                     Some(Object::String(s, _)) => Some(decode_text(s)),
                     _ => None,
                 };
                 Some(ChoiceOption {
-                    export: text(&pair[0])?,
-                    label: text(&pair[1])?,
+                    export: text(export)?,
+                    label: text(label)?,
                 })
             }
             _ => None,
@@ -809,11 +812,10 @@ pub(crate) fn parse_da(da: &str) -> Da {
                     "rg" => 3,
                     _ => 4,
                 };
-                if i >= n {
-                    let nums: Vec<&str> = tokens[i - n..i].to_vec();
-                    if nums.iter().all(|x| x.parse::<f64>().is_ok()) {
-                        out.color = format!("{} {t}", nums.join(" "));
-                    }
+                if let Some(nums) = i.checked_sub(n).and_then(|from| tokens.get(from..i))
+                    && nums.iter().all(|x| x.parse::<f64>().is_ok())
+                {
+                    out.color = format!("{} {t}", nums.join(" "));
                 }
             }
             _ => {}
@@ -939,7 +941,7 @@ fn parse_to_unicode(data: &[u8]) -> HashMap<char, u16> {
             let tail = tail.trim_start();
             if let Some(arr) = tail.strip_prefix('[') {
                 let end = arr.find(']').unwrap_or(arr.len());
-                for (i, d) in arr[..end].split_whitespace().enumerate() {
+                for (i, d) in arr.get(..end).unwrap_or(arr).split_whitespace().enumerate() {
                     if let (Some(d), Some(code)) = (hex(d), lo_c.checked_add(i as u16))
                         && let Some(c) = char_of(&d)
                         && code <= hi_c
@@ -950,7 +952,7 @@ fn parse_to_unicode(data: &[u8]) -> HashMap<char, u16> {
                 rest = arr.get(end + 1..).unwrap_or("");
             } else {
                 let end = tail.find('>').map_or(tail.len(), |e| e + 1);
-                if let Some(d) = hex(&tail[..end])
+                if let Some(d) = hex(tail.get(..end).unwrap_or(tail))
                     && let Some(c) = char_of(&d)
                 {
                     let span = hi_c.saturating_sub(lo_c).min(4096);
@@ -994,12 +996,17 @@ fn standard_width(base: &str, code: u8) -> f64 {
     } else {
         &HELV
     };
+    let width = |c: u8| {
+        table
+            .get(usize::from(c.saturating_sub(32)))
+            .map_or(500.0, |w| f64::from(*w))
+    };
     match code {
-        32..=126 => f64::from(table[(code - 32) as usize]),
+        32..=126 => width(code),
         // Latin-1 letters: about the width of their base letters.
-        0xC0..=0xDE => f64::from(table[(b'A' - 32) as usize]),
-        0xDF..=0xFF => f64::from(table[(b'a' - 32) as usize]),
-        _ => f64::from(table[(b'n' - 32) as usize]),
+        0xC0..=0xDE => width(b'A'),
+        0xDF..=0xFF => width(b'a'),
+        _ => width(b'n'),
     }
 }
 

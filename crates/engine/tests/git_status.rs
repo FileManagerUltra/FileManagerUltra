@@ -141,7 +141,6 @@ fn a_commit_through_a_slow_hook_clears_the_marks() {
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let committer = {
-        let d = d.clone();
         std::thread::spawn(move || {
             git(&d, &["add", "a.txt", "b.txt"]);
             git(&d, &["commit", "-q", "-m", "x"]);

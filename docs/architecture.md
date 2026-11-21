@@ -58,7 +58,7 @@ crates/
   testkit      L0  in-memory Vfs, temp-tree builders, command fuzzing helpers
 apps/
   fm-app       L5  eframe shell: window, menus, shortcut routing, theming
-xtask/                layers | brand-check | ci | bench
+xtask/                layers | brand-check | ci | hooks | mess | bench
 docs/  AGENTS.md  openspec/  log/devlog.md
 ```
 

@@ -511,9 +511,9 @@ fn ticks_to_seconds(time_base: TimeBase, ticks: f64) -> f64 {
 fn repair_aac_config(mut params: AudioCodecParameters) -> AudioCodecParameters {
     if params.codec == CODEC_ID_AAC
         && let Some(config) = params.extra_data.as_mut()
-        && config.len() == 2
+        && let [_, second] = &mut **config
     {
-        config[1] &= !0x02;
+        *second &= !0x02;
     }
     params
 }

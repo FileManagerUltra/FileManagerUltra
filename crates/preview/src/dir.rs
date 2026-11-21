@@ -263,7 +263,7 @@ mod tests {
 
     fn summarize_all(
         fs: &MemFs,
-        entry: &fm_vfs::Entry,
+        entry: &Entry,
         limits: &Limits,
         recursive: bool,
     ) -> Result<crate::DirDoc, fm_vfs::FmError> {

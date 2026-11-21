@@ -386,7 +386,9 @@ impl Layout {
             .iter()
             .position(|p| *p == self.focus.focused)
             .unwrap_or(0);
-        let next = panes[(pos + 1) % panes.len()];
+        let Some(&next) = panes.get((pos + 1) % panes.len()) else {
+            return;
+        };
         // focus_next cycles without stashing "previous" as the swap partner —
         // Tab-swap uses `swap_focused_with_previous`, not this.
         self.focus.focused = next;
@@ -531,7 +533,7 @@ mod tests {
         assert_eq!(l.panes(), vec![b, 1]);
         let mut sorted = l.panes();
         sorted.sort();
-        let mut expected = before.clone();
+        let mut expected = before;
         expected.sort();
         assert_eq!(sorted, expected);
         l.swap(99, 1).expect_err("unknown pane");
@@ -650,7 +652,7 @@ mod tests {
         assert!(!s.go_forward());
         // navigating from the middle truncates forward history
         s.go_back();
-        s.navigate(home.clone());
+        s.navigate(home);
         assert!(!s.can_go_forward());
     }
 

@@ -1,7 +1,7 @@
 # Weekly dependency update PRs. Semver-compatible (minor/patch) bumps arrive grouped in
 # one PR per ecosystem; major bumps get their own PR because they may need code changes.
-# No workflow runs on pull requests, so check a PR locally (`cargo xtask ci`) or start
-# the Windows workflow on its branch before merging.
+# The `ci` workflow checks every PR; start the Windows workflow on the branch too for a
+# full Windows test run before merging a risky bump.
 version: 2
 updates:
   - package-ecosystem: cargo

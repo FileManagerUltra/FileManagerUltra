@@ -206,7 +206,7 @@ fn complete_with_tab(edit: &mut fm_engine::goto_cmds::PathEdit) {
         return;
     };
     let mut common = first.to_string();
-    for other in &dirs[1..] {
+    for other in dirs.iter().skip(1) {
         let keep = common
             .chars()
             .zip(other.chars())

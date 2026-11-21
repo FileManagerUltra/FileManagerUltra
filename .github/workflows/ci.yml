@@ -1,0 +1,123 @@
+name: ci
+
+# The quality gate on every push to main and every pull request (Dependabot's included):
+# the same checks as `cargo xtask ci`. The repository is public, so standard runners cost
+# nothing. Locally, `cargo xtask hooks` installs git hooks that run the fast part of this
+# before each commit and push.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR cancels the run still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # No debug info in CI builds: much less to write and link.
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  lint:
+    name: lint (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: lint
+          cache-on-failure: true
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-machete
+      - name: System libraries (audio output)
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy (panics, unchecked indexing and string slicing denied)
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Layers and branding
+        run: |
+          cargo xtask layers
+          cargo xtask brand-check
+      - name: Dependency policy (licences, advisories, sources)
+        run: cargo deny --locked check
+      - name: Unused dependencies
+        run: cargo machete crates apps xtask
+      # Long and complex functions, listed in the run summary. Never fails the run.
+      - name: Mess report (informational)
+        continue-on-error: true
+        run: |
+          {
+            echo '### Mess report'
+            echo '```'
+            cargo xtask mess
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: test (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test
+          cache-on-failure: true
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      # ffmpeg runs the real video/subtitle tests; Mesa's software Vulkan gives the
+      # pixel snapshots an adapter. SMB integration tests use the runner's Docker.
+      - name: System libraries and test tools
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev ffmpeg mesa-vulkan-drivers
+      - name: Tests (without pixel snapshots)
+        run: cargo nextest run --workspace --all-features --locked --no-fail-fast -E "not binary_id(fm-ui::snapshots)"
+      - name: Doctests
+        run: cargo test --workspace --all-features --locked --doc
+      # Baselines are rendered on a developer machine; a software rasterizer may differ
+      # by a few pixels, so this step reports without failing the run.
+      - name: UI pixel snapshots (informational)
+        continue-on-error: true
+        run: cargo test -p fm-ui --all-features --locked --test snapshots
+      - name: Upload snapshot diffs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: snapshot-diffs-linux
+          path: crates/ui/tests/snapshots/*.diff.png
+          if-no-files-found: ignore
+
+  # Platform-only code (`cfg(windows)`, `cfg(target_os = "macos")`) is invisible to the
+  # Linux lint job. Full Windows tests stay in the manual `windows` workflow.
+  clippy-platforms:
+    name: clippy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy
+          cache-on-failure: true
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings

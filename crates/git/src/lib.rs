@@ -103,10 +103,10 @@ impl RepoStatus {
         if mark == Mark::Ignored {
             return;
         }
-        let mut end = rel.len();
-        while let Some(i) = rel[..end].rfind('/') {
-            end = i;
-            let d = self.dirs.entry(rel[..end].into()).or_insert(mark);
+        let mut cur = rel;
+        while let Some((parent, _)) = cur.rsplit_once('/') {
+            cur = parent;
+            let d = self.dirs.entry(parent.into()).or_insert(mark);
             if mark > *d {
                 *d = mark;
             }
@@ -127,10 +127,10 @@ impl RepoStatus {
 
     /// Entries below a collapsed untracked/ignored folder inherit its mark.
     fn inherited(&self, rel: &str) -> Option<Mark> {
-        let mut end = rel.len();
-        while let Some(i) = rel[..end].rfind('/') {
-            end = i;
-            if let Some(m) = self.own.get(&rel[..end])
+        let mut cur = rel;
+        while let Some((parent, _)) = cur.rsplit_once('/') {
+            cur = parent;
+            if let Some(m) = self.own.get(parent)
                 && matches!(m, Mark::Untracked | Mark::Ignored)
             {
                 return Some(*m);

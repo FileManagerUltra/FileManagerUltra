@@ -102,7 +102,7 @@ fn probe_once(hosts: &HostList) -> std::io::Result<()> {
     // swallow a single unbound multicast probe.
     let mut sockets: Vec<UdpSocket> = Vec::new();
     for iface in if_addrs::get_if_addrs()? {
-        if let std::net::IpAddr::V4(ip) = iface.ip()
+        if let IpAddr::V4(ip) = iface.ip()
             && !ip.is_loopback()
             && !ip.is_link_local()
             && sockets.len() < MAX_IFACES

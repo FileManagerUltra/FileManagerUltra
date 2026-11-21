@@ -356,7 +356,7 @@ mod tests {
     fn dragging_a_selected_row_carries_the_selection() {
         let mut s = Session::default();
         let loc = u("/d");
-        s.layout.state_mut(1).expect("pane").location = loc.clone();
+        s.layout.state_mut(1).expect("pane").location = loc;
         {
             let listing = &mut s.layout.state_mut(1).expect("pane").listing;
             listing.select_only(Some("a"), 0);

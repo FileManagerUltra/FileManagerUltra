@@ -1,0 +1,4 @@
+#!/bin/sh
+# Installed by `cargo xtask hooks`: clippy and the dependency policy before each push.
+# Skip once with `git push --no-verify`.
+exec cargo xtask hook pre-push

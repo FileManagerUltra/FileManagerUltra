@@ -52,8 +52,8 @@ fn num(s: &str) -> Option<i64> {
 fn tz(s: &str) -> i64 {
     let s = s.trim();
     let (sign, rest) = match s.as_bytes().first() {
-        Some(b'+') => (1, &s[1..]),
-        Some(b'-') => (-1, &s[1..]),
+        Some(b'+') => (1, s.get(1..).unwrap_or_default()),
+        Some(b'-') => (-1, s.get(1..).unwrap_or_default()),
         _ => return 0,
     };
     let digits: String = rest.chars().filter(char::is_ascii_digit).collect();
@@ -61,8 +61,8 @@ fn tz(s: &str) -> i64 {
         return 0;
     }
     let (h, m) = (
-        num(&digits[..2]).unwrap_or(0),
-        num(&digits[2..4]).unwrap_or(0),
+        digits.get(..2).and_then(num).unwrap_or(0),
+        digits.get(2..4).and_then(num).unwrap_or(0),
     );
     sign * (h * 3600 + m * 60)
 }
@@ -81,7 +81,7 @@ pub fn parse_clf(s: &str) -> Option<i64> {
 /// `2024-05-01 12:00:00`, `2024-05-01T12:00:00.123+02:00`, `2024/05/01 12:00:00`.
 pub fn parse_iso(s: &str) -> Option<i64> {
     let b = s.as_bytes();
-    if b.len() < 19 || !matches!(b[4], b'-' | b'/') {
+    if b.len() < 19 || !matches!(b.get(4), Some(b'-' | b'/')) {
         return None;
     }
     let (y, mo, d) = (num(s.get(0..4)?)?, num(s.get(5..7)?)?, num(s.get(8..10)?)?);
@@ -283,6 +283,16 @@ pub fn detect_line(line: &str) -> Option<LogFormat> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hostile_time_zones_do_not_panic() {
+        for zone in ["+", "-", "+é", "-12", "+1é2:3", "+٠٢٠٠", "Z", ""] {
+            let _ = tz(zone);
+        }
+        assert_eq!(tz("+02:00"), 7200);
+        assert_eq!(tz("-0130"), -5400);
+        assert_eq!(parse_iso("2000é10-10 20:55:36"), None);
+    }
 
     #[test]
     fn timestamps() {

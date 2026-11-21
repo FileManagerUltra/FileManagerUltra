@@ -27,7 +27,7 @@ fn read_line(
             None => (chunk.len(), false),
         };
         let room = cap.saturating_sub(buf.len());
-        buf.extend_from_slice(&chunk[..take.min(room)]);
+        buf.extend_from_slice(chunk.get(..take.min(room)).unwrap_or_default());
         r.consume(take);
         used += take;
         if done {
@@ -263,7 +263,7 @@ fn open_gz(
     if bytes > lim.max_bytes {
         let mut drop = 0;
         while bytes > lim.max_bytes && drop < records.len() {
-            bytes -= records[drop].text.len() as u64 + 32;
+            bytes = bytes.saturating_sub(records.get(drop).map_or(0, |r| r.text.len() as u64 + 32));
             drop += 1;
         }
         records.drain(..drop);
@@ -377,7 +377,7 @@ pub fn follow_poll(
     let now = vfs.stat(&entry.uri)?;
     let size = now.size.unwrap_or(0);
     if size < doc.end_offset {
-        let mut fresh = now.clone();
+        let mut fresh = now;
         fresh.name = entry.name.clone();
         return open_doc_with(vfs, &fresh, limits, lim)
             .map(|d| FollowUpdate::Reloaded(Box::new(d)));
@@ -436,7 +436,11 @@ impl LogDoc {
             let mut drop = 0;
             let mut b = self.bytes;
             while b > lim.max_bytes && drop + 1 < self.records.len() {
-                b -= self.records[drop].text.len() as u64 + 32;
+                b = b.saturating_sub(
+                    self.records
+                        .get(drop)
+                        .map_or(0, |r| r.text.len() as u64 + 32),
+                );
                 drop += 1;
             }
             self.records.drain(..drop);

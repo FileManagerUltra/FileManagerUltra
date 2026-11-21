@@ -34,7 +34,7 @@ fn to_wide(path: &Path) -> Option<Vec<u16>> {
 fn strip_verbatim(mut wide: Vec<u16>) -> Vec<u16> {
     if wide.starts_with(&VERBATIM_UNC) {
         let mut out = vec![b'\\' as u16, b'\\' as u16];
-        out.extend_from_slice(&wide[VERBATIM_UNC.len()..]);
+        out.extend_from_slice(wide.get(VERBATIM_UNC.len()..).unwrap_or_default());
         return out;
     }
     if wide.starts_with(&VERBATIM) {

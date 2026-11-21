@@ -53,15 +53,16 @@ fn magic(head: &[u8]) -> Option<Kind> {
     if crate::raw_prev::is_tiff(h) {
         return Some(Kind::Image("tiff"));
     }
-    if h.len() >= 12 && &h[0..4] == b"RIFF" {
-        match &h[8..12] {
+    let at = |r: std::ops::Range<usize>| h.get(r).unwrap_or_default();
+    if at(0..4) == b"RIFF" {
+        match at(8..12) {
             b"WEBP" => return Some(Kind::Image("webp")),
             b"AVI " => return Some(Kind::Video),
             b"WAVE" => return Some(Kind::Audio),
             _ => {}
         }
     }
-    if h.len() >= 12 && &h[4..8] == b"ftyp" {
+    if h.len() >= 12 && at(4..8) == b"ftyp" {
         return Some(Kind::Video);
     }
     if h.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
@@ -73,7 +74,7 @@ fn magic(head: &[u8]) -> Option<Kind> {
     // Monkey's Audio, WavPack, AIFF/AIFF-C.
     if h.starts_with(b"MAC ")
         || h.starts_with(b"wvpk")
-        || (h.len() >= 12 && &h[0..4] == b"FORM" && matches!(&h[8..12], b"AIFF" | b"AIFC"))
+        || (at(0..4) == b"FORM" && matches!(at(8..12), b"AIFF" | b"AIFC"))
     {
         return Some(Kind::Audio);
     }
@@ -91,10 +92,13 @@ pub fn is_log_name(name: &str) -> bool {
         return true;
     }
     if let Some(ix) = stem.rfind(".log") {
-        let rest = &stem[ix + 4..];
+        let rest = stem.get(ix + 4..).unwrap_or_default();
         return rest.len() > 1
-            && matches!(rest.as_bytes()[0], b'.' | b'-')
-            && rest[1..].bytes().all(|b| b.is_ascii_digit() || b == b'-');
+            && matches!(rest.as_bytes().first(), Some(b'.' | b'-'))
+            && rest
+                .bytes()
+                .skip(1)
+                .all(|b| b.is_ascii_digit() || b == b'-');
     }
     false
 }

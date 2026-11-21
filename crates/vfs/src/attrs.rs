@@ -86,10 +86,10 @@ impl AttrSet {
 
     pub const fn of(groups: &[AttrGroup]) -> Self {
         let mut bits = 0;
-        let mut i = 0;
-        while i < groups.len() {
-            bits |= groups[i].bit();
-            i += 1;
+        let mut rest = groups;
+        while let [group, tail @ ..] = rest {
+            bits |= group.bit();
+            rest = tail;
         }
         Self(bits)
     }

@@ -50,12 +50,41 @@ cargo run -p fm-app                 # run the desktop app
 cargo xtask desktop-install         # Linux: register this build's launcher and dock icon
 cargo test  --workspace              # the suite
 cargo test  -p fm-ops                # one crate
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check
 cargo xtask layers                   # layering enforcement (fails on a bad dependency)
 cargo xtask brand-check              # no hard-coded product name outside brand/
+cargo deny check                     # licences, advisories, sources (deny.toml)
+cargo machete crates apps xtask      # unused dependencies
 cargo xtask ci                       # everything CI runs, locally
+cargo xtask hooks                    # once per clone: git hooks (see below)
+cargo xtask mess                     # report-only: longest/most complex functions
 ```
+
+## Quality gate: CI and git hooks
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request
+(Dependabot's too): format, clippy with warnings denied (Linux, plus Windows and macOS
+for platform-only code), layers, branding, `cargo deny`, `cargo machete` and the tests.
+Pixel snapshots and the mess report are informational there. `cargo xtask ci` runs the
+same gate locally; it needs `cargo install cargo-deny cargo-machete --locked`.
+
+Beyond the panic bans, clippy denies unchecked indexing (`v[i]`, `&s[a..b]`) and byte
+slicing of `str`, because filenames, listings and documents are hostile input (golden
+rules 1 and 8): use `get()`, `split_once`, `strip_prefix`, slice patterns or iterators.
+Test functions keep `[i]` (`clippy.toml`); test helpers outside `#[test]` do not.
+`deny.toml` allows permissive licences only; a new licence or an ignored advisory needs
+a scoped entry with its reason.
+
+Run `cargo xtask hooks` once per clone. It sets `core.hooksPath` to `.githooks/`, whose
+scripts call `cargo xtask hook <name>`:
+
+- **pre-commit** (seconds): `cargo fmt --check`, `cargo xtask layers`, `brand-check`.
+- **pre-push** (a minute or more): workspace clippy (`CARGO_BUILD_JOBS=2` unless set),
+  then `cargo deny` and `cargo machete` when installed.
+
+Skip a hook once with `--no-verify`; remove them with `cargo xtask hooks uninstall`.
+Tests are not in the hooks: run them per crate while working, and CI runs them all.
 
 Faster inner loop: `cargo nextest run` if `cargo install cargo-nextest` is available; while iterating use `cargo test -p <crate> --lib --tests` to skip examples/doctests.
 
@@ -100,8 +129,8 @@ Every external crate is declared once, in `[workspace.dependencies]` of the root
 one line.
 
 - Dependabot (`.github/dependabot.yml`) opens weekly PRs: minor/patch bumps grouped per
-  ecosystem (Cargo, GitHub Actions), majors separately. No workflow runs on PRs, so
-  check out the branch and run `cargo xtask ci` (or start the Windows workflow on it).
+  ecosystem (Cargo, GitHub Actions), majors separately. The `ci` workflow checks each
+  PR; start the Windows workflow on the branch too for a full Windows test run.
 - By hand: `cargo update` moves `Cargo.lock` to the newest semver-compatible versions;
   `cargo update -p <crate>` updates one. A major bump means editing the version in the
   root `Cargo.toml`, then `cargo check`.

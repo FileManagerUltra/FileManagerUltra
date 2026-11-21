@@ -207,7 +207,7 @@ fn open() -> CommandSpec {
             }
             if let Some(local) = folder.local_path() {
                 // A missing target folder: start at its nearest existing parent.
-                let mut p = local.to_path_buf();
+                let mut p = local;
                 while !p.is_dir() {
                     if !p.pop() {
                         break;

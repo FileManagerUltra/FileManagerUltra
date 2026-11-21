@@ -94,7 +94,7 @@ fn tail_first_then_earlier_chunks_cover_everything_once() {
     assert!(tail_len < 440);
     assert!(doc.records.last().expect("last").text.contains("line 399"));
     while doc.more_before {
-        doc = load::load_earlier(&fs, &e, &doc, &lim).expect("earlier");
+        doc = load_earlier(&fs, &e, &doc, &lim).expect("earlier");
     }
     assert_eq!(doc.records.len(), 440);
     assert!(doc.records.first().expect("first").text.contains("line 0"));
@@ -114,7 +114,7 @@ fn markers_keep_their_place_when_the_window_changes() {
     let after_last = doc.base + doc.records.len() as i64;
     let tail_text = doc.records.last().expect("last").text.clone();
     while doc.more_before {
-        doc = load::load_earlier(&fs, &e, &doc, &lim).expect("earlier");
+        doc = load_earlier(&fs, &e, &doc, &lim).expect("earlier");
     }
     assert_eq!(doc.marks, vec![after_last]);
     assert_eq!(doc.base + doc.records.len() as i64, after_last);

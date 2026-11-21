@@ -17,7 +17,7 @@ use russh_sftp::protocol::{FileAttributes, OpenFlags, StatusCode};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::connect::Handler;
-use crate::rt::{self, block_on_timeout, transport_error};
+use crate::rt::{block_on_timeout, transport_error};
 
 /// Reads and writes move in chunks this size; a reported file size is never trusted
 /// for an allocation.
@@ -663,8 +663,11 @@ impl Read for RemoteReader {
             return Ok(0);
         }
         let n = buf.len().min(CHUNK);
+        let Some(chunk) = buf.get_mut(..n) else {
+            return Ok(0);
+        };
         let file = &mut self.file;
-        match block_on_timeout(async { file.read(&mut buf[..n]).await }) {
+        match block_on_timeout(async { file.read(chunk).await }) {
             Ok(r) => r.map_err(lift_io),
             Err(e) => Err(fm_to_io(e)),
         }
@@ -686,8 +689,8 @@ impl Write for RemoteWriter {
         if buf.is_empty() {
             return Ok(0);
         }
-        let n = buf.len().min(CHUNK);
-        match block_on_timeout(async { file.write(&buf[..n]).await }) {
+        let chunk = buf.get(..buf.len().min(CHUNK)).unwrap_or(buf);
+        match block_on_timeout(async { file.write(chunk).await }) {
             Ok(r) => r.map_err(lift_io),
             Err(e) => Err(fm_to_io(e)),
         }
@@ -709,7 +712,7 @@ impl Drop for RemoteWriter {
         if let Some(file) = self.file.take() {
             // Waits for pending writes; skipped (the file closes itself) if we are
             // somehow on a runtime thread, where blocking would panic.
-            let _ = rt::block_on_timeout(async move { file.close().await });
+            let _ = block_on_timeout(async move { file.close().await });
         }
     }
 }

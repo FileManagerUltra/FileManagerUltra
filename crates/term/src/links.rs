@@ -38,7 +38,7 @@ fn trim_end(url: &str) -> &str {
         if !drop {
             return url;
         }
-        url = &url[..url.len() - last.len_utf8()];
+        url = url.strip_suffix(last).unwrap_or_default();
     }
 }
 
@@ -123,6 +123,14 @@ mod tests {
         assert_eq!(find(line, 30), None);
         let l = link_at(&snap(line), 0, 10).expect("link");
         assert_eq!((l.start, l.end), (4, 28));
+    }
+
+    #[test]
+    fn trailing_multibyte_punctuation_is_handled() {
+        assert_eq!(trim_end("https://a.org/x'"), "https://a.org/x");
+        assert_eq!(trim_end("https://a.org/é)"), "https://a.org/é");
+        assert_eq!(trim_end("https://a.org/ü"), "https://a.org/ü");
+        assert_eq!(trim_end("..."), "");
     }
 
     #[test]

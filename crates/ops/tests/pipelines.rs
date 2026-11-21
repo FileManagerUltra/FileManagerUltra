@@ -658,7 +658,7 @@ fn existing_directory_in_the_way_is_a_failure_not_an_overwrite() {
     let fs = sample();
     fs.mkdirs_str("/dst/top.txt").expect("dir");
     let report = run(
-        Arc::new(fs.clone()),
+        Arc::new(fs),
         ConflictPolicy::Overwrite,
         false,
         &["/src/top.txt"],

@@ -251,8 +251,8 @@ impl FfmpegDecoder {
             .spawn(move || {
                 let mut buffer = vec![0u8; PACKET_FRAMES * frame_bytes];
                 let mut filled = 0;
-                loop {
-                    let read = match out.read(&mut buffer[filled..]) {
+                while let Some(free) = buffer.get_mut(filled..) {
+                    let read = match out.read(free) {
                         Ok(0) | Err(_) => break,
                         Ok(read) => read,
                     };
@@ -266,7 +266,7 @@ impl FfmpegDecoder {
                 }
                 let whole = filled / frame_bytes * frame_bytes;
                 if whole > 0 {
-                    let _ = tx.send(Chunk::Pcm(samples(&buffer[..whole])));
+                    let _ = tx.send(Chunk::Pcm(samples(buffer.get(..whole).unwrap_or_default())));
                 }
                 let _ = tx.send(Chunk::End);
             })

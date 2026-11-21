@@ -169,7 +169,7 @@ fn invalid_unc_path_keeps_manual_login_open_and_profiles_store_normalized_hosts(
 fn a_failed_connect_closes_the_popup_and_reports() {
     let mut s = session();
     let uri = VfsUri::parse("smb://127.0.0.1:1/").unwrap();
-    s.ensure_read(uri.clone()).unwrap();
+    s.ensure_read(uri).unwrap();
     s.dispatch(
         "network.login",
         &json!({"user": "alice", "password": "s3cret", "remember": "session"}),
@@ -255,7 +255,7 @@ fn an_sftp_pane_without_a_connection_lists_the_saved_servers() {
         if matches!(s.dirs.state(&VfsUri::servers()), DirState::Ready { .. }) {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(10));
     }
     let entries = s.dirs.entries(&VfsUri::servers()).expect("listed");
     assert_eq!(entries.len(), 1);

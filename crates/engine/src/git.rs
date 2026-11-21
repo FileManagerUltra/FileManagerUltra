@@ -107,9 +107,9 @@ impl GitState {
         }
     }
 
-    fn repo_mut(&mut self, root: &Path) -> &mut Repo {
+    fn repo_mut(&mut self, root: &Path) -> Option<&mut Repo> {
         if let Some(i) = self.repos.iter().position(|r| r.root == root) {
-            return &mut self.repos[i];
+            return self.repos.get_mut(i);
         }
         if self.repos.len() >= MAX_REPOS
             && let Some(oldest) = self
@@ -131,8 +131,7 @@ impl GitState {
             used: Instant::now(),
             error: None,
         });
-        let last = self.repos.len() - 1;
-        &mut self.repos[last]
+        self.repos.last_mut()
     }
 
     /// Mark every cached repository stale (`git.refresh`).
@@ -181,7 +180,7 @@ impl Session {
         }
         let dir = uri.local_path()?;
         let root = self.git.root_of(&dir)?;
-        let repo = self.git.repo_mut(&root);
+        let repo = self.git.repo_mut(&root)?;
         repo.used = Instant::now();
         repo.status.clone()
     }

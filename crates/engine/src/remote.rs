@@ -1061,7 +1061,7 @@ impl Session {
         if self
             .remote
             .local_tick
-            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2))
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(2))
         {
             return;
         }
@@ -1079,7 +1079,7 @@ impl Session {
         if self
             .remote
             .net_tick
-            .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(500))
+            .is_some_and(|t| t.elapsed() < Duration::from_millis(500))
         {
             return;
         }

@@ -639,7 +639,7 @@ impl Session {
 }
 
 /// Hidden on any platform: a leading dot, or the backend reported the OS hidden flag.
-pub fn is_hidden(entry: &fm_vfs::Entry) -> bool {
+pub fn is_hidden(entry: &Entry) -> bool {
     entry.hidden || entry.name.starts_with('.')
 }
 
@@ -854,10 +854,8 @@ mod tests {
             .dispatch("test.enqueue", &Params::Null)
             .expect("dispatch");
         // The job runs in the background; the dispatch call already returned.
-        let terminal = session
-            .jobs
-            .wait_for_terminal(1, std::time::Duration::from_secs(5));
-        assert!(matches!(terminal, Some(crate::jobs::JobEvent::Done(_))));
+        let terminal = session.jobs.wait_for_terminal(1, Duration::from_secs(5));
+        assert!(matches!(terminal, Some(JobEvent::Done(_))));
     }
 
     // ---- directory-cache integration (capability `directory-cache`) ----
@@ -963,7 +961,7 @@ mod tests {
     fn inflight_reads_of_the_same_uri_are_deduped() {
         let (mut s, _mem, uri) = mem_session();
         let a = s.submit_read(uri.clone()).expect("a");
-        let b = s.submit_read(uri.clone()).expect("b");
+        let b = s.submit_read(uri).expect("b");
         assert_eq!(a, b, "second submit must reuse the in-flight job");
     }
 

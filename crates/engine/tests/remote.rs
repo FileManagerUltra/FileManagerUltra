@@ -285,8 +285,8 @@ fn disconnect_sends_an_sftp_pane_back_to_saved_servers() {
     s.layout.state_mut(pane).unwrap().kind = fm_layout::PaneKind::Sftp;
     s.dispatch("remote.disconnect", &json!(null)).unwrap();
     let st = s.layout.state(pane).unwrap();
-    assert_eq!(st.location, fm_vfs::VfsUri::servers());
-    assert_eq!(st.tree.root, fm_vfs::VfsUri::servers());
+    assert_eq!(st.location, VfsUri::servers());
+    assert_eq!(st.tree.root, VfsUri::servers());
 }
 
 #[test]

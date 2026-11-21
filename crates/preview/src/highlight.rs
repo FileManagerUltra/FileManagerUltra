@@ -117,7 +117,7 @@ fn push(spans: &mut Vec<Span>, text: &str, class: Class) {
 /// Cut `line` to [`MAX_LINE_CHARS`] on a char boundary.
 pub fn clip(line: &str) -> String {
     match line.char_indices().nth(MAX_LINE_CHARS) {
-        Some((ix, _)) => format!("{}…", &line[..ix]),
+        Some((ix, _)) => format!("{}…", line.get(..ix).unwrap_or(line)),
         None => line.to_string(),
     }
 }
@@ -169,16 +169,20 @@ pub fn highlight(text: &str, lang: &str, max_lines: usize) -> Vec<Vec<Span>> {
         let mut at = 0;
         for (pos, op) in ops {
             let pos = pos.min(line.len());
-            if pos > at && line.is_char_boundary(pos) && line.is_char_boundary(at) {
-                push(&mut spans, &line[at..pos], classify(&stack));
+            if pos > at
+                && let Some(piece) = line.get(at..pos)
+            {
+                push(&mut spans, piece, classify(&stack));
                 at = pos;
             }
             if stack.apply(&op).is_err() {
                 stack = ScopeStack::new();
             }
         }
-        if at < line.len() && line.is_char_boundary(at) {
-            push(&mut spans, &line[at..], classify(&stack));
+        if let Some(tail) = line.get(at..)
+            && !tail.is_empty()
+        {
+            push(&mut spans, tail, classify(&stack));
         }
         out.push(spans);
     }
@@ -195,7 +199,8 @@ fn fallback(text: &str, lang: &str, max_lines: usize) -> Vec<Vec<Span>> {
 
 /// TOML is not in syntect's default pack: a small line tokenizer covers it.
 fn toml_line(line: &str) -> Vec<Span> {
-    let line = &clip(line)[..];
+    let clipped = clip(line);
+    let line = clipped.as_str();
     let mut spans = Vec::new();
     let trimmed = line.trim_start();
     if trimmed.starts_with('#') {
@@ -206,8 +211,8 @@ fn toml_line(line: &str) -> Vec<Span> {
         push(&mut spans, line, Class::Type);
         return spans;
     }
-    let (key, rest) = match line.find('=') {
-        Some(ix) => (&line[..ix], Some(&line[ix..])),
+    let (key, rest) = match line.find('=').and_then(|ix| line.split_at_checked(ix)) {
+        Some((key, rest)) => (key, Some(rest)),
         None => (line, None),
     };
     match rest {
@@ -215,9 +220,9 @@ fn toml_line(line: &str) -> Vec<Span> {
         Some(rest) => {
             push(&mut spans, key, Class::Key);
             push(&mut spans, "=", Class::Punct);
-            let value = &rest[1..];
-            let (val, comment) = match value.find(" #") {
-                Some(ix) if !value[..ix].contains('"') => (&value[..ix], Some(&value[ix..])),
+            let value = rest.strip_prefix('=').unwrap_or(rest);
+            let (val, comment) = match value.find(" #").and_then(|ix| value.split_at_checked(ix)) {
+                Some((val, comment)) if !val.contains('"') => (val, Some(comment)),
                 _ => (value, None),
             };
             let v = val.trim();
@@ -283,6 +288,23 @@ mod tests {
         assert!(out[2].iter().any(|s| s.class == Class::String));
         let plain = highlight("hello\n", "zzz", 10);
         assert_eq!(plain[0][0].class, Class::Plain);
+    }
+
+    #[test]
+    fn multibyte_toml_never_splits_a_character() {
+        for line in [
+            "ключ = \"значение\" # комментарий",
+            "é=ü",
+            "= #",
+            "名前 = '値' #注",
+            "🦀🦀 = \"🦀\" #🦀",
+        ] {
+            let spans = toml_line(line);
+            let joined: String = spans.iter().map(|s| s.text.as_str()).collect();
+            assert_eq!(joined, line);
+        }
+        let clipped = clip(&"é".repeat(MAX_LINE_CHARS + 5));
+        assert_eq!(clipped.chars().count(), MAX_LINE_CHARS + 1);
     }
 
     #[test]

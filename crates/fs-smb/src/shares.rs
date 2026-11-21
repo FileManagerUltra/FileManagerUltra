@@ -287,7 +287,7 @@ mod tests {
         for cut in 0..good.len() {
             let _ = parse_shares(&good[..cut]);
         }
-        let mut huge = good.clone();
+        let mut huge = good;
         huge[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
         assert_eq!(parse_shares(&huge), None);
         assert_eq!(parse_shares(&[0xff; 64]), None);

@@ -1,12 +1,15 @@
 //! `cargo xtask` — the one tooling entry point (design D7).
 //!
 //! Subcommands: `layers` (layering enforcement), `brand-check` (stale names, colour
-//! literals), `rename "<NewName>"`, `ci` (the full gate).
+//! literals), `rename "<NewName>"`, `ci` (the full gate), `hooks` (install the git
+//! hooks), `hook <name>` (run one), `mess` (report-only code-health scan).
 
 mod brand;
 mod ci;
 mod desktop;
+mod hooks;
 mod layers;
+mod mess;
 mod util;
 
 use std::env;
@@ -39,9 +42,12 @@ fn dispatch() -> Result<String, String> {
         Some("packager-config") => brand::packager_config(),
         Some("desktop-install") => desktop::install(),
         Some("ci") => ci::run(),
+        Some("hooks") => hooks::manage(args.get(1).map(String::as_str)),
+        Some("hook") => hooks::run(args.get(1).map(String::as_str)),
+        Some("mess") => mess::run(),
         Some("--version") | Some("-V") => Ok(format!("xtask {}", env!("CARGO_PKG_VERSION"))),
         _ => Err(
-            "usage: cargo xtask <layers|brand-check|rename <name>|packager-config|desktop-install|ci|--version>"
+            "usage: cargo xtask <layers|brand-check|rename <name>|packager-config|desktop-install|ci|hooks [install|uninstall]|hook <name>|mess|--version>"
                 .to_string(),
         ),
     }

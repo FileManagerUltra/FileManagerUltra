@@ -539,15 +539,16 @@ fn parse_document(src: &str, max_lines: usize, total_bytes: u64) -> MdDoc {
     while !src.is_char_boundary(end) {
         end = end.saturating_sub(1);
     }
-    let src_capped = &src[..end];
+    let src_capped = src.get(..end).unwrap_or_default();
     let line_end = src_capped
         .split_inclusive('\n')
         .take(max_lines)
         .map(str::len)
         .sum::<usize>();
+    let body = src_capped.get(..line_end).unwrap_or(src_capped);
     let mut budget = Budget::default();
     let mut events = Parser::new_ext(
-        &src_capped[..line_end],
+        body,
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS,
     )
     .peekable();
@@ -556,7 +557,7 @@ fn parse_document(src: &str, max_lines: usize, total_bytes: u64) -> MdDoc {
     MdDoc {
         blocks,
         source: TextDoc {
-            lines: highlight::highlight(&src_capped[..line_end], "md", max_lines),
+            lines: highlight::highlight(body, "md", max_lines),
             lang: "md".into(),
             truncated,
             total_bytes,

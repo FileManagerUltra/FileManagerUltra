@@ -1,0 +1,4 @@
+#!/bin/sh
+# Installed by `cargo xtask hooks`: format, layers and branding before each commit.
+# Skip once with `git commit --no-verify`.
+exec cargo xtask hook pre-commit

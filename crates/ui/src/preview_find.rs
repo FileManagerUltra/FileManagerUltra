@@ -361,13 +361,19 @@ mod tests {
                     .sections
                     .iter()
                     .filter(|section| section.format.background == tokens.accent)
-                    .map(|section| &job.text[section.byte_range.start.0..section.byte_range.end.0])
+                    .filter_map(|section| {
+                        job.text
+                            .get(section.byte_range.start.0..section.byte_range.end.0)
+                    })
                     .collect();
                 assert_eq!(highlighted, "needle");
                 let combined: String = job
                     .sections
                     .iter()
-                    .map(|section| &job.text[section.byte_range.start.0..section.byte_range.end.0])
+                    .filter_map(|section| {
+                        job.text
+                            .get(section.byte_range.start.0..section.byte_range.end.0)
+                    })
                     .collect();
                 assert_eq!(combined, original);
             });

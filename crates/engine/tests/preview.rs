@@ -162,7 +162,7 @@ fn rig(files: &[(&str, &[u8])]) -> Rig {
         .state_mut(files_pane)
         .expect("pane")
         .navigate(uri.clone());
-    s.ensure_read(uri.clone()).expect("read");
+    s.ensure_read(uri).expect("read");
     assert!(pump(&mut s, |s| s.pane_view_ready(files_pane)));
     s.dispatch("view.preview.toggle", &json!({})).expect("open");
     let preview = s
@@ -196,7 +196,7 @@ impl Rig {
             let row = ix
                 .order
                 .iter()
-                .position(|i| entries[*i as usize].name == *name)
+                .position(|i| entries.get(*i as usize).is_some_and(|e| e.name == *name))
                 .expect("row");
             self.s
                 .layout
@@ -212,7 +212,7 @@ impl Rig {
         let row = ix
             .order
             .iter()
-            .position(|i| entries[*i as usize].name == name)
+            .position(|i| entries.get(*i as usize).is_some_and(|e| e.name == name))
             .expect("entry");
         let st = self.s.layout.state_mut(self.files).expect("pane");
         st.listing.on_current = false;
@@ -358,7 +358,7 @@ fn visible_text(s: &Session, pane: PaneId) -> Vec<String> {
         .unwrap_or_else(|| (0..doc.records.len() as u32).collect());
     indices
         .into_iter()
-        .map(|i| doc.records[i as usize].text.clone())
+        .filter_map(|i| doc.records.get(i as usize).map(|r| r.text.clone()))
         .collect()
 }
 

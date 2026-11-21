@@ -232,10 +232,10 @@ fn pdf_date_text(m: &str) -> String {
         return m.to_string();
     }
     let part = |a: usize, b: usize| digits.get(a..b).unwrap_or("00").to_string();
-    let rest = &d[digits.len().min(d.len())..];
+    let rest = d.get(digits.len()..).unwrap_or_default();
     let zone = match rest.chars().next() {
         Some('Z') | None => "UTC".to_string(),
-        Some(_) => rest.replace('\'', "").to_string(),
+        Some(_) => rest.replace('\'', ""),
     };
     format!(
         "{}-{}-{} {}:{}:{} {}",
@@ -399,7 +399,7 @@ fn check(bytes: &[u8], f: &Found, r: &mut SignatureReport) -> Result<usize, Stri
             let pre = hash(digest_oid, &[&der]).ok_or_else(|| malformed("digest"))?;
             (der, pre)
         }
-        None => (digest.clone(), digest.clone()),
+        None => (digest.clone(), digest),
     };
     if r.time.is_none() {
         r.time = f.m.clone();
@@ -544,7 +544,7 @@ fn verify_signature(
         use rsa::pkcs8::DecodePublicKey;
         let pk = rsa::RsaPublicKey::from_public_key_der(&spki)
             .map_err(|_| "the signer's RSA key is unreadable".to_string())?;
-        let bits = rsa::traits::PublicKeyParts::n(&pk).bits();
+        let bits = rsa::traits::PublicKeyParts::n(&pk).bit_width();
         if bits < 2048 {
             r.weak.push(format!("RSA key of {bits} bits"));
         }

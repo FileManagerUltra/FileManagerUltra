@@ -65,10 +65,11 @@ pub(crate) fn request(
     );
     let first = first.min(len);
     let behind = first.saturating_sub(count);
-    let order: Vec<Entry> = items[first..vis_end]
+    let part = |range: std::ops::Range<usize>| items.get(range).unwrap_or_default();
+    let order: Vec<Entry> = part(first..vis_end)
         .iter()
-        .chain(&items[vis_end..ahead_end])
-        .chain(items[behind..first].iter().rev())
+        .chain(part(vis_end..ahead_end))
+        .chain(part(behind..first).iter().rev())
         .cloned()
         .collect();
     let vfs = s.backends.require(&subject.uri)?;

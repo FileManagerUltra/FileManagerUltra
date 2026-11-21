@@ -94,12 +94,12 @@ fn rect(v: Option<&Value>) -> Result<[f32; 4], FmError> {
         .filter(|a| a.len() == 4)
         .ok_or_else(bad)?;
     let mut r = [0f32; 4];
-    for (i, x) in a.iter().enumerate() {
+    for (slot, x) in r.iter_mut().zip(a) {
         let f = x
             .as_f64()
             .filter(|f| f.is_finite() && f.abs() < 1e6)
             .ok_or_else(bad)?;
-        r[i] = f as f32;
+        *slot = f as f32;
     }
     let [x0, y0, x1, y1] = r;
     Ok([x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)])

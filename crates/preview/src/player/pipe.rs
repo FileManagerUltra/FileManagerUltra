@@ -71,7 +71,10 @@ impl Pipe {
                     let mut bytes = vec![0; chunk_bytes];
                     let mut offset = 0;
                     while offset < bytes.len() {
-                        match out.read(&mut bytes[offset..]) {
+                        let Some(free) = bytes.get_mut(offset..) else {
+                            break;
+                        };
+                        match out.read(free) {
                             Ok(0) => break,
                             Ok(n) => offset += n,
                             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,

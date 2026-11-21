@@ -293,12 +293,11 @@ mod tests {
         let marks = right.unwrap_or_default();
         assert!(!marks.is_empty());
         let (s, e) = marks[0];
-        assert!(
-            m.rows[0]
-                .right
-                .as_ref()
-                .is_some_and(|l| l.text[s as usize..e as usize].contains("22"))
-        );
+        assert!(m.rows[0].right.as_ref().is_some_and(|l| {
+            l.text
+                .get(s as usize..e as usize)
+                .is_some_and(|t| t.contains("22"))
+        }));
     }
 
     #[test]

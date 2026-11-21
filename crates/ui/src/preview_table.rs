@@ -471,8 +471,8 @@ fn width_of(v: &TableView, st: &GridUi, c: usize, char_w: f32, pad: f32) -> f32 
 
 /// First line of a cell, and whether it had more lines.
 fn first_line(s: &str) -> (&str, bool) {
-    match s.find(['\n', '\r']) {
-        Some(i) => (&s[..i], true),
+    match s.split_once(['\n', '\r']) {
+        Some((first, _)) => (first, true),
         None => (s, false),
     }
 }
@@ -740,7 +740,7 @@ fn grid(
             Pos2::new(inner.min.x, inner.center().y),
             Align2::LEFT_CENTER,
             &name,
-            egui::FontId::new(font.size, font.family.clone()),
+            FontId::new(font.size, font.family.clone()),
             tokens.text,
         );
         if let Some(pos) = sort_pos {
@@ -770,7 +770,7 @@ fn grid(
                     Pos2::new(inner.max.x, inner.center().y),
                     Align2::RIGHT_CENTER,
                     (pos + 1).to_string(),
-                    egui::FontId::new(font.size * 0.7, font.family.clone()),
+                    FontId::new(font.size * 0.7, font.family.clone()),
                     tokens.text_muted,
                 );
             }
@@ -1038,7 +1038,7 @@ fn grid(
             } else {
                 "No rows match the filter"
             },
-            font.clone(),
+            font,
             tokens.text_muted,
         );
     }

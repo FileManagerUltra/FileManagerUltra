@@ -27,13 +27,15 @@ pub fn validate_descriptor(sd: &[u8]) -> Result<(), SecError> {
     if sd.first().copied() != Some(REVISION) {
         return Err(SecError::Invalid("unknown revision"));
     }
-    let control = u16::from_le_bytes([sd[2], sd[3]]);
+    let word = |at: usize| sd.get(at..at + 2).and_then(|b| b.try_into().ok());
+    let dword = |at: usize| sd.get(at..at + 4).and_then(|b| b.try_into().ok());
+    let control = u16::from_le_bytes(word(2).ok_or(SecError::Invalid("too short"))?);
     if control & SE_SELF_RELATIVE == 0 {
         return Err(SecError::Invalid("not self-relative"));
     }
     for i in 0..4 {
         let at = 4 + i * 4;
-        let off = u32::from_le_bytes([sd[at], sd[at + 1], sd[at + 2], sd[at + 3]]) as usize;
+        let off = u32::from_le_bytes(dword(at).ok_or(SecError::Invalid("too short"))?) as usize;
         if off != 0 && (off < HEADER || off >= sd.len()) {
             return Err(SecError::Invalid("offset outside the descriptor"));
         }

@@ -14,7 +14,7 @@ fn uri(s: &str) -> VfsUri {
     VfsUri::parse(s).expect("uri")
 }
 
-fn session_on(fs: Arc<dyn fm_vfs::Vfs>) -> Session {
+fn session_on(fs: Arc<dyn Vfs>) -> Session {
     let mut s = Session::new().expect("session");
     s.backends.register(fs);
     s
@@ -277,7 +277,7 @@ fn newfile_creates_empty_file_and_undo_removes_it() {
 fn tree_directory_is_the_target_until_the_listing_is_used() {
     let fs = MemFs::new();
     fs.mkdirs_str("/d/sub").expect("sub");
-    let mut s = session_on(Arc::new(fs.clone()));
+    let mut s = session_on(Arc::new(fs));
     {
         let pane = s.layout.state_mut(1).expect("pane");
         pane.location = uri("/d");
@@ -778,7 +778,7 @@ fn visible_local_folders_pick_up_files_added_behind_the_apps_back() {
 fn mkdir_shows_up_in_a_cached_directory_listing() {
     let fs = MemFs::new();
     fs.mkdirs_str("/d/old").expect("d");
-    let mut s = session_on(Arc::new(fs.clone()));
+    let mut s = session_on(Arc::new(fs));
     s.ensure_read(uri("/d")).expect("read");
     poll_until(&mut s, "listing", |s| s.dirs.state(&uri("/d")).is_ready());
     dispatch(&mut s, "file.mkdir", json!({"parent": "/d", "name": "new"})).expect("mkdir");

@@ -1107,7 +1107,7 @@ fn tab_order_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
         };
         set(s, "workspace_tab_order", json!(value));
     }
-    crate::dialog_style::hint(
+    hint(
         ui,
         tokens,
         match s.prefs.workspace_tab_order {
@@ -1143,7 +1143,7 @@ fn unsaved_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
         };
         set(s, "unsaved_workspaces", json!(value));
     }
-    crate::dialog_style::hint(
+    hint(
         ui,
         tokens,
         match s.prefs.unsaved_workspaces {
@@ -1183,7 +1183,7 @@ fn renderer_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
         set(s, "windows_renderer", json!(value));
     }
     let in_use = fm_engine::diag::renderer().unwrap_or_else(|| "unknown".into());
-    crate::dialog_style::hint(
+    hint(
         ui,
         tokens,
         format!("In use: {in_use}. A change applies the next time the app starts."),

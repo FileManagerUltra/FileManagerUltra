@@ -66,7 +66,7 @@ proptest! {
     #[test]
     fn parent_chain_reaches_root(input in any_uri()) {
         if let Ok(uri) = VfsUri::parse(&input) {
-            let mut cur = uri.clone();
+            let mut cur = uri;
             let mut steps = 0;
             while let Some(parent) = cur.parent() {
                 prop_assert!(parent.is_ancestor_of(&cur));

@@ -627,17 +627,22 @@ fn finish(
     out.splice(open + 1..close, text.into_bytes());
     // Digest over everything except the placeholder (including its angle brackets? No:
     // the brackets are inside the excluded range [start, end)).
+    let placeholder = || PdfError::Invalid("the signature placeholder is out of place".into());
+    let (head, tail) = out
+        .get(..start)
+        .zip(out.get(end..))
+        .ok_or_else(placeholder)?;
     let (digest_oid, digest) = match &signer.key {
         SignKey::P384(_) => {
             let mut h = sha2::Sha384::new();
-            h.update(&out[..start]);
-            h.update(&out[end..]);
+            h.update(head);
+            h.update(tail);
             (OID_SHA384, h.finalize().to_vec())
         }
         _ => {
             let mut h = sha2::Sha256::new();
-            h.update(&out[..start]);
-            h.update(&out[end..]);
+            h.update(head);
+            h.update(tail);
             (OID_SHA256, h.finalize().to_vec())
         }
     };
@@ -652,7 +657,9 @@ fn finish(
         .iter()
         .flat_map(|b| format!("{b:02X}").into_bytes())
         .collect();
-    out[start + 1..start + 1 + hex.len()].copy_from_slice(&hex);
+    out.get_mut(start + 1..start + 1 + hex.len())
+        .ok_or_else(placeholder)?
+        .copy_from_slice(&hex);
     Ok(out)
 }
 

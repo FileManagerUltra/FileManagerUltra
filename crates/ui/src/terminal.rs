@@ -488,8 +488,10 @@ fn handle_pointer(
                 "pane": pane, "row": event.row, "col": event.col, "action": action,
                 "shift": event.shift, "alt": event.alt, "ctrl": event.ctrl,
             });
-            if let Some(button) = button {
-                params["button"] = button.into();
+            if let Some(button) = button
+                && let Some(obj) = params.as_object_mut()
+            {
+                obj.insert("button".into(), button.into());
             }
             s.dispatch_or_notice("term.mouse", &params);
         }
@@ -1449,10 +1451,10 @@ mod tests {
 
     #[test]
     fn box_characters_map_to_arms_and_others_do_not() {
-        assert_eq!(super::box_arms("┌"), Some([false, true, false, true]));
-        assert_eq!(super::box_arms("┼"), Some([true; 4]));
-        assert_eq!(super::box_arms("x"), None);
-        assert_eq!(super::box_arms("──"), None);
-        assert_eq!(super::box_arms(""), None);
+        assert_eq!(box_arms("┌"), Some([false, true, false, true]));
+        assert_eq!(box_arms("┼"), Some([true; 4]));
+        assert_eq!(box_arms("x"), None);
+        assert_eq!(box_arms("──"), None);
+        assert_eq!(box_arms(""), None);
     }
 }

@@ -507,7 +507,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("dir");
         let bytes = good();
         let pin = pin_for(&bytes);
-        let mut tampered = bytes.clone();
+        let mut tampered = bytes;
         if let Some(byte) = tampered.get_mut(10) {
             *byte ^= 0xff;
         }

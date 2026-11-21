@@ -776,10 +776,9 @@ fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id, actions: &mut Co
                     );
                     child.set_clip_rect(cell.intersect(ui.clip_rect()));
                     let pics = row_images.get(col).map_or(&[][..], Vec::as_slice);
-                    let parts = if n == 0 {
-                        &table.header
-                    } else {
-                        &table.rows[n - 1]
+                    let parts = match n.checked_sub(1) {
+                        None => &table.header,
+                        Some(row) => table.rows.get(row).unwrap_or(&table.header),
                     };
                     if pics.is_empty() || has_glyphs(&galley) {
                         let response = child.add(egui::Label::new(galley.clone()).selectable(true));

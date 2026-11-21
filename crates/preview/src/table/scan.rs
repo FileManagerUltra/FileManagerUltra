@@ -109,7 +109,7 @@ impl Fields {
 /// Largest `n <= max` that does not split a UTF-8 sequence in `bytes`.
 fn floor_char_boundary(bytes: &[u8], max: usize) -> usize {
     let mut n = max.min(bytes.len());
-    while n > 0 && n < bytes.len() && (bytes[n] & 0xC0) == 0x80 {
+    while n > 0 && bytes.get(n).is_some_and(|b| (b & 0xC0) == 0x80) {
         n -= 1;
     }
     n

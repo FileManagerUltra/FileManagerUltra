@@ -204,10 +204,10 @@ mod tests {
         let Preview::Markdown(mut doc) = md else {
             panic!("markdown")
         };
-        doc.source = fm_preview::TextDoc {
-            lines: vec![vec![fm_preview::Span {
+        doc.source = TextDoc {
+            lines: vec![vec![Span {
                 text: "# Title".into(),
-                class: fm_preview::Class::Plain,
+                class: Class::Plain,
             }]],
             ..Default::default()
         };

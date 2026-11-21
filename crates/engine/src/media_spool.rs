@@ -294,7 +294,7 @@ mod tests {
     fn progress_is_reported_while_pending_and_abandoned_downloads_are_cancelled() {
         let mut s = session_with(&[("a.mp3", &[0; 1024])]);
         let uri = remote("a.mp3");
-        s.media_spool_begin(uri.clone()).expect("begin");
+        s.media_spool_begin(uri).expect("begin");
         assert!(s.media.spool.progress().is_some());
         s.media.spool.cancel_except(Some(&remote("other.mp3")));
         assert!(s.media.spool.progress().is_none());

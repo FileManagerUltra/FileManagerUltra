@@ -2964,7 +2964,7 @@ fn log_toolbar(ui: &mut Ui, pane: PaneId, v: &LogView, actions: &mut Vec<Action>
 fn log_filter_help(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
     ui.set_max_width(360.0);
     let size = egui::TextStyle::Body.resolve(ui.style()).size;
-    ui.style_mut().override_font_id = Some(egui::FontId::proportional(size));
+    ui.style_mut().override_font_id = Some(FontId::proportional(size));
     ui.vertical(|ui| {
         ui.label(RichText::new(title).strong());
         ui.separator();
@@ -3128,7 +3128,7 @@ fn marker_rule(ui: &mut Ui, tokens: &Tokens, n: usize, row_h: f32) {
         rect.left_top() + vec2(4.0, 2.0),
         egui::Align2::LEFT_TOP,
         format!("marker {n}"),
-        egui::FontId::proportional(9.0),
+        FontId::proportional(9.0),
         tokens.accent_text,
     );
 }
@@ -3373,7 +3373,7 @@ mod tests {
                 audio.playing = true;
             }
             let mut harness = Harness::builder()
-                .with_size(egui::vec2(640.0, 360.0))
+                .with_size(vec2(640.0, 360.0))
                 .build_ui_state(
                     move |ui, s| {
                         show(ui, s, pane, &Tokens::dark());

@@ -835,7 +835,7 @@ mod tests {
     }
     impl VfsUriExt for std::path::Path {
         fn uri(&self) -> String {
-            fm_vfs::VfsUri::parse(&self.to_string_lossy())
+            VfsUri::parse(&self.to_string_lossy())
                 .expect("uri")
                 .to_string()
         }

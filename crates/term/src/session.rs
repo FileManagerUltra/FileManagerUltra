@@ -111,7 +111,8 @@ impl TermSession {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
-                            if out_tx.send(buf[..n].to_vec()).is_err() {
+                            let chunk = buf.get(..n).unwrap_or_default().to_vec();
+                            if out_tx.send(chunk).is_err() {
                                 break;
                             }
                         }

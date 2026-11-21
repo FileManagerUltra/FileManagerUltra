@@ -215,7 +215,7 @@ impl JobQueue {
                 // The OS refused a thread: degrade to a lane that fails every job
                 // with an event instead of panicking.
                 let (dead_tx, dead_rx) = unbounded::<Job>();
-                let fallback_events = events.clone();
+                let fallback_events = events;
                 let handle = std::thread::spawn(move || {
                     while let Ok(job) = dead_rx.recv() {
                         let _ = fallback_events.send(JobEvent::Started(job.id));
@@ -247,7 +247,11 @@ impl JobQueue {
             work: Box::new(work),
         };
         let idx = lane.index();
-        if self.lanes[idx].0.send(job).is_err() {
+        let sent = self
+            .lanes
+            .get(idx)
+            .is_some_and(|(tx, _)| tx.send(job).is_ok());
+        if !sent {
             let _ = self.events_tx.send(JobEvent::Failed {
                 id,
                 message: "job lane unavailable".to_string(),

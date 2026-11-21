@@ -297,7 +297,7 @@ fn edit(s: &mut Session, params: &Params) -> Result<(), FmError> {
         v.fill = Some(session);
     }
     let inbox = s.pdf_inbox.clone();
-    let bytes = doc.bytes.clone();
+    let bytes = doc.bytes;
     s.pdf.run(move || {
         let result = FormDoc::open(bytes.clone(), password.as_ref())
             .and_then(|a| FormDoc::open(bytes, password.as_ref()).map(|b| Box::new((a, b))));
@@ -703,9 +703,9 @@ impl Session {
                 return;
             }
         };
-        let digital = bytes.len() > session.original.len()
-            && fm_pdf::doc::find(&bytes[session.original.len()..], b"/ETSI.CAdES.detached")
-                .is_some();
+        let digital = bytes
+            .get(session.original.len()..)
+            .is_some_and(|tail| fm_pdf::doc::find(tail, b"/ETSI.CAdES.detached").is_some());
         let (dest, mode) = match &target {
             SaveTarget::Copy => match copy_name(&session.uri, signed || digital) {
                 Ok(d) => (d, WriteMode::Numbered),
@@ -764,8 +764,8 @@ impl Session {
             return;
         };
         match state {
-            crate::fileops::OpState::Finished if !created.is_empty() => {
-                let saved = created[0].clone();
+            crate::fileops::OpState::Finished if let Some(first) = created.first() => {
+                let saved = first.clone();
                 let bytes = session
                     .saving_bytes
                     .take()
@@ -1140,7 +1140,7 @@ pub(crate) mod tests {
             original,
             "byte-for-byte unchanged"
         );
-        let doc = fm_pdf::Document::open(bytes.into(), None).expect("reopen");
+        let doc = Document::open(bytes.into(), None).expect("reopen");
         let t = fm_pdf::text::page_text(&doc, 0).expect("text");
         assert!(t.text.contains("Jane Doe"));
         // The pane now shows the saved file.
