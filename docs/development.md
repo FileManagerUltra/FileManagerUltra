@@ -138,6 +138,16 @@ one line.
   are excluded from Dependabot: re-vendor and re-diff them as `vendor/FM-VENDORED.md`
   describes.
 
+## Rust toolchain
+
+`rust-toolchain.toml` pins one Rust version (with clippy and rustfmt) for every machine
+and CI job; `rustup` installs it on the first `cargo` call. A new stable release brings
+new clippy lints, so the pin keeps the gate from failing overnight and keeps Linux,
+Windows and CI in agreement. To bump it, change `channel`, run the workspace clippy and
+tests (expect a full rebuild), fix what the new lints report, and commit the bump on its
+own. `rust-version` in `Cargo.toml` is the minimum supported version and moves
+separately.
+
 ## Layout of the tree
 
 See `AGENTS.md` §2. `docs/architecture.md` explains why each crate exists and how data flows.

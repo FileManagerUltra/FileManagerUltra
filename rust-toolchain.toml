@@ -1,0 +1,7 @@
+# One Rust version for every machine and CI job, so a new stable release cannot turn
+# the clippy gate red overnight. Bump deliberately: change the channel, run
+# `cargo clippy --workspace --all-targets --all-features -- -D warnings` and the tests,
+# then commit (docs/development.md, "Rust toolchain").
+[toolchain]
+channel = "1.100"
+components = ["clippy", "rustfmt"]
