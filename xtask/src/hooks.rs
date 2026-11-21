@@ -107,7 +107,7 @@ fn pre_push(root: &Path) -> Result<String, String> {
             ));
             continue;
         }
-        util::cargo(tool.args, root, &format!("cargo {}", tool.args.join(" ")))?;
+        tool.run(root)?;
         report.push(format!("  {} ✓", tool.name));
     }
     Ok(report.join("\n"))
@@ -138,13 +138,62 @@ impl DepTool {
         let Some(sub) = self.args.first() else {
             return false;
         };
-        Command::new("cargo")
-            .args([sub, "--version"])
-            .current_dir(root)
+        self.command(root, &[sub, "--version"])
             .output()
             .is_ok_and(|o| o.status.success())
     }
+
+    /// Run `cargo <args>` with inherited output; the error names the command to rerun.
+    pub fn run(&self, root: &Path) -> Result<(), String> {
+        let hint = format!("cargo {}", self.args.join(" "));
+        println!("\n=== {}: {hint} ===", self.name);
+        let status = self
+            .command(root, self.args)
+            .status()
+            .map_err(|e| format!("cannot start cargo: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("failed step — reproduce with: {hint}"))
+        }
+    }
+
+    /// `cargo <args>` without the package variables `cargo run` gave xtask: with
+    /// `CARGO_PKG_NAME` set, cargo-machete thinks it was started directly, keeps the
+    /// `machete` argument and fails scanning it as a folder.
+    fn command(&self, root: &Path, args: &[&str]) -> Command {
+        let mut cmd = Command::new("cargo");
+        cmd.args(args).current_dir(root);
+        for var in CARGO_RUN_VARS {
+            cmd.env_remove(var);
+        }
+        cmd
+    }
 }
+
+/// Variables `cargo run` sets for the binary it starts (xtask) that must not leak into
+/// third-party cargo subcommands.
+const CARGO_RUN_VARS: &[&str] = &[
+    "CARGO_PKG_NAME",
+    "CARGO_PKG_VERSION",
+    "CARGO_PKG_VERSION_MAJOR",
+    "CARGO_PKG_VERSION_MINOR",
+    "CARGO_PKG_VERSION_PATCH",
+    "CARGO_PKG_VERSION_PRE",
+    "CARGO_PKG_AUTHORS",
+    "CARGO_PKG_DESCRIPTION",
+    "CARGO_PKG_HOMEPAGE",
+    "CARGO_PKG_REPOSITORY",
+    "CARGO_PKG_LICENSE",
+    "CARGO_PKG_LICENSE_FILE",
+    "CARGO_PKG_RUST_VERSION",
+    "CARGO_PKG_README",
+    "CARGO_MANIFEST_DIR",
+    "CARGO_MANIFEST_PATH",
+    "CARGO_PRIMARY_PACKAGE",
+    "CARGO_CRATE_NAME",
+    "CARGO_BIN_NAME",
+];
 
 /// Dependency checks: licences/advisories/sources (`deny.toml`) and unused dependencies.
 /// Vendored crates are excluded from the unused-dependency scan: they are upstream code.

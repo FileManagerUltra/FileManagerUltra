@@ -46,12 +46,7 @@ pub fn run() -> Result<String, String> {
 
     let mut done = Vec::new();
     for tool in DEP_TOOLS {
-        step(
-            &root,
-            tool.name,
-            tool.args,
-            &format!("cargo {}", tool.args.join(" ")),
-        )?;
+        tool.run(&root)?;
         done.push(format!("  {} ✓", tool.name));
     }
 
