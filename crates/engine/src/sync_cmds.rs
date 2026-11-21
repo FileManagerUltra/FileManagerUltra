@@ -877,7 +877,7 @@ mod tests {
 
         s.dispatch("sync.profile.save", &json!({})).expect("save");
         let mut again = Session::new().expect("session");
-        assert!(again.sync.set_config_dir(c.clone()).is_none());
+        assert!(again.sync.set_config_dir(c).is_none());
         assert_eq!(again.sync.profiles.len(), 1);
         #[cfg(unix)]
         {

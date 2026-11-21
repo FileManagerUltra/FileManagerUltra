@@ -508,7 +508,7 @@ pub fn dialog() -> CommandSpec {
 /// takes the rest of rundll32's command line as the path, so it must not be quoted (Rust
 /// quotes paths with spaces, and the dialog then silently did not appear).
 #[cfg(windows)]
-fn system_open_with(path: &std::path::Path) -> Result<(), FmError> {
+fn system_open_with(path: &Path) -> Result<(), FmError> {
     use std::os::windows::process::CommandExt as _;
     let system = std::env::var_os("SystemRoot")
         .map(std::path::PathBuf::from)

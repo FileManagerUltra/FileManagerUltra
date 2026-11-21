@@ -156,7 +156,7 @@ fn cancel_at_every_tick_leaves_no_partial_files() {
         let flag = CancelFlag::new();
         let ticks = Arc::new(AtomicUsize::new(0));
         {
-            let (flag, ticks) = (flag.clone(), ticks.clone());
+            let (flag, ticks) = (flag.clone(), ticks);
             let mut f = fs.faults();
             f.read_chunk = Some(1024);
             f.read_hook = Some(Arc::new(move || {
