@@ -877,12 +877,14 @@ mod tests {
 
         s.dispatch("sync.profile.save", &json!({})).expect("save");
         let mut again = Session::new().expect("session");
+        #[cfg(unix)]
+        let profiles_file = c.join("sync-profiles.json");
         assert!(again.sync.set_config_dir(c).is_none());
         assert_eq!(again.sync.profiles.len(), 1);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(c.join("sync-profiles.json"))
+            let mode = std::fs::metadata(&profiles_file)
                 .expect("meta")
                 .permissions()
                 .mode();
