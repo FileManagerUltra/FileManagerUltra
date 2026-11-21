@@ -183,7 +183,10 @@ mod tests {
         let root = util::workspace_root().unwrap();
         for hook in HOOKS {
             let script = util::read(&root.join(HOOKS_DIR).join(hook)).unwrap();
-            assert!(script.starts_with("#!/bin/sh\n"), "{hook} needs a POSIX shebang");
+            assert!(
+                script.starts_with("#!/bin/sh\n"),
+                "{hook} needs a POSIX shebang"
+            );
             assert!(
                 script.contains(&format!("exec cargo xtask hook {hook}")),
                 "{hook} must delegate to `cargo xtask hook {hook}`"

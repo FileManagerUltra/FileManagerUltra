@@ -13,12 +13,18 @@ use crate::util;
 
 /// Lints scanned, with the label used in the report.
 const LINTS: &[(&str, &str)] = &[
-    ("clippy::too_many_lines", "long functions (lines, limit 100)"),
+    (
+        "clippy::too_many_lines",
+        "long functions (lines, limit 100)",
+    ),
     (
         "clippy::cognitive_complexity",
         "complex functions (cognitive complexity, limit 25)",
     ),
-    ("clippy::struct_excessive_bools", "structs with more than 3 bools"),
+    (
+        "clippy::struct_excessive_bools",
+        "structs with more than 3 bools",
+    ),
     (
         "clippy::fn_params_excessive_bools",
         "functions with more than 3 bool parameters",
@@ -85,8 +91,7 @@ fn parse(output: &str) -> Result<Vec<Finding>, String> {
         let Some(caps) = line_re.captures(line.trim_end()) else {
             continue;
         };
-        let (Some(file), Some(row), Some(message)) = (caps.get(1), caps.get(2), caps.get(3))
-        else {
+        let (Some(file), Some(row), Some(message)) = (caps.get(1), caps.get(2), caps.get(3)) else {
             continue;
         };
         let message = message.as_str();
@@ -111,7 +116,11 @@ fn report(findings: &[Finding]) -> String {
     let mut out = vec!["Mess report (informational, never fails the build)".to_string()];
     for (lint, (_, label)) in LINTS.iter().enumerate() {
         let mut hits: Vec<&Finding> = findings.iter().filter(|f| f.lint == lint).collect();
-        hits.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.location.cmp(&b.location)));
+        hits.sort_by(|a, b| {
+            b.size
+                .cmp(&a.size)
+                .then_with(|| a.location.cmp(&b.location))
+        });
         out.push(String::new());
         out.push(format!("{label}: {}", hits.len()));
         for f in hits.iter().take(TOP) {
