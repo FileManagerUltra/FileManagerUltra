@@ -5,3 +5,7 @@
 **/*.rs.bk
 .DS_Store
 /tests
+# egui_kittest output for a failing snapshot (baselines are the plain *.png).
+crates/ui/tests/snapshots/*.diff.png
+crates/ui/tests/snapshots/*.new.png
+crates/ui/tests/snapshots/*.old.png

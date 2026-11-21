@@ -110,6 +110,9 @@ jobs:
         os: [windows-latest, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      # aws-lc-sys needs NASM on Windows unless it uses its committed prebuilt objects.
+      AWS_LC_SYS_PREBUILT_NASM: 1
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

@@ -329,7 +329,7 @@ impl Build<'_> {
             let full = match lo::get_text(self.prev, d, b"T") {
                 Some(t) if prefix.is_empty() => t,
                 Some(t) => format!("{prefix}.{t}"),
-                None => prefix.clone(),
+                None => prefix,
             };
             if full == name {
                 if lo::get_name(self.prev, d, b"FT").as_deref() != Some("Sig") {
@@ -878,7 +878,7 @@ mod tests {
             };
             let out = sign(&original, None, &s, &req).expect("sign");
             assert!(out.starts_with(&original));
-            let doc = crate::Document::open(out.clone().into(), None).expect("reopen");
+            let doc = crate::Document::open(out.into(), None).expect("reopen");
             assert_eq!(doc.info().forms.signed, 1);
             let reports = verify_all(&doc);
             assert_eq!(reports.len(), 1, "{key:?}");
