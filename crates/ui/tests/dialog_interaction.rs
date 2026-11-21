@@ -15,6 +15,22 @@ use serde_json::json;
 
 fn drag<T>(h: &mut Harness<'_, T>, id: Id) {
     h.run_steps(3);
+    // Background work (a folder count, an app scan) can resize the auto-sized, centred
+    // window when it lands; a resize under the pointer loses the drag. Wait until the
+    // window has kept its rect for 10 frames.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut last = None;
+    let mut stable = 0;
+    while stable < 10 && std::time::Instant::now() < deadline {
+        h.run_steps(1);
+        let rect = h.ctx.memory(|m| m.area_rect(id));
+        if rect == last {
+            stable += 1;
+        } else {
+            (last, stable) = (rect, 0);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     let before = h.ctx.memory(|m| m.area_rect(id)).expect("window");
     assert!(
         before.center().distance(h.ctx.content_rect().center()) < 2.0,
