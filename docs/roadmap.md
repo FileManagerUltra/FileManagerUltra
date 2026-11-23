@@ -26,7 +26,7 @@ not implementing persistence or packaging from scratch.
 **Security is a standing concern, not a change.** The `security` OpenSpec capability starts in change 1 (hostile input, secrets, state-file permissions, symlink policy, no `unsafe`) and each change that adds a behaviour area extends it in the same change: change 3 adds drag & drop / `ops` containment and overwrite rules; change 4 adds credentials, host keys and remote listing caps. A change that adds security-relevant behaviour without a spec + failing-test proof is not done.
 
 Additional capabilities have landed alongside these milestones: previews, workspace
-tabs, file/content search and terminal panes. Archives, plugins and CLI/MCP automation
+tabs, file/content search and terminal panes. Archives (proposed, see below), plugins and CLI/MCP automation
 remain future work (the command registry is already in place).
 
 ## Current focus
@@ -93,6 +93,22 @@ USB media and VeraCrypt on Linux and Windows (macOS untested) and is archived.
 Captured so they are not lost; each becomes an OpenSpec proposal (`/opsx-propose`) when picked up.
 
 - **Preferences menu + pane-layout restore policy** (extends existing workspace startup behavior): a Preferences menu item holding app settings from `prefs.toml`, with *Restore previous pane layout* as `yes` / `no` / `ask`. On `ask`, a popup poses the question at startup before the saved layout is applied, and the popup repeats the same yes/no/ask control so the setting can be changed right there (the answer persists the preference). Stays a command (`prefs.*` id) and a `Prefs` field, so the security rules (no secrets, owner-only file) hold unchanged.
+
+### Next: archives, disk images and Docker as folders
+
+Three proposed OpenSpec changes, in order (proposals written 2026-11-23, not started):
+
+- **`add-archive-vfs`**: zip, tar (gz/bz2/xz/zst), 7z, ISO and RAR (read-only, through an
+  installed 7-Zip or unrar) open like folders with Enter, on every backend and nested,
+  in a distinct archive colour. Edits inside writable archives are staged and written
+  by an explicit, atomic Save (Discard and quit prompts like PDF Fill & Sign). Extract
+  here / to, Compress to.
+- **`add-disk-images`**: read-only SquashFS, ext2/3/4, FAT, NTFS, JFFS2 and CramFS images,
+  MBR/GPT partitions as folders, and "Open as archive or image…" that scans any file for
+  signatures at any offset (binwalk-style).
+- **`add-docker`**: local Docker/Podman engine in Places; containers (copy in/out, edit,
+  new folder), images (read-only) and volumes as folders through the Engine API, plus
+  `docker save`/OCI image tars as archives.
 
 ### Near-future: more viewers in the Preview pane
 
