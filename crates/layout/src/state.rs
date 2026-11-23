@@ -910,8 +910,14 @@ impl PaneState {
     /// tree click can still collapse it), focus it and ask for it to be scrolled into view.
     /// Locations outside the tree's root are ignored.
     pub fn reveal_location(&mut self) {
+        self.reveal_location_via(&VfsUri::parent);
+    }
+
+    /// [`Self::reveal_location`] with the tree's own idea of a parent: the engine passes
+    /// one that steps from an archive's root to the folder holding the archive file.
+    pub fn reveal_location_via(&mut self, parent_of: &dyn Fn(&VfsUri) -> Option<VfsUri>) {
         let mut chain = Vec::new();
-        let mut cur = self.location.parent();
+        let mut cur = parent_of(&self.location);
         while let Some(p) = cur {
             chain.push(p.clone());
             if p == self.tree.root {
@@ -922,7 +928,7 @@ impl PaneState {
                 self.tree.reveal = !self.tree.active;
                 return;
             }
-            cur = p.parent();
+            cur = parent_of(&p);
         }
         // Hosts have no parent: under a Network tree they hang off its root.
         if matches!(self.tree.root.scheme(), Scheme::Network | Scheme::Servers)

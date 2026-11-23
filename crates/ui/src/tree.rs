@@ -29,6 +29,19 @@ struct Row {
     is_dir: bool,
     expanded: bool,
     state: RowState,
+    /// The row this one hangs under (an archive's root hangs under its file's folder).
+    parent: Option<VfsUri>,
+    /// For an archive's root: the archive file it stands for.
+    container: Option<VfsUri>,
+}
+
+/// One pending row of the walk.
+struct Pending {
+    name: String,
+    uri: VfsUri,
+    depth: usize,
+    parent: Option<VfsUri>,
+    container: Option<VfsUri>,
 }
 
 /// Flatten the expanded portion of the tree, reading only from the cache.
@@ -56,10 +69,23 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
             .is_some_and(|state| state.tree.is_expanded(uri))
     };
     let mut rows: Vec<Row> = Vec::new();
-    // Pending `(name, uri, depth)`. Children are pushed in reverse so the LIFO
-    // pop visits siblings in sorted order, each one before its own children.
-    let mut stack: Vec<(String, VfsUri, usize)> = vec![(root_label(root), root.clone(), 0)];
-    while let Some((name, uri, depth)) = stack.pop() {
+    // Children are pushed in reverse so the LIFO pop visits siblings in sorted order,
+    // each one before its own children.
+    let mut stack = vec![Pending {
+        name: root_label(root),
+        uri: root.clone(),
+        depth: 0,
+        parent: None,
+        container: None,
+    }];
+    while let Some(Pending {
+        name,
+        uri,
+        depth,
+        parent,
+        container,
+    }) = stack.pop()
+    {
         if rows.len() >= MAX_ROWS {
             break;
         }
@@ -77,12 +103,14 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
             DirState::Absent => RowState::Ready,
         };
         rows.push(Row {
-            uri,
+            uri: uri.clone(),
             name,
             depth,
             is_dir: true,
             expanded: is_expanded,
             state,
+            parent,
+            container,
         });
         if !is_expanded {
             continue;
@@ -90,20 +118,37 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
         let DirState::Ready { entries, .. } = dir_state else {
             continue;
         };
-        let mut dirs: Vec<&fm_vfs::Entry> = entries
+        // Folders, then archive files, which expand like folders when Enter browses them.
+        let archive = |e: &fm_vfs::Entry| {
+            s.prefs.archives_browse
+                && e.is_file()
+                && fm_engine::archive_cmds::is_archive_name(&e.name)
+        };
+        let mut children: Vec<&fm_vfs::Entry> = entries
             .iter()
-            .filter(|e| e.is_dir_like())
+            .filter(|e| e.is_dir_like() || archive(e))
             .filter(|e| s.show_hidden || !fm_engine::is_hidden(e))
             .collect();
-        dirs.sort_by_key(|e| e.name.to_lowercase());
-        let dirs = dirs
-            .into_iter()
-            .map(|e| (e.display_name().to_string(), e.uri.clone()));
-        for (name, child) in dirs.rev() {
+        children.sort_by_key(|e| (archive(e), e.name.to_lowercase()));
+        for e in children.into_iter().rev() {
             if rows.len() + stack.len() >= MAX_ROWS {
                 break;
             }
-            stack.push((name, child, depth + 1));
+            let (child, container) = if archive(e) {
+                match fm_engine::archive_cmds::tree_root(&e.uri) {
+                    Some(root) => (root, Some(e.uri.clone())),
+                    None => continue,
+                }
+            } else {
+                (e.uri.clone(), None)
+            };
+            stack.push(Pending {
+                name: e.display_name().to_string(),
+                uri: child,
+                depth: depth + 1,
+                parent: Some(uri.clone()),
+                container,
+            });
         }
     }
     rows
@@ -123,7 +168,7 @@ fn handle_key(row: &Row, key: Key) -> KeyOutcome {
         Key::ArrowLeft => {
             let collapse = (row.is_dir && row.expanded).then(|| row.uri.clone());
             let focus = if row.depth > 0 {
-                row.uri.parent()
+                row.parent.clone()
             } else {
                 None
             };
@@ -236,7 +281,10 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     let marks = crate::git_marks::Marks::peek(s, &row.uri);
                     let mark = marks.mark(&row.uri);
                     let mut text = egui::RichText::new(format!("   {label}"));
-                    if !selected && let Some(tint) = marks.tint_of(mark, tokens) {
+                    if !selected && row.uri.scheme() == fm_vfs::Scheme::Archive {
+                        // Archives and everything inside them in their own colour.
+                        text = text.color(tokens.archive);
+                    } else if !selected && let Some(tint) = marks.tint_of(mark, tokens) {
                         text = text.color(tint);
                     }
                     let response = ui.add(
@@ -271,11 +319,12 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     }
                     if response.drag_started() {
                         response.dnd_set_drag_payload(crate::dnd::DragPayload {
-                            sources: vec![row.uri.clone()],
+                            sources: vec![row.container.clone().unwrap_or_else(|| row.uri.clone())],
                             origin: pane,
                         });
                     }
-                    if row.is_dir {
+                    // An archive's own row is no drop target until adding to archives lands.
+                    if row.is_dir && row.container.is_none() {
                         crate::dnd::register_zone(
                             ui.ctx(),
                             response.rect,
@@ -328,7 +377,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     }
                     response
                         .clone()
-                        .on_hover_text(fm_engine::item_cmds::display_path(&row.uri));
+                        .on_hover_text(fm_engine::item_cmds::display_path(
+                            row.container.as_ref().unwrap_or(&row.uri),
+                        ));
                     if response.has_focus() {
                         // Left/Right belong to expand/collapse; without the lock egui moves
                         // widget focus sideways (into the listing) before we see the key.
@@ -658,6 +709,8 @@ mod tests {
             is_dir: true,
             expanded: false,
             state: RowState::Ready,
+            parent: uri.parent(),
+            container: None,
         };
         assert_eq!(
             handle_key(&row, Key::ArrowRight),
@@ -684,6 +737,8 @@ mod tests {
             is_dir: false,
             expanded: false,
             state: RowState::Ready,
+            parent: VfsUri::parse("/home/alice/docs").ok(),
+            container: None,
         };
         assert_eq!(
             handle_key(&child, Key::ArrowLeft),
@@ -714,6 +769,66 @@ mod tests {
         let rows = collect_rows(&s, 1, &home);
         let names: Vec<(&str, usize)> = rows.iter().map(|r| (r.name.as_str(), r.depth)).collect();
         assert_eq!(names, [("alice", 0), ("docs", 1), ("deep", 2), ("pics", 1)]);
+    }
+
+    /// `archive-browsing`: an archive file expands in the tree like a folder, its rows
+    /// are its contents, and Left from inside walks back to the archive's own row.
+    #[test]
+    fn archives_expand_in_the_tree() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let base = tmp.path().join("work");
+        std::fs::create_dir_all(base.join("project/docs")).expect("mkdir");
+        std::fs::write(base.join("project/docs/a.txt"), b"alpha").expect("write");
+        std::fs::create_dir(base.join("folder")).expect("mkdir");
+        let uri = |p: &std::path::Path| VfsUri::parse(p.to_str().expect("utf8")).expect("uri");
+        let mut s = Session::new().expect("session");
+        s.dispatch(
+            "archive.compress",
+            &serde_json::json!({
+                "sources": [uri(&base.join("project/docs")).to_string()],
+                "target": uri(&base.join("site.zip")).to_string(),
+                "format": "zip",
+            }),
+        )
+        .expect("compress");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.fileops.jobs().iter().any(|j| j.state.is_running()) {
+            s.poll();
+            assert!(Instant::now() < deadline, "compress timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::fs::remove_dir_all(base.join("project")).expect("rm");
+        let work = uri(&base);
+        s.ensure_read(work.clone()).expect("read");
+        wait_ready(&mut s, &work);
+
+        let rows = collect_rows(&s, 1, &work);
+        let names: Vec<_> = rows.iter().map(|r| (r.name.as_str(), r.depth)).collect();
+        assert_eq!(names, [("work", 0), ("folder", 1), ("site.zip", 1)]);
+        let zip = rows.get(2).expect("zip row");
+        assert_eq!(zip.container, Some(uri(&base.join("site.zip"))));
+        assert_eq!(zip.uri.scheme(), fm_vfs::Scheme::Archive);
+        let root = zip.uri.clone();
+
+        expand_node(&mut s, 1, &root);
+        wait_ready(&mut s, &root);
+        let rows = collect_rows(&s, 1, &work);
+        let names: Vec<_> = rows.iter().map(|r| (r.name.as_str(), r.depth)).collect();
+        assert_eq!(
+            names,
+            [("work", 0), ("folder", 1), ("site.zip", 1), ("docs", 2)]
+        );
+        let docs = rows.get(3).expect("docs");
+        assert_eq!(docs.parent.as_ref(), Some(&root));
+        assert!(matches!(
+            handle_key(docs, Key::ArrowLeft),
+            KeyOutcome::Left { focus: Some(f), .. } if f == root
+        ));
+        assert_eq!(handle_key(zip, Key::Enter), KeyOutcome::Open(root.clone()));
+
+        // Turning browsing off hides archives from the tree again.
+        s.prefs.archives_browse = false;
+        assert_eq!(collect_rows(&s, 1, &work).len(), 2);
     }
 
     /// Spec `file-tree`: expanding submits exactly one read — duplicates

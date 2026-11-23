@@ -41,6 +41,8 @@ pub struct Mounts {
     lazies: HashMap<String, Arc<LazyArchive>>,
     /// The archive Extract To… is choosing a folder for.
     pub extract_pending: Option<VfsUri>,
+    /// The last location each pane's tree was revealed for (archive locations only).
+    revealed: HashMap<fm_layout::PaneId, VfsUri>,
 }
 
 impl std::fmt::Debug for Mounts {
@@ -170,7 +172,7 @@ pub(crate) fn mount_as(
 
 /// Make sure the archive behind `uri` is registered (after a restart, a restored pane or
 /// history entry points at a handle this session has not mounted yet).
-pub(crate) fn ensure_registered(s: &mut Session, uri: &VfsUri) -> Result<(), FmError> {
+pub fn ensure_registered(s: &mut Session, uri: &VfsUri) -> Result<(), FmError> {
     let Some(handle) = uri.archive_handle() else {
         return Ok(());
     };
@@ -183,6 +185,62 @@ pub(crate) fn ensure_registered(s: &mut Session, uri: &VfsUri) -> Result<(), FmE
     ensure_registered(s, &r.container)?;
     let format = r.format.as_deref().and_then(FormatId::from_id);
     mount_as(s, &r.container, r.offset, format).map(|_| ())
+}
+
+/// The root location of `container` as an archive, without opening it: what the tree
+/// shows as the archive's node, so it expands like a folder (`archive-browsing` "Archives
+/// expand in the tree"). The handle is remembered so the root displays and mounts later.
+pub fn tree_root(container: &VfsUri) -> Option<VfsUri> {
+    let handle = fm_archive::handle_for(container, 0, None);
+    let root = VfsUri::archive_root(&handle).ok()?;
+    let known = REFS
+        .read()
+        .ok()
+        .is_some_and(|refs| refs.contains_key(&handle));
+    if !known {
+        remember(
+            &handle,
+            ArchiveRef {
+                container: container.clone(),
+                offset: 0,
+                format: None,
+            },
+        );
+    }
+    Some(root)
+}
+
+/// A location's parent as the tree nests it: an archive's root hangs under the folder
+/// holding the archive file.
+pub fn tree_parent(uri: &VfsUri) -> Option<VfsUri> {
+    if uri.archive_handle().is_some() && uri.path_str() == "/" {
+        return container_of(uri).and_then(|r| r.container.parent());
+    }
+    uri.parent()
+}
+
+/// Expand each tree down to a pane that just moved inside an archive (layout alone stops
+/// at the archive's root, which has no parent).
+pub(crate) fn reveal_in_trees(s: &mut Session) -> bool {
+    let mut changed = false;
+    for pane in s.layout.panes() {
+        let Some(location) = s.layout.state(pane).map(|p| p.location.clone()) else {
+            continue;
+        };
+        if location.archive_handle().is_none() {
+            s.archives.revealed.remove(&pane);
+            continue;
+        }
+        if s.archives.revealed.get(&pane) == Some(&location) {
+            continue;
+        }
+        s.archives.revealed.insert(pane, location);
+        if let Some(state) = s.layout.state_mut(pane) {
+            state.reveal_location_via(&tree_parent);
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Whether a read failed because an archive needs a (different) password: the text of
@@ -427,6 +485,35 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "listing timed out");
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn a_location_inside_an_archive_is_revealed_in_the_tree() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let zip = tmp.path().join("site.zip");
+        std::fs::write(&zip, zip_bytes(None)).expect("zip");
+        let mut s = Session::new().expect("session");
+        let pane = s.layout.focused();
+        let tree_root = VfsUri::parse(tmp.path().to_str().expect("utf8")).expect("uri");
+        if let Some(state) = s.layout.state_mut(pane) {
+            state.tree = fm_layout::TreeState::new(tree_root.clone());
+        }
+        let container = VfsUri::parse(zip.to_str().expect("utf8")).expect("uri");
+        let root = tree_root_of(&container);
+        let inner = root.join("docs").expect("inner");
+        if let Some(state) = s.layout.state_mut(pane) {
+            state.location = inner.clone();
+        }
+        assert!(reveal_in_trees(&mut s));
+        let state = s.layout.state(pane).expect("pane");
+        assert!(state.tree.is_expanded(&root), "the archive's row opens");
+        assert_eq!(state.tree.focused.as_ref(), Some(&inner));
+        assert_eq!(tree_parent(&root), Some(tree_root));
+        assert!(!reveal_in_trees(&mut s), "only once per location");
+    }
+
+    fn tree_root_of(container: &VfsUri) -> VfsUri {
+        tree_root(container).expect("root")
     }
 
     #[test]

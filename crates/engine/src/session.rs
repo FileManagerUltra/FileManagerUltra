@@ -387,6 +387,8 @@ impl Session {
         if self.needs_login(&uri) || self.needs_sftp_login(&uri) {
             return Err(FmError::PermissionDenied(uri.to_string()));
         }
+        // An archive the tree or a restored pane reaches before it was entered.
+        crate::archive_cmds::ensure_registered(self, &uri)?;
         let backend = self.backends.require(&uri)?;
         let lane = lane_for(uri.scheme());
         let inbox = self.inbox.clone();
@@ -482,6 +484,7 @@ impl Session {
         changed |= self.refresh_previews();
         changed |= self.pump_pdf();
         self.note_files_dir();
+        changed |= crate::archive_cmds::reveal_in_trees(self);
         changed |= self.media_tick();
         changed |= self.media_store_tick();
         changed |= self.pump_sync();

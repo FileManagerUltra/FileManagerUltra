@@ -404,3 +404,9 @@ change is visible: the changelog explains it and the preference restores the old
   entries are in the item context menu only (no File menu yet). Split output does not
   re-open as one archive until split reading (3.9) lands; `archive.join` and `archive.add`
   are still open.
+- Tree: an archive file's row *is* its archive root (`archive_cmds::tree_root`, a pure
+  handle computation that only remembers the handle), so expand, select, open and the
+  location highlight reuse the folder paths; `submit_read` registers unmounted archive
+  locations, and `reveal_in_trees` (in `poll`) expands the tree down into an archive
+  through `PaneState::reveal_location_via(tree_parent)`, since fm-layout cannot see
+  archive containers. Archive rows are tinted, drag their file, and are no drop target.
