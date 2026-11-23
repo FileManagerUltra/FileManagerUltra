@@ -9,8 +9,6 @@ use serde_json::json;
 
 use crate::{CommandSpec, Params, Session};
 
-const STEP: f32 = 1.2;
-
 fn bad_params() -> FmError {
     FmError::InvalidParams("expected {pane?: number}".into())
 }
@@ -64,11 +62,7 @@ fn change(s: &mut Session, params: &Params, mode: i8) -> Result<(), FmError> {
                 .state_mut(pane)
                 .ok_or_else(|| FmError::NotFound("no such pane".to_string()))?;
             let current = state.view_scale();
-            state.view_scale = match mode {
-                1 => (current * STEP).min(MAX_TERM_SCALE),
-                -1 => (current / STEP).max(MIN_TERM_SCALE),
-                _ => 1.0,
-            };
+            state.view_scale = fm_layout::zoom_step(current, mode, MIN_TERM_SCALE, MAX_TERM_SCALE);
             Ok(())
         }
     }
@@ -153,6 +147,25 @@ mod tests {
                 .expect("reset");
             assert_eq!(scale(&s, first), 1.0);
             assert_eq!(s.prefs.zoom, global, "interface zoom untouched");
+        }
+    }
+
+    #[test]
+    fn zooming_out_to_the_floor_and_back_in_returns_to_exactly_100() {
+        for kind in [PaneKind::Files, PaneKind::Terminal, PaneKind::Preview] {
+            let (mut s, _, pane) = files_and(kind);
+            let target = json!({ "pane": pane });
+            for _ in 0..10 {
+                s.dispatch("pane.scale.out", &target).expect("out");
+            }
+            assert_eq!(scale(&s, pane), MIN_TERM_SCALE, "{kind:?}");
+            let mut seen = Vec::new();
+            for _ in 0..4 {
+                s.dispatch("pane.scale.in", &target).expect("in");
+                seen.push((scale(&s, pane) * 100.0).round());
+            }
+            assert_eq!(seen, [58.0, 69.0, 83.0, 100.0], "{kind:?}");
+            assert!((scale(&s, pane) - 1.0).abs() < 1e-4, "{kind:?}");
         }
     }
 

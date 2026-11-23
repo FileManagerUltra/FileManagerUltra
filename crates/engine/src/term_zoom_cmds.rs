@@ -7,8 +7,6 @@ use fm_vfs::FmError;
 
 use crate::{CommandSpec, Params, Session};
 
-const STEP: f32 = 1.2;
-
 fn bad_params() -> FmError {
     FmError::InvalidParams("expected {pane?: number}".into())
 }
@@ -48,11 +46,7 @@ pub(crate) fn change(s: &mut Session, params: &Params, mode: i8) -> Result<(), F
         .state_mut(pane)
         .ok_or_else(|| FmError::NotFound("no terminal pane".to_string()))?;
     let current = state.term_scale();
-    state.term_scale = match mode {
-        1 => (current * STEP).min(MAX_TERM_SCALE),
-        -1 => (current / STEP).max(MIN_TERM_SCALE),
-        _ => 1.0,
-    };
+    state.term_scale = fm_layout::zoom_step(current, mode, MIN_TERM_SCALE, MAX_TERM_SCALE);
     Ok(())
 }
 

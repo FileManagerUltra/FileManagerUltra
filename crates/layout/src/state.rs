@@ -760,6 +760,31 @@ fn default_term_scale() -> f32 {
 pub const MIN_TERM_SCALE: f32 = 0.5;
 pub const MAX_TERM_SCALE: f32 = 4.0;
 
+/// One zoom step: pane, terminal and preview zoom all move along the levels 1.2^k (…, 83%,
+/// 100%, 120%, 144%, …), clamped to `min..=max`. `dir` > 0 goes to the next level above
+/// `current`, < 0 to the next below, 0 resets to 100%. Snapping to the levels (instead of
+/// multiplying) brings a zoom that hit a bound, or any stored value, back to exactly 100%.
+pub fn zoom_step(current: f32, dir: i8, min: f32, max: f32) -> f32 {
+    const STEP: f32 = 1.2;
+    // Tolerance for float error: 1.2^k computed and stored is still "on" level k.
+    const EPS: f32 = 1e-3;
+    if dir == 0 {
+        return 1.0;
+    }
+    let current = if current.is_finite() && current > 0.0 {
+        current.clamp(min, max)
+    } else {
+        1.0
+    };
+    let level = current.ln() / STEP.ln();
+    let next = if dir > 0 {
+        (level + EPS).floor() + 1.0
+    } else {
+        (level - EPS).ceil() - 1.0
+    };
+    STEP.powf(next).clamp(min, max)
+}
+
 /// Default tree width in px.
 pub const DEFAULT_TREE_WIDTH: f32 = 220.0;
 /// Detail columns fit to content until manually resized.
@@ -969,6 +994,28 @@ pub struct Focus {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn zoom_steps_stay_on_the_levels_and_find_their_way_back() {
+        let (lo, hi) = (MIN_TERM_SCALE, MAX_TERM_SCALE);
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(near(zoom_step(1.0, 1, lo, hi), 1.2));
+        assert!(near(zoom_step(1.2, 1, lo, hi), 1.44));
+        assert!(near(zoom_step(1.2, -1, lo, hi), 1.0));
+        assert!(near(zoom_step(1.0, -1, lo, hi), 1.0 / 1.2));
+        // From a bound that is not a level, the next step is the nearest level inward.
+        assert!(near(zoom_step(lo, 1, lo, hi), 1.2_f32.powi(-3)));
+        assert!(near(zoom_step(hi, -1, lo, hi), 1.2_f32.powi(7)));
+        assert_eq!(zoom_step(hi, 1, lo, hi), hi);
+        assert_eq!(zoom_step(lo, -1, lo, hi), lo);
+        // A drifted stored value (old builds stepped from the bound) snaps back.
+        assert!(near(zoom_step(1.0368, -1, lo, hi), 1.0));
+        assert!(near(zoom_step(1.0368, 1, lo, hi), 1.2));
+        assert_eq!(zoom_step(2.5, 0, lo, hi), 1.0);
+        for bad in [f32::NAN, f32::INFINITY, -1.0, 0.0] {
+            assert!(near(zoom_step(bad, 1, lo, hi), 1.2), "{bad}");
+        }
+    }
+
     use super::*;
 
     #[test]

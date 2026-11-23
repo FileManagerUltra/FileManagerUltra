@@ -31,8 +31,7 @@ pub(crate) fn change(s: &mut Session, params: &Params, mode: i8) -> Result<(), F
         .entry(pane)
         .or_insert_with(PreviewSlot::new);
     slot.scale = match mode {
-        1 => (slot.scale * 1.2).min(MAX_SCALE),
-        -1 => (slot.scale / 1.2).max(MIN_SCALE),
+        1 | -1 => fm_layout::zoom_step(slot.scale, mode, MIN_SCALE, MAX_SCALE),
         _ => 1.0,
     };
     Ok(())
