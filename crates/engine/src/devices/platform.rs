@@ -285,9 +285,38 @@ mod linux {
         }
     }
 
+    /// Whether a loop device is a plain disk image: backed by a regular file outside
+    /// VeraCrypt's auxiliary mount, with nothing (device mapper) stacked on top.
+    pub(super) fn image_loop(backing: &str, holders: usize, backing_is_file: bool) -> bool {
+        !backing.is_empty()
+            && backing.starts_with('/')
+            && backing_is_file
+            && holders == 0
+            && !backing.contains(".veracrypt_aux_mnt")
+            && !backing.ends_with(" (deleted)")
+    }
+
     fn removal(m: &Mount, all: &[Mount]) -> Removal {
         if network(&m.fs) {
             return if Path::new("/bin/umount").is_file() {
+                Removal::Dismount
+            } else {
+                unsupported()
+            };
+        }
+        // A disk image the desktop mounted (an ISO opened with its default app) is a loop
+        // device backed by a plain file; VeraCrypt's loops are backed by its own FUSE
+        // file or hold a device-mapper volume, so they stay with VeraCrypt.
+        if m.source.starts_with("/dev/loop") {
+            let image = drive(m).is_some_and(|parent| {
+                let backing =
+                    std::fs::read_to_string(parent.join("loop/backing_file")).unwrap_or_default();
+                let holders = std::fs::read_dir(parent.join("holders"))
+                    .map(|d| d.count())
+                    .unwrap_or(usize::MAX);
+                image_loop(backing.trim(), holders, Path::new(backing.trim()).is_file())
+            });
+            return if image && Path::new("/usr/bin/udisksctl").is_file() {
                 Removal::Dismount
             } else {
                 unsupported()
@@ -403,6 +432,20 @@ mod linux {
                 "-b",
                 &mount.source,
             ]))?;
+            // A disk image's loop device goes too, unless the kernel clears it itself.
+            if mount.source.starts_with("/dev/loop")
+                && let Some(parent) = drive(mount)
+                && std::fs::read_to_string(parent.join("loop/autoclear"))
+                    .is_ok_and(|s| s.trim() != "1")
+                && let Some(name) = parent.file_name().map(|n| n.to_string_lossy().into_owned())
+            {
+                output(Command::new("/usr/bin/udisksctl").args([
+                    "loop-delete",
+                    "--no-user-interaction",
+                    "-b",
+                    &format!("/dev/{name}"),
+                ]))?;
+            }
             if d.removal == Removal::Eject {
                 // Refuse to power off if any other filesystem on this disk is now mounted.
                 let remaining = read_mounts()?;
@@ -427,6 +470,19 @@ mod linux {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn disk_image_loops_are_dismountable_but_veracrypt_loops_are_not() {
+            assert!(image_loop("/home/u/Videos/disc.iso", 0, true));
+            assert!(!image_loop("/tmp/.veracrypt_aux_mnt1/volume", 0, true));
+            assert!(
+                !image_loop("/home/u/vault.hc", 1, true),
+                "dm-crypt holds it"
+            );
+            assert!(!image_loop("/home/u/gone.iso (deleted)", 0, false));
+            assert!(!image_loop("", 0, false));
+            assert!(!image_loop("relative.iso", 0, true));
+        }
 
         #[test]
         fn desktop_bridges_are_hidden_but_user_fuse_mounts_remain_visible() {
@@ -485,11 +541,20 @@ mod windows {
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 @(Get-CimInstance Win32_LogicalDisk | Where-Object {
-    $_.DeviceID -ne $env:SystemDrive -and $_.DriveType -in 2,3,4 -and
+    $_.DeviceID -ne $env:SystemDrive -and $_.DriveType -in 2,3,4,5 -and
     ($_.DriveType -ne 2 -or $_.Size -gt 0 -or -not [string]::IsNullOrEmpty($_.VolumeSerialNumber))
 } | ForEach-Object {
     $volume=$_
-    $userMounted=$volume.DriveType -in 2,4
+    $image=''
+    if ($volume.DriveType -eq 5) {
+        # Only disk images Windows mounted (an ISO opened in Explorer), not optical drives.
+        try {
+            $image=(Get-Volume -DriveLetter $volume.DeviceID.Substring(0,1) -ErrorAction Stop |
+                Get-DiskImage -ErrorAction Stop).ImagePath
+        } catch { $image='' }
+        if ([string]::IsNullOrEmpty($image)) { return }
+    }
+    $userMounted=$volume.DriveType -in 2,4,5
     if ($volume.DriveType -eq 3) {
         $partitions=@(Get-CimAssociatedInstance -InputObject $volume -Association Win32_LogicalDiskToPartition)
         $userMounted=$partitions.Count -eq 0
@@ -501,7 +566,7 @@ $ErrorActionPreference='Stop'
             }
         }
     }
-    $volume | Select-Object DeviceID,VolumeName,VolumeSerialNumber,ProviderName,FileSystem,Size,FreeSpace,DriveType,@{Name='UserMounted';Expression={$userMounted}}
+    $volume | Select-Object DeviceID,VolumeName,VolumeSerialNumber,ProviderName,FileSystem,Size,FreeSpace,DriveType,@{Name='UserMounted';Expression={$userMounted}},@{Name='ImagePath';Expression={$image}}
 }) | ConvertTo-Json -Compress
 "#;
     const EJECT: &str = r#"
@@ -526,6 +591,19 @@ do {
     if ($null -eq $current -or ($current.Size -le 0 -and [string]::IsNullOrEmpty($current.VolumeSerialNumber))) { exit 0 }
 } while ([DateTime]::UtcNow -lt $deadline)
 throw 'Windows did not eject the selected drive. Close open files and use Safely Remove Hardware if it remains busy'
+"#;
+
+    const DISMOUNT_IMAGE: &str = r#"
+$ErrorActionPreference='Stop'
+$d=$env:FM_IMAGE_DRIVE
+if ($d -notmatch '^[A-Za-z]:$') { throw 'Invalid drive' }
+$volume=Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -eq $d }
+if ($null -eq $volume -or $volume.DriveType -ne 5) { throw 'The disk image is no longer mounted' }
+$image=(Get-Volume -DriveLetter $d.Substring(0,1) | Get-DiskImage).ImagePath
+if ([string]::IsNullOrEmpty($image)) { throw 'The selected drive is not a mounted disk image' }
+$identity='{0}:{1}:{2}' -f $volume.DeviceID,$volume.VolumeSerialNumber,$image
+if ($identity -cne $env:FM_IMAGE_IDENTITY) { throw 'Mount identity changed; refresh Devices' }
+Dismount-DiskImage -ImagePath $image | Out-Null
 "#;
 
     fn powershell(script: &str) -> Command {
@@ -558,6 +636,10 @@ throw 'Windows did not eject the selected drive. Close open files and use Safely
         entries
             .iter()
             .filter(|v| match v.get("DriveType").and_then(|v| v.as_u64()) {
+                Some(5) => v
+                    .get("ImagePath")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|p| !p.is_empty()),
                 Some(2) => {
                     v.get("Size")
                         .and_then(|v| v.as_u64())
@@ -591,18 +673,29 @@ throw 'Windows did not eject the selected drive. Close open files and use Safely
                     .get("Size")
                     .and_then(|v| v.as_u64())
                     .zip(v.get("FreeSpace").and_then(|v| v.as_u64()));
-                let removal = if !text("VolumeSerialNumber").is_empty()
+                let image = v.get("DriveType").and_then(|v| v.as_u64()) == Some(5);
+                let removal = if image {
+                    Removal::Dismount
+                } else if !text("VolumeSerialNumber").is_empty()
                     && v.get("DriveType").and_then(|v| v.as_u64()) == Some(2)
                 {
                     Removal::Eject
                 } else {
                     unsupported()
                 };
-                let identity = format!(
-                    "{drive}:{}:{}",
-                    text("VolumeSerialNumber"),
-                    text("ProviderName")
-                );
+                let identity = if image {
+                    format!(
+                        "{drive}:{}:{}",
+                        text("VolumeSerialNumber"),
+                        text("ImagePath")
+                    )
+                } else {
+                    format!(
+                        "{drive}:{}:{}",
+                        text("VolumeSerialNumber"),
+                        text("ProviderName")
+                    )
+                };
                 device(
                     &format!("{drive}\\"),
                     label,
@@ -616,11 +709,20 @@ throw 'Windows did not eject the selected drive. Close open files and use Safely
     }
 
     pub(crate) fn remove(d: &Device) -> Result<(), FmError> {
+        let path = d.mount.local_path().ok_or_else(|| error("Invalid drive"))?;
+        let drive = path.to_string_lossy();
+        if d.removal == Removal::Dismount {
+            // Only mounted disk images are listed as Dismount on Windows.
+            output(
+                powershell(DISMOUNT_IMAGE)
+                    .env("FM_IMAGE_DRIVE", drive.trim_end_matches('\\'))
+                    .env("FM_IMAGE_IDENTITY", &d.identity),
+            )?;
+            return Ok(());
+        }
         if d.removal != Removal::Eject {
             return Err(error("Dismount this volume in VeraCrypt or Windows"));
         }
-        let path = d.mount.local_path().ok_or_else(|| error("Invalid drive"))?;
-        let drive = path.to_string_lossy();
         output(
             powershell(EJECT)
                 .env("FM_EJECT_DRIVE", drive.trim_end_matches('\\'))
@@ -671,6 +773,17 @@ throw 'Windows did not eject the selected drive. Close open files and use Safely
                     .as_ref()
                     .is_some_and(|(message, _)| message.contains("First disconnected"))
             );
+        }
+
+        #[test]
+        fn mounted_disk_images_are_listed_and_dismountable_but_optical_drives_are_not() {
+            let found = parse(br#"[
+                {"DeviceID":"E:","VolumeName":"DVD","VolumeSerialNumber":"AB","DriveType":5,"Size":4096,"ImagePath":"C:\\Users\\me\\disc.iso"},
+                {"DeviceID":"F:","VolumeName":"","DriveType":5,"Size":0,"ImagePath":""}
+            ]"#).expect("parse");
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].removal, Removal::Dismount);
+            assert_eq!(found[0].identity, "E::AB:C:\\Users\\me\\disc.iso");
         }
 
         #[test]
