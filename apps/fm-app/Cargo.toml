@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 fm-brand.workspace = true
 fm-dragout.workspace = true
-fm-winout.workspace = true
 fm-engine.workspace = true
 fm-layout.workspace = true
 fm-ui.workspace = true
@@ -34,6 +33,8 @@ winit.workspace = true
 souvlaki.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+# OLE drag-out; only `dragout.rs`'s `#[cfg(windows)]` path calls it.
+fm-winout.workspace = true
 raw-window-handle.workspace = true
 # Windows draws with wgpu (Direct3D 12): NVIDIA's OpenGL driver leaked per frame (change
 # `windows-wgpu`). OpenGL stays available as a preference and fallback.
