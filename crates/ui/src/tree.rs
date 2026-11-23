@@ -123,12 +123,13 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
         let DirState::Ready { entries, .. } = dir_state else {
             continue;
         };
-        // Folders and the archive this pane is inside (and the archives around it), which
-        // expand like folders; other archive files stay out of the tree.
+        // Folders and the archives opened this session (until closed), which expand like
+        // folders; other archive files stay out of the tree.
         // Preferences can show every archive file instead.
         let archive = |e: &fm_vfs::Entry| {
             e.is_file()
                 && (open.contains(&e.uri)
+                    || s.archives.is_opened(&e.uri)
                     || s.prefs.archives_in_tree
                         && s.prefs.archives_browse
                         && fm_engine::archive_cmds::is_archive_name(&e.name))
@@ -855,13 +856,22 @@ mod tests {
         ));
         assert_eq!(handle_key(zip, Key::Enter), KeyOutcome::Open(root.clone()));
 
-        // Leaving the archive takes it out of the tree again…
+        // Once opened, the archive stays in the tree after leaving it…
+        s.poll();
         s.layout.state_mut(1).expect("pane").location = work.clone();
+        s.poll();
+        assert_eq!(visible(&s), ["work", "folder", "site.zip", "docs", "zeta"]);
+        // …until it is closed (its tree row's "Close Archive").
+        s.dispatch(
+            "archive.unmount",
+            &serde_json::json!({"uri": root.to_string()}),
+        )
+        .expect("close");
         assert_eq!(visible(&s), ["work", "folder", "zeta"]);
-        // …unless Preferences show every archive as a folder.
+        // Preferences can show every archive as a folder.
         s.dispatch("prefs.archives.tree", &serde_json::json!({"value": true}))
             .expect("pref");
-        assert_eq!(visible(&s), ["work", "folder", "site.zip", "docs", "zeta"]);
+        assert_eq!(visible(&s), ["work", "folder", "site.zip", "zeta"]);
     }
 
     /// Spec `file-tree`: expanding submits exactly one read — duplicates

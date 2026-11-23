@@ -41,9 +41,15 @@ pub struct Mounts {
     lazies: HashMap<String, Arc<LazyArchive>>,
     /// The archive Extract To… is choosing a folder for.
     pub extract_pending: Option<VfsUri>,
-    /// The last location each pane's tree was revealed for (archive locations only).
+    /// The last location each pane's tree was revealed for.
     revealed: HashMap<fm_layout::PaneId, VfsUri>,
+    /// Archive files opened this session, oldest first: the tree keeps showing them as
+    /// folders until they are closed (Close Archive).
+    opened: Vec<VfsUri>,
 }
+
+/// Most archives the tree keeps as opened.
+const MAX_OPENED: usize = 256;
 
 impl std::fmt::Debug for Mounts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -62,6 +68,36 @@ impl Mounts {
     pub fn for_uri(&self, uri: &VfsUri) -> Option<&Arc<LazyArchive>> {
         uri.archive_handle().and_then(|h| self.lazies.get(h))
     }
+
+    /// Whether the tree shows this archive file as a folder (opened and not closed since).
+    pub fn is_opened(&self, container: &VfsUri) -> bool {
+        self.opened.contains(container)
+    }
+
+    fn open(&mut self, container: VfsUri) {
+        if !self.opened.contains(&container) {
+            if self.opened.len() >= MAX_OPENED {
+                self.opened.remove(0);
+            }
+            self.opened.push(container);
+        }
+    }
+}
+
+/// Whether `uri` lies inside the archive with `handle`, directly or in an archive within it.
+fn within(uri: &VfsUri, handle: &str) -> bool {
+    let mut at = uri.clone();
+    for _ in 0..=fm_archive::limits::MAX_NESTING {
+        match at.archive_handle() {
+            Some(h) if h == handle => return true,
+            Some(_) => match container_of(&at) {
+                Some(r) => at = r.container,
+                None => return false,
+            },
+            None => return false,
+        }
+    }
+    false
 }
 
 /// The archive file behind an archive location (`None` for other locations).
@@ -235,9 +271,9 @@ pub fn open_containers(location: &VfsUri) -> Vec<VfsUri> {
     out
 }
 
-/// Keep each tree in step with its pane's archive: when the pane moves inside one, expand
-/// the tree down to it (layout alone stops at the archive's root, which has no parent);
-/// when it leaves, fold the archives it left so their rows go away.
+/// Keep each tree in step with its pane's archive: an archive a pane moves into is
+/// remembered as opened (the tree shows it until it is closed) and the tree expands down
+/// to the location (layout alone stops at the archive's root, which has no parent).
 pub(crate) fn reveal_in_trees(s: &mut Session) -> bool {
     let mut changed = false;
     for pane in s.layout.panes() {
@@ -248,43 +284,83 @@ pub(crate) fn reveal_in_trees(s: &mut Session) -> bool {
             continue;
         }
         s.archives.revealed.insert(pane, location.clone());
-        let mut open: Vec<String> = open_containers(&location)
-            .iter()
-            .map(|c| fm_archive::handle_for(c, 0, None))
-            .collect();
-        open.extend(location.archive_handle().map(str::to_string));
-        let Some(state) = s.layout.state_mut(pane) else {
+        if location.archive_handle().is_none() {
             continue;
-        };
-        let left: Vec<VfsUri> = state
-            .tree
-            .expanded()
-            .filter(|u| {
-                u.archive_handle()
-                    .is_some_and(|h| !open.iter().any(|o| o == h))
-            })
-            .cloned()
-            .collect();
-        // With every archive shown in the tree, the ones left behind stay as they were.
-        for uri in left.iter().filter(|_| !s.prefs.archives_in_tree) {
-            state.tree.collapse(uri);
-            changed = true;
         }
-        if state
-            .tree
-            .focused
-            .as_ref()
-            .and_then(VfsUri::archive_handle)
-            .is_some_and(|h| !open.iter().any(|o| o == h))
-        {
-            state.tree.focused = Some(location.clone());
+        for container in open_containers(&location).into_iter().rev() {
+            s.archives.open(container);
         }
-        if location.archive_handle().is_some() {
+        if let Some(state) = s.layout.state_mut(pane) {
             state.reveal_location_via(&tree_parent);
             changed = true;
         }
     }
     changed
+}
+
+/// The archive file `uri` names: an archive location's archive, or an archive file itself.
+fn container_for(uri: &VfsUri) -> Option<VfsUri> {
+    if uri.archive_handle().is_none() && uri.file_name().is_some_and(is_archive_name) {
+        return Some(uri.clone());
+    }
+    container_of(uri).map(|r| r.container)
+}
+
+/// Close an archive: free its memory and passwords (and those of archives inside it), take
+/// it out of the tree, and move panes inside it to the folder holding it.
+pub(crate) fn close(s: &mut Session, container: &VfsUri) {
+    let handle = fm_archive::handle_for(container, 0, None);
+    let inner: Vec<String> = s
+        .archives
+        .lazies
+        .keys()
+        .filter(|h| {
+            **h == handle
+                || VfsUri::archive_root(h)
+                    .ok()
+                    .and_then(|root| container_of(&root))
+                    .is_some_and(|r| within(&r.container, &handle))
+        })
+        .cloned()
+        .collect();
+    for h in &inner {
+        if let Some(m) = s.archives.lazies.get(h) {
+            m.unmount();
+        }
+    }
+    s.archives
+        .opened
+        .retain(|c| c != container && !within(c, &handle));
+    let reveal = container.file_name().map(str::to_string);
+    let outside = container.parent();
+    for pane in s.layout.panes() {
+        let Some(state) = s.layout.state_mut(pane) else {
+            continue;
+        };
+        let folded: Vec<VfsUri> = state
+            .tree
+            .expanded()
+            .filter(|u| within(u, &handle))
+            .cloned()
+            .collect();
+        for uri in &folded {
+            state.tree.collapse(uri);
+        }
+        if state
+            .tree
+            .focused
+            .as_ref()
+            .is_some_and(|f| within(f, &handle))
+        {
+            state.tree.focused = outside.clone();
+        }
+        if within(&state.location, &handle)
+            && let Some(dir) = outside.clone()
+        {
+            state.navigate(dir);
+            state.listing.reveal = reveal.clone();
+        }
+    }
 }
 
 /// Whether a read failed because an archive needs a (different) password: the text of
@@ -383,15 +459,27 @@ pub fn unmount() -> CommandSpec {
         label: "Close Archive",
         menu: &["File", "Archive", "Close Archive"],
         shortcut: None,
-        params: "{uri?: string} — default the focused pane's archive",
+        params: "{uri?: string} — an archive location or archive file; default the focused pane's archive",
         enabled: |s| {
             s.layout
                 .state(s.layout.focused())
                 .is_some_and(|p| p.location.scheme() == Scheme::Archive)
         },
         run: |s, params: &Params| {
-            let mount = target_mount(s, params)?;
-            mount.unmount();
+            let uri = match uri_of(params)? {
+                Some(u) => u,
+                None => s
+                    .layout
+                    .state(s.layout.focused())
+                    .map(|p| p.location.clone())
+                    .ok_or_else(|| FmError::NotFound("focused pane".into()))?,
+            };
+            let container = container_for(&uri)
+                .ok_or_else(|| FmError::InvalidParams("not an archive".into()))?;
+            close(s, &container);
+            if let Some(dir) = container.parent() {
+                let _ = s.ensure_read(dir);
+            }
             Ok(())
         },
     }
@@ -553,16 +641,32 @@ mod tests {
         assert!(state.tree.is_expanded(&root), "the archive's row opens");
         assert_eq!(state.tree.focused.as_ref(), Some(&inner));
         assert_eq!(tree_parent(&root), Some(tree_root.clone()));
-        assert_eq!(open_containers(&inner), [container]);
+        assert_eq!(open_containers(&inner), std::slice::from_ref(&container));
         assert!(!reveal_in_trees(&mut s), "only once per location");
-        // Leaving the archive folds it, so its row goes away.
+        assert!(s.archives.is_opened(&container));
+        // Leaving keeps it in the tree…
         if let Some(state) = s.layout.state_mut(pane) {
             state.location = tree_root.clone();
         }
-        assert!(reveal_in_trees(&mut s));
-        let state = s.layout.state(pane).expect("pane");
-        assert!(!state.tree.is_expanded(&root));
+        reveal_in_trees(&mut s);
+        assert!(s.archives.is_opened(&container));
         assert!(open_containers(&tree_root).is_empty());
+        // …until it is closed, which also takes a pane inside it back out.
+        if let Some(state) = s.layout.state_mut(pane) {
+            state.location = inner;
+        }
+        reveal_in_trees(&mut s);
+        s.dispatch("archive.unmount", &json!({ "uri": root.to_string() }))
+            .expect("close");
+        assert!(!s.archives.is_opened(&container));
+        let state = s.layout.state(pane).expect("pane");
+        assert_eq!(state.location, tree_root);
+        assert!(!state.tree.is_expanded(&root));
+        assert_eq!(state.listing.reveal.as_deref(), Some("site.zip"));
+        assert!(
+            s.dispatch("archive.unmount", &json!({ "uri": tree_root.to_string() }))
+                .is_err()
+        );
     }
 
     fn tree_root_of(container: &VfsUri) -> VfsUri {

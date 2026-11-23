@@ -243,6 +243,22 @@ pub fn attach_folder(response: &Response, s: &mut Session, pane: PaneId, folder:
         return;
     };
     response.context_menu(|ui| {
+        // An archive's own tree row: take it out of the tree (and free its memory).
+        if folder.archive_handle().is_some() && folder.path_str() == "/" {
+            if ui.button("Close Archive").clicked() {
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(
+                        Id::NULL.with("folder-context-command"),
+                        Some(FolderAction {
+                            id: "archive.unmount",
+                            folder: folder.clone(),
+                        }),
+                    )
+                });
+                ui.close();
+            }
+            ui.separator();
+        }
         for entry in FOLDER_ENTRIES {
             match entry {
                 Some(id) => {
