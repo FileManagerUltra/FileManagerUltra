@@ -40,6 +40,11 @@ pub enum FmError {
     InvalidParams(String),
     /// Two commands share an id (registry construction error).
     DuplicateCommand(String),
+    /// An encrypted archive needs a password before this can be read (carries the
+    /// archive's name, redacted for display). Never carries a password.
+    PasswordRequired(String),
+    /// The password given for an encrypted archive is wrong (carries the archive's name).
+    WrongPassword(String),
 }
 
 impl FmError {
@@ -54,6 +59,11 @@ impl FmError {
     /// URI parse failure; the raw input is redacted for display.
     pub fn invalid_uri(input: impl Into<String>) -> Self {
         Self::InvalidUri(redact(&input.into()))
+    }
+
+    /// `true` when reading needs a (different) archive password: ask the user.
+    pub fn wants_password(&self) -> bool {
+        matches!(self, Self::PasswordRequired(_) | Self::WrongPassword(_))
     }
 
     /// `true` when the error is a cancellation (used to end jobs quietly).
@@ -78,6 +88,8 @@ impl fmt::Display for FmError {
             Self::UnknownCommand(id) => write!(f, "unknown command: {}", redact(id)),
             Self::InvalidParams(detail) => write!(f, "invalid parameters: {}", redact(detail)),
             Self::DuplicateCommand(id) => write!(f, "duplicate command id: {}", redact(id)),
+            Self::PasswordRequired(name) => write!(f, "{} needs a password", redact(name)),
+            Self::WrongPassword(name) => write!(f, "wrong password for {}", redact(name)),
         }
     }
 }

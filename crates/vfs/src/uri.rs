@@ -25,6 +25,10 @@ pub enum Scheme {
     Network,
     /// The virtual "Saved servers" folder (`servers:///`) listing saved SFTP profiles.
     Servers,
+    /// Inside a mounted archive (`archive://<handle>/…`). The authority's host is the
+    /// mount handle: 16 lowercase hex digits naming the archive file in the engine's
+    /// mount table (change `add-archive-vfs`, design D1).
+    Archive,
 }
 
 impl Scheme {
@@ -35,6 +39,7 @@ impl Scheme {
             Self::Sftp => "sftp",
             Self::Network => "network",
             Self::Servers => "servers",
+            Self::Archive => "archive",
         }
     }
 
@@ -45,6 +50,7 @@ impl Scheme {
             "sftp" => Some(Self::Sftp),
             "network" => Some(Self::Network),
             "servers" => Some(Self::Servers),
+            "archive" => Some(Self::Archive),
             _ => None,
         }
     }
@@ -201,6 +207,16 @@ impl VfsUri {
                     return Ok(Self::servers());
                 }
                 return Err(FmError::invalid_uri(original));
+            }
+            Scheme::Archive => {
+                if !is_archive_handle(auth_part) {
+                    return Err(FmError::invalid_uri(original));
+                }
+                Authority {
+                    user: None,
+                    host: auth_part.to_string(),
+                    port: None,
+                }
             }
         };
 
@@ -392,6 +408,36 @@ impl VfsUri {
         other.path == self.path || other.path.starts_with(&format!("{}/", self.path))
     }
 
+    /// The root of the archive mounted under `handle` (16 lowercase hex digits).
+    pub fn archive_root(handle: &str) -> Result<Self, FmError> {
+        if !is_archive_handle(handle) {
+            return Err(FmError::invalid_uri("bad archive handle"));
+        }
+        Ok(Self {
+            scheme: Scheme::Archive,
+            authority: Authority {
+                user: None,
+                host: handle.to_string(),
+                port: None,
+            },
+            path: "/".to_string(),
+        })
+    }
+
+    /// The mount handle of an archive location (`None` for other schemes).
+    pub fn archive_handle(&self) -> Option<&str> {
+        (self.scheme == Scheme::Archive).then_some(self.authority.host.as_str())
+    }
+
+    /// The same location with another `/`-separated absolute path (normalised).
+    pub fn with_path(&self, path: &str) -> Result<Self, FmError> {
+        Ok(Self {
+            scheme: self.scheme,
+            authority: self.authority.clone(),
+            path: normalize_path(path)?,
+        })
+    }
+
     /// Canonical string form; `parse` accepts it back.
     pub fn as_str(&self) -> String {
         self.to_string()
@@ -406,6 +452,7 @@ impl fmt::Display for VfsUri {
             Scheme::Sftp => write!(f, "sftp://{}{}", self.authority, self.path),
             Scheme::Network => f.write_str("network:///"),
             Scheme::Servers => f.write_str("servers:///"),
+            Scheme::Archive => write!(f, "archive://{}{}", self.authority.host, self.path),
         }
     }
 }
@@ -416,6 +463,14 @@ impl std::str::FromStr for VfsUri {
         Self::parse(s)
     }
 }
+
+/// An archive mount handle: exactly 16 lowercase hex digits.
+pub fn is_archive_handle(s: &str) -> bool {
+    s.len() == ARCHIVE_HANDLE_LEN && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Length of an archive mount handle in hex digits.
+pub const ARCHIVE_HANDLE_LEN: usize = 16;
 
 fn parse_authority(part: &str, scheme: Scheme, original: &str) -> Result<Authority, FmError> {
     if part.is_empty() {
@@ -540,6 +595,36 @@ pub fn display_form(uri: &VfsUri, windows: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archive_locations_round_trip_and_reject_bad_handles() {
+        let uri = VfsUri::parse("archive://0123456789abcdef/www/index.html").expect("uri");
+        assert_eq!(uri.scheme(), Scheme::Archive);
+        assert_eq!(uri.archive_handle(), Some("0123456789abcdef"));
+        assert_eq!(uri.path_str(), "/www/index.html");
+        assert_eq!(uri.to_string(), "archive://0123456789abcdef/www/index.html");
+        assert_eq!(VfsUri::parse(&uri.to_string()).expect("again"), uri);
+        let root = VfsUri::archive_root("0123456789abcdef").expect("root");
+        assert_eq!(root.to_string(), "archive://0123456789abcdef/");
+        assert_eq!(uri.parent().and_then(|p| p.parent()), Some(root.clone()));
+        // `..` is clamped at the archive root.
+        let up = VfsUri::parse("archive://0123456789abcdef/../../etc/passwd").expect("uri");
+        assert_eq!(up.path_str(), "/etc/passwd");
+        assert!(root.is_ancestor_of(&up));
+        for bad in [
+            "archive:///x",
+            "archive://0123456789ABCDEF/",
+            "archive://0123456789abcde/",
+            "archive://0123456789abcdef0/",
+            "archive://u@0123456789abcdef/",
+            "archive://0123456789abcdef:1/",
+            "archive://../etc",
+        ] {
+            assert!(VfsUri::parse(bad).is_err(), "{bad}");
+        }
+        assert!(VfsUri::archive_root("nothex!!nothex!!").is_err());
+        assert_eq!(VfsUri::root_file().archive_handle(), None);
+    }
 
     #[test]
     fn drive_roots_are_the_children_of_this_pc_on_windows_only() {

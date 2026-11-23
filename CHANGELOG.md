@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Archives open like folders: press Enter or double-click a zip, tar, tar.gz, tar.bz2, tar.xz, tar.zst or 7z file to see what is inside, preview files and copy them out, also when the archive is on a network share, on an SFTP server or inside another archive. Backspace leaves the archive with the cursor on it. Archives and everything inside them are shown in their own colour, and archive files have a small box icon. A single compressed file such as `access.log.gz` opens as a folder holding that file. Encrypted zip and 7z archives ask for their password in the pane; it is kept only while the archive is open. To open archives with their application instead, turn off Preferences › File operations › "Enter browses inside archives"; the right-click menu always offers both. Changing files inside archives comes later.
+
 ### Fixed
 
 - CSV and TSV tables: with a filter on, row numbers of 1,000 and up are shown in full instead of losing their first digit (",856" instead of "1,856").

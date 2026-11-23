@@ -6,6 +6,7 @@
 //! dispatches; it never performs work itself.
 
 pub mod app_cmds;
+pub mod archive_cmds;
 pub mod arrange_cmds;
 pub mod audio_owner;
 pub mod backends;

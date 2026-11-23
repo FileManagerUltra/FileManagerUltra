@@ -55,6 +55,13 @@ pub const NOTICES: &[Notice] = &[
         source: "https://crates.io/crates/merman-elk-layered/0.10.0",
         text: include_str!("../licenses/EPL-2.0.txt"),
     },
+    Notice {
+        name: "bzip2 / libbzip2 (Rust translation libbzip2-rs)",
+        purpose: "Reading and writing bzip2 in archives (.tar.bz2, zip, 7z)",
+        licence: "bzip2-1.0.6",
+        source: "https://crates.io/crates/libbz2-rs-sys/0.2.7",
+        text: include_str!("../licenses/bzip2-1.0.6.txt"),
+    },
 ];
 
 #[cfg(test)]
@@ -73,6 +80,16 @@ mod tests {
             .find(|n| n.licence == "EPL-2.0")
             .expect("EPL notice");
         assert!(epl.text.starts_with("Eclipse Public License - v 2.0"));
+    }
+
+    /// The bzip2 notice names the locked version of the translation.
+    #[test]
+    fn the_bzip2_notice_matches_the_locked_version() {
+        let lock = include_str!("../../../Cargo.lock").replace("\r\n", "\n");
+        assert!(
+            lock.contains("name = \"libbz2-rs-sys\"\nversion = \"0.2.7\""),
+            "update the notice when libbz2-rs-sys changes"
+        );
     }
 
     /// The EPL part is pinned: a merman upgrade must revisit this notice.

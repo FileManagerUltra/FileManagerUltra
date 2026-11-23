@@ -15,6 +15,9 @@ pub fn display_path(uri: &VfsUri) -> String {
     if uri.is_drive_list() {
         return "This PC".to_string();
     }
+    if let Some(shown) = crate::archive_cmds::display(uri, cfg!(windows)) {
+        return shown;
+    }
     fm_vfs::display_form(uri, cfg!(windows))
 }
 

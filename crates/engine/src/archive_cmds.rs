@@ -1,0 +1,523 @@
+//! Archives as folders (change `add-archive-vfs`): the mount table and the
+//! `archive.enter`, `archive.unmount`, `archive.password` and `archive.password.forget`
+//! commands.
+//!
+//! Entering an archive registers a [`LazyArchive`] backend under `archive://<handle>/`
+//! and navigates there; the archive is opened by the first directory read, on the
+//! archive job lane. Which file a handle names is also kept in a process-wide table so
+//! [`display`] can show `…/site.zip/www` wherever a location is shown.
+
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, RwLock};
+
+use fm_archive::{FormatId, LazyArchive, Secret};
+use fm_vfs::{FmError, Scheme, VfsUri};
+
+use crate::registry::{CommandSpec, Params};
+use crate::session::Session;
+
+/// The archive file (and, for items found inside blobs, offset and format) behind a handle.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ArchiveRef {
+    pub container: VfsUri,
+    #[serde(default)]
+    pub offset: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+}
+
+/// Handles this process knows, for display and re-mounting (bounded).
+static REFS: LazyLock<RwLock<HashMap<String, ArchiveRef>>> = LazyLock::new(Default::default);
+
+/// Most handles remembered; the oldest are dropped first, which only affects display.
+const MAX_REFS: usize = 4096;
+
+/// Longest password accepted (bytes).
+const MAX_PASSWORD: usize = 1024;
+
+/// Mounted archives of this session.
+#[derive(Default)]
+pub struct Mounts {
+    lazies: HashMap<String, Arc<LazyArchive>>,
+}
+
+impl std::fmt::Debug for Mounts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mounts")
+            .field("handles", &self.lazies.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl Mounts {
+    pub fn get(&self, handle: &str) -> Option<&Arc<LazyArchive>> {
+        self.lazies.get(handle)
+    }
+
+    /// The mount serving `uri`, if `uri` is inside an archive.
+    pub fn for_uri(&self, uri: &VfsUri) -> Option<&Arc<LazyArchive>> {
+        uri.archive_handle().and_then(|h| self.lazies.get(h))
+    }
+}
+
+/// The archive file behind an archive location (`None` for other locations).
+pub fn container_of(uri: &VfsUri) -> Option<ArchiveRef> {
+    let handle = uri.archive_handle()?;
+    REFS.read().ok()?.get(handle).cloned()
+}
+
+/// How many archives deep `uri` is (0 outside archives).
+pub fn nesting(uri: &VfsUri) -> usize {
+    let mut depth = 0;
+    let mut at = uri.clone();
+    while let Some(r) = container_of(&at) {
+        depth += 1;
+        if depth > fm_archive::limits::MAX_NESTING {
+            break;
+        }
+        at = r.container;
+    }
+    depth
+}
+
+/// The display form of a location inside an archive: the archive file's display form,
+/// then the inner path with the platform separator (`path-display`).
+pub fn display(uri: &VfsUri, windows: bool) -> Option<String> {
+    let r = container_of(uri)?;
+    let base = if r.container.scheme() == Scheme::Archive {
+        display(&r.container, windows).unwrap_or_else(|| r.container.to_string())
+    } else if r.container.is_drive_list() {
+        r.container.to_string()
+    } else {
+        fm_vfs::display_form(&r.container, windows)
+    };
+    let rest = uri.path_str().trim_start_matches('/');
+    if rest.is_empty() {
+        return Some(base);
+    }
+    let sep = if windows { "\\" } else { "/" };
+    Some(format!("{base}{sep}{}", rest.replace('/', sep)))
+}
+
+/// Where Up goes from the root of an archive: the folder holding the archive file, with
+/// the archive's name to put the cursor on.
+pub fn up_from_root(uri: &VfsUri) -> Option<(VfsUri, String)> {
+    if uri.path_str() != "/" {
+        return None;
+    }
+    let r = container_of(uri)?;
+    let name = r.container.file_name()?.to_string();
+    Some((r.container.parent()?, name))
+}
+
+fn remember(handle: &str, r: ArchiveRef) {
+    if let Ok(mut refs) = REFS.write() {
+        if refs.len() >= MAX_REFS && !refs.contains_key(handle) {
+            let victim = refs.keys().next().cloned();
+            if let Some(v) = victim {
+                refs.remove(&v);
+            }
+        }
+        refs.insert(handle.to_string(), r);
+    }
+}
+
+/// Register `container` as an archive and return its root location. Registering again
+/// returns the same root and keeps the mount (and its passwords).
+pub(crate) fn mount(s: &mut Session, container: &VfsUri) -> Result<VfsUri, FmError> {
+    mount_as(s, container, 0, None)
+}
+
+pub(crate) fn mount_as(
+    s: &mut Session,
+    container: &VfsUri,
+    offset: u64,
+    format: Option<FormatId>,
+) -> Result<VfsUri, FmError> {
+    if nesting(container) >= fm_archive::limits::MAX_NESTING {
+        return Err(FmError::backend(
+            "archive",
+            "Archives nested more than 8 deep cannot be opened; copy this one out first",
+        ));
+    }
+    let handle = fm_archive::handle_for(container, offset, format);
+    let root = VfsUri::archive_root(&handle)?;
+    remember(
+        &handle,
+        ArchiveRef {
+            container: container.clone(),
+            offset,
+            format: format.map(|f| f.id().to_string()),
+        },
+    );
+    if s.archives.lazies.contains_key(&handle) && s.backends.get_for(&root).is_some() {
+        return Ok(root);
+    }
+    let container_vfs = s.backends.require(container)?;
+    let lazy = Arc::new(LazyArchive::new(
+        root.clone(),
+        container.clone(),
+        container_vfs,
+        format,
+        offset,
+    ));
+    s.backends.register_at(root.authority(), lazy.clone());
+    s.archives.lazies.insert(handle, lazy);
+    Ok(root)
+}
+
+/// Make sure the archive behind `uri` is registered (after a restart, a restored pane or
+/// history entry points at a handle this session has not mounted yet).
+pub(crate) fn ensure_registered(s: &mut Session, uri: &VfsUri) -> Result<(), FmError> {
+    let Some(handle) = uri.archive_handle() else {
+        return Ok(());
+    };
+    if s.archives.lazies.contains_key(handle) {
+        return Ok(());
+    }
+    let r = container_of(uri).ok_or_else(|| {
+        FmError::NotFound("This archive location is no longer available".to_string())
+    })?;
+    ensure_registered(s, &r.container)?;
+    let format = r.format.as_deref().and_then(FormatId::from_id);
+    mount_as(s, &r.container, r.offset, format).map(|_| ())
+}
+
+/// Whether a read failed because an archive needs a (different) password: the text of
+/// `FmError::PasswordRequired` / `FmError::WrongPassword` as a listing shows it.
+pub fn is_password_message(message: &str) -> bool {
+    message.ends_with(" needs a password") || message.starts_with("wrong password for ")
+}
+
+/// Whether a file with this name opens as a folder when activated.
+pub fn is_archive_name(name: &str) -> bool {
+    // ISO and RAR keep opening with their application until their readers land.
+    fm_archive::by_name(name).is_some_and(|f| !matches!(f, FormatId::Iso | FormatId::Rar))
+}
+
+fn uri_of(params: &Params) -> Result<Option<VfsUri>, FmError> {
+    let raw = match params {
+        Params::Null => None,
+        Params::String(s) => Some(s.as_str()),
+        Params::Object(map) => match map.get("uri") {
+            None | Some(Params::Null) => None,
+            Some(Params::String(s)) => Some(s.as_str()),
+            Some(_) => return Err(FmError::InvalidParams("uri must be a string".into())),
+        },
+        _ => {
+            return Err(FmError::InvalidParams(
+                "expected {uri?: string}".to_string(),
+            ));
+        }
+    };
+    raw.map(|r| VfsUri::parse(r).map_err(|_| FmError::invalid_uri(r.to_string())))
+        .transpose()
+}
+
+/// The archive a command acts on: its `uri` param, else the focused pane's location.
+fn target_mount(s: &Session, params: &Params) -> Result<Arc<LazyArchive>, FmError> {
+    let uri = match uri_of(params)? {
+        Some(u) => u,
+        None => s
+            .layout
+            .state(s.layout.focused())
+            .map(|p| p.location.clone())
+            .ok_or_else(|| FmError::NotFound("focused pane".into()))?,
+    };
+    s.archives
+        .for_uri(&uri)
+        .cloned()
+        .ok_or_else(|| FmError::InvalidParams("not inside an archive".into()))
+}
+
+/// Read again whatever shows the archive (after a password was given or forgotten).
+fn reload(s: &mut Session, mount: &LazyArchive) {
+    let handle = mount.root().archive_handle().map(str::to_string);
+    let shown: Vec<VfsUri> = s
+        .layout
+        .panes()
+        .into_iter()
+        .filter_map(|id| s.layout.state(id))
+        .map(|p| p.location.clone())
+        .filter(|l| l.archive_handle().map(str::to_string) == handle)
+        .collect();
+    for uri in shown {
+        s.dirs.invalidate(&uri);
+        let _ = s.ensure_read(uri);
+    }
+}
+
+/// `archive.enter {uri}` — browse into an archive file in the focused pane.
+pub fn enter() -> CommandSpec {
+    CommandSpec {
+        id: "archive.enter",
+        label: "Browse Inside",
+        menu: &["File", "Archive", "Browse Inside"],
+        shortcut: None,
+        params: "{uri: string} — an archive file",
+        enabled: |_s| true,
+        run: |s, params: &Params| {
+            let uri = uri_of(params)?
+                .ok_or_else(|| FmError::InvalidParams("expected {uri: string}".into()))?;
+            let name = uri
+                .file_name()
+                .ok_or_else(|| FmError::InvalidParams("not a file".into()))?;
+            if !is_archive_name(name) {
+                return Err(FmError::Unsupported("this file is not an archive"));
+            }
+            ensure_registered(s, &uri)?;
+            let root = mount(s, &uri)?;
+            s.dispatch("nav.open", &Params::String(root.to_string()))
+        },
+    }
+}
+
+/// `archive.unmount {uri?}` — close an archive (and forget its passwords).
+pub fn unmount() -> CommandSpec {
+    CommandSpec {
+        id: "archive.unmount",
+        label: "Close Archive",
+        menu: &["File", "Archive", "Close Archive"],
+        shortcut: None,
+        params: "{uri?: string} — default the focused pane's archive",
+        enabled: |s| {
+            s.layout
+                .state(s.layout.focused())
+                .is_some_and(|p| p.location.scheme() == Scheme::Archive)
+        },
+        run: |s, params: &Params| {
+            let mount = target_mount(s, params)?;
+            mount.unmount();
+            Ok(())
+        },
+    }
+}
+
+/// `archive.password {uri?, password}` — add a password for an encrypted archive and
+/// read again what needed it. The password stays in memory with the mount only.
+pub fn password() -> CommandSpec {
+    CommandSpec {
+        id: "archive.password",
+        label: "Archive Password",
+        menu: &["File", "Archive", "Enter Password…"],
+        shortcut: None,
+        params: "{uri?: string, password: string}",
+        enabled: |_s| true,
+        run: |s, params: &Params| {
+            let map = params
+                .as_object()
+                .ok_or_else(|| FmError::InvalidParams("expected {password: string}".into()))?;
+            let pw = map
+                .get("password")
+                .and_then(Params::as_str)
+                .ok_or_else(|| FmError::InvalidParams("password must be a string".into()))?;
+            if pw.is_empty() || pw.len() > MAX_PASSWORD {
+                return Err(FmError::InvalidParams(format!(
+                    "password must be 1 to {MAX_PASSWORD} bytes"
+                )));
+            }
+            let mount = target_mount(s, params)?;
+            mount.passwords().add(Secret::new(pw));
+            reload(s, &mount);
+            Ok(())
+        },
+    }
+}
+
+/// `archive.password.forget {uri?}` — drop the passwords given for an archive.
+pub fn forget_password() -> CommandSpec {
+    CommandSpec {
+        id: "archive.password.forget",
+        label: "Forget Password",
+        menu: &["File", "Archive", "Forget Password"],
+        shortcut: None,
+        params: "{uri?: string} — default the focused pane's archive",
+        enabled: |s| {
+            s.layout
+                .state(s.layout.focused())
+                .and_then(|p| s.archives.for_uri(&p.location))
+                .is_some_and(|m| !m.passwords().is_empty())
+        },
+        run: |s, params: &Params| {
+            let mount = target_mount(s, params)?;
+            mount.unmount();
+            reload(s, &mount);
+            Ok(())
+        },
+    }
+}
+
+/// `archive.open_app {uri}` — open an archive file with its application instead of
+/// browsing inside (the context menu's "Open with Default App").
+pub fn open_app() -> CommandSpec {
+    CommandSpec {
+        id: "archive.open_app",
+        label: "Open with Default App",
+        menu: &["File", "Archive", "Open with Default App"],
+        shortcut: None,
+        params: "{uri: string} — an archive file",
+        enabled: |_s| true,
+        run: |s, params: &Params| {
+            let uri = uri_of(params)?
+                .ok_or_else(|| FmError::InvalidParams("expected {uri: string}".into()))?;
+            s.dispatch(
+                "file.open",
+                &serde_json::json!({ "uri": uri.to_string(), "browse": false }),
+            )
+        },
+    }
+}
+
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        enter(),
+        open_app(),
+        unmount(),
+        password(),
+        forget_password(),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::Write as _;
+
+    pub(crate) fn zip_bytes(password: Option<&str>) -> Vec<u8> {
+        let mut out = std::io::Cursor::new(Vec::new());
+        {
+            let mut w = zip::ZipWriter::new(&mut out);
+            let mut opts = zip::write::SimpleFileOptions::default();
+            if let Some(pw) = password {
+                opts = opts.with_aes_encryption(zip::AesMode::Aes256, pw);
+            }
+            w.add_directory("www/", zip::write::SimpleFileOptions::default())
+                .expect("dir");
+            w.start_file("www/index.html", opts).expect("file");
+            w.write_all(b"<h1>hi</h1>").expect("w");
+            w.finish().expect("finish");
+        }
+        out.into_inner()
+    }
+
+    fn session_with(name: &str, bytes: &[u8]) -> (Session, VfsUri) {
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).expect("write");
+        let s = Session::new().expect("session");
+        let uri = VfsUri::parse(path.to_str().expect("utf8")).expect("uri");
+        std::mem::forget(dir);
+        (s, uri)
+    }
+
+    fn wait_listing(s: &mut Session, uri: &VfsUri) -> crate::DirState {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            s.poll();
+            let state = s.dirs.state(uri);
+            if !matches!(
+                state,
+                crate::DirState::Loading { .. } | crate::DirState::Absent
+            ) {
+                return state;
+            }
+            assert!(std::time::Instant::now() < deadline, "listing timed out");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn enter_lists_the_archive_and_up_returns_to_its_folder() {
+        let (mut s, zip) = session_with("site.zip", &zip_bytes(None));
+        s.dispatch("archive.enter", &json!({"uri": zip.to_string()}))
+            .expect("enter");
+        let loc = s
+            .layout
+            .state(s.layout.focused())
+            .expect("pane")
+            .location
+            .clone();
+        assert_eq!(loc.scheme(), Scheme::Archive);
+        let crate::DirState::Ready { entries, .. } = wait_listing(&mut s, &loc) else {
+            panic!("not listed");
+        };
+        assert_eq!(entries.len(), 1);
+        let shown = crate::item_cmds::display_path(&loc.join("www").expect("www"));
+        assert!(
+            shown.ends_with("site.zip/www") || shown.ends_with("site.zip\\www"),
+            "{shown}"
+        );
+        s.dispatch("nav.up", &Params::Null).expect("up");
+        let back = s
+            .layout
+            .state(s.layout.focused())
+            .expect("pane")
+            .location
+            .clone();
+        assert_eq!(Some(back), zip.parent());
+    }
+
+    #[test]
+    fn a_password_unlocks_encrypted_members() {
+        let (mut s, zip) = session_with("secret.zip", &zip_bytes(Some("pw")));
+        s.dispatch("archive.enter", &json!({"uri": zip.to_string()}))
+            .expect("enter");
+        let root = s
+            .layout
+            .state(s.layout.focused())
+            .expect("pane")
+            .location
+            .clone();
+        wait_listing(&mut s, &root);
+        let page = root
+            .join("www")
+            .and_then(|w| w.join("index.html"))
+            .expect("page");
+        let vfs = s.backends.require(&page).expect("backend");
+        assert!(matches!(
+            vfs.open_read(&page),
+            Err(FmError::PasswordRequired(_))
+        ));
+        assert!(
+            s.dispatch("archive.password", &json!({"password": ""}))
+                .is_err(),
+            "empty password"
+        );
+        s.dispatch("archive.password", &json!({"password": "pw"}))
+            .expect("password");
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut vfs.open_read(&page).expect("open"), &mut text)
+            .expect("read");
+        assert_eq!(text, "<h1>hi</h1>");
+        s.dispatch("archive.password.forget", &Params::Null)
+            .expect("forget");
+        assert!(matches!(
+            vfs.open_read(&page),
+            Err(FmError::PasswordRequired(_))
+        ));
+    }
+
+    #[test]
+    fn bad_params_are_errors() {
+        let (mut s, _) = session_with("x.zip", &zip_bytes(None));
+        for bad in [
+            Params::Null,
+            json!({"uri": 5}),
+            json!({"uri": "/etc"}),
+            json!({"uri": "/tmp/notes.txt"}),
+            json!({"uri": "x".repeat(10_000)}),
+        ] {
+            assert!(s.dispatch("archive.enter", &bad).is_err(), "{bad}");
+        }
+        assert!(
+            s.dispatch("archive.password", &json!({"password": 3}))
+                .is_err()
+        );
+        assert!(
+            s.dispatch("archive.password", &json!({"password": "x".repeat(2000)}))
+                .is_err()
+        );
+        assert!(s.dispatch("archive.unmount", &Params::Null).is_err());
+    }
+}

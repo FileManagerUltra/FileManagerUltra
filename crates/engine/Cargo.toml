@@ -24,6 +24,7 @@ fm-sync.workspace = true
 fm-term.workspace = true
 fm-preview.workspace = true
 fm-pdf.workspace = true
+fm-archive.workspace = true
 fm-media.workspace = true
 opener.workspace = true
 reqwest.workspace = true

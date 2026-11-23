@@ -25,15 +25,21 @@ pub enum JobLane {
     BulkLocal,
     BulkSmb,
     BulkSftp,
+    /// Listings and member reads inside mounted archives (add-archive-vfs D15).
+    Archive,
+    /// Archive saves and extraction.
+    BulkArchive,
 }
 
-const LANES: [JobLane; 6] = [
+const LANES: [JobLane; 8] = [
     JobLane::Local,
     JobLane::Smb,
     JobLane::Sftp,
     JobLane::BulkLocal,
     JobLane::BulkSmb,
     JobLane::BulkSftp,
+    JobLane::Archive,
+    JobLane::BulkArchive,
 ];
 
 impl JobLane {
@@ -181,6 +187,8 @@ impl JobQueue {
                 JobLane::BulkLocal => "bulk-local",
                 JobLane::BulkSmb => "bulk-smb",
                 JobLane::BulkSftp => "bulk-sftp",
+                JobLane::Archive => "archive",
+                JobLane::BulkArchive => "bulk-archive",
             }
         );
         let events_for_thread = events.clone();

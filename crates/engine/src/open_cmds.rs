@@ -230,7 +230,7 @@ pub fn open_file() -> CommandSpec {
         label: "Open File",
         menu: &["File", "Open"],
         shortcut: None,
-        params: "{uri: string, mode?: \"default\"|\"run\", confirm?: bool}",
+        params: "{uri: string, mode?: \"default\"|\"run\", confirm?: bool, browse?: bool} — browse: false opens an archive with its application instead of browsing inside",
         enabled: |_s| true,
         run: |s, params: &Params| {
             let map = object(params)?
@@ -262,6 +262,19 @@ pub fn open_file() -> CommandSpec {
             }
             if matches!(entry.kind, EntryKind::Other) {
                 return Err(FmError::Unsupported("special files are never opened"));
+            }
+            // An archive browses inside, unless the caller or the preference says otherwise.
+            let browse = map.get("browse").and_then(Params::as_bool).unwrap_or(true);
+            if browse
+                && mode == Mode::Default
+                && s.prefs.archives_browse
+                && entry.is_file()
+                && crate::archive_cmds::is_archive_name(&entry.name)
+            {
+                return s.dispatch(
+                    "archive.enter",
+                    &serde_json::json!({ "uri": uri.to_string() }),
+                );
             }
             if mode == Mode::Run && !confirmed {
                 return Err(FmError::InvalidParams(

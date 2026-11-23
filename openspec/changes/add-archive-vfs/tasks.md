@@ -1,7 +1,7 @@
 ## 1. Crate, dependencies and spikes
 
-- [ ] 1.1 Create `crates/archive` (`fm-archive`, L1, no egui, I/O only through `Vfs`/`Source`), register it in `xtask/src/layers.rs` and the workspace manifests (written atomically); `cargo xtask layers` green
-- [ ] 1.2 Add `zip` (default features off: `deflate`, `deflate64`, `bzip2`, `lzma`, `xz`, `zstd-rs`, `ppmd`, `aes-crypto`, `time`), `tar`, `bzip2` (pure-Rust backend), `lzma-rust2`, `ruzstd`, `sevenz-rust2`, `hadris-iso` (read features) as exact-pinned workspace deps; `cargo tree -e features` shows no `cc`/native `*-sys` builds; `cargo deny check` green; record clean build time and release binary size before and after in the devlog
+- [x] 1.1 Create `crates/archive` (`fm-archive`, L1, no egui, I/O only through `Vfs`/`Source`), register it in `xtask/src/layers.rs` and the workspace manifests (written atomically); `cargo xtask layers` green
+- [ ] 1.2 Add `zip` (default features off: `deflate`, `deflate64`, `bzip2`, `lzma`, `xz`, `zstd-rs`, `ppmd`, `aes-crypto`, `time`), `tar`, `bzip2` (pure-Rust backend), `lzma-rust2`, `ruzstd`, `sevenz-rust2`, `hadris-iso` (read features) as exact-pinned workspace deps; `cargo tree -e features` shows no `cc`/native `*-sys` builds; `cargo deny check` green; record clean build time and release binary size before and after in the devlog — deps added 2026-11-23 (zip without `zstd-rs`: it still builds `zstd-sys`; `hadris-iso` waits for 3.6); build time and binary size still to record
 - [ ] 1.3 Spike: `sevenz-rust2` random member access in solid blocks and rewrite with an added file; `hadris-iso` read of Joliet + Rock Ridge fixtures; note results in `design.md`
 - [ ] 1.4 Spike: `ruzstd` encoder output decodes with the reference decoder (test fixture) and its speed on 100 MB; decide whether tar.zst is writable in this change (D11) and note it in `design.md`
 - [ ] 1.5 Spike: zip spanned sets (`.z01`… `.zip`) through a `ConcatSource` with the `zip` crate, or our own disk-offset translation; fallback via the 7-Zip tool; note the result in `design.md` (D16)
@@ -10,31 +10,31 @@
 
 ## 2. Locations and display (`fm-vfs`)
 
-- [ ] 2.1 `Scheme::Archive` (`archive://<handle>/<path>`), handle = 16 hex digits of SHA-256 over the canonical container URI; parse/display round-trip and hostile-input tests
+- [x] 2.1 `Scheme::Archive` (`archive://<handle>/<path>`), handle = 16 hex digits of SHA-256 over the canonical container URI; parse/display round-trip and hostile-input tests
 - [ ] 2.2 `ArchiveRef { handle, container }` stored beside archive URIs in history, tabs, workspaces and bookmarks (serde default, bounded); migration-free loading of old files
-- [ ] 2.3 Display form and typed-path resolution (left to right, entering archive files, nesting cap 8) in `path-display`; Linux and Windows display tests
+- [ ] 2.3 Display form and typed-path resolution (left to right, entering archive files, nesting cap 8) in `path-display`; Linux and Windows display tests — display form done (`archive_cmds::display`, used by `display_path`); typed-path resolution still open
 
 ## 3. Reading archives (`fm-archive`)
 
-- [ ] 3.1 `Source` trait (random access, size, mtime) and the shared 1 MiB-block / 64 MiB LRU cache
-- [ ] 3.2 `Index` model and limits (1 000 000 entries, 4 096-byte names, depth 64), name normalisation, duplicate shadowing count; unit tests with hostile names
-- [ ] 3.3 zip reader (all listed methods, zip64, AES/ZipCrypto with password)
-- [ ] 3.4 tar reader (ustar, GNU long names, PAX), plain and gz/bz2/xz/zst; one-pass index with progress callback; member read by skip; spool-to-temp after the second read (cap 4 GiB and 80 % of free space)
-- [ ] 3.5 7z reader with per-block cache (≤ 256 MiB) and encrypted headers
+- [x] 3.1 `Source` trait (random access, size, mtime) and the shared 1 MiB-block / 64 MiB LRU cache (32 MiB LRU per mount instead of one shared 64 MiB)
+- [x] 3.2 `Index` model and limits (1 000 000 entries, 4 096-byte names, depth 64), name normalisation, duplicate shadowing count; unit tests with hostile names
+- [x] 3.3 zip reader (all listed methods, zip64, AES/ZipCrypto with password)
+- [ ] 3.4 tar reader (ustar, GNU long names, PAX), plain and gz/bz2/xz/zst; one-pass index with progress callback; member read by skip; spool-to-temp after the second read (cap 4 GiB and 80 % of free space) — reader, progress, cancel and member reads done; spool-to-temp still open
+- [x] 3.5 7z reader with per-block cache (≤ 256 MiB) and encrypted headers (one decoded block per read, not cached yet)
 - [ ] 3.6 ISO reader (Joliet, Rock Ridge), read-only
-- [ ] 3.7 Single-file gz/bz2/xz/zst as a one-entry folder
-- [ ] 3.8 `ArchiveFs: Vfs` over index + source (+ overlay, section 5); every decoder call inside `catch_unwind`; tests on the in-memory `Vfs` for every format
+- [x] 3.7 Single-file gz/bz2/xz/zst as a one-entry folder
+- [x] 3.8 `ArchiveFs: Vfs` over index + source (+ overlay, section 5); every decoder call inside `catch_unwind`; tests on the in-memory `Vfs` for every format (writes still refused until section 5; decoders guarded by `catch_unwind`, also inside the streaming thread)
 - [ ] 3.9 Split archives: name-based set resolution (numbered parts, zip spanned, RAR volumes; gaps, 10 000-part cap, folder-only), `ConcatSource` with random access across parts, spanned-zip offset mapping (per 1.6), `ArchiveRef` volume kind; tests on local and the in-memory `Vfs`, missing-part errors, hostile next-volume names
 - [ ] 3.10 Encryption on read: AES and ZipCrypto zip members, 7z AES with encrypted headers, lock badges in the index, wrong-password detection (verifier, CRC), up to 8 passwords per mount tried in order; `Secret` zeroised on drop; redaction tests
 - [ ] 3.11 Fuzz corpus (truncated, bit-flipped, oversized headers) for zip, tar, 7z, ISO: no panics, bounded memory
 
 ## 4. Engine: mounting and browsing
 
-- [ ] 4.1 Mount table (handle → container, max 16 mounted, 10-minute idle unmount for clean mounts), backend registration per handle, re-mount on restore; unavailable-location state when the container is gone
-- [ ] 4.2 `JobLane::Archive` (2 workers) and `BulkArchive`; `lane_for`/`bulk_lane_for`
-- [ ] 4.3 Recognition patterns in prefs (`archives.patterns`, `archives.enter`: browse/open), signature check on mount with the "is not a … archive" error
-- [ ] 4.4 `archive_cmds.rs`: `archive.enter`, `archive.unmount`, `archive.password`; Enter/double-click and tree expansion route archives to `archive.enter` according to the preference; context menu "Browse inside" / "Open with default app"; extend `commands.rs` `specs()`; malformed-params fuzz and per-command bad-param tests
-- [ ] 4.5 Password flow: in-app prompt (on enter for encrypted names, on first encrypted read otherwise), three attempts, per-mount password list, `archive.password.forget`, zeroised on unmount/quit; redaction tests
+- [ ] 4.1 Mount table (handle → container, max 16 mounted, 10-minute idle unmount for clean mounts), backend registration per handle, re-mount on restore; unavailable-location state when the container is gone — `LazyArchive` per handle, process-wide handle table, re-registration from it; persistence across restarts, the 16-mount cap and idle unmount still open
+- [x] 4.2 `JobLane::Archive` (2 workers) and `BulkArchive`; `lane_for`/`bulk_lane_for` (one thread per lane, like the other lanes)
+- [ ] 4.3 Recognition patterns in prefs (`archives.patterns`, `archives.enter`: browse/open), signature check on mount with the "is not a … archive" error — `archives_browse` pref, Preferences checkbox and signature check done; editable patterns still open
+- [ ] 4.4 `archive_cmds.rs`: `archive.enter`, `archive.unmount`, `archive.password`; Enter/double-click and tree expansion route archives to `archive.enter` according to the preference; context menu "Browse inside" / "Open with default app"; extend `commands.rs` `specs()`; malformed-params fuzz and per-command bad-param tests — commands, `file.open` routing, Up from the root, context menu done; tree expansion still open
+- [ ] 4.5 Password flow: in-app prompt (on enter for encrypted names, on first encrypted read otherwise), three attempts, per-mount password list, `archive.password.forget`, zeroised on unmount/quit; redaction tests — password field in the listing, per-mount list, forget done; three-attempt limit and preview prompt still open
 - [ ] 4.6 RAR helper (including multi-volume sets resolved first, and encrypted names via `-p`): tool discovery (PATH, Windows 7-Zip location, preference), listing and member read with argument arrays after `--`, timeout and output cap, remote copy to the private temp folder (≤ 4 GiB), parser tests on recorded `7z l -slt` and `unrar lt` output, hostile member names; "needs 7-Zip or unrar" state
 - [ ] 4.7 Engine tests: local/SMB/SFTP parity on the in-memory `Vfs`, nested archive, restore after restart, nesting limit, compressed-tar progress and cancel by navigation
 

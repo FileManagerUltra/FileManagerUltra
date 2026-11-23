@@ -145,6 +145,8 @@ pub struct Session {
     pub diffs: crate::diff_cmds::DiffHub,
     /// Scheme → backend; local disk is always registered.
     pub backends: VfsRegistry,
+    /// Archives browsed as folders (change `add-archive-vfs`).
+    pub archives: crate::archive_cmds::Mounts,
     /// Running and recently finished file jobs (capability `job-progress`).
     pub fileops: FileOps,
     /// SFTP connections, host keys and remote polling (capability `sftp-backend`).
@@ -260,6 +262,7 @@ impl Default for Session {
             git: Default::default(),
             diffs: Default::default(),
             backends,
+            archives: Default::default(),
             fileops: FileOps::default(),
             remote,
             trash: Default::default(),

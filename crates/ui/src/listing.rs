@@ -79,7 +79,26 @@ pub fn show(
 
     match dir_state {
         DirState::Absent | DirState::Loading { .. } => {
-            ui.label(tokens.muted("Loading…"));
+            let progress = s.archives.for_uri(&location).and_then(|m| m.progress());
+            match progress {
+                Some((done, total)) if total > 0 => {
+                    let name = fm_engine::archive_cmds::container_of(&location)
+                        .and_then(|r| r.container.file_name().map(str::to_string))
+                        .unwrap_or_default();
+                    let pct = (done.min(total) as f64 * 100.0 / total as f64).round();
+                    ui.label(tokens.muted(format!("Reading {name}… {pct:.0} %")));
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(200));
+                }
+                _ => {
+                    ui.label(tokens.muted("Loading…"));
+                }
+            }
+        }
+        DirState::Failed { message, .. }
+            if fm_engine::archive_cmds::is_password_message(&message) =>
+        {
+            crate::archive_password::prompt(ui, s, &location, &message, tokens);
         }
         DirState::Failed { message, .. } => {
             ui.colored_label(tokens.error, message);
@@ -284,6 +303,26 @@ fn paint_link_icon(painter: &egui::Painter, origin: egui::Pos2, color: egui::Col
     painter.line_segment([corner, tip], stroke);
     painter.line_segment([tip, egui::pos2(x0 + 5.5, y0 - 5.0)], stroke);
     painter.line_segment([tip, egui::pos2(x0 + 5.5, y0)], stroke);
+}
+
+/// A small box with a zipper line: the badge of an archive file (colour is never the only
+/// cue, D14).
+pub(crate) fn paint_archive_icon(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    color: egui::Color32,
+) {
+    let stroke = egui::Stroke::new(1.0, color);
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(origin.x + 1.0, origin.y - 4.5),
+        egui::vec2(8.0, 9.0),
+    );
+    painter.rect_stroke(rect, 1.0, stroke, egui::StrokeKind::Inside);
+    let x = rect.center().x;
+    for i in 0..3 {
+        let y = rect.top() + 2.0 + i as f32 * 2.0;
+        painter.line_segment([egui::pos2(x - 1.0, y), egui::pos2(x + 1.0, y)], stroke);
+    }
 }
 
 /// One continuous layout shared by header, hit-testing and entry rows.
@@ -1138,10 +1177,15 @@ fn entry_row_ui(
     // Norton-style cues: directories get the accent colour and a trailing slash, links the
     // muted colour and an `@`; plain files keep the primary text colour.
     let mark = marks.mark(&entry.uri);
+    // Archive files and everything inside an archive carry the archive colour (D14).
+    let archive_file = entry.is_file() && fm_engine::archive_cmds::is_archive_name(&entry.name);
+    let in_archive = entry.uri.scheme() == fm_vfs::Scheme::Archive;
     let text_color = if selected {
         tokens.selection_text
     } else if let Some(tint) = marks.tint_of(mark, tokens) {
         tint
+    } else if archive_file || in_archive {
+        tokens.archive
     } else if entry.is_dir_like() {
         tokens.accent_text
     } else if entry.is_symlink() {
@@ -1171,6 +1215,9 @@ fn entry_row_ui(
         } else if entry.is_symlink() {
             let origin = cols.name.left_center() + egui::vec2(tokens.padding, 0.0);
             paint_link_icon(ui.painter(), origin, text_color);
+        } else if archive_file {
+            let origin = cols.name.left_center() + egui::vec2(tokens.padding, 0.0);
+            paint_archive_icon(ui.painter(), origin, text_color);
         }
         cell.min.x += ICON_GUTTER;
         paint_cell(

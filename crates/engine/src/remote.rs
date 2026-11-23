@@ -526,7 +526,7 @@ pub fn is_transport_failure(scheme: Scheme, err: &FmError) -> bool {
     match scheme {
         Scheme::Sftp => fm_fs_sftp::is_transport_error(err),
         Scheme::Smb => fm_fs_smb::is_transport_error(err),
-        Scheme::File | Scheme::Network | Scheme::Servers => false,
+        Scheme::File | Scheme::Network | Scheme::Servers | Scheme::Archive => false,
     }
 }
 

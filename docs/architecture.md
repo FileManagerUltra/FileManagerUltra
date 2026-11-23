@@ -711,6 +711,32 @@ The path picker (`add-path-picker`) is a shared in-app chooser: `Session::picker
 
 The engine turns it into `Body::Table(TableView)` (`preview_table.rs`). A view owns three threads (`fm-table-index`, `fm-table-rows`, `fm-table-view`; not job lanes, like the other long walks): load + index, row requests (the UI's `TableView::rows` returns cached rows and replaces one "wanted" request), and filter/sort jobs that a newer job supersedes. All stop when the view drops (an `AtomicBool` checked between batches and while idle); results wake the UI through `Session::tables` (`TableHub` waker). `preview_table_cmds.rs` exposes `preview.table.*`. `fm-ui::preview::table` draws the grid with its own `u64` first-row scroll (egui `f32` positions would lose rows beyond ~800 k), lays out only visible rows and columns, and keeps column widths and scroll in egui memory.
 
+## 12e. Archives as folders (`add-archive-vfs`, in progress)
+
+`fm-archive` (L1, no egui, I/O only through a `Source`) reads zip (`zip`), tar plain or
+gz/bz2/xz/zst (`tar` + `flate2`/`bzip2`/`lzma-rust2`/`ruzstd`), 7z (`sevenz-rust2`) and
+single compressed files. A `Source` is positional and thread-safe: `VfsSource` reads the
+archive file through any `Vfs` in 1 MiB blocks with a 32-block LRU, so a zip on SFTP is
+listed from its central directory; `SliceSource` and `ConcatSource` cover offsets and
+split parts. Each format builds an `Index` (normalised names, implicit folders,
+duplicates shadowed, hard links resolved inside the archive, limits from `limits.rs`) and
+opens members on demand: small members are read in one go behind a declared-size guard,
+big ones and every compressed-tar or 7z member stream through `format::pipe`, a bounded
+chunk channel fed by one thread. Every decoder call runs under `catch_unwind`.
+`ArchiveFs` serves the index through `Vfs`; `LazyArchive` is the backend registered per
+handle and opens the archive on its first use, which is a directory read on the
+`archive` job lane.
+
+Locations inside archives are `archive://<handle>/<path>` (`Scheme::Archive`); the handle
+is 16 hex digits of SHA-256 over the archive file's uri, so nested archives are just
+archives whose file is itself an `archive://` uri. `engine::archive_cmds` keeps the mount
+table, a process-wide handle → archive-file table (for `display_path`, which shows
+`…/site.zip/www`, and for re-registering restored locations), `archive.enter`,
+`archive.open_app`, `archive.unmount`, `archive.password[.forget]`; `file.open` routes
+archive files to `archive.enter` unless `prefs.archives_browse` is off, and `nav.up` from
+an archive root returns to the archive's folder. Passwords are `Secret`s held by the
+mount (at most 8, zeroised, never persisted).
+
 ## 13. Change history
 
 | Date | Change |

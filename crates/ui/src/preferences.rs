@@ -755,6 +755,18 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                 tokens,
                 "Keep links inside a copied folder pointing to the copy. Links are never followed.",
             );
+            section_heading(ui, tokens, "Archives");
+            let mut browse = s.prefs.archives_browse;
+            let response = ui
+                .checkbox(&mut browse, "Enter browses inside archives")
+                .on_hover_text(
+                    "Enter or a double click on a zip, tar, 7z, ISO or RAR file shows its \
+                     contents like a folder. Turn this off to open archives with their \
+                     application; the right-click menu always offers both.",
+                );
+            if response.changed() {
+                s.dispatch_or_notice("prefs.archives.browse", &json!({"value": browse}));
+            }
         }
         Topic::Preview => {
             section_heading(ui, tokens, "Playback");

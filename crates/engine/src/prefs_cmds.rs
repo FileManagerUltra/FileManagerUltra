@@ -44,6 +44,29 @@ pub fn retarget_links() -> CommandSpec {
     }
 }
 
+/// `prefs.archives.browse` — Enter on an archive browses inside it (`true`, the default)
+/// or opens it with its application. Without `value` the setting is toggled.
+pub fn archives_browse() -> CommandSpec {
+    CommandSpec {
+        id: "prefs.archives.browse",
+        label: "Enter Browses Inside Archives",
+        menu: &["File", "Preferences", "Enter browses inside archives"],
+        shortcut: None,
+        params: "value?: bool",
+        enabled: |_session| true,
+        run: |session, params| {
+            let value = match object(params)?.and_then(|m| m.get("value")) {
+                None => !session.prefs.archives_browse,
+                Some(v) => v.as_bool().ok_or_else(|| {
+                    FmError::InvalidParams("value must be true or false".to_string())
+                })?,
+            };
+            session.prefs.archives_browse = value;
+            Ok(())
+        },
+    }
+}
+
 /// `prefs.terminal.shell` — the shell new terminal panes start: `default` (PowerShell on
 /// Windows, the login shell elsewhere), `powershell` or `cmd`. Running terminals keep
 /// theirs until restarted.

@@ -28,12 +28,37 @@ pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, f
     else {
         return;
     };
-    let text = RichText::new(&path).font(tokens.font());
-    let text = if focused {
-        text.color(tokens.accent_text).strong()
+    let location = s.layout.state(pane).map(|p| p.location.clone());
+    // Inside an archive, the part from the archive file on carries the archive colour.
+    let split = location
+        .as_ref()
+        .and_then(|l| archive_split(l, &path))
+        .filter(|at| *at < path.len());
+    let base_color = if focused {
+        tokens.accent_text
     } else {
-        text.color(tokens.text_muted)
+        tokens.text_muted
     };
+    let mut job = egui::text::LayoutJob::default();
+    let mut append = |part: &str, color: egui::Color32| {
+        job.append(
+            part,
+            0.0,
+            egui::TextFormat {
+                font_id: tokens.font(),
+                color,
+                ..Default::default()
+            },
+        );
+    };
+    match split.and_then(|at| path.split_at_checked(at)) {
+        Some((head, tail)) => {
+            append(head, base_color);
+            append(tail, tokens.archive);
+        }
+        None => append(&path, base_color),
+    }
+    let text = egui::WidgetText::from(job);
     // The whole remaining header width is the click target, not just the text.
     let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
@@ -53,6 +78,25 @@ pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, f
         let _ = s.layout.focus_pane(pane);
         s.dispatch_or_notice("nav.goto", &serde_json::Value::Null);
     }
+}
+
+/// Where the outermost archive file's name starts in `shown` (the display path of
+/// `location`), when `location` is inside an archive.
+fn archive_split(location: &fm_vfs::VfsUri, shown: &str) -> Option<usize> {
+    let mut outer = fm_engine::archive_cmds::container_of(location)?.container;
+    let mut guard = 0;
+    while let Some(r) = fm_engine::archive_cmds::container_of(&outer) {
+        outer = r.container;
+        guard += 1;
+        if guard > 16 {
+            return None;
+        }
+    }
+    let name = outer.file_name()?;
+    let archive_shown = fm_engine::item_cmds::display_path(&outer);
+    shown
+        .starts_with(&archive_shown)
+        .then(|| archive_shown.len().saturating_sub(name.len()))
 }
 
 /// The path editor with its suggestion popup. Call only while [`is_editing`].

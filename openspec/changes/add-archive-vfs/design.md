@@ -90,7 +90,7 @@ trait Format {
 
 | Format | Read | Write | Crate (default features off) |
 |---|---|---|---|
-| zip, zip64, AES, ZipCrypto | ✓ | ✓ | `zip` with `deflate` (zlib-rs via flate2), `deflate64`, `bzip2` (pure-Rust `libbz2-rs-sys`), `lzma`, `xz`, `zstd-rs` (ruzstd), `ppmd`, `aes-crypto`, `time` |
+| zip, zip64, AES, ZipCrypto | ✓ | ✓ | `zip` with `deflate` (zlib-rs via flate2), `deflate64`, `bzip2` (pure-Rust `libbz2-rs-sys`), `lzma`, `xz`, `ppmd`, `aes-crypto`, `time`; no Zstandard members (its `zstd-rs` feature still builds `zstd-sys` with a pre-release C-to-Rust port, checked 2026-11-23), which show "compression method not supported: Zstandard" |
 | tar (ustar, GNU, PAX) | ✓ | ✓ | `tar` |
 | .gz / .bz2 / .xz / .zst (tar or single file) | ✓ | ✓ (zst: see D11) | `flate2`, `bzip2`, `lzma-rust2`, `ruzstd` |
 | 7z (LZMA, LZMA2, BZip2, Deflate, PPMd, AES-256) | ✓ | ✓ | `sevenz-rust2` |
@@ -380,3 +380,15 @@ change is visible: the changelog explains it and the preference restores the old
   navigate the listing? Default: same as folders.
 - Do we want "Open with 7-Zip" as a fallback for other formats 7-Zip reads (CAB, WIM,
   DMG, ARJ, LZH)? Not in this change; easy to add once the RAR path exists.
+
+## Implementation notes
+
+- 2026-11-23: zip is built without its `zstd-rs` feature (it still compiles `zstd-sys`
+  with a pre-release C-to-Rust port); Zstandard zip members report "compression method
+  not supported".
+- Mounting is lazy: `archive.enter` registers a `LazyArchive` backend for the handle and
+  the first directory read (on the archive lane) opens the archive. Handles and their
+  archive files live in a process-wide table (`archive_cmds::REFS`) that `display_path`
+  and re-registration use; persisting it across restarts is still open (task 4.1).
+- The archive lanes have one thread each, like every other lane (D15 said two).
+- The container cache is 32 MiB per mount rather than one shared 64 MiB (D5).

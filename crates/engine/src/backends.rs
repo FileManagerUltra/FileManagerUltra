@@ -15,6 +15,7 @@ pub fn lane_for(scheme: Scheme) -> JobLane {
         Scheme::File | Scheme::Network | Scheme::Servers => JobLane::Local,
         Scheme::Smb => JobLane::Smb,
         Scheme::Sftp => JobLane::Sftp,
+        Scheme::Archive => JobLane::Archive,
     }
 }
 
@@ -23,6 +24,7 @@ pub fn bulk_lane_for(scheme: Scheme) -> JobLane {
     match lane_for(scheme) {
         JobLane::Smb => JobLane::BulkSmb,
         JobLane::Sftp => JobLane::BulkSftp,
+        JobLane::Archive => JobLane::BulkArchive,
         _ => JobLane::BulkLocal,
     }
 }
@@ -152,5 +154,7 @@ mod tests {
         assert_eq!(lane_for(Scheme::File), JobLane::Local);
         assert_eq!(lane_for(Scheme::Smb), JobLane::Smb);
         assert_eq!(lane_for(Scheme::Sftp), JobLane::Sftp);
+        assert_eq!(lane_for(Scheme::Archive), JobLane::Archive);
+        assert_eq!(bulk_lane_for(Scheme::Archive), JobLane::BulkArchive);
     }
 }

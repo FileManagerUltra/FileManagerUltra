@@ -17,8 +17,7 @@ and saved deliberately, so an archive is never rewritten by accident.
 - **Archives look different.** Archive files, and the folders and files inside an
   archive, are drawn with a distinct theme colour and an archive badge in the tree,
   the listing and the breadcrumb, in dark and light. No new Places section.
-- **Formats.** Read and write: zip (Deflate, Deflate64, Bzip2, LZMA, XZ, Zstandard,
-  PPMd; zip64; AES and ZipCrypto passwords), tar and tar.gz / .tgz, .tar.bz2, .tar.xz,
+- **Formats.** Read and write: zip (Deflate, Deflate64, Bzip2, LZMA, XZ, PPMd; zip64; AES and ZipCrypto passwords), tar and tar.gz / .tgz, .tar.bz2, .tar.xz,
   .tar.zst, and 7z (LZMA/LZMA2, AES). Read-only: ISO 9660 with Joliet and Rock Ridge,
   single-file .gz/.bz2/.xz/.zst (shown as a folder holding one file), and RAR through an
   installed 7-Zip or unrar. All decoders are pure Rust; RAR is the only format that

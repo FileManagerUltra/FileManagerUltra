@@ -31,6 +31,7 @@ pub fn specs() -> Vec<CommandSpec> {
         app_cmds::licenses(),
         prefs_cmds::preferences(),
         prefs_cmds::retarget_links(),
+        prefs_cmds::archives_browse(),
         prefs_cmds::recursive_preview(),
         prefs_cmds::remote_images(),
         prefs_cmds::mermaid(),
@@ -123,6 +124,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(crate::sync_cmds::specs());
     specs.extend(crate::sync_wizard_cmds::specs());
     specs.extend(crate::picker_cmds::specs());
+    specs.extend(crate::archive_cmds::specs());
     specs.extend(crate::openwith_cmds::specs());
     specs.extend(crate::diag_cmds::specs());
     specs

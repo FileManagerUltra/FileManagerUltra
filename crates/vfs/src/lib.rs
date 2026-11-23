@@ -18,7 +18,9 @@ pub use attrs::{
 };
 pub use entry::{Entry, EntryKind};
 pub use error::FmError;
-pub use uri::{Authority, Scheme, VfsUri, display_form, native_path};
+pub use uri::{
+    ARCHIVE_HANDLE_LEN, Authority, Scheme, VfsUri, display_form, is_archive_handle, native_path,
+};
 pub use vfs::{SpaceInfo, Vfs, WriteOpts};
 
 /// Hard caps for hostile input (capability `security`). A path, component or URI that

@@ -49,6 +49,9 @@ pub struct Tokens {
     pub git_untracked: Color32,
     pub git_ignored: Color32,
     pub git_conflict: Color32,
+    /// Archives and everything inside them (name tint in the tree, listing and
+    /// breadcrumb; add-archive-vfs D14). Readable on `bg`, `panel` and `hover_bg`.
+    pub archive: Color32,
     /// Diff pane row backgrounds and the stronger intra-line highlights.
     pub diff_add_bg: Color32,
     pub diff_del_bg: Color32,
@@ -143,6 +146,7 @@ impl Tokens {
             git_untracked: Color32::from_rgb(0x6f, 0xe3, 0xd0),
             git_ignored: Color32::from_rgb(0x7a, 0x80, 0x88),
             git_conflict: Color32::from_rgb(0xff, 0x8f, 0xd0),
+            archive: Color32::from_rgb(0xb9, 0xa3, 0xff),
             diff_add_bg: Color32::from_rgb(0x1d, 0x3a, 0x26),
             diff_del_bg: Color32::from_rgb(0x44, 0x22, 0x26),
             diff_add_word: Color32::from_rgb(0x2b, 0x62, 0x3c),
@@ -230,6 +234,7 @@ impl Tokens {
             git_untracked: Color32::from_rgb(0x0a, 0x7d, 0x7d),
             git_ignored: Color32::from_rgb(0x80, 0x86, 0x90),
             git_conflict: Color32::from_rgb(0xa8, 0x2a, 0x8a),
+            archive: Color32::from_rgb(0x5b, 0x3c, 0xc4),
             diff_add_bg: Color32::from_rgb(0xdf, 0xf5, 0xe3),
             diff_del_bg: Color32::from_rgb(0xfd, 0xe3, 0xe3),
             diff_add_word: Color32::from_rgb(0xa6, 0xe3, 0xb2),
@@ -874,6 +879,7 @@ mod tests {
                 git_untracked,
                 git_ignored,
                 git_conflict,
+                archive,
                 diff_add_bg,
                 diff_del_bg,
                 diff_add_word,
@@ -934,6 +940,7 @@ mod tests {
                 ("git_untracked", git_untracked),
                 ("git_ignored", git_ignored),
                 ("git_conflict", git_conflict),
+                ("archive", archive),
                 ("diff_add_bg", diff_add_bg),
                 ("diff_del_bg", diff_del_bg),
                 ("diff_add_word", diff_add_word),
@@ -979,6 +986,20 @@ mod tests {
         }
         check(Tokens::dark());
         check(Tokens::light());
+    }
+
+    #[test]
+    fn archive_tint_is_readable_on_rows() {
+        for t in [Tokens::dark(), Tokens::light()] {
+            for (name, under) in [("bg", t.bg), ("panel", t.panel), ("hover_bg", t.hover_bg)] {
+                let ratio = contrast(t.archive, under);
+                assert!(
+                    ratio >= 4.5,
+                    "archive on {name} ({}): {ratio:.2}:1",
+                    if t.dark { "dark" } else { "light" }
+                );
+            }
+        }
     }
 
     #[test]

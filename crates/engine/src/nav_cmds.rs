@@ -70,6 +70,8 @@ pub fn open() -> CommandSpec {
             if s.needs_sftp_login_to(&to, true) || s.needs_login_to(&to, true) {
                 return Ok(());
             }
+            // A restored archive location mounts its archive again.
+            crate::archive_cmds::ensure_registered(s, &to)?;
             // No backend → error before committing the location (no ghost "loading").
             s.backends.require(&to)?;
             {
@@ -96,16 +98,30 @@ pub fn up() -> CommandSpec {
         menu: &["Go", "Up"],
         shortcut: Some("Backspace"),
         params: "none",
-        enabled: |s| focused_pane(s).is_some_and(|p| p.up_target().is_some()),
+        enabled: |s| {
+            focused_pane(s).is_some_and(|p| {
+                p.up_target().is_some() || crate::archive_cmds::up_from_root(&p.location).is_some()
+            })
+        },
         run: |s, _p: &Params| {
-            let target = match focused_pane(s).and_then(|p| p.up_target()) {
-                Some(t) => t,
-                None => return Ok(()), // at the root, or no pane: no-op
+            // From an archive's root, Up leaves the archive with the cursor on it.
+            let from_archive =
+                focused_pane(s).and_then(|p| crate::archive_cmds::up_from_root(&p.location));
+            let (target, reveal) = match from_archive {
+                Some((dir, name)) => (dir, Some(name)),
+                None => match focused_pane(s).and_then(|p| p.up_target()) {
+                    Some(t) => (t, None),
+                    None => return Ok(()), // at the root, or no pane: no-op
+                },
             };
+            crate::archive_cmds::ensure_registered(s, &target)?;
             s.backends.require(&target)?;
             let focused = s.layout.focused();
             if let Some(pane) = s.layout.state_mut(focused) {
                 pane.navigate(target.clone());
+                if reveal.is_some() {
+                    pane.listing.reveal = reveal;
+                }
                 expand_unless_tree_driven(pane);
             }
             s.note_visit(&target);

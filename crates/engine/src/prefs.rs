@@ -224,6 +224,9 @@ impl WindowGeometry {
 pub struct Prefs {
     #[serde(default = "default_true")]
     pub check_updates: bool,
+    /// Enter on an archive browses inside it (`true`) or opens it with its application.
+    #[serde(default = "default_true")]
+    pub archives_browse: bool,
     #[serde(default)]
     pub theme: ThemePreference,
     #[serde(default)]
@@ -631,6 +634,7 @@ impl Default for Prefs {
     fn default() -> Self {
         Self {
             check_updates: true,
+            archives_browse: true,
             theme: ThemePreference::default(),
             window_maximized: false,
             window_geometry: None,
@@ -1139,6 +1143,7 @@ mod tests {
         assert_eq!(
             keys,
             [
+                "archives_browse",
                 "bookmarks",
                 "check_updates",
                 "confirm_delete",

@@ -45,6 +45,9 @@ allow = [
 exceptions = [
     # Mermaid ELK layout, user-approved 2026-11-16 (AGENTS.md §7, fm_preview::notices).
     { allow = ["EPL-2.0"], crate = "merman-elk-layered" },
+    # Pure-Rust bzip2 for archives, user-approved 2026-11-23 (add-archive-vfs,
+    # fm_preview::notices); a permissive BSD-style licence.
+    { allow = ["bzip2-1.0.6"], crate = "libbz2-rs-sys" },
 ]
 
 [licenses.private]

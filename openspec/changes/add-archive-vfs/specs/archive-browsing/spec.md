@@ -23,7 +23,7 @@ An archive SHALL be recognised by case-insensitive file-name patterns (defaults:
 - **THEN** the pane shows "notes.zip is not a zip archive" and stays usable
 
 ### Requirement: Supported formats
-The app SHALL read zip (including zip64, Deflate, Deflate64, Bzip2, LZMA, XZ, Zstandard and PPMd members), tar (ustar, GNU and PAX) plain or compressed with gzip, bzip2, xz or Zstandard, 7z (LZMA, LZMA2, BZip2, Deflate, PPMd), ISO 9660 with Joliet and Rock Ridge names, single-file gzip/bzip2/xz/Zstandard files (shown as a folder holding one file named without the compression suffix) and RAR 4 and 5 through an installed tool. Zip, the tar family and 7z SHALL be writable; ISO, RAR and single-file compressed files SHALL be read-only, and write commands SHALL be disabled inside them. All decoders SHALL be pure Rust except the RAR tool.
+The app SHALL read zip (including zip64, Deflate, Deflate64, Bzip2, LZMA, XZ and PPMd members; Zstandard members SHALL show "compression method not supported"), tar (ustar, GNU and PAX) plain or compressed with gzip, bzip2, xz or Zstandard, 7z (LZMA, LZMA2, BZip2, Deflate, PPMd), ISO 9660 with Joliet and Rock Ridge names, single-file gzip/bzip2/xz/Zstandard files (shown as a folder holding one file named without the compression suffix) and RAR 4 and 5 through an installed tool. Zip, the tar family and 7z SHALL be writable; ISO, RAR and single-file compressed files SHALL be read-only, and write commands SHALL be disabled inside them. All decoders SHALL be pure Rust except the RAR tool.
 
 #### Scenario: Read-only ISO
 - **WHEN** the pane shows the inside of `debian.iso`

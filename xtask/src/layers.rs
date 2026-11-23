@@ -28,6 +28,7 @@ const TABLE: &[(&str, u8)] = &[
     ("fm-sync", 1),
     ("fm-term", 1),
     ("fm-preview", 1),
+    ("fm-archive", 1),
     ("fm-pdf", 1),
     ("fm-media", 1),
     ("fm-layout", 2),

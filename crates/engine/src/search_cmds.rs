@@ -505,7 +505,7 @@ fn os_hidden(child: &std::fs::DirEntry) -> bool {
 /// server root list servers or shares, not files.
 pub(crate) fn searchable(uri: &VfsUri) -> Result<(), FmError> {
     match uri.scheme() {
-        Scheme::File | Scheme::Sftp => Ok(()),
+        Scheme::File | Scheme::Sftp | Scheme::Archive => Ok(()),
         Scheme::Smb if uri.share().is_some() => Ok(()),
         Scheme::Smb => Err(FmError::Unsupported("Open a share to search it")),
         Scheme::Network | Scheme::Servers => {
