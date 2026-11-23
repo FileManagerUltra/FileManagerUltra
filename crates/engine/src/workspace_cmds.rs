@@ -533,6 +533,43 @@ mod tests {
     }
 
     #[test]
+    fn a_dragged_tab_order_survives_a_restart() {
+        let names = |s: &Session| -> Vec<String> {
+            s.workspaces.tabs.iter().map(|t| t.name.clone()).collect()
+        };
+        let mut s = session();
+        for name in ["A", "B", "C"] {
+            if name != "A" {
+                run(&mut s, "workspace.new", json!({ "name": name })).expect("new");
+            }
+            run(&mut s, "workspace.save", json!({ "name": name })).expect("save");
+            run(&mut s, "workspace.startup", json!({"on": true})).expect("startup");
+        }
+        // A saved workspace that is not open keeps its place between the open ones.
+        run(&mut s, "workspace.new", json!({"name": "Closed"})).expect("new");
+        run(&mut s, "workspace.save", Params::Null).expect("save");
+        let closed = s.workspaces.active;
+        run(&mut s, "workspace.close", json!({ "tab": closed })).expect("close");
+        assert_eq!(names(&s), ["A", "B", "C"]);
+        let _ = s.workspace_tick();
+
+        run(&mut s, "workspace.move", json!({"from": 2, "to": 0})).expect("move");
+        assert_eq!(names(&s), ["C", "A", "B"]);
+        let text = s.workspace_tick().expect("the new order is written");
+
+        let mut t = session();
+        assert!(t.workspace_startup(&text).is_none());
+        assert_eq!(names(&t), ["C", "A", "B"]);
+        let saved: Vec<&str> = t.workspaces.saved.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(saved, ["C", "A", "B", "Closed"]);
+        assert!(t.workspace_unsaved().is_empty(), "a reorder is not an edit");
+        assert!(
+            run(&mut t, "workspace.move", json!({"from": 0, "to": 9})).is_err(),
+            "out of range"
+        );
+    }
+
+    #[test]
     fn the_saved_set_survives_a_restart() {
         let mut s = session();
         run(&mut s, "workspace.save", json!({"name": "Home"})).expect("save");

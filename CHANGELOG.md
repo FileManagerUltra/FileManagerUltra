@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Workspace tabs now reopen in the order you dragged them into; before, they came back in the order they were first saved.
 - The Open With window no longer grows taller than the screen on systems with many installed applications; the list scrolls inside the window and the Open and Cancel buttons stay in view.
 - The Synchronize Folders window no longer grows past the edge of the app window on small screens or with large text, which could leave its title bar, Minimize and Close out of reach. When the window cannot fit, its contents scroll and the list gets smaller, so the Back, Next and Start buttons stay in view.
 - Opening a folder you have no permission to read no longer also adds a "Live refresh is unavailable" error to the Activity panel; the Files pane already says access was denied.

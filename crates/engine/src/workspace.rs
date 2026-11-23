@@ -206,6 +206,37 @@ impl Workspaces {
         self.saved_for(uid).is_some()
     }
 
+    /// Startup opens tabs in saved order, so a reorder of the tabs must reach the saved set:
+    /// the saved workspaces that are open as tabs take the slots they already hold, in tab
+    /// order; closed ones keep their place. Marks the set for writing when anything moved.
+    fn saved_follow_tab_order(&mut self) {
+        let slots: Vec<usize> = (0..self.saved.len())
+            .filter(|&sx| {
+                self.saved
+                    .get(sx)
+                    .is_some_and(|s| self.tabs.iter().any(|t| t.uid == s.uid))
+            })
+            .collect();
+        let mut open: Vec<Saved> = self
+            .tabs
+            .iter()
+            .filter_map(|t| self.saved.iter().find(|s| s.uid == t.uid).cloned())
+            .collect();
+        if open.len() != slots.len() {
+            return;
+        }
+        let mut moved = false;
+        for (sx, saved) in slots.into_iter().zip(open.drain(..)) {
+            if let Some(slot) = self.saved.get_mut(sx)
+                && slot.uid != saved.uid
+            {
+                *slot = saved;
+                moved = true;
+            }
+        }
+        self.changed |= moved;
+    }
+
     fn saved_ix(&self, uid: u64) -> Option<usize> {
         self.saved.iter().position(|s| s.uid == uid)
     }
@@ -713,6 +744,7 @@ impl Session {
         {
             self.workspaces.active = ix;
         }
+        self.workspaces.saved_follow_tab_order();
         Ok(())
     }
 
