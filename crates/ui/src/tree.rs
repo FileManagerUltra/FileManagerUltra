@@ -123,7 +123,7 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
         let DirState::Ready { entries, .. } = dir_state else {
             continue;
         };
-        // Folders, then the archive this pane is inside (and the archives around it), which
+        // Folders and the archive this pane is inside (and the archives around it), which
         // expand like folders; other archive files stay out of the tree.
         // Preferences can show every archive file instead.
         let archive = |e: &fm_vfs::Entry| {
@@ -138,7 +138,8 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
             .filter(|e| e.is_dir_like() || archive(e))
             .filter(|e| s.show_hidden || !fm_engine::is_hidden(e))
             .collect();
-        children.sort_by_key(|e| (archive(e), e.name.to_lowercase()));
+        // Archives sort among the folders by name, so they are found where expected.
+        children.sort_by_key(|e| e.name.to_lowercase());
         for e in children.into_iter().rev() {
             if rows.len() + stack.len() >= MAX_ROWS {
                 break;
@@ -789,6 +790,7 @@ mod tests {
         std::fs::create_dir_all(base.join("project/docs")).expect("mkdir");
         std::fs::write(base.join("project/docs/a.txt"), b"alpha").expect("write");
         std::fs::create_dir(base.join("folder")).expect("mkdir");
+        std::fs::create_dir(base.join("zeta")).expect("mkdir");
         let uri = |p: &std::path::Path| VfsUri::parse(p.to_str().expect("utf8")).expect("uri");
         let mut s = Session::new().expect("session");
         s.dispatch(
@@ -817,13 +819,16 @@ mod tests {
                 .map(|r| r.name)
                 .collect()
         };
-        assert_eq!(visible(&s), ["work", "folder"]);
+        assert_eq!(visible(&s), ["work", "folder", "zeta"]);
         let root = fm_engine::archive_cmds::tree_root(&uri(&base.join("site.zip"))).expect("root");
         s.layout.state_mut(1).expect("pane").location = root.clone();
 
         let rows = collect_rows(&s, 1, &work);
         let names: Vec<_> = rows.iter().map(|r| (r.name.as_str(), r.depth)).collect();
-        assert_eq!(names, [("work", 0), ("folder", 1), ("site.zip", 1)]);
+        assert_eq!(
+            names,
+            [("work", 0), ("folder", 1), ("site.zip", 1), ("zeta", 1)]
+        );
         let zip = rows.get(2).expect("zip row");
         assert_eq!(zip.container, Some(uri(&base.join("site.zip"))));
         assert_eq!(zip.uri, root);
@@ -834,7 +839,13 @@ mod tests {
         let names: Vec<_> = rows.iter().map(|r| (r.name.as_str(), r.depth)).collect();
         assert_eq!(
             names,
-            [("work", 0), ("folder", 1), ("site.zip", 1), ("docs", 2)]
+            [
+                ("work", 0),
+                ("folder", 1),
+                ("site.zip", 1),
+                ("docs", 2),
+                ("zeta", 1)
+            ]
         );
         let docs = rows.get(3).expect("docs");
         assert_eq!(docs.parent.as_ref(), Some(&root));
@@ -846,11 +857,11 @@ mod tests {
 
         // Leaving the archive takes it out of the tree again…
         s.layout.state_mut(1).expect("pane").location = work.clone();
-        assert_eq!(visible(&s), ["work", "folder"]);
+        assert_eq!(visible(&s), ["work", "folder", "zeta"]);
         // …unless Preferences show every archive as a folder.
         s.dispatch("prefs.archives.tree", &serde_json::json!({"value": true}))
             .expect("pref");
-        assert_eq!(visible(&s), ["work", "folder", "site.zip", "docs"]);
+        assert_eq!(visible(&s), ["work", "folder", "site.zip", "docs", "zeta"]);
     }
 
     /// Spec `file-tree`: expanding submits exactly one read — duplicates
