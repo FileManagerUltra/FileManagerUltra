@@ -413,3 +413,7 @@ change is visible: the changelog explains it and the preference restores the old
   By default only the archives the pane is inside (`open_containers`) are tree rows, and
   leaving folds them; `prefs.archives_in_tree` (Preferences, off by default) shows every
   archive file and keeps left archives expanded (user request 2026-11-23).
+- The `archive` token is derived from `accent_text` (user request 2026-11-23): 35% toward
+  white on dark themes, toward black on light ones; when that is not distinct enough
+  (contrast < 1.25:1 to the accent) it steps the other way while it stays 4.5:1 on rows.
+  `archive_muted` from D14 is not used.

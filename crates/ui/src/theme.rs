@@ -209,6 +209,7 @@ impl Tokens {
                 Color32::from_rgb(0xff, 0xff, 0xff),
             ],
         }
+        .with_archive_tint()
     }
 
     /// Light palette.
@@ -296,6 +297,7 @@ impl Tokens {
                 Color32::from_rgb(0x1b, 0x1e, 0x23),
             ],
         }
+        .with_archive_tint()
     }
 
     /// Colour of a git status mark.
@@ -411,6 +413,8 @@ impl Tokens {
                 mix(b, t.panel.b()),
             );
         }
+        // The archive colour follows the (readable) accent.
+        t = t.with_archive_tint();
         let (row, pad) = match prefs.density {
             fm_engine::Density::Compact => (20.0, 4.0),
             fm_engine::Density::Normal => (t.row_height, t.padding),
@@ -422,6 +426,17 @@ impl Tokens {
         t.font_size = prefs.ui_font_size();
         t.term_font_size = prefs.term_font_size();
         t
+    }
+
+    /// Derive `archive` from `accent_text` (add-archive-vfs: archives in a variant of the
+    /// accent colour).
+    fn with_archive_tint(mut self) -> Self {
+        self.archive = archive_tint(
+            self.accent_text,
+            self.dark,
+            [self.bg, self.panel, self.hover_bg],
+        );
+        self
     }
 
     /// Terminal font.
@@ -470,6 +485,48 @@ fn contrast(a: Color32, b: Color32) -> f64 {
     let a = luminance(a);
     let b = luminance(b);
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+fn mix_toward(from: Color32, to: Color32, amount: f64) -> Color32 {
+    let mix = |a: u8, b: u8| (f64::from(a) + (f64::from(b) - f64::from(a)) * amount).round() as u8;
+    Color32::from_rgb(
+        mix(from.r(), to.r()),
+        mix(from.g(), to.g()),
+        mix(from.b(), to.b()),
+    )
+}
+
+/// The archive colour: the accent a step lighter on dark themes and a step darker on light
+/// ones (the direction that also adds contrast). When the accent is already too close to
+/// white or black for that step to show, it goes the other way as far as it stays readable
+/// (4.5:1 on every row surface).
+fn archive_tint(accent: Color32, dark: bool, surfaces: [Color32; 3]) -> Color32 {
+    const STEP: f64 = 0.35;
+    const DISTINCT: f64 = 1.25;
+    let readable = |c: Color32| surfaces.iter().all(|bg| contrast(c, *bg) >= 4.5);
+    let (toward, away) = if dark {
+        (Color32::WHITE, Color32::BLACK)
+    } else {
+        (Color32::BLACK, Color32::WHITE)
+    };
+    let preferred = mix_toward(accent, toward, STEP);
+    if contrast(preferred, accent) >= DISTINCT && readable(preferred) {
+        return preferred;
+    }
+    for tenth in 2..=6 {
+        let candidate = mix_toward(accent, away, f64::from(tenth) / 10.0);
+        if !readable(candidate) {
+            break;
+        }
+        if contrast(candidate, accent) >= DISTINCT {
+            return candidate;
+        }
+    }
+    if readable(preferred) {
+        preferred
+    } else {
+        accent
+    }
 }
 
 fn readable_accent(
@@ -986,6 +1043,50 @@ mod tests {
         }
         check(Tokens::dark());
         check(Tokens::light());
+    }
+
+    /// The archive colour is a lighter (dark theme) or darker (light theme) variant of the
+    /// accent, distinct from it and readable for every accent.
+    #[test]
+    fn archive_colour_follows_the_accent_for_every_accent_in_both_themes() {
+        let dark = Tokens::dark();
+        assert!(
+            luminance(dark.archive) > luminance(dark.accent_text),
+            "lighter on dark"
+        );
+        let light = Tokens::light();
+        assert!(
+            luminance(light.archive) < luminance(light.accent_text),
+            "darker on light"
+        );
+        for theme in [ThemePreference::Dark, ThemePreference::Light] {
+            for r in (0..=255u8).step_by(51) {
+                for g in (0..=255u8).step_by(51) {
+                    for b in (0..=255u8).step_by(51) {
+                        let prefs = fm_engine::Prefs {
+                            theme,
+                            accent: Some(format!("#{r:02x}{g:02x}{b:02x}")),
+                            ..Default::default()
+                        };
+                        let t = Tokens::resolve_with(&prefs, false);
+                        for surface in [t.bg, t.panel, t.hover_bg] {
+                            assert!(
+                                contrast(t.archive, surface) >= 4.5,
+                                "archive {:?} on {surface:?} (accent {:?})",
+                                t.archive,
+                                t.accent
+                            );
+                        }
+                        assert!(
+                            contrast(t.archive, t.accent_text) >= 1.2,
+                            "archive {:?} too close to accent {:?}",
+                            t.archive,
+                            t.accent_text
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
