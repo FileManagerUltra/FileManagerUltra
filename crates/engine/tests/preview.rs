@@ -1591,3 +1591,86 @@ fn csv_files_open_as_a_live_table_that_sorts() {
         .preview_slot(preview)
         .is_some_and(|slot| matches!(slot.body, Body::Static(_)))));
 }
+
+fn png(w: u32, h: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    image::RgbaImage::from_pixel(w, h, image::Rgba([200, 30, 30, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .expect("png");
+    out
+}
+
+/// `(texture width, texture height, original)` of the picture the Preview shows.
+fn shown_picture(s: &Session, pane: PaneId) -> Option<(u32, u32, (u32, u32))> {
+    match &s.preview_slot(pane)?.body {
+        Body::Static(p) => match &**p {
+            Preview::Image(i) => Some((i.width, i.height, i.original)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+#[test]
+fn a_downscaled_picture_is_decoded_again_at_the_size_asked_for() {
+    let big = png(3000, 1500);
+    let mut r = rig(&[("big.png", &big)]);
+    r.cursor("big.png");
+    let preview = r.preview;
+    assert!(pump(&mut r.s, |s| shown_picture(s, preview).is_some()));
+    assert_eq!(
+        shown_picture(&r.s, preview),
+        Some((2048, 1024, (3000, 1500))),
+        "Fit gets the capped copy"
+    );
+    r.s.dispatch(
+        "preview.image.full",
+        &json!({"pane": preview, "edge": 4096}),
+    )
+    .expect("full");
+    assert!(pump(&mut r.s, |s| shown_picture(s, preview)
+        .is_some_and(|i| i.0 == 3000)));
+    assert_eq!(
+        shown_picture(&r.s, preview),
+        Some((3000, 1500, (3000, 1500))),
+        "never larger than the original"
+    );
+    // Asked once per picture: a second request starts nothing and changes nothing.
+    r.s.dispatch(
+        "preview.image.full",
+        &json!({"pane": preview, "edge": 8192}),
+    )
+    .expect("again");
+    assert_eq!(
+        shown_picture(&r.s, preview),
+        Some((3000, 1500, (3000, 1500)))
+    );
+}
+
+#[test]
+fn a_picture_that_fits_is_not_decoded_again() {
+    let small = png(800, 600);
+    let mut r = rig(&[("small.png", &small)]);
+    r.cursor("small.png");
+    let preview = r.preview;
+    assert!(pump(&mut r.s, |s| shown_picture(s, preview).is_some()));
+    let before = r.s.preview_slot(preview).map(|x| match &x.body {
+        Body::Static(p) => std::sync::Arc::as_ptr(p),
+        _ => std::ptr::null(),
+    });
+    r.s.dispatch(
+        "preview.image.full",
+        &json!({"pane": preview, "edge": 4096}),
+    )
+    .expect("full");
+    for _ in 0..20 {
+        r.s.poll();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let after = r.s.preview_slot(preview).map(|x| match &x.body {
+        Body::Static(p) => std::sync::Arc::as_ptr(p),
+        _ => std::ptr::null(),
+    });
+    assert_eq!(before, after, "the same picture stays");
+    assert_eq!(shown_picture(&r.s, preview), Some((800, 600, (800, 600))));
+}

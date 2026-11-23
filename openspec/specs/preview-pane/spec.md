@@ -264,13 +264,22 @@ multi-file cards and video; the Preview toolbar SHALL NOT repeat them.
 Only that pane's content SHALL scale; pane chrome, other panes and the application
 zoom preference SHALL remain unchanged. Scale SHALL survive changes of previewed
 file within the same pane. Images SHALL retain Fit/Actual modes; choosing either
-SHALL reset additional magnification. Zoom SHALL NOT increase file/decode limits.
+SHALL reset additional magnification. Zoom SHALL NOT increase the file size or pixel limits.
+A still image is decoded for Fit with its longest side at most 2048 px; when it is drawn
+larger than that copy on screen (100%, magnified, or Fit in a large pane), the pane SHALL ask
+once per picture for a sharper decode with `preview.image.full {pane?, edge}` (edge at most
+8192 px and the GPU's largest texture, never above the original), run on the job lanes, which
+replaces the picture in place when done; a failed decode keeps the shown picture.
 
 A focused Preview SHALL accept Ctrl/Cmd+= (or +), Ctrl/Cmd+- and Ctrl/Cmd+0.
 A shortcut SHALL do the same in every pane: Ctrl/Cmd+Shift+= (or +), Ctrl/Cmd+Shift+-
 and Ctrl/Cmd+Shift+0 SHALL keep changing the interface zoom while a Preview has focus.
 Dialogs, popups and focused text fields SHALL retain keyboard ownership.
 Commands SHALL reject malformed parameters and invalid explicit panes.
+
+#### Scenario: 100% shows the full-resolution picture
+- **WHEN** a 4000×3000 photo is shown at Fit (decoded at 2048×1536) and the user picks 100%
+- **THEN** the picture is decoded again at 4000×3000 in the background and drawn sharp, and the "(preview downscaled)" note disappears
 
 #### Scenario: Zoom without changing the app
 - **WHEN** a focused Preview is zoomed in, out or reset

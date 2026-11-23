@@ -42,6 +42,9 @@ pub(super) struct MdWants {
     pub toggle: Option<usize>,
     /// A drawn diagram to copy as an image.
     pub copy_image: Option<usize>,
+    /// Not Markdown: the shown picture is drawn larger than it was decoded and wants a
+    /// sharper decode with this longest side (`preview.image.full`).
+    pub full_image: Option<u32>,
 }
 
 /// Every distinct image URL of the document, in order.

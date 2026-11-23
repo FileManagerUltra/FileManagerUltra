@@ -173,6 +173,9 @@ pub struct PreviewSlot {
     /// Multi-file content changed; keep the loaded view until the user reloads.
     pub updates_available: bool,
     token: u64,
+    /// The render (token) a sharper decode of its downscaled picture was asked for; one
+    /// request per picture.
+    full_image: Option<u64>,
     key: Option<Vec<Key>>,
     /// Stops a running recursive folder scan when the slot moves on or is dropped.
     scan: Option<ScanCancel>,
@@ -212,6 +215,7 @@ impl PreviewSlot {
             stale: false,
             updates_available: false,
             token: 0,
+            full_image: None,
             key: None,
             scan: None,
             pending: None,
@@ -741,6 +745,7 @@ impl Session {
             let preview = render_budgeted(
                 vfs,
                 entry,
+                Limits::default(),
                 recursive,
                 show_hidden,
                 log_limits,
@@ -1067,6 +1072,67 @@ impl Session {
         self.previews.slot(pane)
     }
 
+    /// Decode the shown picture again with its longest side up to `edge` pixels, because it
+    /// was downscaled for Fit and is now shown larger (100% or zoomed in). The result
+    /// replaces the picture in place; the request is made once per picture and only for a
+    /// downscaled still image. Returns whether a decode was started.
+    pub(crate) fn preview_full_image(&mut self, pane: PaneId, edge: u32) -> Result<bool, FmError> {
+        let slot = self.previews.slots.get_mut(&pane).ok_or_else(no_preview)?;
+        let Body::Static(p) = &slot.body else {
+            return Ok(false);
+        };
+        let Preview::Image(img) = &**p else {
+            return Ok(false);
+        };
+        let longest = img.width.max(img.height);
+        let original = img.original.0.max(img.original.1);
+        if img.frames.len() != 1 || img.format == "svg" || longest >= original || edge <= longest {
+            return Ok(false);
+        }
+        if slot.full_image == Some(slot.token) || slot.pending.is_some() {
+            return Ok(false);
+        }
+        let entry = slot.subject.clone().ok_or_else(no_preview)?;
+        let vfs = self.backends.require(&entry.uri)?;
+        slot.full_image = Some(slot.token);
+        let token = slot.token;
+        let limits = Limits {
+            image_edge: edge.min(original),
+            ..Limits::default()
+        };
+        let recursive = self.prefs.recursive_preview;
+        let show_hidden = self.show_hidden;
+        let log_limits = self.prefs.log_limits();
+        let filters = self.prefs.preview_filters.clone();
+        let budget = self.prefs.preview_budget();
+        let inbox = self.previews.inbox.clone();
+        self.jobs.submit(lane_for(entry.uri.scheme()), move |_ctx| {
+            let preview = render_budgeted(
+                vfs,
+                entry,
+                limits,
+                recursive,
+                show_hidden,
+                log_limits,
+                filters,
+                budget,
+            );
+            // Only a sharper picture replaces the shown one; a failure keeps what is shown.
+            if matches!(preview, Preview::Image(_)) {
+                PreviewHub::push(
+                    &inbox,
+                    Msg::Rendered {
+                        pane,
+                        token,
+                        preview: Box::new(preview),
+                    },
+                );
+            }
+            Ok(())
+        });
+        Ok(true)
+    }
+
     /// Read the shown table again with other dialect choices (delimiter, header).
     pub(crate) fn rerender_table(
         &mut self,
@@ -1163,9 +1229,11 @@ fn no_log() -> FmError {
     FmError::InvalidParams("the preview is not showing a log".to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_budgeted(
     vfs: Arc<dyn Vfs>,
     entry: Entry,
+    limits: Limits,
     recursive: bool,
     show_hidden: bool,
     logs: LogLimits,
@@ -1180,7 +1248,7 @@ fn render_budgeted(
         fm_preview::render_configured(
             &*vfs,
             &entry,
-            &Limits::default(),
+            &limits,
             fm_preview::RenderOpts {
                 recursive,
                 show_hidden,

@@ -77,6 +77,7 @@ pub mod preview_cmds;
 pub mod preview_code_cmds;
 pub mod preview_filter_cmds;
 pub mod preview_find_cmds;
+pub mod preview_image_cmds;
 pub mod preview_link_cmds;
 pub mod preview_multi;
 pub mod preview_open_cmds;

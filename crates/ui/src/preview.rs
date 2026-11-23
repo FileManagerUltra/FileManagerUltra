@@ -389,6 +389,9 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             json!({ "urls": want.images, "pane": pane }),
                         ));
                     }
+                    if let Some(edge) = want.full_image {
+                        actions.push(("preview.image.full", json!({ "pane": pane, "edge": edge })));
+                    }
                     if let Some(block) = want.toggle {
                         actions.push((
                             "preview.md_diagrams.toggle_source",
@@ -1047,7 +1050,9 @@ fn static_body(
         Preview::Markdown(m) => {
             return markdown::show(ui, pane, tokens, m, wrap, link, inputs, want);
         }
-        Preview::Image(i) => image(ui, pane, tokens, p, i, zoom, subject, turns),
+        Preview::Image(i) => {
+            want.full_image = image(ui, pane, tokens, p, i, zoom, subject, turns);
+        }
         Preview::Svg(d) if source => structured(ui, pane, tokens, &d.source, pretty, wrap),
         Preview::Svg(d) => svg(ui, pane, tokens, p, d, zoom, wrap),
         Preview::Hex(h) => hex(ui, tokens, h),
@@ -1287,10 +1292,10 @@ fn image(
     zoom: Zoom,
     subject: Option<&fm_vfs::VfsUri>,
     turns: u8,
-) {
+) -> Option<u32> {
     if img.frames.is_empty() {
         centered(ui, tokens, "No pixels to show");
-        return;
+        return None;
     }
     let ctx = ui.ctx().clone();
     let id = ui.make_persistent_id(("pv-tex", pane));
@@ -1331,9 +1336,7 @@ fn image(
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(33));
     }
-    let Some(tex) = textures.get(frame) else {
-        return;
-    };
+    let tex = textures.get(frame)?;
     // A quarter turn shows the picture sideways: its width and height swap.
     let sideways = turns % 2 == 1;
     let (ow, oh) = if sideways {
@@ -1358,6 +1361,16 @@ fn image(
             Zoom::Actual => 1.0,
             Zoom::Scale(v) => v,
         };
+    // A picture decoded smaller than it is drawn (on screen pixels) would be enlarged and
+    // blurry: ask once for a sharper decode, up to what the GPU holds.
+    let drawn_px = (natural * scale * ui.ctx().pixels_per_point()).max_elem();
+    let downscaled = !vector && img.frames.len() == 1 && (img.width, img.height) != img.original;
+    let longest = img.width.max(img.height);
+    let gpu = u32::try_from(ui.ctx().input(|i| i.max_texture_side)).unwrap_or(u32::MAX);
+    let edge = gpu.min(fm_engine::preview_image_cmds::MAX_EDGE);
+    // Only when a bigger copy is possible at all: the GPU may not hold more than this one.
+    let sharper =
+        (downscaled && edge > longest && drawn_px > longest as f32 * 1.02).then_some(edge);
     let output = paged_scroll(ui, ScrollArea::both(), ("pv-img", pane))
         .auto_shrink(false)
         .max_height(avail.y)
@@ -1399,6 +1412,7 @@ fn image(
             ""
         }
     )));
+    sharper
 }
 
 /// An SVG: the drawing, or why it could not be drawn followed by its source.
@@ -1412,7 +1426,9 @@ fn svg(
     wrap: bool,
 ) {
     match &d.image {
-        Ok(img) => image(ui, pane, tokens, p, img, zoom, None, 0),
+        Ok(img) => {
+            image(ui, pane, tokens, p, img, zoom, None, 0);
+        }
         Err(why) => {
             ui.label(RichText::new(format!("Cannot draw this SVG: {why}")).color(tokens.error));
             structured(ui, pane, tokens, &d.source, false, wrap);
@@ -3245,6 +3261,46 @@ pub fn grid_has_keyboard(ctx: &egui::Context) -> bool {
 mod tests {
     use super::*;
     use fm_layout::PaneKind;
+
+    #[test]
+    fn a_downscaled_picture_asks_for_a_sharper_one_only_when_drawn_larger() {
+        let doc = |w: u32, h: u32, original: (u32, u32)| ImageDoc {
+            width: w,
+            height: h,
+            frames: vec![(vec![128; (w * h * 4) as usize], 0)],
+            original,
+            format: "jpeg",
+        };
+        let tokens = Tokens::dark();
+        let ask = |zoom: Zoom, d: ImageDoc| {
+            let preview = Arc::new(Preview::Image(d.clone()));
+            let wanted = std::cell::Cell::new(None);
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(vec2(800.0, 600.0))
+                .build_ui(|ui| {
+                    wanted.set(image(ui, 1, &tokens, &preview, &d, zoom, None, 0));
+                });
+            harness.run_steps(2);
+            let gpu = harness.ctx.input(|i| i.max_texture_side) as u32;
+            drop(harness);
+            (wanted.get(), gpu)
+        };
+        // A 2000×1000 photo kept as a 1024×512 copy (the harness GPU holds 2048 px).
+        let small = doc(1024, 512, (2000, 1000));
+        let (wanted, gpu) = ask(Zoom::Actual, small.clone());
+        assert_eq!(
+            wanted,
+            Some(gpu.min(fm_engine::preview_image_cmds::MAX_EDGE)),
+            "100% draws 2000 px from a 1024 px copy"
+        );
+        assert!(ask(Zoom::Scale(3.0), small.clone()).0.is_some());
+        assert_eq!(ask(Zoom::Fit, small).0, None, "Fit in 800 px needs no more");
+        let full = doc(2000, 1000, (2000, 1000));
+        assert_eq!(ask(Zoom::Actual, full).0, None, "already full size");
+        // Already as large as the GPU allows: nothing better to ask for.
+        let capped = doc(gpu, gpu / 2, (gpu * 2, gpu));
+        assert_eq!(ask(Zoom::Actual, capped).0, None);
+    }
 
     #[test]
     fn video_frames_of_the_same_size_reuse_one_gpu_texture() {
