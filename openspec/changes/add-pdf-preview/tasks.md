@@ -59,7 +59,7 @@
 - [x] 7.4 Generate test certificates (RSA and ECDSA, expired, wrong key usage, legacy and modern p12) in test code; no private keys committed except clearly test-only fixtures
 - [x] 7.5 `pdf_sign_cmds.rs`: `pdf.sign.{visual,place,move,remove,digital,saved.store,saved.delete}`; the password is a `SecretString` redacted in all logged/displayed forms; fuzz and bad-param tests
 - [x] 7.6 Digital tab in the signature dialog: certificate picker, password field, reason/location/contact, appearance choice, field or rectangle; snapshots (no snapshots of the dialog yet)
-- [ ] 7.7 Optional CI check with `pdfsig` (poppler) on our signed output when installed, skipped otherwise (not done; optional)
+- [x] 7.7 Optional CI check with `pdfsig` (poppler) on our signed output when installed, skipped otherwise (`sign::tests::pdfsig_accepts_our_signatures_when_installed`: P-256, P-384, RSA and a filled form with two signatures; CI installs `poppler-utils`)
 
 ## 8. Verification
 
@@ -67,7 +67,7 @@
 - [x] 8.2 Revision analysis: "changed after signing" with a coarse summary (form fields, signatures added, other changes)
 - [x] 8.3 Run verification on the PDF pool once per document with a 5 s budget; results in `PdfDocInfo`
 - [x] 8.4 `fm-ui/pdf_signatures.rs`: badge and panel (signer, time, reason, location, issuer, serial, fingerprint, status, trust-list note); snapshots in both themes (no snapshot of the panel yet; the trust-list note is a hint under the list)
-- [ ] 8.5 Tests: valid, tampered byte, filled after signing, two signatures, SHA-1 flag, malicious ByteRange, oversized CMS, adbe.pkcs7.detached input (done: valid, tampered byte, filled after signing, two signatures, malicious ByteRange, oversized CMS; open: SHA-1 flag and adbe.pkcs7.detached fixtures)
+- [x] 8.5 Tests: valid, tampered byte, filled after signing, two signatures, SHA-1 flag, malicious ByteRange, oversized CMS, adbe.pkcs7.detached input (SHA-1 and adbe.pkcs7.detached fixtures are rewritten from our own RSA signature in test code: `a_sha1_signature_is_valid_but_flagged_weak`, `adbe_pkcs7_detached_signatures_verify`)
 
 ## 9. Security, docs and wrap-up
 

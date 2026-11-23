@@ -945,6 +945,68 @@ mod tests {
         assert_eq!(r[1].status, SigStatus::Valid);
     }
 
+    /// An independent check of our output: poppler's `pdfsig` must call every signature
+    /// valid (the self-signed test certificate is not trusted, so `-nocert` skips that
+    /// part). Skipped when `pdfsig` is not installed; CI installs `poppler-utils`.
+    #[test]
+    fn pdfsig_accepts_our_signatures_when_installed() {
+        if std::process::Command::new("pdfsig")
+            .arg("-v")
+            .output()
+            .is_err()
+        {
+            eprintln!("pdfsig not installed; skipping");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut cases: Vec<(String, Vec<u8>, usize)> = Vec::new();
+        for key in [
+            certs::KeySpec::P256,
+            certs::KeySpec::P384,
+            certs::KeySpec::Rsa2048,
+        ] {
+            let req = Request {
+                rect: Some([50.0, 700.0, 300.0, 780.0]),
+                appearance: Appearance::NameAndDate,
+                reason: Some("Approved".into()),
+                ..Default::default()
+            };
+            let out = sign(&fixtures::text_pages(1), None, &signer(key), &req).expect("sign");
+            cases.push((format!("{key:?}"), out, 1));
+        }
+        let mut form = crate::forms::FormDoc::open(fixtures::form().into(), None).expect("form");
+        form.set("name", crate::forms::FieldInput::Text("Jane".into()))
+            .expect("fill");
+        let s = signer(certs::KeySpec::P256);
+        let field = Request {
+            field: Some("sig".into()),
+            appearance: Appearance::NameAndDate,
+            ..Default::default()
+        };
+        let once = sign(&form.build(&[]).expect("build"), None, &s, &field).expect("field");
+        let twice = sign(&once, None, &s, &Request::default()).expect("second");
+        cases.push(("filled form, two signatures".into(), twice, 2));
+        for (name, bytes, count) in cases {
+            let path = dir.path().join("signed.pdf");
+            std::fs::write(&path, &bytes).expect("write");
+            let out = std::process::Command::new("pdfsig")
+                .arg("-nocert")
+                .arg(&path)
+                .output()
+                .expect("pdfsig");
+            let text = String::from_utf8_lossy(&out.stdout);
+            let valid = text
+                .matches("Signature Validation: Signature is Valid.")
+                .count();
+            assert_eq!(valid, count, "{name}: pdfsig said:\n{text}");
+            // Each signature covers its whole revision, the last one the whole file.
+            assert!(
+                text.contains("Total document signed") || count > 1,
+                "{name}: {text}"
+            );
+        }
+    }
+
     #[test]
     fn refusals() {
         let s = signer(certs::KeySpec::P256);

@@ -821,6 +821,140 @@ mod tests {
         assert!(r[0].signer.is_some());
     }
 
+    fn rsa_signer() -> crate::cert::Signer {
+        let p12 = certs::p12(&certs::P12Spec {
+            key: certs::KeySpec::Rsa2048,
+            ..Default::default()
+        });
+        load_pkcs12(&p12, &Secret::new("test-pass"), SystemTime::now()).expect("signer")
+    }
+
+    /// Rewrite the last signature of `bytes` the way older signers made them: `/SubFilter
+    /// /adbe.pkcs7.detached` (same length as `ETSI.CAdES.detached`, so no offset moves)
+    /// and/or a SHA-1 digest signed with SHA-1 RSA. The CMS is re-signed over the result.
+    fn legacy(
+        mut bytes: Vec<u8>,
+        signer: &crate::cert::Signer,
+        sha1: bool,
+        pkcs7: bool,
+    ) -> Vec<u8> {
+        use der::asn1::SetOfVec;
+        use signature::{SignatureEncoding, Signer as _};
+        if pkcs7 {
+            let at = crate::doc::rfind(&bytes, b"/ETSI.CAdES.detached").expect("subfilter");
+            bytes[at..at + 20].copy_from_slice(b"/adbe.pkcs7.detached");
+        }
+        let at = crate::doc::rfind(&bytes, b"/ByteRange").expect("range");
+        let open = at + crate::doc::find(&bytes[at..], b"[").expect("[");
+        let close = open + crate::doc::find(&bytes[open..], b"]").expect("]");
+        let n: Vec<usize> = std::str::from_utf8(&bytes[open + 1..close])
+            .expect("ascii")
+            .split_whitespace()
+            .map(|t| t.parse().expect("number"))
+            .collect();
+        let (b, c, d) = (n[1], n[2], n[3]);
+        let der: Vec<u8> = bytes[b + 1..c - 1]
+            .chunks(2)
+            .map(|p| u8::from_str_radix(std::str::from_utf8(p).expect("hex"), 16).expect("hex"))
+            .collect();
+        let mut sd = parse_signed_data(trim_der(&der)).expect("cms");
+        let digest_oid = if sha1 { OID_SHA1 } else { OID_SHA256 };
+        let digest = hash(digest_oid, &[&bytes[..b], &bytes[c..c + d]]).expect("digest");
+        let mut si = sd.signer_infos.0.iter().next().expect("signer").clone();
+        si.digest_alg.oid = digest_oid;
+        let mut attrs = SetOfVec::new();
+        for a in si.signed_attrs.as_ref().expect("attrs").iter() {
+            let mut a = a.clone();
+            if a.oid == OID_MESSAGE_DIGEST {
+                let mut values = SetOfVec::new();
+                values
+                    .insert(
+                        der::Any::encode_from(&OctetString::new(digest.clone()).expect("md"))
+                            .expect("md"),
+                    )
+                    .expect("md");
+                a.values = values;
+            }
+            attrs.insert(a).expect("attr");
+        }
+        let to_sign = attrs.to_der().expect("attrs");
+        let crate::cert::SignKey::Rsa(key) = &signer.key else {
+            panic!("an RSA test key")
+        };
+        let signature = if sha1 {
+            rsa::pkcs1v15::SigningKey::<sha1::Sha1>::new((**key).clone())
+                .try_sign(&to_sign)
+                .expect("sign")
+                .to_vec()
+        } else {
+            rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new((**key).clone())
+                .try_sign(&to_sign)
+                .expect("sign")
+                .to_vec()
+        };
+        si.signed_attrs = Some(attrs);
+        si.signature_algorithm = AlgorithmIdentifierOwned {
+            oid: if sha1 { OID_RSA_SHA1 } else { OID_RSA },
+            parameters: Some(der::Any::null()),
+        };
+        si.signature = OctetString::new(signature).expect("signature");
+        let mut infos = SetOfVec::new();
+        infos.insert(si.clone()).expect("info");
+        sd.signer_infos = cms::signed_data::SignerInfos(infos);
+        let mut algs = SetOfVec::new();
+        algs.insert(si.digest_alg).expect("alg");
+        sd.digest_algorithms = algs;
+        let cms = cms::content_info::ContentInfo {
+            content_type: crate::sign::OID_SIGNED_DATA,
+            content: der::Any::encode_from(&sd).expect("sd"),
+        }
+        .to_der()
+        .expect("cms");
+        let mut hex: Vec<u8> = cms
+            .iter()
+            .flat_map(|x| format!("{x:02X}").into_bytes())
+            .collect();
+        hex.resize(c - b - 2, b'0');
+        bytes[b + 1..c - 1].copy_from_slice(&hex);
+        bytes
+    }
+
+    #[test]
+    fn a_sha1_signature_is_valid_but_flagged_weak() {
+        let signer = rsa_signer();
+        let bytes = sign(&fixtures::form(), None, &signer, &Request::default()).expect("sign");
+        // The rewrite itself must not break a signature: SHA-256 stays clean.
+        let r = reports(legacy(bytes.clone(), &signer, false, false));
+        assert_eq!(r[0].status, SigStatus::Valid, "{:?}", r[0]);
+        assert!(r[0].weak.is_empty(), "{:?}", r[0].weak);
+
+        let r = reports(legacy(bytes, &signer, true, false));
+        assert_eq!(r[0].status, SigStatus::Valid, "{:?}", r[0]);
+        assert!(
+            r[0].weak.iter().any(|w| w.contains("SHA-1")),
+            "{:?}",
+            r[0].weak
+        );
+    }
+
+    #[test]
+    fn adbe_pkcs7_detached_signatures_verify() {
+        let signer = rsa_signer();
+        let bytes = sign(&fixtures::form(), None, &signer, &Request::default()).expect("sign");
+        for sha1 in [false, true] {
+            let signed = legacy(bytes.clone(), &signer, sha1, true);
+            let r = reports(signed.clone());
+            assert_eq!(r[0].kind, "adbe.pkcs7.detached");
+            assert_eq!(r[0].status, SigStatus::Valid, "sha1 {sha1}: {:?}", r[0]);
+            assert_eq!(r[0].weak.iter().any(|w| w.contains("SHA-1")), sha1);
+            // And it breaks like any other signature when a signed byte changes.
+            let mut tampered = signed;
+            let at = crate::doc::find(&tampered, b"Application form").expect("text");
+            tampered[at] = b'X';
+            assert!(matches!(reports(tampered)[0].status, SigStatus::Broken(_)));
+        }
+    }
+
     #[test]
     fn sizes_are_readable() {
         assert_eq!(size_text(999), "999 bytes");

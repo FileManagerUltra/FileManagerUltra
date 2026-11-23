@@ -44,3 +44,4 @@ fixtures = ["x509-cert/builder"]
 
 [dev-dependencies]
 x509-cert = { workspace = true, features = ["builder"] }
+tempfile.workspace = true
