@@ -37,6 +37,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     if kind.is_files() {
         mouse_history(ui, s, pane, area);
     }
+    wheel_zoom(ui, s, pane, area);
 
     let mut open = None;
     crate::dnd::note_pane(ui.ctx(), pane, area);
@@ -432,6 +433,39 @@ fn mouse_history(ui: &Ui, s: &mut Session, pane: PaneId, area: egui::Rect) {
     }
 }
 
+/// How far Ctrl+wheel (or a pinch) must zoom before the pane takes one zoom step, as a natural
+/// log. egui turns one wheel notch into a factor of about e^0.2; 0.15 makes every notch one step
+/// while a trackpad pinch, which arrives in small factors, needs a deliberate movement.
+const WHEEL_ZOOM_STEP: f32 = 0.15;
+
+/// Ctrl+mouse wheel (and a trackpad pinch) zooms the pane under the pointer, focused or not,
+/// through `pane.scale.*` like the header's zoom control. egui reports Ctrl+wheel as a zoom
+/// factor instead of scrolling, so the pane's own scrolling never sees it.
+fn wheel_zoom(ui: &Ui, s: &mut Session, pane: PaneId, area: egui::Rect) {
+    let id = ui.make_persistent_id(egui::IdSalt::new(("pane-wheel-zoom", pane)));
+    let (factor, pointer) = ui.input(|i| (i.zoom_delta(), i.pointer.latest_pos()));
+    let over = pointer.is_some_and(|p| area.contains(p))
+        && pointer
+            .and_then(|p| ui.ctx().layer_id_at(p))
+            .is_none_or(|layer| layer == ui.layer_id());
+    if !over || !factor.is_finite() || factor <= 0.0 || (factor - 1.0).abs() < f32::EPSILON {
+        return;
+    }
+    let total = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0) + factor.ln();
+    let action = if total >= WHEEL_ZOOM_STEP {
+        Some("pane.scale.in")
+    } else if total <= -WHEEL_ZOOM_STEP {
+        Some("pane.scale.out")
+    } else {
+        None
+    };
+    // A step starts the next one from zero, so a wheel notch never carries half a step over.
+    ui.data_mut(|d| d.insert_temp(id, if action.is_some() { 0.0 } else { total }));
+    if let Some(command) = action {
+        s.dispatch_or_notice(command, &serde_json::json!({ "pane": pane }));
+    }
+}
+
 /// Back and forward arrows before the path, greyed out when there is nowhere to go. History
 /// lasts for this session only (it is not saved with workspaces).
 fn history_buttons(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
@@ -807,6 +841,70 @@ mod tests {
                 assert_eq!(scale(&harness, 1), 1.0, "{kind:?}");
                 harness.get_by_label("Zoom");
             }
+        }
+    }
+
+    #[test]
+    fn ctrl_wheel_zooms_the_pane_under_the_pointer_for_every_kind() {
+        let wheel_with = |lines: f32, modifiers| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, lines),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers,
+        };
+        let wheel = |lines: f32| wheel_with(lines, egui::Modifiers::COMMAND);
+        for kind in PaneKind::ALL {
+            let mut s = ready_session();
+            s.registry =
+                fm_engine::Registry::from_specs(fm_engine::commands::specs()).expect("registry");
+            let other = s
+                .layout
+                .split(1, fm_layout::Axis::Horizontal, 0.5)
+                .expect("split");
+            s.layout.state_mut(1).expect("pane").kind = kind;
+            let tokens = Tokens::dark();
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(640.0, 480.0))
+                .build_ui_state(
+                    move |ui, s: &mut Session| {
+                        let _ = show(ui, s, 1, &tokens);
+                    },
+                    s,
+                );
+            harness.run_steps(2);
+            let scale = |h: &egui_kittest::Harness<'_, Session>, pane| {
+                fm_engine::pane_scale_cmds::pane_scale(h.state(), pane).expect("pane")
+            };
+            harness.hover_at(egui::pos2(320.0, 300.0));
+            harness.event(wheel(1.0));
+            harness.run_steps(2);
+            assert!(
+                (scale(&harness, 1) - 1.2).abs() < 0.01,
+                "{kind:?}: one notch is one step in, got {}",
+                scale(&harness, 1)
+            );
+            assert!((scale(&harness, other) - 1.0).abs() < 0.001);
+            harness.event(wheel(-1.0));
+            harness.run_steps(2);
+            assert!(
+                (scale(&harness, 1) - 1.0).abs() < 0.01,
+                "{kind:?}: one notch back is one step out"
+            );
+            // A pinch arrives in small factors: one step only once they add up.
+            for _ in 0..2 {
+                harness.event(egui::Event::Zoom(1.06));
+                harness.run_steps(1);
+            }
+            assert!((scale(&harness, 1) - 1.0).abs() < 0.01, "{kind:?}");
+            harness.event(egui::Event::Zoom(1.06));
+            harness.run_steps(2);
+            assert!((scale(&harness, 1) - 1.2).abs() < 0.01, "{kind:?}");
+            // Without Ctrl the wheel scrolls; it never zooms.
+            harness.event(wheel_with(3.0, egui::Modifiers::NONE));
+            harness.run_steps(2);
+            assert!((scale(&harness, 1) - 1.2).abs() < 0.01, "{kind:?}");
+            assert!(harness.state().notice.is_none(), "{kind:?}");
         }
     }
 
