@@ -47,8 +47,30 @@ Closing the last pane or tab showing an archive with staged changes, and quittin
 - **WHEN** `site.zip` has staged changes and the user quits
 - **THEN** the app asks whether to save `site.zip` before quitting, and Cancel keeps the app open
 
+### Requirement: Setting, changing and removing a password
+For a writable zip or 7z, "Set password…", "Change password…" and "Remove password" SHALL be staged changes applied on Save: every member is re-encrypted with the new password (zip: AES-256, or ZipCrypto only when chosen and marked as weak; 7z: AES-256, with encrypted file names by default) or decrypted. The new password SHALL be typed twice. The unsaved bar SHALL say that the password changes on save. Tar archives SHALL NOT offer these actions and SHALL say that tar has no encryption.
+
+#### Scenario: Encrypt an existing zip
+- **WHEN** the user sets a password on `site.zip` and presses Save
+- **THEN** every member of the saved `site.zip` is AES-256 encrypted, and entering it again asks for the password when a file is opened
+
+#### Scenario: Remove a password from a 7z
+- **WHEN** the user removes the password from `secret.7z` (after entering it) and saves
+- **THEN** the saved archive opens without a password and its file names are readable
+
+### Requirement: Saving split archives
+Saving an archive stored as numbered parts SHALL write it again as numbered parts of the original part size, verify the joined result, and replace the original parts so that a failure at any point leaves either the old set or the new set complete. Backups left by an interrupted save SHALL be detected on the next mount, which offers to restore them. Surplus old parts SHALL be removed only after the new set is in place.
+
+#### Scenario: Add a file to a split 7z
+- **WHEN** the user copies a 300 MB file into `backup.7z.001` (100 MB parts, 5 parts) and saves
+- **THEN** the folder holds `backup.7z.001` to `backup.7z.008`, all of 100 MB except the last, and the archive opens with the new file
+
+#### Scenario: Interrupted swap
+- **WHEN** renaming the third new part fails during Save
+- **THEN** the original five parts are restored, the staged changes are kept, and an error names the failed part
+
 ### Requirement: Archive editing commands
-`archive.save`, `archive.save_as`, `archive.discard` and `archive.changes` (the list of staged changes) SHALL be commands with ids, menu paths (File menu, enabled only when the focused pane is inside an archive with staged changes) and bad-parameter tests.
+`archive.save`, `archive.save_as`, `archive.discard`, `archive.changes` (the list of staged changes) and `archive.password.set` (no password removes it) SHALL be commands with ids, menu paths (File menu, enabled only when the focused pane is inside an archive with staged changes) and bad-parameter tests.
 
 #### Scenario: Save with nothing to save
 - **WHEN** `archive.save` is dispatched for an archive without staged changes or for a uri outside any archive

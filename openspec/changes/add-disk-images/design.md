@@ -55,6 +55,13 @@ at 0. `ArchiveRef` gains `offset: u64` and `format: Option<FormatId>` (serde def
 and the handle hashes container + offset + format, so such locations survive history,
 tabs and restarts.
 
+### D2a. Split images
+
+Raw images split into numbered parts (`disk.img.001`, `.002`, …, as written by 7-Zip,
+FTK Imager's raw split or `split -d`) open as one image through the `ConcatSource` and
+name-based set resolution from `add-archive-vfs` (D16 there), from any part, with the
+same missing-part error. Split images are read-only like all images here.
+
 ### D3. Partitions as a folder
 
 A file with a valid MBR or GPT (and no file system at offset 0 that claims the whole

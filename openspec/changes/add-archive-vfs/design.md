@@ -30,7 +30,7 @@ separate changes (`add-disk-images`, `add-docker`).
 
 **Non-Goals:**
 - File-system images and partitions (`add-disk-images`), Docker (`add-docker`).
-- Writing RAR or ISO, split/multi-volume archives, self-extracting executables,
+- Writing RAR or ISO, editing zip spanned sets and RAR volumes, self-extracting executables,
   solid-block-level editing of 7z (a 7z save always recompresses).
 - Mounting archives into the OS (FUSE, Windows ProjFS).
 
@@ -186,21 +186,99 @@ the pane shows "RAR archives need 7-Zip or unrar" with the install hint per OS.
   user's process list for the life of the child).
 - Remote RAR files are first copied to the private temp folder (≤ 4 GiB).
 
-### D10. Passwords
+### D10. Encrypted archives: reading
 
-Encrypted zip and 7z ask for the password when a member is first read (or, for 7z
-with encrypted headers, when mounting). The password lives in memory with the mount
-(zeroised on unmount) and is never stored, logged or put in `Display`. A wrong
-password shows "Wrong password" and asks again; three failures stop.
+| Format | Encryption read | Names hidden too |
+|---|---|---|
+| zip | WinZip AES-128/192/256 (AE-1, AE-2), traditional ZipCrypto | no (zip never hides names) |
+| 7z | AES-256 + SHA-256 key derivation | yes, when headers are encrypted |
+| RAR 4/5 | through the tool (`-p`) | yes, when headers are encrypted (`-hp`) |
 
-### D11. Compress to…
+- Archives whose names are hidden (7z encrypted headers, RAR `-hp`) ask for the
+  password when they are entered; others ask when an encrypted member is first read
+  (preview, copy out, Find in contents). The listing marks encrypted entries with a
+  lock badge, and the archive preview says which method is used.
+- One password per mount is tried first for every member; a zip whose members use
+  different passwords asks again for a member the known password does not open, and
+  keeps up to 8 passwords for that mount.
+- Wrong passwords are detected by the format's check value (zip AES verifier, ZipCrypto
+  check byte plus CRC on read, 7z/RAR header or CRC failure) and show "Wrong
+  password"; three failures in a row stop that read. ZipCrypto's one-byte check can
+  pass a wrong password, so a CRC failure after a ZipCrypto read is reported as
+  "Wrong password or damaged file".
+- Passwords are `Secret` values (zeroised on drop), held by the mount, cleared on
+  unmount, quit and "Forget password" (`archive.password.forget`), and never stored,
+  logged, put in notices, `Display`, workspaces or the diagnostic log.
+- Secrets are not handed to other threads beyond the mount's own workers; the RAR tool
+  gets the password as its `-p` argument for the life of that child (D9).
 
-`archive.compress { sources, target, format, level, password? }` creates a new archive
-as a file job: zip (Deflate; AES-256 with a password), tar.gz, tar.xz, 7z (LZMA2;
-AES-256 with header encryption when a password is given) and tar.zst. `ruzstd`'s
-encoder is young; task 1.4 checks its output against the reference decoder and its
-speed. If it is not good enough, tar.zst stays read-only in this change and the
-Compress dialog does not offer it.
+### D11. Compress to… and encrypting
+
+`archive.compress { sources, target, format, level, password?, encryption?,
+encrypt_names?, split? }` creates a new archive as a file job: zip (Deflate), tar.gz,
+tar.xz, 7z (LZMA2) and tar.zst. `ruzstd`'s encoder is young; task 1.4 checks its
+output against the reference decoder and its speed. If it is not good enough, tar.zst
+stays read-only in this change and the Compress dialog does not offer it.
+
+Encryption when a password is given:
+
+- zip: WinZip AES-256 (AE-2) by default; `encryption: "zipcrypto"` only on request,
+  with the dialog marking it "weak, for old tools only".
+- 7z: AES-256; `encrypt_names: true` (default on) also encrypts the headers.
+- tar family: no encryption exists in the format; the password field is disabled with
+  the tooltip "tar has no encryption; choose 7z or zip".
+
+The dialog asks for the password twice and shows whether they match; it is never
+pre-filled or remembered.
+
+Encrypting, re-encrypting or decrypting an existing zip or 7z is a staged change
+(`archive.password.set { uri, password?, encryption?, encrypt_names? }`, no password =
+remove) applied on Save: every member is re-encrypted (raw copy is not possible for
+members whose encryption changes, so Save decompresses and recompresses them).
+The unsaved bar says "password will change on save".
+
+### D16. Split archives (multiple volumes)
+
+Three kinds of volume sets are recognised from the name of any part:
+
+| Kind | Names | Structure | In this change |
+|---|---|---|---|
+| Numbered parts | `name.ext.001`, `.002`, … (any archive format; 7-Zip's and HJSplit's convention) | the archive's bytes cut at fixed sizes | read and write |
+| Zip spanned set | `name.z01`, `name.z02`, …, `name.zip` (last) | zip with per-disk offsets in the central directory | read-only |
+| RAR volumes | `name.part1.rar`, `name.part2.rar`, … or `name.rar`, `name.r00`, `name.r01`, … | RAR's own volume format | read-only, through the tool |
+
+- **Finding the set.** Entering any part resolves the set in that folder (same backend)
+  by name pattern only, never by content: parts are listed with one `read_dir`, sorted
+  by number, checked for gaps, and capped at 10 000 parts. A missing part fails the
+  mount with "Part 4 of backup.7z is missing (backup.7z.004)". The mount's container is
+  the first part; `ArchiveRef` records the kind so locations restore after a restart.
+- **Numbered parts** are read through a `ConcatSource` over the parts (offset → part,
+  random access through each part's `open_read_at`), so the format reader sees one
+  file. This also covers split disk images (`add-disk-images`).
+- **Zip spanned sets** need the central directory's (disk number, offset) pairs mapped to
+  a global offset. Spike 1.5 checks whether the `zip` crate reads them through a
+  `ConcatSource`; if not, our index reader translates disk-relative offsets itself
+  before handing members to `zip`'s decompressors, and if that is not feasible, spanned
+  zips open through the 7-Zip tool like RAR (read-only), with the same "needs 7-Zip"
+  state.
+- **RAR volumes**: the tool is given the first volume and finds the rest itself; we
+  still resolve the set first so a missing part is reported before the tool runs.
+  Remote RAR sets are copied to the private temp folder as a whole set (≤ 4 GiB total).
+- **Listing.** Every part is tinted as an archive in the folder listing; parts after
+  the first also carry a "part n of N" hint. Entering any part shows the same mount.
+- **Changed-on-disk check** covers every part (size and mtime).
+- **Saving numbered parts** writes the new archive as temporary parts of the original
+  part size next to the originals, verifies the joined result by re-indexing, then
+  swaps: each original part is renamed to a backup name, the new parts are renamed into
+  place, and the backups are removed. If any rename fails, the swap is rolled back from
+  the backups; a crash in the middle leaves the backups beside the parts, which the next
+  mount detects and offers to restore. The number of parts may change; surplus old parts
+  are removed only after the swap succeeded.
+- **Compress to… split**: `split: { size }` (presets 100 MB, 700 MB, 4 GB FAT32 limit,
+  custom ≥ 64 KiB) writes numbered parts `name.ext.001…` for every format.
+- **Join parts** (`archive.join { uri, target? }`) concatenates numbered parts into one
+  file next to them (`backup.7z`), as a file job; it does not apply to zip spanned sets
+  or RAR volumes, which can be converted by extracting and compressing.
 
 ### D12. Extraction
 
@@ -215,8 +293,8 @@ existing rules.
 
 ### D13. Hostile-archive limits
 
-- ≤ 1 000 000 entries per archive, ≤ 4 096 bytes per name, ≤ 64 path depth; beyond
-  that, mounting stops with an actionable error.
+- ≤ 1 000 000 entries per archive, ≤ 4 096 bytes per name, ≤ 64 path depth, ≤ 10 000
+  parts per split archive; beyond that, mounting stops with an actionable error.
 - Names: backslashes, absolute paths, drive letters and `..` are normalised at index
   time; control characters are shown escaped; duplicate paths keep the last entry
   and the archive summary says how many were shadowed.

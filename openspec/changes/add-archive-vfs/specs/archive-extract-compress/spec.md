@@ -19,11 +19,33 @@ Copying or moving entries from inside an archive to a location outside it (F5, F
 - **THEN** `bin` is copied there with its contents, with progress in the job panel
 
 ### Requirement: Compress to
-"Compress to…" SHALL create a new archive from the selection in a dialog offering format (zip, tar.gz, tar.xz, 7z, and tar.zst when the encoder passes its quality check), compression level (fast, normal, best), an optional password for zip (AES-256) and 7z (AES-256 with encrypted names), and the target name and folder (default: next to the selection, named after the single item or the folder). It SHALL run as a file job with progress and cancel and SHALL never overwrite an existing file without the usual conflict prompt.
+"Compress to…" SHALL create a new archive from the selection in a dialog offering format (zip, tar.gz, tar.xz, 7z, and tar.zst when the encoder passes its quality check), compression level (fast, normal, best), the target name and folder (default: next to the selection, named after the single item or the folder) and splitting into numbered parts of a chosen size (100 MB, 700 MB, 4 GB, or a custom size of at least 64 KiB). It SHALL run as a file job with progress and cancel and SHALL never overwrite an existing file without the usual conflict prompt.
+
+#### Scenario: Split into parts
+- **WHEN** the user compresses a 950 MB folder to 7z with 100 MB parts
+- **THEN** `name.7z.001` to `name.7z.010` are created, and entering `name.7z.001` shows the folder's contents
+
+### Requirement: Compress with encryption
+The Compress dialog SHALL offer a password, typed twice, for zip and 7z. Zip SHALL be encrypted with AES-256 by default, and with traditional ZipCrypto only when the user chooses it, with the choice marked as weak and for old tools only. 7z SHALL be encrypted with AES-256 and SHALL encrypt file names unless the user turns that off. For tar formats the password field SHALL be disabled with the reason. The password SHALL never be pre-filled, remembered, logged or shown in notices or errors.
 
 #### Scenario: Zip with a password
 - **WHEN** the user compresses two folders to `share.zip` with a password
-- **THEN** `share.zip` is created, its members are AES-256 encrypted, and opening it in the app asks for the password
+- **THEN** `share.zip` is created, its members are AES-256 encrypted, and opening a file in it in the app asks for the password
+
+#### Scenario: Encrypted 7z hides names
+- **WHEN** the user compresses to `secret.7z` with a password and "Encrypt file names" on
+- **THEN** another tool listing `secret.7z` without the password sees no file names
+
+#### Scenario: Passwords do not match
+- **WHEN** the two password fields differ
+- **THEN** the Compress button is disabled and the dialog says the passwords do not match
+
+### Requirement: Join parts
+"Join parts" SHALL concatenate an archive's numbered parts into one file next to them (named without the part number), as a file job with progress, cancel and the conflict prompt; it SHALL refuse when a part is missing, naming it, and SHALL NOT be offered for zip spanned sets or RAR volumes.
+
+#### Scenario: Join a split tar.gz
+- **WHEN** the user chooses Join parts on `dump.tar.gz.002` with parts 001 to 004 present
+- **THEN** `dump.tar.gz` is created with the parts' bytes in order, and the parts are kept
 
 ### Requirement: Extraction never escapes the destination
 Extraction SHALL NOT write outside the chosen destination: entry names are normalised, links resolving outside the archive are not followed, hard links to entries outside the archive are skipped, device files and FIFOs are skipped, setuid and setgid bits are cleared, and names invalid on the destination OS are renamed by the existing rules. Skipped entries SHALL be listed in the job's summary.
@@ -44,8 +66,8 @@ Extraction of more than 1 GiB at a ratio above 1000:1 SHALL ask before continuin
 - **THEN** the job asks before writing beyond 1 GiB, and stopping leaves no partial file
 
 ### Requirement: Extract and compress commands
-`archive.extract { uri, dest? }` and `archive.compress { sources, target, format, level, password? }` SHALL be commands with ids, menu paths (File menu and the context menu) and bad-parameter tests; the password parameter SHALL never appear in logs, notices or errors.
+`archive.extract { uri, dest? }`, `archive.compress { sources, target, format, level, password?, encryption?, encrypt_names?, split? }` and `archive.join { uri, target? }` SHALL be commands with ids, menu paths (File menu and the context menu) and bad-parameter tests; the password parameter SHALL never appear in logs, notices or errors.
 
 #### Scenario: Malformed compress params
-- **WHEN** `archive.compress` receives an unknown format, an empty source list or a level of 99
+- **WHEN** `archive.compress` receives an unknown format, an empty source list, a level of 99, a password for tar.gz or a part size below 64 KiB
 - **THEN** it returns `Err` and no file is created

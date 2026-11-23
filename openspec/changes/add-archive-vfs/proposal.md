@@ -23,6 +23,23 @@ and saved deliberately, so an archive is never rewritten by accident.
   single-file .gz/.bz2/.xz/.zst (shown as a folder holding one file), and RAR through an
   installed 7-Zip or unrar. All decoders are pure Rust; RAR is the only format that
   uses an external program, and only when the user has one installed.
+- **Split archives (multiple volumes).** Archives split into volumes open as one
+  archive from any of their parts: numbered parts of any format (`backup.7z.001`,
+  `site.zip.001`, `dump.tar.gz.001`, …), zip spanned sets (`site.z01`, `site.z02`, …,
+  `site.zip`) and RAR volumes (`data.part1.rar`, … or `data.rar`, `data.r00`, …). The
+  parts must sit together in one folder (on any backend); a missing part is named in
+  the error. Numbered-part archives of writable formats stay editable: Save rewrites
+  them as the same number of parts at the same part size. Compress to… can split its
+  output into parts of a chosen size, and "Join parts" turns numbered parts back into
+  one file.
+- **Encrypted archives, reading and creating.** Encrypted zip (AES-128/192/256 and
+  legacy ZipCrypto), 7z (AES-256, also with encrypted file names) and RAR (through the
+  tool, also with encrypted file names) open after a password prompt. Saving changes
+  keeps the archive encrypted with the same password. Compress to… encrypts zip
+  (AES-256, or ZipCrypto only when asked for compatibility, marked as weak) and 7z
+  (AES-256, optionally with encrypted file names); the password is typed twice. For an
+  existing zip or 7z, "Set password…", "Change password…" and "Remove password" are
+  staged changes applied on Save. Passwords are kept in memory only while needed.
 - **Works on every backend and nests.** An archive on SMB or SFTP, or an archive inside
   an archive (a zip inside a tar.gz), opens the same way. Locations inside archives are
   ordinary `VfsUri`s, so history, tabs, workspaces, bookmarks and the address bar work.
@@ -45,16 +62,18 @@ and saved deliberately, so an archive is never rewritten by accident.
   detected, and nothing inside an archive is ever executed.
 - **Out of scope.** File-system images (SquashFS, ext, FAT, NTFS, JFFS2, CramFS),
   partition tables and "Open as…" content detection (change `add-disk-images`); Docker
-  (change `add-docker`); writing RAR; creating ISO images; multi-volume (split)
-  archives; self-extracting executables; other formats through 7-Zip.
+  (change `add-docker`); writing RAR; creating ISO images; editing zip spanned sets
+  and RAR volumes (both read-only); self-extracting executables; other formats through
+  7-Zip; encryption that wraps a whole file (GPG, age, OpenSSL `enc`), which is not an
+  archive format; encrypted disk volumes (LUKS, BitLocker, VeraCrypt).
 - Everything is a command (`archive.*`) with bad-parameter tests.
 
 ## Capabilities
 
 ### New Capabilities
-- `archive-browsing`: recognising archives, browsing them as folders on every backend and nested, the archive look, formats and their read/write support, passwords, RAR through an installed tool, the archive preview and the bounds on hostile archives.
-- `archive-editing`: staged changes inside writable archives, Save, Discard, conflict detection on save, and the unsaved-changes prompts.
-- `archive-extract-compress`: Extract here, Extract to…, Compress to…, and copying out of archives, as file jobs.
+- `archive-browsing`: recognising archives, browsing them as folders on every backend and nested, the archive look, formats and their read/write support, split archives, encrypted archives and passwords, RAR through an installed tool, the archive preview and the bounds on hostile archives.
+- `archive-editing`: staged changes inside writable archives (including split archives and setting, changing or removing a password), Save, Discard, conflict detection on save, and the unsaved-changes prompts.
+- `archive-extract-compress`: Extract here, Extract to…, Compress to… (with encryption and splitting into parts), Join parts, and copying out of archives, as file jobs.
 
 ### Modified Capabilities
 - `path-display`: locations inside archives have a display form (the archive's display form, then the inner path) that can be typed back.

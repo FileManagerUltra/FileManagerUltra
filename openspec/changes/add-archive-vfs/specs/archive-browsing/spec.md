@@ -16,7 +16,7 @@ Activating (Enter or double-click) a file recognised as an archive SHALL browse 
 - **THEN** the zip opens in its default application and the pane does not change
 
 ### Requirement: Archive recognition
-An archive SHALL be recognised by case-insensitive file-name patterns (defaults: `*.zip`, `*.jar`, `*.tar`, `*.tar.gz`, `*.tgz`, `*.tar.bz2`, `*.tbz2`, `*.tar.xz`, `*.txz`, `*.tar.zst`, `*.tzst`, `*.7z`, `*.iso`, `*.rar`, `*.gz`, `*.bz2`, `*.xz`, `*.zst`) editable under Preferences › Archives, and SHALL be confirmed by its signature bytes when mounted. A file whose signature does not match its pattern SHALL show an actionable error naming the expected format instead of a listing.
+An archive SHALL be recognised by case-insensitive file-name patterns (defaults: `*.zip`, `*.jar`, `*.tar`, `*.tar.gz`, `*.tgz`, `*.tar.bz2`, `*.tbz2`, `*.tar.xz`, `*.txz`, `*.tar.zst`, `*.tzst`, `*.7z`, `*.iso`, `*.rar`, `*.gz`, `*.bz2`, `*.xz`, `*.zst`, and for split archives `*.001`–`*.999` after an archive name, `*.z01`–`*.z99` and `*.r00`–`*.r99`) editable under Preferences › Archives, and SHALL be confirmed by its signature bytes when mounted. A file whose signature does not match its pattern SHALL show an actionable error naming the expected format instead of a listing.
 
 #### Scenario: Wrong extension
 - **WHEN** the user enters `notes.zip` whose content is plain text
@@ -62,12 +62,43 @@ Mounting, indexing and member reads SHALL run off the UI thread on the archive j
 - **WHEN** the user enters a 2 GiB `dump.tar.xz`
 - **THEN** the pane shows "Reading dump.tar.xz… 35 %" while frames keep rendering, then the listing
 
-### Requirement: Encrypted archives ask for a password
-Reading a member of an encrypted zip or 7z, or mounting a 7z with encrypted headers, SHALL ask for the password in an in-app dialog. The password SHALL be kept in memory only while the archive is mounted, SHALL be cleared on unmount, and SHALL never be stored, logged or shown. A wrong password SHALL show "Wrong password" and ask again; after three failures the read stops.
+### Requirement: Encrypted archives open with a password
+Encrypted zip (WinZip AES-128/192/256 and traditional ZipCrypto), 7z (AES-256, including encrypted file names) and RAR (through the tool, including encrypted file names) SHALL open after the user enters the password in an in-app dialog: when entering the archive if its file names are encrypted, otherwise when an encrypted member is first read. Encrypted entries SHALL carry a lock badge in the listing, and the archive preview SHALL name the encryption method. A password that opened one member SHALL be tried first for the others; a member it does not open SHALL ask again, keeping at most 8 passwords per archive. A wrong password SHALL show "Wrong password" and ask again; after three failures in a row the read stops. A CRC failure after a ZipCrypto read SHALL be reported as "Wrong password or damaged file".
 
 #### Scenario: Wrong then right password
 - **WHEN** the user previews a file inside an AES zip, enters a wrong password and then the right one
 - **THEN** the first attempt shows "Wrong password" and the second shows the file
+
+#### Scenario: 7z with encrypted names
+- **WHEN** the user enters `secret.7z` whose headers are encrypted
+- **THEN** the password dialog appears before any name is shown, and the listing appears after the right password
+
+#### Scenario: Members with different passwords
+- **WHEN** a zip holds `a.txt` encrypted with password A and `b.txt` with password B, and the user opens `a.txt` then `b.txt`
+- **THEN** the dialog appears once for each password, and reopening either file afterwards does not ask again
+
+#### Scenario: Forget password
+- **WHEN** the user chooses "Forget password" for a mounted encrypted archive
+- **THEN** the next read of an encrypted member asks for the password again
+
+### Requirement: Split archives open as one archive
+An archive split into parts SHALL open as one archive from any of its parts, on every backend, when all parts are in the same folder: numbered parts of any supported format (`name.ext.001`, `.002`, …), zip spanned sets (`name.z01`, …, `name.zip`) and RAR volumes (`name.part1.rar`, … or `name.rar`, `name.r00`, …). The set SHALL be found by name only, in the part's folder, with at most 10 000 parts. A missing part SHALL fail with a message naming it. Every part SHALL get the archive look in listings, and parts after the first SHALL show which part they are. Zip spanned sets and RAR volumes SHALL be read-only; numbered parts SHALL be as writable as their format.
+
+#### Scenario: Enter the third part of a 7z
+- **WHEN** the user presses Enter on `backup.7z.003` in a folder holding `backup.7z.001` to `backup.7z.005`
+- **THEN** the pane shows the root of the whole archive, and the breadcrumb names `backup.7z.001`
+
+#### Scenario: Missing part
+- **WHEN** `backup.7z.004` is absent and the user enters `backup.7z.001`
+- **THEN** the pane says "Part 4 of backup.7z is missing (backup.7z.004)"
+
+#### Scenario: Spanned zip on SFTP
+- **WHEN** the user enters `site.zip` on an SFTP server next to `site.z01` and `site.z02`
+- **THEN** the pane lists the whole archive, and write commands are disabled with a tooltip saying spanned zip sets are read-only
+
+#### Scenario: RAR volumes
+- **WHEN** 7-Zip is installed and the user enters `data.part2.rar` next to `data.part1.rar` and `data.part3.rar`
+- **THEN** the pane lists the whole archive
 
 ### Requirement: RAR through an installed tool
 RAR archives SHALL be listed and read through an installed 7-Zip (`7zz`, `7z`, `7za`, or `7z.exe` in the standard Windows location) or `unrar`, found on `PATH` or set in Preferences › Archives. When no tool is found, entering a RAR SHALL show which tool to install for the current OS. Remote RAR files SHALL be copied to the private temporary folder (at most 4 GiB) before the tool reads them. RAR archives SHALL be read-only.
@@ -88,7 +119,7 @@ The Preview pane SHALL show, for an archive file, its format, compression method
 - **THEN** the Preview shows "7z · LZMA2 · 1 204 files · 38 MB → 112 MB" and its top-level folders
 
 ### Requirement: Archive browsing commands
-`archive.enter`, `archive.unmount` and `archive.password` SHALL be commands with ids, menu paths and bad-parameter tests (malformed params return `Err` without changing state). `archive.enter` SHALL accept a file uri and SHALL fail with an actionable error for non-archives.
+`archive.enter`, `archive.unmount`, `archive.password` and `archive.password.forget` SHALL be commands with ids, menu paths and bad-parameter tests (malformed params return `Err` without changing state). `archive.enter` SHALL accept a file uri and SHALL fail with an actionable error for non-archives.
 
 #### Scenario: Malformed params
 - **WHEN** `archive.enter` receives a directory uri, a 10 000-byte string or no uri

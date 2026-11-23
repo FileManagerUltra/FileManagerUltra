@@ -100,9 +100,12 @@ Three proposed OpenSpec changes, in order (proposals written 2026-11-23, not sta
 
 - **`add-archive-vfs`**: zip, tar (gz/bz2/xz/zst), 7z, ISO and RAR (read-only, through an
   installed 7-Zip or unrar) open like folders with Enter, on every backend and nested,
-  in a distinct archive colour. Edits inside writable archives are staged and written
-  by an explicit, atomic Save (Discard and quit prompts like PDF Fill & Sign). Extract
-  here / to, Compress to.
+  in a distinct archive colour. Split archives (numbered parts, zip spanned sets, RAR
+  volumes) open as one archive from any part. Encrypted zip/7z/RAR open with a
+  password; Compress to… and Set password… encrypt (AES-256). Edits inside writable
+  archives are staged and written by an explicit, atomic Save (Discard and quit
+  prompts like PDF Fill & Sign). Extract here / to, Compress to (optionally in parts),
+  Join parts.
 - **`add-disk-images`**: read-only SquashFS, ext2/3/4, FAT, NTFS, JFFS2 and CramFS images,
   MBR/GPT partitions as folders, and "Open as archive or image…" that scans any file for
   signatures at any offset (binwalk-style).

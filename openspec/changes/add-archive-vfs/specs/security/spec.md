@@ -11,6 +11,13 @@ Archive indexes and members SHALL be treated as hostile input: at most 1 000 000
 - **WHEN** a zip declares 5 000 000 entries
 - **THEN** mounting stops with "too many entries (limit 1 000 000)" without reading them all
 
+### Requirement: Split-archive parts are found by name, in one folder
+The parts of a split archive SHALL be resolved only from the entered part's own folder on the same backend, by name pattern, capped at 10 000 parts; names or offsets read from archive content SHALL never point the app at other files or folders.
+
+#### Scenario: Hostile volume name in a RAR header
+- **WHEN** a RAR volume's header names its next volume `../../etc/passwd`
+- **THEN** the app resolves parts only from the folder listing and reports a missing part instead of reading that path
+
 ### Requirement: Nothing inside an archive is executed
 A program inside an archive SHALL NOT be run: `file.open` in run mode SHALL be refused for archive locations, and opening a member with its default application SHALL extract it to the owner-only private temporary folder as a non-executable file first.
 
@@ -19,7 +26,7 @@ A program inside an archive SHALL NOT be run: `file.open` in run mode SHALL be r
 - **THEN** it returns `Err` and no process starts
 
 ### Requirement: Archive passwords never persist
-Archive passwords SHALL be held in memory only while the archive is mounted, zeroised on unmount and quit, and never written to disk, logs, notices, `Display` output, workspaces or the diagnostic log.
+Archive passwords, for reading and for creating or re-encrypting archives, SHALL be held in memory only while needed (reading: while the archive is mounted; creating: for the job), zeroised on unmount, job end and quit, and never written to disk, logs, notices, `Display` output, command history, workspaces or the diagnostic log. New encryption SHALL default to AES-256; weaker ZipCrypto SHALL only be used when the user explicitly chooses it.
 
 #### Scenario: Password not in the workspace
 - **WHEN** a workspace is saved while an encrypted zip is open with its password entered

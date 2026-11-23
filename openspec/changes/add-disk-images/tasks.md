@@ -15,8 +15,9 @@
 - [ ] 2.6 JFFS2 parser (node scan, both endiannesses, zlib/rtime/lzo, latest version wins, caps)
 - [ ] 2.7 CramFS parser (both endiannesses, zlib)
 - [ ] 2.8 Partition tables: MBR with extended partitions, GPT with labels; partitions as folder entries; raw `partition.img` fallback
-- [ ] 2.9 Metadata into `Entry`/`Attrs` (mode, uid/gid, times, capped xattrs, NTFS attributes as `dos_flags`; new `Attrs::rdev` for device numbers)
-- [ ] 2.10 Fuzz tests for every reader and the scanner (truncated, bit-flipped, looping structures); bounded memory
+- [ ] 2.9 Split raw images (`*.img.001`, `*.dd.001`, `*.raw.001`) through `ConcatSource`; fixture and missing-part test
+- [ ] 2.10 Metadata into `Entry`/`Attrs` (mode, uid/gid, times, capped xattrs, NTFS attributes as `dos_flags`; new `Attrs::rdev` for device numbers)
+- [ ] 2.11 Fuzz tests for every reader and the scanner (truncated, bit-flipped, looping structures); bounded memory
 
 ## 3. Content detection
 

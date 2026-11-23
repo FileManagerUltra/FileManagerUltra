@@ -11,6 +11,13 @@ SquashFS 4.0 (gzip, xz, lzma, lzo, lz4 and zstd compression), ext2/3/4, FAT12/16
 - **WHEN** a user on Windows enters `disk.ext4`
 - **THEN** the pane lists its root folders, including `lost+found`
 
+### Requirement: Split images open as one image
+A raw disk or file-system image split into numbered parts (`name.img.001`, `.002`, …) SHALL open as one image from any part, with the same part resolution, limits and missing-part error as split archives.
+
+#### Scenario: Split dd image
+- **WHEN** the user enters `evidence.dd.002` next to `evidence.dd.001` to `evidence.dd.004` holding an MBR disk
+- **THEN** the pane shows the disk's partitions
+
 ### Requirement: Ambiguous image names are probed
 For ambiguous names (`*.img`, `*.raw`, `*.bin`, `*.dd`), Enter SHALL check for a known file-system signature or partition table at offset 0 and SHALL browse inside only when one is found; otherwise it SHALL use the normal open action.
 
