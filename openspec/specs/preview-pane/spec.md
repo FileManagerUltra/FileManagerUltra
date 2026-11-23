@@ -107,6 +107,10 @@ preview zoom, and reserve space so it does not cover code. Activating
 `preview.code.copy {pane?, block, item?}` SHALL copy only that loaded block's
 plain code text, without language labels, Markdown fences or UI chrome.
 
+#### Scenario: Selecting into text that overflows
+- **WHEN** the user drags a text selection to or past the right (or bottom) edge of the text, source view, a Markdown code block or table, and holds the mouse still
+- **THEN** that area keeps scrolling that way, faster the further the pointer is past the edge, so the selection extends into the hidden part; it stops when the button is released, and a drag that started on a scroll bar does not trigger it
+
 #### Scenario: Copy code without polluting selection
 - **WHEN** a user clicks a code block's copy control
 - **THEN** the clipboard contains exactly that block's loaded code, independent of wrapping or syntax highlighting

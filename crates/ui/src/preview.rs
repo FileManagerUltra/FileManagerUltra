@@ -540,6 +540,56 @@ pub(super) fn paged_scroll(
     }
 }
 
+/// Distance from a scroll area's edge (points) where dragging a selection starts to scroll.
+const EDGE_ZONE: f32 = 24.0;
+
+/// While a text selection is dragged to or past an edge of the scroll area it started in,
+/// scroll that area so the selection can go on into the hidden part, faster the further out
+/// the pointer is. egui only follows the selection when it changes, so a pointer held still
+/// past the edge would stop it. Call inside the area's content, with the axes it scrolls.
+pub(super) fn select_edge_scroll(ui: &Ui, axes: egui::Vec2b) {
+    let view = ui.clip_rect();
+    let (down, origin, pointer, dt) = ui.input(|i| {
+        (
+            i.pointer.primary_down() && i.pointer.is_decidedly_dragging(),
+            i.pointer.press_origin(),
+            i.pointer.latest_pos(),
+            i.stable_dt.clamp(0.0, 0.1),
+        )
+    });
+    let (Some(origin), Some(pointer)) = (origin, pointer) else {
+        return;
+    };
+    // Not from a scroll bar (they float over the right and bottom of the view), not a drop.
+    let bars = ui.spacing().scroll.allocated_width();
+    let text = egui::Rect::from_min_max(view.min, view.max - vec2(bars, bars));
+    if !down || !text.contains(origin) || egui::DragAndDrop::has_any_payload(ui.ctx()) {
+        return;
+    }
+    // Points per second: from slow at the edge zone to fast well past the edge.
+    let speed = |before: f32, after: f32| -> f32 {
+        let past = |d: f32| ((d + EDGE_ZONE) / EDGE_ZONE).clamp(0.0, 10.0);
+        if after > -EDGE_ZONE {
+            -past(after) * 240.0
+        } else if before > -EDGE_ZONE {
+            past(before) * 240.0
+        } else {
+            0.0
+        }
+    };
+    let mut delta = egui::Vec2::ZERO;
+    if axes.x {
+        delta.x = speed(view.left() - pointer.x, pointer.x - view.right());
+    }
+    if axes.y {
+        delta.y = speed(view.top() - pointer.y, pointer.y - view.bottom());
+    }
+    if delta != egui::Vec2::ZERO {
+        ui.scroll_with_delta_animation(delta * dt, egui::style::ScrollAnimation::none());
+        ui.ctx().request_repaint();
+    }
+}
+
 pub(super) fn remember_scroll<R>(ui: &Ui, output: &egui::scroll_area::ScrollAreaOutput<R>) {
     let bottom = (output.content_size.y - output.inner_rect.height()).max(0.0);
     ui.data_mut(|d| d.insert_temp(output.id.with("pv-bottom"), bottom));
@@ -1221,6 +1271,7 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
     let output = if wrap {
         area.show(ui, |ui| {
             tight_rows(ui);
+            select_edge_scroll(ui, egui::Vec2b::new(false, true));
             for (i, line) in d.lines.iter().enumerate() {
                 find::set_segment(ui, i);
                 ui.horizontal_top(|ui| {
@@ -1245,6 +1296,7 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
     } else {
         area.show_rows(ui, row_h, d.lines.len(), |ui, range| {
             tight_rows(ui);
+            select_edge_scroll(ui, egui::Vec2b::TRUE);
             for i in range {
                 let Some(line) = d.lines.get(i) else { continue };
                 find::set_segment(ui, i);
@@ -3273,6 +3325,77 @@ pub fn grid_has_keyboard(ctx: &egui::Context) -> bool {
 mod tests {
     use super::*;
     use fm_layout::PaneKind;
+
+    #[test]
+    fn selecting_past_the_right_edge_keeps_scrolling_while_the_mouse_is_still() {
+        let long = format!("start {} THE-END", "word ".repeat(150));
+        let doc = TextDoc {
+            lines: (0..5)
+                .map(|_| {
+                    vec![Span {
+                        text: long.clone(),
+                        class: fm_preview::highlight::Class::Plain,
+                    }]
+                })
+                .collect(),
+            lang: "text".into(),
+            truncated: false,
+            total_bytes: 0,
+        };
+        let tokens = Tokens::dark();
+        let scroll_id = std::cell::Cell::new(Id::NULL);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(500.0, 300.0))
+            .build_ui(|ui| {
+                scroll_id.set(ui.make_persistent_id(egui::IdSalt::new(("pv-text", 1u64))));
+                text_view(ui, 1, &tokens, &doc, false);
+            });
+        harness.run_steps(2);
+        let offset = |h: &egui_kittest::Harness<'_>| {
+            egui::scroll_area::State::load(&h.ctx, scroll_id.get())
+                .map(|s| s.clamped_offset())
+                .unwrap_or_default()
+        };
+        let start = egui::pos2(80.0, 20.0);
+        harness.event(egui::Event::PointerMoved(start));
+        harness.event(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        // Drag past the right edge, then hold the mouse still there.
+        for x in [150.0, 300.0, 450.0, 520.0] {
+            harness.event(egui::Event::PointerMoved(egui::pos2(x, 20.0)));
+            harness.step();
+        }
+        let at_edge = offset(&harness).x;
+        for _ in 0..60 {
+            harness.step();
+        }
+        let later = offset(&harness).x;
+        assert!(
+            later > at_edge + 100.0,
+            "the view keeps scrolling right while the pointer waits past the edge: {at_edge} → {later}"
+        );
+        harness.event(egui::Event::PointerButton {
+            pos: egui::pos2(520.0, 20.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(2);
+        let after_release = offset(&harness).x;
+        for _ in 0..10 {
+            harness.step();
+        }
+        assert_eq!(
+            offset(&harness).x,
+            after_release,
+            "stops when the button is let go"
+        );
+    }
 
     #[test]
     fn dragging_a_picture_larger_than_the_pane_pans_it() {

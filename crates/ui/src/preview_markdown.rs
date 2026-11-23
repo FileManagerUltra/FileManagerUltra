@@ -13,7 +13,7 @@ use fm_preview::mermaid::{self, Diagram};
 use fm_preview::thumbs::Thumb;
 
 use super::mermaid_ui::{self, DiagramStates};
-use super::{find, paged_scroll, remember_scroll, selection_job};
+use super::{find, paged_scroll, remember_scroll, select_edge_scroll, selection_job};
 use crate::{markdown_fonts, theme::Tokens};
 
 /// What the engine knows about each image URL of the document; `None` = not requested yet.
@@ -440,6 +440,7 @@ fn code(
                 ScrollArea::horizontal()
                     .id_salt(path.with("code"))
                     .show(ui, |ui| {
+                        select_edge_scroll(ui, egui::Vec2b::new(true, false));
                         find::label(ui, tokens, job, false);
                     });
             }
@@ -698,6 +699,7 @@ fn table(ui: &mut Ui, tokens: &Tokens, table: &Table, path: Id, actions: &mut Co
     ScrollArea::horizontal()
         .id_salt(path.with("table"))
         .show(ui, |ui| {
+            select_edge_scroll(ui, egui::Vec2b::new(true, false));
             ui.spacing_mut().item_spacing.y = 0.0;
             for (n, row) in std::iter::once(&table.header)
                 .chain(table.rows.iter())
@@ -970,6 +972,7 @@ pub(super) fn show(
     let output = paged_scroll(ui, ScrollArea::vertical(), ("pv-md", pane))
         .auto_shrink(false)
         .show(ui, |ui| {
+            select_edge_scroll(ui, egui::Vec2b::new(false, true));
             let padding = (tokens.font_size * 1.2).min(ui.available_width() * 0.06);
             egui::Frame::NONE.inner_margin(padding).show(ui, |ui| {
                 let width = ui.available_width().min(tokens.font_size * 52.0).max(1.0);
@@ -1137,6 +1140,64 @@ mod tests {
             assert_eq!(harness.state(), &["a.png".to_string()]);
             harness.get_by_label_contains("far");
         }
+    }
+
+    #[test]
+    fn selecting_past_the_edge_of_a_wide_code_block_scrolls_it() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let source = format!("Intro\n\n```\nstart {} THE-END\n```\n", "word ".repeat(150));
+        let doc = MdDoc {
+            blocks: fm_preview::markdown::parse(&source),
+            ..Default::default()
+        };
+        let tokens = Tokens::dark();
+        let mut harness = Harness::builder()
+            .with_size(vec2(600.0, 300.0))
+            .build_ui(move |ui| {
+                crate::theme::apply_to(ui.ctx(), &tokens);
+                show(
+                    ui,
+                    1,
+                    &tokens,
+                    &doc,
+                    false,
+                    &mut None,
+                    MdInputs::default(),
+                    &mut MdWants::default(),
+                );
+            });
+        harness.run();
+        let code_left = |h: &Harness<'_>| h.get_by_label_contains("THE-END").rect().left();
+        let before = code_left(&harness);
+        let code = harness.get_by_label_contains("THE-END").rect();
+        let start = egui::pos2(code.left() + 40.0, code.center().y);
+        harness.event(egui::Event::PointerMoved(start));
+        harness.event(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        });
+        harness.step();
+        for x in [200.0, 400.0, 560.0, 620.0] {
+            harness.event(egui::Event::PointerMoved(egui::pos2(x, start.y)));
+            harness.step();
+        }
+        for _ in 0..60 {
+            harness.step();
+        }
+        let after = code_left(&harness);
+        assert!(
+            after < before - 100.0,
+            "the code block scrolls left under the held pointer: {before} → {after}"
+        );
+        harness.event(egui::Event::PointerButton {
+            pos: egui::pos2(620.0, start.y),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        });
+        harness.run_steps(2);
     }
 
     #[test]
