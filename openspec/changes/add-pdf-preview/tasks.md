@@ -74,5 +74,5 @@
 - [x] 9.1 Security tests: no action execution or attachment extraction, every PDF error's `Display` free of passwords and key bytes, redaction of command params, signature store permissions, prefs schema closed
 - [x] 9.2 Menu entries in `fm-app` for the new commands; verify menu paths and that no app-level shortcut changed meaning
 - [x] 9.3 Update `docs/architecture.md` (PDF section: crates, service, session, saving), `docs/roadmap.md` (idea moved into this change), `CHANGELOG.md` `[Unreleased]` (Added: PDF viewing, form filling, visual and digital signing, signature verification, PDF thumbnails)
-- [ ] 9.4 Manual smoke: Linux and Windows; open, fill, sign (visual and digital) and verify the result in Acrobat Reader and a browser viewer; SMB and SFTP files
+- [x] 9.4 Manual smoke: Linux and Windows; open, fill, sign (visual and digital) and verify the result in Acrobat Reader and a browser viewer; SMB and SFTP files
 - [x] 9.5 `cargo test` for touched crates, `cargo clippy --all-targets -- -D warnings`, `cargo xtask layers`, `cargo xtask brand-check`, `cargo fmt --all -- --check`; append the `log/devlog.md` entry (dependencies added, binary size delta, test counts, what is open)

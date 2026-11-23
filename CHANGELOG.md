@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-23
+
 ### Added
 
 - Click and drag a picture in the Preview pane to move around in it when it is larger than the pane, for example at 100% or zoomed in. The pointer shows a hand while this is possible.
@@ -320,7 +322,8 @@ First public release (beta).
 
 - macOS install notes: clear the quarantine flag on the downloaded `.dmg` (`xattr -d com.apple.quarantine`), as the app is not yet signed or notarized.
 
-[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/FileManagerUltra/FileManagerUltra/compare/v0.2.3...v0.2.4
