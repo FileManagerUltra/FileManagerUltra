@@ -5677,3 +5677,53 @@ fn table_header_sorts_and_record_shows_the_row() {
     assert_eq!(selected.map(|(_, c)| c), Some(3));
     h.get_by_label_contains("Row ");
 }
+
+/// Finding 13: a filter that leaves few rows from far down the file keeps the row-number
+/// column wide enough for those numbers ("1,195"), so they are not cut on the left.
+#[test]
+fn filtered_table_row_numbers_keep_their_width() {
+    use egui_kittest::kittest::Queryable;
+    let _gpu = lock_gpu();
+    let Some(renderer) = renderer_or_skip() else {
+        return;
+    };
+    let mut csv = String::from("id,name\n");
+    for i in 1..=1200 {
+        csv.push_str(&format!("{i},item {i}\n"));
+    }
+    let (session, pane) = preview_fixture("many.csv", csv.as_bytes(), false);
+    let tokens = Tokens::light();
+    let mut h = Harness::builder()
+        .renderer(renderer)
+        .with_accessibility_check(false)
+        .with_size(egui::vec2(700.0, 360.0))
+        .build_ui_state(
+            move |ui, session: &mut Session| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(egui::Theme::Light);
+                fm_ui::preview::show(ui, session, pane, &tokens);
+            },
+            session,
+        );
+    settle_table(&mut h, pane);
+    let data_left = |h: &Harness<'_, Session>| h.get_by_label("Sort by id").rect().min.x;
+    let unfiltered = data_left(&h);
+    h.state_mut()
+        .dispatch(
+            "preview.table.condition.add",
+            &serde_json::json!({ "pane": pane, "column": 0, "op": "greater", "value": "1190" }),
+        )
+        .expect("condition");
+    settle_table(&mut h, pane);
+    let rows = h
+        .state()
+        .preview_slot(pane)
+        .and_then(|s| s.table())
+        .map(|t| t.row_count());
+    assert_eq!(rows, Some(10));
+    let filtered = data_left(&h);
+    assert!(
+        filtered >= unfiltered - 0.5,
+        "row numbers narrowed from {unfiltered} to {filtered}"
+    );
+}

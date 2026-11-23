@@ -513,7 +513,9 @@ fn grid(
         .map(|c| width_of(v, &st, *c, char_w, pad))
         .collect();
     let content_w: f32 = widths.iter().sum();
-    let digits = count(rows_total.max(1)).len() as f32;
+    // Row numbers are file row numbers, so a filter showing rows from far down the file
+    // needs the width of the file's count, not of how many rows match.
+    let digits = count(v.total_rows().max(rows_total).max(1)).len() as f32;
     let num_w = (digits * char_w + 2.0 * pad).max(3.0 * char_w);
     let data_left = rect.min.x + num_w;
     let data_w = (rect.max.x - BAR - data_left).max(1.0);

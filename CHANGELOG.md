@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CSV and TSV tables: with a filter on, row numbers of 1,000 and up are shown in full instead of losing their first digit (",856" instead of "1,856").
 - Synchronize Folders (Advanced): after ticking Keep in sync and comparing, the settings summary above the list now says "keep in sync on" instead of "off" while the window waits for you to press Start syncing.
 
 ## [0.3.2] - 2026-11-23
