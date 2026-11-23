@@ -415,7 +415,9 @@ change is visible: the changelog explains it and the preference restores the old
   they stay after leaving until `archive.unmount` (tree row "Close Archive") closes them,
   which unmounts them and archives inside them, folds them and moves panes out; `prefs.archives_in_tree` (Preferences, off by default) shows every
   archive file and keeps left archives expanded (user request 2026-11-23).
-- The `archive` token is derived from `accent_text` (user request 2026-11-23): 35% toward
-  white on dark themes, toward black on light ones; when that is not distinct enough
-  (contrast < 1.25:1 to the accent) it steps the other way while it stays 4.5:1 on rows.
-  `archive_muted` from D14 is not used.
+- The `archive` token is derived from the accent (user requests 2026-11-23): dark themes
+  take `accent_text` 35% toward white; light themes take the accent's hue at full
+  saturation in the readable shade furthest from the text (darkening drifted to the
+  near-black text: ΔE 1.75:1 contrast for #5cb2ff). Candidates must be 4.5:1 on rows,
+  CIE76 ΔE ≥ 30 from the text and ≥ 12 (then 8) from `accent_text`; grey accents take the
+  readable candidate furthest from the text. `archive_muted` from D14 is not used.

@@ -432,7 +432,9 @@ impl Tokens {
     /// accent colour).
     fn with_archive_tint(mut self) -> Self {
         self.archive = archive_tint(
+            self.accent,
             self.accent_text,
+            self.text,
             self.dark,
             [self.bg, self.panel, self.hover_bg],
         );
@@ -496,37 +498,130 @@ fn mix_toward(from: Color32, to: Color32, amount: f64) -> Color32 {
     )
 }
 
-/// The archive colour: the accent a step lighter on dark themes and a step darker on light
-/// ones (the direction that also adds contrast). When the accent is already too close to
-/// white or black for that step to show, it goes the other way as far as it stays readable
-/// (4.5:1 on every row surface).
-fn archive_tint(accent: Color32, dark: bool, surfaces: [Color32; 3]) -> Color32 {
-    const STEP: f64 = 0.35;
-    const DISTINCT: f64 = 1.25;
-    let readable = |c: Color32| surfaces.iter().all(|bg| contrast(c, *bg) >= 4.5);
-    let (toward, away) = if dark {
-        (Color32::WHITE, Color32::BLACK)
-    } else {
-        (Color32::BLACK, Color32::WHITE)
+/// CIE L*a*b* (D65) of an sRGB colour, for telling colours apart by eye.
+fn lab(color: Color32) -> [f64; 3] {
+    let linear = |channel: u8| {
+        let value = f64::from(channel) / 255.0;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
     };
-    let preferred = mix_toward(accent, toward, STEP);
-    if contrast(preferred, accent) >= DISTINCT && readable(preferred) {
-        return preferred;
-    }
-    for tenth in 2..=6 {
-        let candidate = mix_toward(accent, away, f64::from(tenth) / 10.0);
-        if !readable(candidate) {
-            break;
+    let (r, g, b) = (linear(color.r()), linear(color.g()), linear(color.b()));
+    let x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047;
+    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+    let f = |v: f64| {
+        if v > 0.008856 {
+            v.cbrt()
+        } else {
+            7.787 * v + 16.0 / 116.0
         }
-        if contrast(candidate, accent) >= DISTINCT {
-            return candidate;
-        }
+    };
+    [
+        116.0 * f(y) - 16.0,
+        500.0 * (f(x) - f(y)),
+        200.0 * (f(y) - f(z)),
+    ]
+}
+
+/// How different two colours look (CIE76 ΔE; about 2 is just noticeable).
+fn delta_e(a: Color32, b: Color32) -> f64 {
+    let (a, b) = (lab(a), lab(b));
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
+/// Hue (0..1) and saturation (0..1) of a colour, HSL style.
+fn hue_saturation(color: Color32) -> (f64, f64) {
+    let [r, g, b] = [color.r(), color.g(), color.b()].map(|c| f64::from(c) / 255.0);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let lightness = (max + min) / 2.0;
+    let delta = max - min;
+    if delta <= f64::EPSILON {
+        return (0.0, 0.0);
     }
-    if readable(preferred) {
-        preferred
+    let saturation = delta / (1.0 - (2.0 * lightness - 1.0).abs()).max(f64::EPSILON);
+    let hue = if (max - r).abs() <= f64::EPSILON {
+        ((g - b) / delta).rem_euclid(6.0)
+    } else if (max - g).abs() <= f64::EPSILON {
+        (b - r) / delta + 2.0
     } else {
-        accent
+        (r - g) / delta + 4.0
+    };
+    (hue / 6.0, saturation.min(1.0))
+}
+
+fn from_hsl(hue: f64, saturation: f64, lightness: f64) -> Color32 {
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let h = hue * 6.0;
+    let x = chroma * (1.0 - (h.rem_euclid(2.0) - 1.0).abs());
+    let (r, g, b) = match h as u8 {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let m = lightness - chroma / 2.0;
+    let byte = |v: f64| ((v + m).clamp(0.0, 1.0) * 255.0).round() as u8;
+    Color32::from_rgb(byte(r), byte(g), byte(b))
+}
+
+/// The archive colour, a variant of the accent that reads clearly apart from both the
+/// text and the accent itself, at 4.5:1 on every row surface.
+///
+/// Dark themes take the readable accent a step lighter. Light themes take the accent's
+/// hue at full strength in the lightest shade that is still readable: darkening the
+/// accent there drifts towards the near-black text. Each falls back to the other, and a
+/// grey accent to whichever readable candidate is furthest from the text.
+fn archive_tint(
+    accent: Color32,
+    accent_text: Color32,
+    text: Color32,
+    dark: bool,
+    surfaces: [Color32; 3],
+) -> Color32 {
+    const FROM_TEXT: f64 = 30.0;
+    const FROM_ACCENT: f64 = 12.0;
+    let readable = |c: Color32| surfaces.iter().all(|bg| contrast(c, *bg) >= 4.5);
+    let shade = mix_toward(
+        accent_text,
+        if dark { Color32::WHITE } else { Color32::BLACK },
+        0.35,
+    );
+    // The accent's hue at full strength: the shade furthest from the text that is readable
+    // and stays apart from the accent (preferably clearly, else just visibly).
+    let (hue, saturation) = hue_saturation(accent);
+    let vivid = |apart: f64| {
+        (saturation >= 0.15)
+            .then(|| {
+                (1..100)
+                    .map(|l| from_hsl(hue, saturation.max(0.85), f64::from(l) / 100.0))
+                    .filter(|c| readable(*c) && delta_e(*c, accent_text) >= apart)
+                    .max_by(|a, b| delta_e(*a, text).total_cmp(&delta_e(*b, text)))
+            })
+            .flatten()
+    };
+    let candidates = if dark {
+        [Some(shade), vivid(FROM_ACCENT), vivid(8.0)]
+    } else {
+        [vivid(FROM_ACCENT), vivid(8.0), Some(shade)]
+    };
+    let good = |c: &Color32| {
+        readable(*c) && delta_e(*c, text) >= FROM_TEXT && delta_e(*c, accent_text) >= 8.0
+    };
+    if let Some(c) = candidates.iter().flatten().find(|c| good(c)) {
+        return *c;
     }
+    candidates
+        .iter()
+        .flatten()
+        .copied()
+        .filter(|c| readable(*c))
+        .max_by(|a, b| delta_e(*a, text).total_cmp(&delta_e(*b, text)))
+        .unwrap_or(accent_text)
 }
 
 fn readable_accent(
@@ -1045,8 +1140,8 @@ mod tests {
         check(Tokens::light());
     }
 
-    /// The archive colour is a lighter (dark theme) or darker (light theme) variant of the
-    /// accent, distinct from it and readable for every accent.
+    /// The archive colour is a variant of the accent that stays readable and clearly apart
+    /// from the text (light theme: it used to drift to near-black) and from the accent.
     #[test]
     fn archive_colour_follows_the_accent_for_every_accent_in_both_themes() {
         let dark = Tokens::dark();
@@ -1054,10 +1149,17 @@ mod tests {
             luminance(dark.archive) > luminance(dark.accent_text),
             "lighter on dark"
         );
-        let light = Tokens::light();
+        // The reported case: the light-blue default accent in the light theme.
+        let prefs = fm_engine::Prefs {
+            theme: ThemePreference::Light,
+            accent: Some("#5cb2ff".into()),
+            ..Default::default()
+        };
+        let light = Tokens::resolve_with(&prefs, false);
         assert!(
-            luminance(light.archive) < luminance(light.accent_text),
-            "darker on light"
+            delta_e(light.archive, light.text) >= 30.0,
+            "{:?}",
+            light.archive
         );
         for theme in [ThemePreference::Dark, ThemePreference::Light] {
             for r in (0..=255u8).step_by(51) {
@@ -1077,16 +1179,38 @@ mod tests {
                                 t.accent
                             );
                         }
-                        assert!(
-                            contrast(t.archive, t.accent_text) >= 1.2,
-                            "archive {:?} too close to accent {:?}",
-                            t.archive,
-                            t.accent_text
-                        );
+                        let (_, saturation) = hue_saturation(t.accent);
+                        if saturation >= 0.15 {
+                            assert!(
+                                delta_e(t.archive, t.text) >= 25.0,
+                                "archive {:?} too close to the text (accent {:?}, {theme:?})",
+                                t.archive,
+                                t.accent
+                            );
+                            assert!(
+                                delta_e(t.archive, t.accent_text) >= 8.0,
+                                "archive {:?} too close to accent {:?}",
+                                t.archive,
+                                t.accent_text
+                            );
+                        }
                     }
                 }
             }
         }
+    }
+
+    #[test]
+    fn colour_helpers_round_trip() {
+        let (h, s) = hue_saturation(Color32::from_rgb(0xff, 0x00, 0x00));
+        assert!(h.abs() < 1e-9 && (s - 1.0).abs() < 1e-9);
+        assert_eq!(from_hsl(0.0, 1.0, 0.5), Color32::from_rgb(0xff, 0x00, 0x00));
+        assert_eq!(
+            from_hsl(2.0 / 3.0, 1.0, 0.5),
+            Color32::from_rgb(0x00, 0x00, 0xff)
+        );
+        assert!(delta_e(Color32::BLACK, Color32::WHITE) > 99.0);
+        assert!(delta_e(Color32::BLACK, Color32::BLACK) < 1e-9);
     }
 
     #[test]
