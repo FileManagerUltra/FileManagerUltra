@@ -62,15 +62,20 @@ impl Session {
         self.terminals.get(&pane).map(TermSession::snapshot)
     }
 
+    /// The current folder of the terminal shell `pane` runs (in any workspace tab), when it
+    /// is an existing folder.
+    pub(crate) fn terminal_dir(&self, pane: PaneId) -> Option<String> {
+        self.terminals
+            .get(&pane)
+            .and_then(TermSession::cwd)
+            .filter(|d| std::path::Path::new(d).is_dir())
+    }
+
     /// Where a pane is working: a Files pane's local folder, or a terminal's current folder.
     pub fn pane_dir(&self, pane: PaneId) -> Option<String> {
         let state = self.layout.state(pane)?;
         if state.kind == PaneKind::Terminal {
-            return self
-                .terminals
-                .get(&pane)
-                .and_then(TermSession::cwd)
-                .filter(|d| std::path::Path::new(d).is_dir());
+            return self.terminal_dir(pane);
         }
         state
             .kind
@@ -82,13 +87,23 @@ impl Session {
     /// Start the pane's shell if it has none, in the first local folder of: the active pane
     /// (a pane being switched to Terminal counts as the Files pane it was), the pane active
     /// before it (a split's source terminal), the last Files folder in any workspace, home.
-    /// A terminal pane's stored location is stale and never used.
+    /// A terminal pane's stored location is stale and never used; a terminal restored from a
+    /// saved workspace starts in the folder it was saved in instead (`PaneState::term_dir`).
     pub fn ensure_terminal(&mut self, pane: PaneId) -> Result<(), FmError> {
         if self.terminals.contains_key(&pane) {
             return Ok(());
         }
-        if self.layout.state(pane).is_none() {
+        let Some(state) = self.layout.state_mut(pane) else {
             return Err(FmError::NotFound(format!("pane {pane}")));
+        };
+        // A terminal restored from a saved workspace starts where it was saved (once).
+        if let Some(dir) = state
+            .term_dir
+            .take()
+            .filter(|_| state.kind == PaneKind::Terminal)
+            .and_then(|uri| local_dir(&uri))
+        {
+            return self.ensure_terminal_in(pane, Some(dir));
         }
         let (focused, previous) = (self.layout.focus.focused, self.layout.focus.previous);
         let candidate = |s: &Self, id: PaneId| {
@@ -605,6 +620,72 @@ mod start_folder_tests {
         assert_ne!(new, source);
         s.ensure_terminal(new).expect("start");
         assert_eq!(started_in(&s, new), Some(expected));
+    }
+
+    /// Send the pane's shell to `dir` and wait until the app sees it there: Linux reads the
+    /// real folder, Windows shells report it from their prompt; elsewhere the app is told.
+    fn move_shell(s: &mut Session, pane: PaneId, dir: &str) {
+        let term = s.terminals.get_mut(&pane).expect("terminal");
+        if cfg!(windows) {
+            term.write(format!("Set-Location -LiteralPath '{dir}'\r").as_bytes())
+                .expect("cd");
+        } else if cfg!(target_os = "linux") {
+            term.write(format!("cd '{dir}'\r").as_bytes()).expect("cd");
+        } else {
+            term.note_cwd(dir);
+        }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while started_in(s, pane).as_deref() != Some(dir) {
+            assert!(
+                Instant::now() < deadline,
+                "shell never reached {dir}: {:?}",
+                started_in(s, pane)
+            );
+            s.poll();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn a_saved_workspace_restores_each_terminal_in_its_folder() {
+        let (a, b) = (
+            tempfile::tempdir().expect("a"),
+            tempfile::tempdir().expect("b"),
+        );
+        let Some((mut s, pane)) = terminal_at(a.path()) else {
+            return;
+        };
+        let (at_a, at_b) = (canon(a.path()), canon(b.path()));
+        move_shell(&mut s, pane, &at_b);
+        s.dispatch("workspace.save", &serde_json::json!({"name": "Shells"}))
+            .expect("save");
+        s.dispatch("workspace.startup", &Params::Null)
+            .expect("startup");
+        let text = s.workspace_tick().expect("saved file");
+        // Moving the shell afterwards is not an unsaved change of the workspace.
+        move_shell(&mut s, pane, &at_a);
+        assert!(s.workspace_unsaved().is_empty(), "a cd marked it unsaved");
+
+        let mut t = Session::new().expect("session");
+        assert!(t.workspace_startup(&text).is_none());
+        let restored = t
+            .layout
+            .panes()
+            .into_iter()
+            .find(|p| t.pane_kind(*p) == Some(PaneKind::Terminal))
+            .expect("terminal pane");
+        t.ensure_terminal(restored).expect("start");
+        assert_eq!(
+            started_in(&t, restored),
+            Some(at_b),
+            "starts where it was saved"
+        );
+        // Once: a restart afterwards follows the shell, not the saved folder.
+        assert!(
+            t.layout
+                .state(restored)
+                .is_some_and(|st| st.term_dir.is_none())
+        );
     }
 
     #[test]

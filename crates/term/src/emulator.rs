@@ -193,6 +193,11 @@ impl Emulator {
         self.parser.callbacks_mut().take()
     }
 
+    /// The newest folder the shell reported (OSC 7 / OSC 9;9) since the last call.
+    pub fn take_cwd(&mut self) -> Option<String> {
+        self.parser.callbacks_mut().take_cwd()
+    }
+
     /// Replies owed to the program since the last call.
     pub fn take_replies(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.replies)
@@ -328,6 +333,23 @@ impl Emulator {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reported_folders_are_offered_once() {
+        let mut e = Emulator::new(24, 80);
+        assert_eq!(e.take_cwd(), None);
+        e.feed(b"\x1b]7;file://host/home/me%20too\x07");
+        assert_eq!(e.take_cwd().as_deref(), Some("/home/me too"));
+        assert_eq!(e.take_cwd(), None);
+        // Windows Terminal's form, ST-terminated, split across reads.
+        e.feed(b"\x1b]9;9;\"C:\\Us");
+        e.feed(b"ers\\me\"\x1b\\PS> ");
+        assert_eq!(e.take_cwd().as_deref(), Some(r"C:\Users\me"));
+        // The prompt text after it is still drawn; progress reports (9;4) are no folder.
+        assert!(e.snapshot().text_between((0, 0), (0, 79)).contains("PS>"));
+        e.feed(b"\x1b]9;4;1;50\x07\x1b]7;relative\x07");
+        assert_eq!(e.take_cwd(), None);
+    }
 
     #[test]
     fn osc52_write_is_offered_once_and_reads_are_ignored() {

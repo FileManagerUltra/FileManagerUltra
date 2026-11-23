@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Terminal panes in a saved workspace reopen in the folder they were in when you saved, on every platform. On Windows the app now also knows when you change folders in a PowerShell or Command Prompt terminal, so splitting or restarting a terminal follows you there too.
 - Photos larger than 2048 pixels are sharp at 100% and when zoomed in, instead of an enlarged, blurry copy of the smaller version made for Fit. The full-size picture loads in the background the first time you need it (up to 8192 pixels on the longest side).
 - Zooming a pane, terminal or preview all the way out and back in now returns to exactly 100%; before, it could end up at 104%.
 - Workspace tabs now reopen in the order you dragged them into; before, they came back in the order they were first saved.

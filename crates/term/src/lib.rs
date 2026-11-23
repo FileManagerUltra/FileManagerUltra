@@ -5,6 +5,7 @@
 
 mod charset;
 mod clip;
+mod cwd;
 mod emulator;
 mod links;
 mod mouse;

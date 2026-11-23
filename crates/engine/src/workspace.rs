@@ -389,10 +389,16 @@ impl Session {
                 ))
             })
             .collect();
-        Snapshot {
-            layout: layout.clone(),
-            previews,
+        // Terminals save the folder their shell is in, so a restored one starts there.
+        let mut layout = layout.clone();
+        for (id, state) in &mut layout.states {
+            if state.kind == PaneKind::Terminal {
+                state.term_dir = self
+                    .terminal_dir(*id)
+                    .and_then(|dir| VfsUri::parse(&dir).ok());
+            }
         }
+        Snapshot { layout, previews }
     }
 
     fn tab_value(&self, ix: usize) -> Option<Value> {

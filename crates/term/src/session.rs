@@ -52,7 +52,7 @@ pub struct TermSession {
     status: Status,
     reader: Option<JoinHandle<()>>,
     dialect: Dialect,
-    /// The folder the shell started in, or was last sent to (`note_cwd`).
+    /// The folder the shell started in, last reported, or was last sent to (`note_cwd`).
     known_dir: Option<String>,
 }
 
@@ -93,6 +93,17 @@ impl TermSession {
         }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // Shells that cannot be asked where they are report it from their prompt.
+        match dialect {
+            Dialect::PowerShell => {
+                cmd.args(["-NoExit", "-EncodedCommand", &crate::cwd::powershell_hook()]);
+            }
+            Dialect::Cmd if cfg!(windows) => {
+                let own = std::env::var("PROMPT").ok();
+                cmd.env("PROMPT", crate::cwd::cmd_prompt(own.as_deref()));
+            }
+            _ => {}
+        }
         if let Some(dir) = cwd {
             cmd.cwd(dir);
         }
@@ -181,6 +192,9 @@ impl TermSession {
                 Err(_) => break,
             }
         }
+        if let Some(dir) = self.emulator.take_cwd() {
+            self.known_dir = Some(dir);
+        }
         let replies = self.emulator.take_replies();
         if !replies.is_empty() {
             // Best effort: a full queue only loses an answer, never blocks the frame.
@@ -240,7 +254,8 @@ impl TermSession {
     }
 
     /// The shell's current folder: its real working directory where the OS shows it
-    /// without FFI (Linux), else the folder it started in or was last sent to.
+    /// without FFI (Linux), else the folder it last reported (OSC 7 / OSC 9;9, see
+    /// `crate::cwd`), started in or was last sent to.
     pub fn cwd(&self) -> Option<String> {
         #[cfg(target_os = "linux")]
         if let Some(dir) = self
@@ -374,6 +389,27 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_the_shell_reports_is_its_current_folder_where_the_os_does_not_say() {
+        let Some(mut s) = spawn() else { return };
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().to_str().expect("utf8").to_string();
+        // OSC 7, as zsh, fish and many prompts send it; the shell itself stays in /tmp.
+        s.write(
+            format!("printf '\\033]7;file://localhost{path}\\007'; echo sent-$((40+2))\r")
+                .as_bytes(),
+        )
+        .expect("write");
+        assert!(wait_for(&mut s, "sent-42"));
+        s.pump();
+        if cfg!(target_os = "linux") {
+            // Linux shows the real working directory, which wins.
+            assert!(s.cwd().is_some_and(|d| d.ends_with("tmp")), "{:?}", s.cwd());
+        } else {
+            assert_eq!(s.cwd().as_deref(), Some(path.as_str()));
+        }
+    }
+
+    #[test]
     fn exit_code_is_reported() {
         let Some(mut s) = spawn() else { return };
         s.write(b"exit 7\r").expect("write");
@@ -436,5 +472,58 @@ mod tests {
         assert!(!spawn_env_allowed("CARGO_TARGET_DIR"));
         assert!(spawn_env_allowed("PATH"));
         assert!(spawn_env_allowed("HOME"));
+    }
+}
+
+/// Windows shells cannot be asked for their folder; they report it from their prompt.
+#[cfg(all(test, windows))]
+#[allow(clippy::expect_used)]
+mod windows_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// Pump until the shell's folder is `want` (case-insensitive, as Windows paths are).
+    fn wait_cwd(s: &mut TermSession, want: &str) -> Option<String> {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            s.pump();
+            if s.cwd().is_some_and(|d| d.eq_ignore_ascii_case(want)) {
+                return s.cwd();
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        s.cwd()
+    }
+
+    fn follows_cd(shell: Shell, cd: &str) {
+        let start = std::env::temp_dir();
+        let start = start
+            .to_str()
+            .expect("utf8")
+            .trim_end_matches('\\')
+            .to_string();
+        let mut s = TermSession::spawn(shell, Some(&start), 24, 120).expect("spawn");
+        let target = tempfile::tempdir().expect("tmp");
+        let target = target.path().to_str().expect("utf8").to_string();
+        // Wait for the first prompt (it reports the start folder) before typing.
+        let _ = wait_cwd(&mut s, &start);
+        s.write(format!("{cd} \"{target}\"\r").as_bytes())
+            .expect("write");
+        let seen = wait_cwd(&mut s, &target);
+        assert!(
+            seen.as_deref()
+                .is_some_and(|d| d.eq_ignore_ascii_case(&target)),
+            "{shell:?}: the terminal still thinks it is in {seen:?}, not {target}"
+        );
+    }
+
+    #[test]
+    fn powershell_reports_its_folder_after_cd() {
+        follows_cd(Shell::PowerShell, "Set-Location -LiteralPath");
+    }
+
+    #[test]
+    fn cmd_reports_its_folder_after_cd() {
+        follows_cd(Shell::Cmd, "cd /d");
     }
 }

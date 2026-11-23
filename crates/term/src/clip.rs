@@ -9,11 +9,17 @@ const MAX_BASE64: usize = 1 << 20;
 #[derive(Default)]
 pub struct ClipSink {
     pending: Option<String>,
+    /// The newest folder the shell reported (OSC 7 / OSC 9;9), see `crate::cwd`.
+    cwd: Option<String>,
 }
 
 impl ClipSink {
     pub fn take(&mut self) -> Option<String> {
         self.pending.take()
+    }
+
+    pub fn take_cwd(&mut self) -> Option<String> {
+        self.cwd.take()
     }
 }
 
@@ -24,6 +30,12 @@ impl vt100::Callbacks for ClipSink {
         }
         if let Some(text) = decode(data) {
             self.pending = Some(text);
+        }
+    }
+
+    fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
+        if let Some(dir) = crate::cwd::from_osc(params) {
+            self.cwd = Some(dir);
         }
     }
 }
@@ -42,6 +54,12 @@ fn sextet(c: u8) -> Option<u32> {
 /// Decode standard base64 (padding optional) into UTF-8 text; `None` when malformed,
 /// empty or not valid UTF-8.
 fn decode(data: &[u8]) -> Option<String> {
+    let text = String::from_utf8(decode_bytes(data)?).ok()?;
+    (!text.is_empty()).then_some(text)
+}
+
+/// Decode standard base64 (padding optional); `None` when malformed.
+pub(crate) fn decode_bytes(data: &[u8]) -> Option<Vec<u8>> {
     let data = match data {
         [rest @ .., b'=', b'='] | [rest @ .., b'='] => rest,
         all => all,
@@ -60,8 +78,7 @@ fn decode(data: &[u8]) -> Option<String> {
         let bytes = acc.to_be_bytes();
         out.extend_from_slice(bytes.get(1..n)?);
     }
-    let text = String::from_utf8(out).ok()?;
-    (!text.is_empty()).then_some(text)
+    Some(out)
 }
 
 #[cfg(test)]

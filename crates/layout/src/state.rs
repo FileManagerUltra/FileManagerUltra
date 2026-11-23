@@ -629,6 +629,10 @@ pub struct PaneState {
     /// Terminal panes: text zoom of this terminal, on top of the terminal font size.
     #[serde(default = "default_term_scale")]
     pub term_scale: f32,
+    /// Terminal panes in a saved workspace: the shell's folder when it was saved. A restored
+    /// terminal starts there once; live panes never set it (their folder is the shell's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub term_dir: Option<VfsUri>,
     /// Files, Trash, Network and Media panes: zoom of this pane's text, rows and spacing, on
     /// top of the interface zoom. (Terminal and Preview panes keep their own zoom.)
     #[serde(default = "default_term_scale")]
@@ -814,6 +818,7 @@ impl PaneState {
             places: PlacesState::default(),
             media: MediaPaneState::default(),
             term_scale: 1.0,
+            term_dir: None,
             view_scale: 1.0,
         };
         if pane.location != pane.tree.root {

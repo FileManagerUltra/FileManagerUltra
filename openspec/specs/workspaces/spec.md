@@ -6,6 +6,10 @@ TBD - created by archiving change workspaces. Update Purpose after archive.
 ### Requirement: Workspace tabs
 The window SHALL show a tab bar of open workspaces. Each workspace owns its full pane layout; switching tabs MUST NOT disturb the others, and background terminals keep running. Closing the last tab replaces it with a fresh default. Dragging a tab (`workspace.move {from, to}`) SHALL reorder the tabs and the saved workspaces that are open as tabs, so they open at the next start in the order last arranged; saved workspaces that are not open keep their place, and a reorder is not an unsaved change.
 
+#### Scenario: Terminals reopen where they were
+- **WHEN** a workspace with a Terminal pane whose shell was moved to `D:\work` is saved, closed and opened again
+- **THEN** the terminal starts in `D:\work`, and moving the shell after saving does not mark the workspace unsaved
+
 #### Scenario: Tab order survives a restart
 - **WHEN** workspaces A, B and C open at startup and the user drags C before A, quits and starts again
 - **THEN** the tabs open as C, A, B
