@@ -2052,3 +2052,27 @@ fn picker_hidden_button_lists_dot_folders() {
     assert!(h.query_by_label(".secret").is_some());
     assert!(h.query_by_label("plain").is_some());
 }
+
+#[test]
+fn the_advanced_summary_says_keep_in_sync_on_while_waiting_for_start() {
+    let mut s = sync_session(&[("a", "x.txt", 10)], "Update");
+    s.dispatch("sync.watch.start", &json!({})).expect("watch");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while s
+        .sync
+        .current_state()
+        .is_some_and(|st| st.arming != fm_engine::sync_hub::Arming::Confirm)
+    {
+        s.poll();
+        assert!(std::time::Instant::now() < deadline, "compare timed out");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let mut h = harness(Tokens::dark(), s, fm_ui::sync::show);
+    h.run();
+    h.get_by_label("Advanced").click();
+    h.run();
+    // Ticked and compared, not started yet: the box, the button and the summary agree.
+    h.get_by_label("Start syncing");
+    h.get_by_label_contains("keep in sync on");
+    assert!(h.query_by_label_contains("keep in sync off").is_none());
+}

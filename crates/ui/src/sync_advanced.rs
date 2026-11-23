@@ -141,6 +141,12 @@ fn settings_open(ui: &egui::Ui, state: &SyncState) -> bool {
         .unwrap_or(false)
 }
 
+/// "Keep in sync" counts as on from the moment it is ticked (comparing, then waiting for
+/// Start syncing) until it is stopped, so the checkbox, the footer and the summary agree.
+fn keep_on(state: &SyncState) -> bool {
+    state.watching() || state.arming != Arming::Off
+}
+
 fn summary_card(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState) {
     let p = &state.profile;
     let goal = match p.mode {
@@ -168,7 +174,7 @@ fn summary_card(ui: &mut egui::Ui, tokens: &Tokens, state: &SyncState) {
     let left_out = p.filters.exclude.len();
     let text = format!(
         "{goal}{direction}{deleting} · compares {compare} · {left_out} left out · keep in sync {}",
-        if state.watching() { "on" } else { "off" }
+        if keep_on(state) { "on" } else { "off" }
     );
     egui::Frame::new()
         .stroke(egui::Stroke::new(
@@ -404,7 +410,7 @@ fn keep_in_sync(
         "Keep in sync",
         "Compare after changes and apply them while the app is open.",
         |ui, _| {
-            let mut watching = state.watching() || state.arming != Arming::Off;
+            let mut watching = keep_on(state);
             if ui
                 .checkbox(&mut watching, "Keep in sync")
                 .on_hover_text("Conflicts, permanent deletes and mass deletes wait for your review")
@@ -477,7 +483,7 @@ fn synchronize_row(
     state: &SyncState,
     commands: &mut Vec<Command>,
 ) {
-    let keep = state.watching() || state.arming != Arming::Off;
+    let keep = keep_on(state);
     // Exactly one button tall: a bare `with_layout` takes the rest of the window, centres the
     // button in it and counts as page height, so the list shrank a little every frame.
     let size = egui::vec2(
