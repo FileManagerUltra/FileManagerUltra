@@ -410,3 +410,6 @@ change is visible: the changelog explains it and the preference restores the old
   locations, and `reveal_in_trees` (in `poll`) expands the tree down into an archive
   through `PaneState::reveal_location_via(tree_parent)`, since fm-layout cannot see
   archive containers. Archive rows are tinted, drag their file, and are no drop target.
+  By default only the archives the pane is inside (`open_containers`) are tree rows, and
+  leaving folds them; `prefs.archives_in_tree` (Preferences, off by default) shows every
+  archive file and keeps left archives expanded (user request 2026-11-23).

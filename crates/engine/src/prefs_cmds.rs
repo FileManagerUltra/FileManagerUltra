@@ -67,6 +67,34 @@ pub fn archives_browse() -> CommandSpec {
     }
 }
 
+/// `prefs.archives.tree` — the folder tree shows every archive file as a folder (`true`)
+/// or only the archive the pane is inside (`false`, the default). Without `value` the
+/// setting is toggled.
+pub fn archives_in_tree() -> CommandSpec {
+    CommandSpec {
+        id: "prefs.archives.tree",
+        label: "Show All Archives in the Tree",
+        menu: &[
+            "File",
+            "Preferences",
+            "Show all archives as folders in the tree",
+        ],
+        shortcut: None,
+        params: "value?: bool",
+        enabled: |_session| true,
+        run: |session, params| {
+            let value = match object(params)?.and_then(|m| m.get("value")) {
+                None => !session.prefs.archives_in_tree,
+                Some(v) => v.as_bool().ok_or_else(|| {
+                    FmError::InvalidParams("value must be true or false".to_string())
+                })?,
+            };
+            session.prefs.archives_in_tree = value;
+            Ok(())
+        },
+    }
+}
+
 /// `prefs.terminal.shell` — the shell new terminal panes start: `default` (PowerShell on
 /// Windows, the login shell elsewhere), `powershell` or `cmd`. Running terminals keep
 /// theirs until restarted.

@@ -63,6 +63,11 @@ fn root_label(root: &VfsUri) -> String {
 }
 
 fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
+    let open = s
+        .layout
+        .state(pane)
+        .map(|p| fm_engine::archive_cmds::open_containers(&p.location))
+        .unwrap_or_default();
     let expanded = |uri: &VfsUri| {
         s.layout
             .state(pane)
@@ -118,11 +123,15 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
         let DirState::Ready { entries, .. } = dir_state else {
             continue;
         };
-        // Folders, then archive files, which expand like folders when Enter browses them.
+        // Folders, then the archive this pane is inside (and the archives around it), which
+        // expand like folders; other archive files stay out of the tree.
+        // Preferences can show every archive file instead.
         let archive = |e: &fm_vfs::Entry| {
-            s.prefs.archives_browse
-                && e.is_file()
-                && fm_engine::archive_cmds::is_archive_name(&e.name)
+            e.is_file()
+                && (open.contains(&e.uri)
+                    || s.prefs.archives_in_tree
+                        && s.prefs.archives_browse
+                        && fm_engine::archive_cmds::is_archive_name(&e.name))
         };
         let mut children: Vec<&fm_vfs::Entry> = entries
             .iter()
@@ -801,14 +810,23 @@ mod tests {
         let work = uri(&base);
         s.ensure_read(work.clone()).expect("read");
         wait_ready(&mut s, &work);
+        // Archives the pane is not inside stay out of the tree.
+        let visible = |s: &Session| -> Vec<String> {
+            collect_rows(s, 1, &work)
+                .into_iter()
+                .map(|r| r.name)
+                .collect()
+        };
+        assert_eq!(visible(&s), ["work", "folder"]);
+        let root = fm_engine::archive_cmds::tree_root(&uri(&base.join("site.zip"))).expect("root");
+        s.layout.state_mut(1).expect("pane").location = root.clone();
 
         let rows = collect_rows(&s, 1, &work);
         let names: Vec<_> = rows.iter().map(|r| (r.name.as_str(), r.depth)).collect();
         assert_eq!(names, [("work", 0), ("folder", 1), ("site.zip", 1)]);
         let zip = rows.get(2).expect("zip row");
         assert_eq!(zip.container, Some(uri(&base.join("site.zip"))));
-        assert_eq!(zip.uri.scheme(), fm_vfs::Scheme::Archive);
-        let root = zip.uri.clone();
+        assert_eq!(zip.uri, root);
 
         expand_node(&mut s, 1, &root);
         wait_ready(&mut s, &root);
@@ -826,9 +844,13 @@ mod tests {
         ));
         assert_eq!(handle_key(zip, Key::Enter), KeyOutcome::Open(root.clone()));
 
-        // Turning browsing off hides archives from the tree again.
-        s.prefs.archives_browse = false;
-        assert_eq!(collect_rows(&s, 1, &work).len(), 2);
+        // Leaving the archive takes it out of the tree again…
+        s.layout.state_mut(1).expect("pane").location = work.clone();
+        assert_eq!(visible(&s), ["work", "folder"]);
+        // …unless Preferences show every archive as a folder.
+        s.dispatch("prefs.archives.tree", &serde_json::json!({"value": true}))
+            .expect("pref");
+        assert_eq!(visible(&s), ["work", "folder", "site.zip", "docs"]);
     }
 
     /// Spec `file-tree`: expanding submits exactly one read — duplicates

@@ -32,6 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
         prefs_cmds::preferences(),
         prefs_cmds::retarget_links(),
         prefs_cmds::archives_browse(),
+        prefs_cmds::archives_in_tree(),
         prefs_cmds::recursive_preview(),
         prefs_cmds::remote_images(),
         prefs_cmds::mermaid(),

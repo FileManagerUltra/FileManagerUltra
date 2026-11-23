@@ -219,23 +219,67 @@ pub fn tree_parent(uri: &VfsUri) -> Option<VfsUri> {
     uri.parent()
 }
 
-/// Expand each tree down to a pane that just moved inside an archive (layout alone stops
-/// at the archive's root, which has no parent).
+/// The archive files a location is inside, innermost first (empty outside archives).
+/// The tree shows only these archives (`archive-browsing` "The open archive shows in the
+/// tree").
+pub fn open_containers(location: &VfsUri) -> Vec<VfsUri> {
+    let mut out = Vec::new();
+    let mut at = location.clone();
+    while let Some(r) = container_of(&at) {
+        if out.len() >= fm_archive::limits::MAX_NESTING {
+            break;
+        }
+        out.push(r.container.clone());
+        at = r.container;
+    }
+    out
+}
+
+/// Keep each tree in step with its pane's archive: when the pane moves inside one, expand
+/// the tree down to it (layout alone stops at the archive's root, which has no parent);
+/// when it leaves, fold the archives it left so their rows go away.
 pub(crate) fn reveal_in_trees(s: &mut Session) -> bool {
     let mut changed = false;
     for pane in s.layout.panes() {
         let Some(location) = s.layout.state(pane).map(|p| p.location.clone()) else {
             continue;
         };
-        if location.archive_handle().is_none() {
-            s.archives.revealed.remove(&pane);
-            continue;
-        }
         if s.archives.revealed.get(&pane) == Some(&location) {
             continue;
         }
-        s.archives.revealed.insert(pane, location);
-        if let Some(state) = s.layout.state_mut(pane) {
+        s.archives.revealed.insert(pane, location.clone());
+        let mut open: Vec<String> = open_containers(&location)
+            .iter()
+            .map(|c| fm_archive::handle_for(c, 0, None))
+            .collect();
+        open.extend(location.archive_handle().map(str::to_string));
+        let Some(state) = s.layout.state_mut(pane) else {
+            continue;
+        };
+        let left: Vec<VfsUri> = state
+            .tree
+            .expanded()
+            .filter(|u| {
+                u.archive_handle()
+                    .is_some_and(|h| !open.iter().any(|o| o == h))
+            })
+            .cloned()
+            .collect();
+        // With every archive shown in the tree, the ones left behind stay as they were.
+        for uri in left.iter().filter(|_| !s.prefs.archives_in_tree) {
+            state.tree.collapse(uri);
+            changed = true;
+        }
+        if state
+            .tree
+            .focused
+            .as_ref()
+            .and_then(VfsUri::archive_handle)
+            .is_some_and(|h| !open.iter().any(|o| o == h))
+        {
+            state.tree.focused = Some(location.clone());
+        }
+        if location.archive_handle().is_some() {
             state.reveal_location_via(&tree_parent);
             changed = true;
         }
@@ -508,8 +552,17 @@ mod tests {
         let state = s.layout.state(pane).expect("pane");
         assert!(state.tree.is_expanded(&root), "the archive's row opens");
         assert_eq!(state.tree.focused.as_ref(), Some(&inner));
-        assert_eq!(tree_parent(&root), Some(tree_root));
+        assert_eq!(tree_parent(&root), Some(tree_root.clone()));
+        assert_eq!(open_containers(&inner), [container]);
         assert!(!reveal_in_trees(&mut s), "only once per location");
+        // Leaving the archive folds it, so its row goes away.
+        if let Some(state) = s.layout.state_mut(pane) {
+            state.location = tree_root.clone();
+        }
+        assert!(reveal_in_trees(&mut s));
+        let state = s.layout.state(pane).expect("pane");
+        assert!(!state.tree.is_expanded(&root));
+        assert!(open_containers(&tree_root).is_empty());
     }
 
     fn tree_root_of(container: &VfsUri) -> VfsUri {

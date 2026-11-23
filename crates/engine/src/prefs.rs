@@ -227,6 +227,10 @@ pub struct Prefs {
     /// Enter on an archive browses inside it (`true`) or opens it with its application.
     #[serde(default = "default_true")]
     pub archives_browse: bool,
+    /// The folder tree shows every archive file as an expandable folder (`true`) or only
+    /// the archive the pane is inside (`false`, the default).
+    #[serde(default)]
+    pub archives_in_tree: bool,
     #[serde(default)]
     pub theme: ThemePreference,
     #[serde(default)]
@@ -635,6 +639,7 @@ impl Default for Prefs {
         Self {
             check_updates: true,
             archives_browse: true,
+            archives_in_tree: false,
             theme: ThemePreference::default(),
             window_maximized: false,
             window_geometry: None,
@@ -1144,6 +1149,7 @@ mod tests {
             keys,
             [
                 "archives_browse",
+                "archives_in_tree",
                 "bookmarks",
                 "check_updates",
                 "confirm_delete",

@@ -767,6 +767,19 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
             if response.changed() {
                 s.dispatch_or_notice("prefs.archives.browse", &json!({"value": browse}));
             }
+            let mut in_tree = s.prefs.archives_in_tree;
+            let response = ui
+                .add_enabled(
+                    s.prefs.archives_browse,
+                    egui::Checkbox::new(&mut in_tree, "Show all archives as folders in the tree"),
+                )
+                .on_hover_text(
+                    "Off: the tree shows only the archive you are in, and drops it when you \
+                     leave. On: every archive file in the tree can be expanded like a folder.",
+                );
+            if response.changed() {
+                s.dispatch_or_notice("prefs.archives.tree", &json!({"value": in_tree}));
+            }
         }
         Topic::Preview => {
             section_heading(ui, tokens, "Playback");
