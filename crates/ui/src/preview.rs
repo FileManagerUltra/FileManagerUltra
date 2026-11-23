@@ -1371,7 +1371,9 @@ fn image(
     // Only when a bigger copy is possible at all: the GPU may not hold more than this one.
     let sharper =
         (downscaled && edge > longest && drawn_px > longest as f32 * 1.02).then_some(edge);
+    // Click and drag pans a picture larger than the pane, with the mouse as on a touch screen.
     let output = paged_scroll(ui, ScrollArea::both(), ("pv-img", pane))
+        .scroll_source(egui::scroll_area::ScrollSource::ALL)
         .auto_shrink(false)
         .max_height(avail.y)
         .show(ui, |ui| {
@@ -1401,6 +1403,16 @@ fn image(
                 response.context_menu(|ui| crate::context_menu::copy_image_item(ui, uri));
             }
         });
+    let pannable = output.content_size.x > output.inner_rect.width() + 0.5
+        || output.content_size.y > output.inner_rect.height() + 0.5;
+    if pannable && ui.rect_contains_pointer(output.inner_rect) {
+        let dragging = ui.input(|i| i.pointer.primary_down());
+        ui.ctx().set_cursor_icon(if dragging {
+            egui::CursorIcon::Grabbing
+        } else {
+            egui::CursorIcon::Grab
+        });
+    }
     remember_scroll(ui, &output);
     ui.label(tokens.muted(format!(
         "{} · {ow}×{oh} · {:.0}%{}",
@@ -3261,6 +3273,63 @@ pub fn grid_has_keyboard(ctx: &egui::Context) -> bool {
 mod tests {
     use super::*;
     use fm_layout::PaneKind;
+
+    #[test]
+    fn dragging_a_picture_larger_than_the_pane_pans_it() {
+        let (w, h) = (1600u32, 1200u32);
+        let doc = ImageDoc {
+            width: w,
+            height: h,
+            frames: vec![(vec![128; (w * h * 4) as usize], 0)],
+            original: (w, h),
+            format: "png",
+        };
+        let preview = Arc::new(Preview::Image(doc.clone()));
+        let tokens = Tokens::dark();
+        let scroll_id = std::cell::Cell::new(Id::NULL);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(600.0, 400.0))
+            .build_ui(|ui| {
+                scroll_id.set(ui.make_persistent_id(egui::IdSalt::new(("pv-img", 1u64))));
+                let _ = image(ui, 1, &tokens, &preview, &doc, Zoom::Actual, None, 0);
+            });
+        harness.run_steps(2);
+        let offset = |h: &egui_kittest::Harness<'_>| {
+            egui::scroll_area::State::load(&h.ctx, scroll_id.get())
+                .map(|s| s.clamped_offset())
+                .unwrap_or_default()
+        };
+        assert_eq!(offset(&harness), egui::Vec2::ZERO);
+        let start = egui::pos2(400.0, 250.0);
+        harness.event(egui::Event::PointerMoved(start));
+        harness.event(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        for step in 1..=10 {
+            harness.event(egui::Event::PointerMoved(
+                start - vec2(20.0 * step as f32, 15.0 * step as f32),
+            ));
+            harness.run();
+        }
+        let end = start - vec2(200.0, 150.0);
+        harness.event(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(2);
+        let moved = offset(&harness);
+        // Dragging up-left shows more of the picture's lower right, like moving a photo.
+        assert!(
+            moved.x > 150.0 && moved.y > 100.0,
+            "the picture follows the pointer: {moved:?}"
+        );
+    }
 
     #[test]
     fn a_downscaled_picture_asks_for_a_sharper_one_only_when_drawn_larger() {

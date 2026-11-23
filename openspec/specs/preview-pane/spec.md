@@ -270,6 +270,9 @@ larger than that copy on screen (100%, magnified, or Fit in a large pane), the p
 once per picture for a sharper decode with `preview.image.full {pane?, edge}` (edge at most
 8192 px and the GPU's largest texture, never above the original), run on the job lanes, which
 replaces the picture in place when done; a failed decode keeps the shown picture.
+A picture larger than the pane SHALL pan by clicking and dragging it with the mouse (it
+follows the pointer), besides the scroll bars and wheel; the pointer SHALL show an open hand
+over such a picture and a closed hand while dragging. A right-click still opens its menu.
 
 A focused Preview SHALL accept Ctrl/Cmd+= (or +), Ctrl/Cmd+- and Ctrl/Cmd+0.
 A shortcut SHALL do the same in every pane: Ctrl/Cmd+Shift+= (or +), Ctrl/Cmd+Shift+-
