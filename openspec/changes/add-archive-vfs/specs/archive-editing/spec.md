@@ -7,6 +7,10 @@ Inside a writable archive (zip, tar family, 7z), copying or moving files in, cre
 - **WHEN** the user copies `report.pdf` into `site.zip/docs` with F5
 - **THEN** `report.pdf` appears in the listing of `site.zip/docs`, and `site.zip` on disk has the same size and modification time as before
 
+#### Scenario: Copy a multi-selection into an archive pane
+- **WHEN** one pane shows `site.zip/docs` and the user selects 12 files and 3 folders in the other pane with Shift-click and presses F5
+- **THEN** one copy job stages all of them, they appear in `site.zip/docs`, and the unsaved bar counts the change
+
 #### Scenario: Delete inside a tar.gz
 - **WHEN** the user deletes `www/old.html` inside `site.tar.gz`
 - **THEN** the confirmation says it is removed from the archive when saved, and the file disappears from the listing

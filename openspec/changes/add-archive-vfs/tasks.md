@@ -59,6 +59,9 @@
 - [ ] 6.5 Split output: `split { size }` writes `name.ext.001…` for every format (≥ 64 KiB, presets); output re-opens as one archive
 - [ ] 6.6 `archive.join` for numbered parts (missing-part refusal, conflict prompt, progress, cancel); not offered for spanned zip or RAR
 - [ ] 6.7 Moving out of writable archives stages the removal; read-only archives offer copy only
+- [ ] 6.8 Adding a selection in one job: shared source walker (`focused_selection`/`parse_sources` incl. Shift ranges, Ctrl picks, Select all, Find Files results; recursive folders, empty folders, relative layout, links stored not followed); one progress/conflict/summary; tests with mixed selections of 1, 7 and 10 000 items
+- [ ] 6.9 `archive.compress_quick` ("Add to name.zip/.7z", default name rules) and `archive.add` (existing archive: mount, password, stage with conflict prompt + apply to all, save in the same job; stage only when the archive already has staged changes); read-only targets refused; bad-param tests (empty sources, non-archive, read-only, target inside sources)
+- [ ] 6.10 Drop target: dropping a selection on an archive file in a listing or the tree dispatches `archive.add`; drag-and-drop contract tests; context menu entries "Compress to…", "Add to name.zip", "Add to name.7z", "Add to archive…" for any selection
 
 ## 7. UI
 

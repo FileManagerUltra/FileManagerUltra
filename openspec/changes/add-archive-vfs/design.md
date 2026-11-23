@@ -212,6 +212,37 @@ the pane shows "RAR archives need 7-Zip or unrar" with the install hint per OS.
 - Secrets are not handed to other threads beyond the mount's own workers; the RAR tool
   gets the password as its `-p` argument for the life of that child (D9).
 
+### D11a. Adding a selection
+
+All add paths take the pane's whole selection (`focused_selection`, or explicit
+`sources` parsed by `parse_sources`, the same as F5 and the other item commands: Shift ranges, Ctrl picks, Select all, the quick-filter result) and run as **one**
+job with one progress bar, one conflict policy and one summary, never one job per item.
+
+- **Layout inside the archive**: each selected item is stored under its own name at
+  the archive root (or the target folder inside it), folders recursively, so selecting
+  `docs/` and `notes.txt` in `/home/me/project` gives `docs/…` and `notes.txt`, not
+  `home/me/project/…`. Empty folders are stored. A selection from a Find Files result
+  (items from several folders) keeps paths relative to the search root.
+- **Links**: tar and zip store symlinks as links; 7z stores them as links when
+  `sevenz-rust2` supports it (spike 1.3), otherwise they are skipped and listed in the
+  summary. Links are never followed while adding, so a link to `/` cannot pull in the
+  whole disk.
+- **Default name** for a new archive: the single item's name, or the pane folder's name
+  for several items; the dialog shows how many files and folders and the total size.
+- **New archive**: `archive.compress` (dialog) or `archive.compress_quick { sources,
+  format: "zip" | "7z" }` ("Add to *name*.zip", no dialog, normal level, no password).
+- **Existing archive from outside**: `archive.add { sources, archive, dir?, ...}` —
+  chosen with "Add to archive…" (path picker limited to writable archives) or by
+  dropping the selection on an archive file in a listing or the tree. It mounts the
+  archive (asking for its password if encrypted; new members are encrypted with it),
+  stages the selection with the usual conflict prompt for names that already exist,
+  and saves in the same job (D7). If that archive already has staged changes from a
+  pane, the selection is staged on top and not saved, and the unsaved bar shows it.
+- **Into an archive a pane is showing**: F5/F6, paste or drag a selection onto that
+  pane; this is the staged path (D6) with the normal multi-item copy pipeline.
+- Read-only archives (ISO, RAR, spanned zip, single-file compressed) are not offered
+  as targets and refuse drops with the reason.
+
 ### D11. Compress to… and encrypting
 
 `archive.compress { sources, target, format, level, password?, encryption?,

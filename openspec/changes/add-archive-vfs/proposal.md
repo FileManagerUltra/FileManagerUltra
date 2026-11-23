@@ -53,6 +53,15 @@ and saved deliberately, so an archive is never rewritten by accident.
   (zip, tar.gz, tar.xz, tar.zst, 7z; level; optional password for zip and 7z) as file
   jobs with progress, cancel and conflict handling. Copying out of an archive with
   F5 or drag and drop is extraction too.
+- **Adding a selection at once.** Everything selected in a pane (Shift-click ranges,
+  Ctrl-click picks, Select all, mixed files and folders) goes into an archive in one
+  job, with folders added recursively and paths kept relative to the pane's folder:
+  into a new archive (Compress to…, or the one-click "Add to *name*.zip" / "Add to
+  *name*.7z"), into an existing archive ("Add to archive…", or dropping the selection
+  onto an archive file in a listing), or into the archive another pane is showing
+  (F5 or drag and drop). Adding to an existing archive from outside saves it in the
+  same job; adding inside a pane that is already showing the archive is staged like
+  any other edit.
 - **Preview.** The Preview pane shows an archive's format, entry count, packed and
   unpacked size, encryption and its top-level entries; files inside an archive preview
   like any other file.
@@ -73,7 +82,7 @@ and saved deliberately, so an archive is never rewritten by accident.
 ### New Capabilities
 - `archive-browsing`: recognising archives, browsing them as folders on every backend and nested, the archive look, formats and their read/write support, split archives, encrypted archives and passwords, RAR through an installed tool, the archive preview and the bounds on hostile archives.
 - `archive-editing`: staged changes inside writable archives (including split archives and setting, changing or removing a password), Save, Discard, conflict detection on save, and the unsaved-changes prompts.
-- `archive-extract-compress`: Extract here, Extract to…, Compress to… (with encryption and splitting into parts), Join parts, and copying out of archives, as file jobs.
+- `archive-extract-compress`: Extract here, Extract to…, Compress to… (with encryption and splitting into parts), adding a multi-selection to a new or existing archive in one job, Join parts, and copying out of archives, as file jobs.
 
 ### Modified Capabilities
 - `path-display`: locations inside archives have a display form (the archive's display form, then the inner path) that can be typed back.

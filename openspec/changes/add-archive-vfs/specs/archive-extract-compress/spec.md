@@ -40,6 +40,29 @@ The Compress dialog SHALL offer a password, typed twice, for zip and 7z. Zip SHA
 - **WHEN** the two password fields differ
 - **THEN** the Compress button is disabled and the dialog says the passwords do not match
 
+### Requirement: A selection is added to an archive in one job
+Compress to…, "Add to *name*.zip", "Add to *name*.7z", "Add to archive…", dropping onto an archive file and copying into a pane showing an archive SHALL take the pane's whole selection (Shift-click ranges, Ctrl-click picks, Select all, mixed files and folders) and add it in one job with one progress display, one conflict policy and one summary. Folders SHALL be added recursively, including empty folders; each selected item SHALL be stored under its own name relative to the pane's folder (or the search root for Find Files results); symlinks SHALL be stored as links, never followed. The Compress dialog SHALL show the number of files and folders and the total size of the selection.
+
+#### Scenario: Shift-click range into a new zip
+- **WHEN** the user Shift-clicks from `a.txt` to `photos/` (5 files and 2 folders) in `/home/me/project` and chooses Compress to… zip
+- **THEN** one job creates `project.zip` holding the 5 files and both folders with their contents at its root, and the dialog had shown "5 files, 2 folders"
+
+#### Scenario: One-click add
+- **WHEN** the user selects three files and chooses "Add to report.zip" (named after the first item when only one is selected, after the folder otherwise)
+- **THEN** the zip is created next to them without a dialog
+
+#### Scenario: Add to an existing archive
+- **WHEN** the user selects two folders and a file and chooses "Add to archive…" and picks `backup.7z`
+- **THEN** one job adds all three to `backup.7z`, asks once per name that already exists in the archive (with "apply to all"), saves the archive, and the original is replaced only after the new archive was verified
+
+#### Scenario: Drop a selection onto an archive file
+- **WHEN** the user drags a selection of 20 files onto `site.zip` in another pane's listing
+- **THEN** the 20 files are added to `site.zip` and it is saved in one job
+
+#### Scenario: Read-only target
+- **WHEN** the user drops a selection onto `debian.iso`
+- **THEN** the drop is refused with "ISO images are read-only" and nothing changes
+
 ### Requirement: Join parts
 "Join parts" SHALL concatenate an archive's numbered parts into one file next to them (named without the part number), as a file job with progress, cancel and the conflict prompt; it SHALL refuse when a part is missing, naming it, and SHALL NOT be offered for zip spanned sets or RAR volumes.
 
@@ -66,8 +89,12 @@ Extraction of more than 1 GiB at a ratio above 1000:1 SHALL ask before continuin
 - **THEN** the job asks before writing beyond 1 GiB, and stopping leaves no partial file
 
 ### Requirement: Extract and compress commands
-`archive.extract { uri, dest? }`, `archive.compress { sources, target, format, level, password?, encryption?, encrypt_names?, split? }` and `archive.join { uri, target? }` SHALL be commands with ids, menu paths (File menu and the context menu) and bad-parameter tests; the password parameter SHALL never appear in logs, notices or errors.
+`archive.extract { uri, dest? }`, `archive.compress { sources, target, format, level, password?, encryption?, encrypt_names?, split? }`, `archive.compress_quick { sources, format }`, `archive.add { sources, archive, dir? }` and `archive.join { uri, target? }` SHALL be commands with ids, menu paths (File menu and the context menu) and bad-parameter tests; the password parameter SHALL never appear in logs, notices or errors.
 
 #### Scenario: Malformed compress params
 - **WHEN** `archive.compress` receives an unknown format, an empty source list, a level of 99, a password for tar.gz or a part size below 64 KiB
 - **THEN** it returns `Err` and no file is created
+
+#### Scenario: Malformed add params
+- **WHEN** `archive.add` receives an empty source list, a target that is not an archive, a read-only archive, or a source that is the target archive itself
+- **THEN** it returns `Err` and the archive is unchanged
