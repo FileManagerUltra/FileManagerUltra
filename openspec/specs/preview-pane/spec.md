@@ -122,7 +122,7 @@ plain code text, without language labels, Markdown fences or UI chrome.
 - **THEN** it returns an error without changing the clipboard or performing filesystem I/O
 
 ### Requirement: Preview follows a source Files pane
-A Preview pane SHALL display the entry focused in its source Files pane. The source SHALL default to the most recently focused Files pane and MAY be pinned to a specific Files pane from the pane header; a pinned source that closes SHALL revert to following focus. A Preview pane is never its own source.
+A Preview pane SHALL display the entry focused in its source Files pane. The source SHALL default to the most recently focused Files pane and MAY be pinned to a specific Files pane from the pane header; a pinned source that closes SHALL revert to following focus. A Preview pane is never its own source. While a Preview holds unsaved PDF form values or placed signatures, it SHALL keep showing that document instead of following the source, until the changes are saved or discarded.
 
 #### Scenario: Follow focus
 - **WHEN** two Files panes and a Preview pane exist and the user focuses the second Files pane and moves its cursor
@@ -131,6 +131,10 @@ A Preview pane SHALL display the entry focused in its source Files pane. The sou
 #### Scenario: Pinned source closes
 - **WHEN** the pinned source pane is closed
 - **THEN** the preview follows the most recently focused Files pane again
+
+#### Scenario: Unsaved PDF holds the preview
+- **WHEN** a Preview has unsaved PDF form values and the source cursor moves to another file
+- **THEN** the Preview keeps the PDF and its values, and following resumes after Save or Discard
 
 ### Requirement: Preview never blocks the UI
 Reading and rendering SHALL happen off the UI thread, debounced while the cursor moves rapidly; results for a no-longer-selected entry SHALL be discarded.
@@ -324,7 +328,7 @@ identity or raw/pretty mode SHALL invalidate a previous whole-document selection
 - **THEN** their rendered text is copied in document order without heading or emphasis syntax
 
 ### Requirement: Hostile files are bounded
-Previews SHALL enforce size, line, dimension, frame and time limits, check image dimensions before allocating, never follow links or load external resources, and convert any decoder panic, error or timeout into an error card. Tables SHALL cap a record at 1 MiB, a record at 16 384 fields, a displayed field at 64 KiB, sorting at 512 MiB of keys or 20 million rows, and filter results at 20 million rows.
+Previews SHALL enforce size, line, dimension, frame and time limits, check image dimensions before allocating, never follow links or load external resources, and convert any decoder panic, error or timeout into an error card. Tables SHALL cap a record at 1 MiB, a record at 16 384 fields, a displayed field at 64 KiB, sorting at 512 MiB of keys or 20 million rows, and filter results at 20 million rows. PDFs SHALL additionally follow the limits in `pdf-view` ("Hostile PDFs are bounded").
 
 #### Scenario: Decompression bomb
 - **WHEN** an image header declares more than 100 megapixels
@@ -337,6 +341,10 @@ Previews SHALL enforce size, line, dimension, frame and time limits, check image
 #### Scenario: Unclosed quote
 - **WHEN** a CSV file opens a quoted field that never closes
 - **THEN** the record is cut after 1 MiB at the next line break, the rest of the file still shows as rows, and the toolbar counts the malformed record
+
+#### Scenario: Corrupt PDF
+- **WHEN** a file starts with `%PDF` but its structure is unreadable
+- **THEN** the pane shows that the PDF could not be read, with its file information, and the app keeps running
 
 ### Requirement: Video playback is owned by the pane
 A Preview pane SHALL play at most one video, with sound, starting automatically unless disabled in Preferences, controllable with play/pause, seek, volume and mute, decoded at a size fitted to the pane; leaving the file, switching the pane kind or closing the pane SHALL stop it and end the decoder process. This simple single-file playback SHALL remain independent of the Media pane's queue and SHALL NOT require a Media pane. Without a decoder available the pane SHALL show metadata and a hint instead; without an audio device it SHALL play silently with a hint.
@@ -354,7 +362,7 @@ A Preview pane SHALL play at most one video, with sound, starting automatically 
 - **THEN** it plays silently and the pane shows a hint
 
 ### Requirement: Preview commands
-`pane.preview.source`, `preview.zoom`, `preview.toggle_wrap`, `preview.toggle_pretty` and `preview.video.play`, `preview.video.seek` and `preview.video.fit` SHALL be commands with ids, menu paths and bad-parameter tests; they are no-ops unless the focused pane is a Preview.
+`pane.preview.source`, `preview.zoom`, `preview.toggle_wrap`, `preview.toggle_pretty` and `preview.video.play`, `preview.video.seek` and `preview.video.fit` SHALL be commands with ids, menu paths and bad-parameter tests; they are no-ops unless the focused pane is a Preview. The PDF view, form and signing commands are specified in `pdf-view`, `pdf-forms` and `pdf-signing`.
 
 #### Scenario: Bad source
 - **WHEN** `pane.preview.source` is given a pane that is not a Files pane
