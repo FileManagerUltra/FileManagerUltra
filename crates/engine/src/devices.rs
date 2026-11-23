@@ -1,7 +1,10 @@
 //! Cached mounted volumes. Discovery has one worker at a time: a stuck mount must
 //! neither block local file jobs nor accumulate abandoned scan threads.
 
+mod images;
 mod platform;
+
+pub use images::is_disk_image_name;
 
 use std::time::{Duration, Instant};
 
@@ -64,6 +67,8 @@ pub struct Device {
     pub free: Option<u64>,
     pub identity: String,
     pub removal: Removal,
+    /// The disk image file this volume is mounted from, when the OS reports it.
+    pub image: Option<std::path::PathBuf>,
 }
 
 impl std::fmt::Debug for Device {
@@ -134,6 +139,8 @@ pub struct Devices {
     local: Vec<Volume>,
     local_pending: Option<Receiver<Vec<Volume>>>,
     local_next: Option<Instant>,
+    /// A disk image opened from the app whose mount is not listed yet.
+    awaiting: Option<images::AwaitImage>,
 }
 
 impl Devices {
@@ -356,7 +363,9 @@ impl crate::Session {
             self.volumes.next_scan = None;
         }
         self.volumes.focused = focused;
-        let interval = if focused {
+        let interval = if self.volumes.awaiting.is_some() {
+            images::AWAIT_SCAN_INTERVAL
+        } else if focused {
             SCAN_INTERVAL
         } else {
             IDLE_SCAN_INTERVAL
@@ -416,7 +425,9 @@ impl crate::Session {
         self.volumes.started = None;
         self.volumes.next_scan = Some(
             Instant::now()
-                + if self.volumes.focused {
+                + if self.volumes.awaiting.is_some() {
+                    images::AWAIT_SCAN_INTERVAL
+                } else if self.volumes.focused {
                     SCAN_INTERVAL
                 } else {
                     IDLE_SCAN_INTERVAL
@@ -456,6 +467,7 @@ impl crate::Session {
                     }
                 }
                 self.volumes.last_error = None;
+                self.check_awaited_image();
             }
             Err(error) => {
                 let message = error.to_string();
@@ -544,6 +556,7 @@ mod tests {
             free: Some(32 << 30),
             identity: "mount-42".into(),
             removal: Removal::Eject,
+            image: None,
         }
     }
 

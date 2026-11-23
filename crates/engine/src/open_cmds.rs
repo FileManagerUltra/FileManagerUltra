@@ -304,6 +304,21 @@ pub fn open_file() -> CommandSpec {
                 return Ok(());
             }
             let path = local_path(&uri)?;
+            // A disk image the OS already mounted is shown rather than mounted again; a new
+            // one is opened in the pane as soon as its mount appears in Devices.
+            let image = mode == Mode::Default && crate::devices::is_disk_image_name(&entry.name);
+            if image && let Some(mount) = s.mounted_image(&path) {
+                let label = s
+                    .volumes
+                    .device_for(&mount)
+                    .map(|d| d.name.clone())
+                    .unwrap_or_else(|| mount.to_string());
+                s.show_image_mount(&mount, &entry.name, &label);
+                return Ok(());
+            }
+            if image {
+                s.await_image(&path, &entry.name);
+            }
             s.jobs
                 .submit(lane_for(uri.scheme()), move |_ctx| launch(&path, mode));
             if mode == Mode::Default {

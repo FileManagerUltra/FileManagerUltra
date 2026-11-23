@@ -113,6 +113,7 @@ fn device(
         free: capacity.map(|(_, free)| free),
         identity,
         removal,
+        image: None,
     })
 }
 
@@ -296,6 +297,20 @@ mod linux {
             && !backing.ends_with(" (deleted)")
     }
 
+    /// The image file behind a loop mount, when it is a plain disk image.
+    fn loop_image(m: &Mount) -> Option<PathBuf> {
+        if !m.source.starts_with("/dev/loop") {
+            return None;
+        }
+        let parent = drive(m)?;
+        let backing = std::fs::read_to_string(parent.join("loop/backing_file")).ok()?;
+        let backing = backing.trim();
+        let holders = std::fs::read_dir(parent.join("holders"))
+            .map(|d| d.count())
+            .unwrap_or(usize::MAX);
+        image_loop(backing, holders, Path::new(backing).is_file()).then(|| PathBuf::from(backing))
+    }
+
     fn removal(m: &Mount, all: &[Mount]) -> Removal {
         if network(&m.fs) {
             return if Path::new("/bin/umount").is_file() {
@@ -308,15 +323,7 @@ mod linux {
         // device backed by a plain file; VeraCrypt's loops are backed by its own FUSE
         // file or hold a device-mapper volume, so they stay with VeraCrypt.
         if m.source.starts_with("/dev/loop") {
-            let image = drive(m).is_some_and(|parent| {
-                let backing =
-                    std::fs::read_to_string(parent.join("loop/backing_file")).unwrap_or_default();
-                let holders = std::fs::read_dir(parent.join("holders"))
-                    .map(|d| d.count())
-                    .unwrap_or(usize::MAX);
-                image_loop(backing.trim(), holders, Path::new(backing.trim()).is_file())
-            });
-            return if image && Path::new("/usr/bin/udisksctl").is_file() {
+            return if loop_image(m).is_some() && Path::new("/usr/bin/udisksctl").is_file() {
                 Removal::Dismount
             } else {
                 unsupported()
@@ -402,14 +409,16 @@ mod linux {
                         .file_name()
                         .map_or_else(|| m.point.clone(), |n| n.to_string_lossy().into_owned())
                 });
-            out.push(device(
+            let mut found = device(
                 &m.point,
                 &name,
                 &m.fs,
                 identity(m),
                 capacity,
                 removal(m, &all),
-            )?);
+            )?;
+            found.image = loop_image(m);
+            out.push(found);
         }
         Ok(out)
     }
@@ -696,14 +705,18 @@ Dismount-DiskImage -ImagePath $image | Out-Null
                         text("ProviderName")
                     )
                 };
-                device(
+                let mut found = device(
                     &format!("{drive}\\"),
                     label,
                     text("FileSystem"),
                     identity,
                     capacity,
                     removal,
-                )
+                )?;
+                if image {
+                    found.image = Some(std::path::PathBuf::from(text("ImagePath")));
+                }
+                Ok(found)
             })
             .collect()
     }
@@ -784,6 +797,10 @@ Dismount-DiskImage -ImagePath $image | Out-Null
             assert_eq!(found.len(), 1);
             assert_eq!(found[0].removal, Removal::Dismount);
             assert_eq!(found[0].identity, "E::AB:C:\\Users\\me\\disc.iso");
+            assert_eq!(
+                found[0].image.as_deref(),
+                Some(std::path::Path::new("C:\\Users\\me\\disc.iso"))
+            );
         }
 
         #[test]

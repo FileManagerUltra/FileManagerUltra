@@ -636,6 +636,7 @@ mod tests {
             free: Some(32 << 30),
             identity: "virtual-42".into(),
             removal: Removal::Unsupported("Dismount this volume in VeraCrypt".into()),
+            image: None,
         }
     }
 

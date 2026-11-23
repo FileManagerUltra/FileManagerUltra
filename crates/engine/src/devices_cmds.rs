@@ -155,6 +155,7 @@ mod tests {
             free: None,
             identity: "42".into(),
             removal: Removal::Eject,
+            image: None,
         }]);
         s
     }

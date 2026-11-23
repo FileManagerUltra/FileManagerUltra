@@ -4440,6 +4440,7 @@ fn volume_preview_dark_light() {
                 free: Some(96 << 30),
                 identity: "usb-42".into(),
                 removal: Removal::Eject,
+                image: None,
             };
             session.volumes.replace(vec![
                 Device {
@@ -4576,6 +4577,7 @@ fn devices_section_dark_light() {
                 free: Some(96 << 30),
                 identity: "usb-42".into(),
                 removal: fm_engine::devices::Removal::Eject,
+                image: None,
             },
             fm_engine::devices::Device {
                 name: "Private files".into(),
@@ -4587,6 +4589,7 @@ fn devices_section_dark_light() {
                 removal: fm_engine::devices::Removal::Unsupported(
                     "Dismount this volume in VeraCrypt".into(),
                 ),
+                image: None,
             },
         ]);
         let mut h = Harness::builder()
