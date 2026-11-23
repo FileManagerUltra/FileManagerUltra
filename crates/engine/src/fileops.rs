@@ -93,6 +93,21 @@ pub enum OpRequest {
         name: String,
         size: Option<u64>,
     },
+    /// Copy everything in the archive mounted at `root` into a new folder `name` (or
+    /// `name (N)`) in `dest_dir` (add-archive-vfs).
+    Extract {
+        root: VfsUri,
+        dest_dir: VfsUri,
+        name: String,
+    },
+    /// Create a new archive from `sources` at `target` (numbered when taken), optionally
+    /// cut into parts of `split` bytes.
+    Compress {
+        sources: Vec<VfsUri>,
+        target: VfsUri,
+        options: fm_archive::write::CompressOptions,
+        split: Option<u64>,
+    },
 }
 
 /// Bytes shared with a job; compared by identity (they can be large).
@@ -148,6 +163,7 @@ impl OpRequest {
             Self::Rename { .. } => OpKind::Rename,
             Self::Undo(_) | Self::Chmod { .. } => return None,
             Self::OpenRemote { .. } | Self::WriteBytes { .. } => return None,
+            Self::Extract { .. } | Self::Compress { .. } => OpKind::Copy,
         })
     }
 
@@ -170,6 +186,10 @@ impl OpRequest {
             }
             Self::OpenRemote { name, .. } => format!("Open {name}"),
             Self::WriteBytes { dest, .. } => format!("Save {}", leaf(dest)),
+            Self::Extract { name, .. } => format!("Extract to {name}"),
+            Self::Compress {
+                sources, target, ..
+            } => format!("Compress {} to {}", items(sources.len()), leaf(target)),
         }
     }
 
@@ -186,6 +206,8 @@ impl OpRequest {
             Self::Undo(record) => undo_uris(record).into_iter().next(),
             Self::OpenRemote { uri, .. } => Some(uri.clone()),
             Self::WriteBytes { dest, .. } => Some(dest.clone()),
+            Self::Extract { root, .. } => Some(root.clone()),
+            Self::Compress { target, .. } => Some(target.clone()),
         }
     }
 
@@ -206,6 +228,16 @@ impl OpRequest {
             Self::Undo(record) => undo_uris(record),
             Self::OpenRemote { uri, .. } => vec![uri.clone()],
             Self::WriteBytes { dest, .. } => vec![dest.clone()],
+            Self::Extract { root, dest_dir, .. } => vec![root.clone(), dest_dir.clone()],
+            Self::Compress {
+                sources, target, ..
+            } => {
+                let mut all = sources.clone();
+                if let Some(dir) = target.parent() {
+                    all.push(dir);
+                }
+                all
+            }
         }
     }
 
@@ -234,6 +266,8 @@ impl OpRequest {
             Self::Rename { uri, .. } => add(uri.parent()),
             Self::OpenRemote { .. } => {}
             Self::WriteBytes { dest, .. } => add(dest.parent()),
+            Self::Extract { dest_dir, .. } => add(Some(dest_dir.clone())),
+            Self::Compress { target, .. } => add(target.parent()),
             Self::Undo(record) => undo_uris(record).iter().for_each(|u| add(u.parent())),
         }
         dirs
@@ -455,6 +489,34 @@ fn run(
         )?;
         return crate::open_cmds::launch_default(&path);
     }
+    if let OpRequest::Compress {
+        sources,
+        target,
+        options,
+        split,
+    } = request
+    {
+        let mut last_sent: Option<Instant> = None;
+        let mut on_progress = |p: &Progress| {
+            lock(shared).progress = p.clone();
+            if last_sent.is_none_or(|t| t.elapsed() >= PROGRESS_EVERY) {
+                last_sent = Some(Instant::now());
+                ctx.report(p.bytes.done, p.bytes.total);
+            }
+        };
+        let cancelled = || ctx.is_cancelled();
+        let report = crate::archive_ops::compress(
+            backends,
+            sources,
+            target,
+            options,
+            *split,
+            &cancelled,
+            &mut on_progress,
+        )?;
+        lock(shared).report = Some(report);
+        return Ok(());
+    }
     let mut last_sent: Option<Instant> = None;
     let mut on_progress = |p: &Progress| {
         lock(shared).progress = p.clone();
@@ -563,7 +625,12 @@ fn run(
             }
             report
         }
-        OpRequest::OpenRemote { .. } => return Ok(()),
+        OpRequest::Extract {
+            root,
+            dest_dir,
+            name,
+        } => crate::archive_ops::extract(backends, root, dest_dir, name, &mut octx)?,
+        OpRequest::OpenRemote { .. } | OpRequest::Compress { .. } => return Ok(()),
     };
     let cancelled = report.cancelled;
     lock(shared).report = Some(report);

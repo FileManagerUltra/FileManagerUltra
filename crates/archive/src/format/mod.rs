@@ -142,6 +142,26 @@ pub const SUFFIXES: &[(&str, FormatId)] = &[
     (".zst", FormatId::Zst),
 ];
 
+/// `site.tar.gz` → (`site`, `.tar.gz`); names without an archive suffix split at their last
+/// dot (`notes.txt` → `notes`, `.txt`), and names without a dot keep an empty suffix.
+pub fn split_suffix(name: &str) -> (String, String) {
+    let lower = name.to_ascii_lowercase();
+    if let Some((suffix, _)) = SUFFIXES
+        .iter()
+        .find(|(s, _)| lower.len() > s.len() && lower.ends_with(s))
+        && let Some(stem) = name.get(..name.len() - suffix.len())
+    {
+        return (
+            stem.to_string(),
+            name.get(stem.len()..).unwrap_or("").to_string(),
+        );
+    }
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+        _ => (name.to_string(), String::new()),
+    }
+}
+
 /// The format a file name suggests, by its suffix.
 pub fn by_name(name: &str) -> Option<FormatId> {
     let lower = name.to_ascii_lowercase();
@@ -476,6 +496,12 @@ mod tests {
         );
         assert_eq!(by_name("notes.txt"), None);
         assert_eq!(sniff(b"PK\x03\x04rest"), Some(FormatId::Zip));
+        assert_eq!(
+            split_suffix("Site.Tar.GZ"),
+            ("Site".into(), ".Tar.GZ".into())
+        );
+        assert_eq!(split_suffix("notes.txt"), ("notes".into(), ".txt".into()));
+        assert_eq!(split_suffix("README"), ("README".into(), String::new()));
         assert!(signature_fits(FormatId::TarGz, &[0x1f, 0x8b, 8]));
         assert!(!signature_fits(FormatId::Zip, b"7z\xBC\xAF\x27\x1C"));
         assert!(!signature_fits(FormatId::SevenZ, b"plain text"));

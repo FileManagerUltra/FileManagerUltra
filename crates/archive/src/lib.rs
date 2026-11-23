@@ -13,6 +13,7 @@ pub mod mount;
 pub mod secret;
 pub mod source;
 pub mod time;
+pub mod write;
 
 pub use format::{FormatId, Info, Passwords, Progress, Reader, by_name, signature_fits, sniff};
 pub use fs::ArchiveFs;

@@ -33,6 +33,8 @@ impl fmt::Debug for Secret {
     }
 }
 
+impl Eq for Secret {}
+
 impl PartialEq for Secret {
     fn eq(&self, other: &Self) -> bool {
         self.as_bytes() == other.as_bytes()

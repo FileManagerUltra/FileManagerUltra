@@ -37,6 +37,35 @@ pub fn from_unix(secs: i64) -> Option<SystemTime> {
     }
 }
 
+/// `SystemTime` to UTC `(year, month, day, hour, minute, second)`.
+pub fn to_civil(t: SystemTime) -> (i64, u8, u8, u8, u8, u8) {
+    let secs = match t.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(d) => i64::try_from(d.as_secs()).unwrap_or(i64::MAX),
+        Err(e) => -i64::try_from(e.duration().as_secs()).unwrap_or(i64::MAX),
+    };
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    let narrow = |v: i64| u8::try_from(v).unwrap_or(0);
+    (
+        year,
+        narrow(month),
+        narrow(day),
+        narrow(rem / 3600),
+        narrow(rem % 3600 / 60),
+        narrow(rem % 60),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,5 +83,7 @@ mod tests {
             Some(SystemTime::UNIX_EPOCH)
         );
         assert!(from_civil(2026, 13, 1, 0, 0, 0).is_none());
+        assert_eq!(to_civil(t), (2026, 11, 23, 12, 0, 0));
+        assert_eq!(to_civil(SystemTime::UNIX_EPOCH), (1970, 1, 1, 0, 0, 0));
     }
 }

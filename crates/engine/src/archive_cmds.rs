@@ -33,12 +33,14 @@ static REFS: LazyLock<RwLock<HashMap<String, ArchiveRef>>> = LazyLock::new(Defau
 const MAX_REFS: usize = 4096;
 
 /// Longest password accepted (bytes).
-const MAX_PASSWORD: usize = 1024;
+pub(crate) const MAX_PASSWORD: usize = 1024;
 
 /// Mounted archives of this session.
 #[derive(Default)]
 pub struct Mounts {
     lazies: HashMap<String, Arc<LazyArchive>>,
+    /// The archive Extract To… is choosing a folder for.
+    pub extract_pending: Option<VfsUri>,
 }
 
 impl std::fmt::Debug for Mounts {

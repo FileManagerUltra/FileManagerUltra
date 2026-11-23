@@ -62,6 +62,8 @@ pub enum Dialog {
         save: bool,
         path: String,
     },
+    /// Compress the selection into a new archive.
+    Compress(Box<crate::compress_dialog::CompressForm>),
 }
 
 /// Open-dialog state held by the app.
@@ -163,6 +165,10 @@ pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
             pattern: "*".to_string(),
             mode: "replace",
         }),
+        "archive.compress" if !selection.is_empty() => {
+            crate::compress_dialog::CompressForm::new(selection)
+                .map(|form| Dialog::Compress(Box::new(form)))
+        }
         "file.mkdir" => Some(Dialog::Mkdir {
             dir,
             name: String::new(),
@@ -285,6 +291,9 @@ impl Dialogs {
                 } else {
                     !(cancel || esc)
                 }
+            }
+            Dialog::Compress(form) => {
+                crate::compress_dialog::show(ctx, s, tokens, form, focus, esc, enter)
             }
             Dialog::Mkdir { dir, name } => {
                 let verdict = file_cmds::validate_new_name(s, dir, name, None);

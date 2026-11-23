@@ -583,7 +583,7 @@ pub(crate) fn dispatch_folder(
     let params = match action.id {
         "file.clip_paste" => serde_json::json!({ "dest": folder }),
         "nav.refresh" | "bookmark.add" | "preview.open" | "image.copy" | "media.play_folder"
-        | "archive.enter" | "archive.open_app" => {
+        | "archive.enter" | "archive.open_app" | "archive.extract" | "archive.extract_to" => {
             serde_json::json!({ "uri": folder })
         }
         _ => serde_json::json!({ "sources": [folder] }),

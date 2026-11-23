@@ -72,6 +72,8 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
         {
             for (id, label) in [
                 ("archive.enter", "Browse Inside"),
+                ("archive.extract", "Extract Here"),
+                ("archive.extract_to", "Extract To…"),
                 ("archive.open_app", "Open with Default App"),
             ] {
                 if ui.button(label).clicked() {
@@ -141,6 +143,30 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
                 )
             });
             ui.close();
+        }
+        // Compress the selection (the right-clicked item is selected first).
+        if uri.archive_handle().is_none() {
+            ui.separator();
+            let stem = match fm_engine::file_cmds::focused_selection(s).as_slice() {
+                [one] => one.file_name().map(fm_engine::archive_ops::extract_name),
+                _ => fm_engine::archive_job_cmds::quick_target(
+                    &fm_engine::file_cmds::focused_selection(s),
+                    "",
+                )
+                .and_then(|t| t.file_name().map(str::to_string)),
+            };
+            if let Some(stem) = stem {
+                for (id, suffix) in [("archive.add_zip", ".zip"), ("archive.add_7z", ".7z")] {
+                    if s.command_enabled(id)
+                        && ui.button(format!("Add to {stem}{suffix}")).clicked()
+                    {
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp::<&'static str>(queue_id(), id));
+                        ui.close();
+                    }
+                }
+            }
+            command_item(ui, s, "archive.compress");
         }
         for entry in ENTRIES {
             match entry {

@@ -392,3 +392,15 @@ change is visible: the changelog explains it and the preference restores the old
   and re-registration use; persisting it across restarts is still open (task 4.1).
 - The archive lanes have one thread each, like every other lane (D15 said two).
 - The container cache is 32 MiB per mount rather than one shared 64 MiB (D5).
+- Extract/compress (part 2): extraction is `fm_ops::copy` from the archive root into a
+  new folder (`archive_ops::extract`), so conflicts, progress, cancel and undo (the whole
+  new folder) are the copy pipeline's; devices/FIFOs are skipped and counted, no modes are
+  carried (so no setuid/setgid), links stay links. Hostile-fixture tests (6.2) and the
+  bomb prompt (6.3) are still open. Compression writes to a temp file (next to a local
+  target, else in a private 0700 temp folder), then renames, uploads or cuts it into
+  `.001…` parts; names are numbered `name (2).zip` when taken. ZipCrypto writing is
+  refused (the zip crate keeps it crate-private) and tar.zst is read-only (ruzstd has
+  only its fastest level). 7z stores no symlinks; they are left out and counted. The
+  entries are in the item context menu only (no File menu yet). Split output does not
+  re-open as one archive until split reading (3.9) lands; `archive.join` and `archive.add`
+  are still open.

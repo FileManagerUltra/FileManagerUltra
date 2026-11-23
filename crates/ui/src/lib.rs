@@ -7,6 +7,7 @@ pub mod activity_card;
 pub mod archive_password;
 pub mod arrange;
 pub mod compare_with;
+pub mod compress_dialog;
 pub mod context_menu;
 pub mod dialog_style;
 pub mod dialogs;

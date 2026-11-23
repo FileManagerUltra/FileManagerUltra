@@ -52,10 +52,10 @@
 
 ## 6. Extract and compress
 
-- [ ] 6.1 `archive.extract` (Extract here with `name (2)` when taken; Extract to… with the path picker) on the copy pipeline; context menu and File menu
+- [x] 6.1 `archive.extract` (Extract here with `name (2)` when taken; Extract to… with the path picker) on the copy pipeline; context menu and File menu
 - [ ] 6.2 Extraction containment: links, hard links, devices/FIFOs, setuid/setgid, OS-invalid names; skipped entries in the job summary; tests with hostile fixtures
 - [ ] 6.3 Bomb handling: declared-size overrun stops; >1 GiB at >1000:1 asks; out-of-space error; tests
-- [ ] 6.4 `archive.compress` writers (zip with AES-256 or chosen ZipCrypto, tar.gz, tar.xz, 7z with AES-256 and optional encrypted names, tar.zst if 1.4 passed); levels; password refused for tar formats; conflict prompt; password redaction tests
+- [x] 6.4 `archive.compress` writers (zip with AES-256 or chosen ZipCrypto, tar.gz, tar.xz, 7z with AES-256 and optional encrypted names, tar.zst if 1.4 passed); levels; password refused for tar formats; conflict prompt; password redaction tests
 - [ ] 6.5 Split output: `split { size }` writes `name.ext.001…` for every format (≥ 64 KiB, presets); output re-opens as one archive
 - [ ] 6.6 `archive.join` for numbered parts (missing-part refusal, conflict prompt, progress, cancel); not offered for spanned zip or RAR
 - [ ] 6.7 Moving out of writable archives stages the removal; read-only archives offer copy only

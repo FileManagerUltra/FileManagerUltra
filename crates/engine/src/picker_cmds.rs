@@ -332,6 +332,14 @@ fn accept() -> CommandSpec {
             }
             let shown = crate::item_cmds::display_path(&chosen);
             match picker.purpose.as_str() {
+                "archive.extract" => {
+                    if let Some(archive) = s.archives.extract_pending.take() {
+                        s.dispatch(
+                            "archive.extract",
+                            &json!({ "uri": archive.to_string(), "dest": chosen.to_string() }),
+                        )?;
+                    }
+                }
                 side @ ("sync.left" | "sync.right") => {
                     let field = side.trim_start_matches("sync.");
                     s.dispatch("sync.profile.set", &json!({ "patch": { field: shown } }))?;
