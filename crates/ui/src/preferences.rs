@@ -424,6 +424,36 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                     set(s, "single_click_open", json!(single));
                 }
             });
+            section(ui, tokens, "Archives", None, |ui| {
+                let mut browse = s.prefs.archives_browse;
+                let response = ui
+                    .checkbox(&mut browse, "Enter browses inside archives")
+                    .on_hover_text(
+                        "Enter or a double click on a zip, tar or 7z file shows its contents \
+                         like a folder. Turn this off to open archives with their \
+                         application; the right-click menu always offers both.",
+                    );
+                if response.changed() {
+                    s.dispatch_or_notice("prefs.archives.browse", &json!({"value": browse}));
+                }
+                let mut in_tree = s.prefs.archives_in_tree;
+                let response = ui
+                    .add_enabled(
+                        s.prefs.archives_browse,
+                        egui::Checkbox::new(
+                            &mut in_tree,
+                            "Show all archives as folders in the tree",
+                        ),
+                    )
+                    .on_hover_text(
+                        "Off: the tree shows the archives you opened, until you close them \
+                         (right-click > Close Archive). On: every archive file in the tree \
+                         can be expanded like a folder.",
+                    );
+                if response.changed() {
+                    s.dispatch_or_notice("prefs.archives.tree", &json!({"value": in_tree}));
+                }
+            });
             section(ui, tokens, "Display", None, |ui| {
                 let units = [
                     ("KiB (1024)", SizeUnits::Binary),
@@ -755,31 +785,6 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                 tokens,
                 "Keep links inside a copied folder pointing to the copy. Links are never followed.",
             );
-            section_heading(ui, tokens, "Archives");
-            let mut browse = s.prefs.archives_browse;
-            let response = ui
-                .checkbox(&mut browse, "Enter browses inside archives")
-                .on_hover_text(
-                    "Enter or a double click on a zip, tar, 7z, ISO or RAR file shows its \
-                     contents like a folder. Turn this off to open archives with their \
-                     application; the right-click menu always offers both.",
-                );
-            if response.changed() {
-                s.dispatch_or_notice("prefs.archives.browse", &json!({"value": browse}));
-            }
-            let mut in_tree = s.prefs.archives_in_tree;
-            let response = ui
-                .add_enabled(
-                    s.prefs.archives_browse,
-                    egui::Checkbox::new(&mut in_tree, "Show all archives as folders in the tree"),
-                )
-                .on_hover_text(
-                    "Off: the tree shows only the archive you are in, and drops it when you \
-                     leave. On: every archive file in the tree can be expanded like a folder.",
-                );
-            if response.changed() {
-                s.dispatch_or_notice("prefs.archives.tree", &json!({"value": in_tree}));
-            }
         }
         Topic::Preview => {
             section_heading(ui, tokens, "Playback");
