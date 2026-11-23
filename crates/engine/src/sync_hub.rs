@@ -191,6 +191,25 @@ struct RunTiming {
     speed: SpeedMeter,
 }
 
+/// One side of a row as it was when the user chose its action: kind, size, modified time.
+type SideKey = Option<(fm_sync::NodeKind, u64, Option<SystemTime>)>;
+
+/// An action the user chose for one row, kept while both sides stay exactly as they were, so
+/// a new comparison (Keep in sync's next pass, Compare again) does not forget it.
+#[derive(Clone, Debug, PartialEq)]
+struct Decision {
+    action: fm_sync::Action,
+    left: SideKey,
+    right: SideKey,
+}
+
+/// Most remembered choices per sync; a plan is bounded too, this only caps hostile growth.
+const MAX_DECISIONS: usize = 100_000;
+
+fn side_key(node: Option<&fm_sync::Node>) -> SideKey {
+    node.map(|n| (n.kind, n.size, n.mtime))
+}
+
 pub struct SyncState {
     /// Working copy; edited by `sync.profile.set`, stored by `sync.profile.save`.
     pub profile: Profile,
@@ -218,6 +237,8 @@ pub struct SyncState {
     timing: RunTiming,
     task: Option<Task>,
     watch: Option<WatchState>,
+    /// Actions the user chose for rows, by path (see [`Decision`]).
+    decisions: BTreeMap<String, Decision>,
 }
 
 impl SyncState {
@@ -242,6 +263,62 @@ impl SyncState {
             timing: RunTiming::default(),
             task: None,
             watch: None,
+            decisions: BTreeMap::new(),
+        }
+    }
+
+    /// Remember the action now set on `rels` (the user chose it), with both sides as they are.
+    pub(crate) fn remember_choices<'a>(&mut self, rels: impl IntoIterator<Item = &'a str>) {
+        let Some(plan) = &self.plan else { return };
+        for rel in rels {
+            let Some(item) = plan.find(rel) else { continue };
+            if self.decisions.len() >= MAX_DECISIONS && !self.decisions.contains_key(rel) {
+                break;
+            }
+            self.decisions.insert(
+                rel.to_string(),
+                Decision {
+                    action: item.action,
+                    left: side_key(item.left.as_ref()),
+                    right: side_key(item.right.as_ref()),
+                },
+            );
+        }
+    }
+
+    /// Forget every remembered choice (the folders or settings changed).
+    pub(crate) fn forget_choices(&mut self) {
+        self.decisions.clear();
+    }
+
+    /// Apply remembered choices to a fresh plan where both sides are unchanged; drop the rest.
+    fn reapply_choices(&mut self) {
+        let Some(plan) = &mut self.plan else {
+            return;
+        };
+        self.decisions.retain(|rel, d| {
+            let same = plan.find(rel).is_some_and(|it| {
+                side_key(it.left.as_ref()) == d.left && side_key(it.right.as_ref()) == d.right
+            });
+            same && plan.set_action(rel, d.action).is_ok()
+        });
+    }
+
+    /// Conflicts in the plan the user has not decided on yet.
+    pub fn open_conflicts(&self) -> usize {
+        self.plan.as_ref().map_or(0, |plan| {
+            plan.items
+                .iter()
+                .filter(|it| it.status == Status::Conflict && !self.decisions.contains_key(&it.rel))
+                .count()
+        })
+    }
+
+    /// While keeping in sync, look again soon (after the usual quiet time) instead of at the
+    /// next poll: the user just decided something the next pass should apply.
+    pub(crate) fn nudge_watch(&self) {
+        if let Some(w) = &self.watch {
+            w.dirty.store(true, Ordering::Relaxed);
         }
     }
 
@@ -824,6 +901,7 @@ impl Session {
                     match result {
                         TaskResult::Compared(Ok(plan)) => {
                             state.plan = Some(*plan);
+                            state.reapply_choices();
                             state.phase = Phase::Ready;
                             state.refresh_rows();
                             if state.arming == Arming::Comparing {
@@ -944,7 +1022,8 @@ impl Session {
         if !work {
             return;
         }
-        if plan.summary.conflicts > 0 || plan.guards.confirmation_required() {
+        // Conflicts the user decided on (also "skip") are reviewed: only open ones hold it back.
+        if state.open_conflicts() > 0 || plan.guards.confirmation_required() {
             state.watch_note = Some("Changes need your review before they can be applied".into());
             notices.push(format!(
                 "Sync \"{}\": changes need your review",

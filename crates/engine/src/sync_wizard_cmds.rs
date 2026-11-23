@@ -105,6 +105,7 @@ fn swap() -> CommandSpec {
             std::mem::swap(&mut p.left, &mut p.right);
             st.saved = false;
             st.arming = Arming::Off;
+            st.forget_choices();
             st.plan = None;
             st.rows.clear();
             st.phase = crate::sync_hub::Phase::Idle;

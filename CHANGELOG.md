@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Synchronize Folders: an action you choose for a conflict while "Keep in sync" is on is now carried out by the next pass, instead of being forgotten and the conflict shown again. Your choice also survives Compare again, as long as neither file changes; if one does, the conflict comes back for you to decide.
 - Selecting text with the mouse in a Markdown preview or a file's text now scrolls when you drag to the edge, so you can select lines, code blocks and tables that run past the right side of the pane. Hold the pointer past the edge and the view keeps moving; the further out, the faster.
 - Terminal panes in a saved workspace reopen in the folder they were in when you saved, on every platform. On Windows the app now also knows when you change folders in a PowerShell or Command Prompt terminal, so splitting or restarting a terminal follows you there too.
 - Photos larger than 2048 pixels are sharp at 100% and when zoomed in, instead of an enlarged, blurry copy of the smaller version made for Fit. The full-size picture loads in the background the first time you need it (up to 8192 pixels on the longest side).

@@ -37,7 +37,11 @@ A profile with watch enabled SHALL be monitored: local sides through debounced `
 - **THEN** exactly one follow-up compare is queued and runs never overlap
 
 ### Requirement: Auto-apply is conservative
-Auto-apply SHALL execute only a plan with no conflicts, no permanent deletes and no tripped deletion safeguard; otherwise it SHALL stop, keep the plan for review and show a notice.
+Auto-apply SHALL execute only a plan with no open conflicts, no permanent deletes and no tripped deletion safeguard; otherwise it SHALL stop, keep the plan for review and show a notice. A conflict the user chose an action for (`sync.set_action`, including Skip) is no longer open. Such a choice SHALL be remembered for the sync, with both sides' kind, size and modified time, and applied again by every later compare (a Keep in sync pass or Compare again) while both sides are unchanged; when either side changes the choice SHALL lapse and the conflict SHALL be open again. Choices are forgotten when the folders, mode or filters change. Choosing an action while keeping in sync SHALL start a pass after the usual quiet time.
+
+#### Scenario: A conflict decided while keeping in sync
+- **WHEN** keeping in sync holds back a conflict and the user sets its action to copy to the right
+- **THEN** the next pass applies the copy, and if the file changes on either side first, the conflict is shown for review again
 
 #### Scenario: Conflict appears
 - **WHEN** a watched change creates a conflict

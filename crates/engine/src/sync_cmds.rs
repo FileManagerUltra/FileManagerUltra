@@ -237,6 +237,7 @@ fn profile_set() -> CommandSpec {
                 state.plan = None;
                 state.rows.clear();
                 state.phase = crate::sync_hub::Phase::Idle;
+                state.forget_choices();
             }
             Ok(())
         },
@@ -554,12 +555,26 @@ fn set_action() -> CommandSpec {
                 return Err(bad("the sync is running"));
             }
             let plan = state.plan.as_mut().ok_or_else(|| bad("compare first"))?;
-            if params.get("recursive").and_then(Value::as_bool) == Some(true) {
-                plan.set_action_tree(rel, action)?;
-            } else {
-                plan.set_action(rel, action)?;
-            }
+            let chosen: Vec<String> =
+                if params.get("recursive").and_then(Value::as_bool) == Some(true) {
+                    plan.set_action_tree(rel, action)?;
+                    let prefix = format!("{rel}/");
+                    plan.items
+                        .iter()
+                        .filter(|it| {
+                            (it.rel == rel || it.rel.starts_with(&prefix)) && it.action == action
+                        })
+                        .map(|it| it.rel.clone())
+                        .collect()
+                } else {
+                    plan.set_action(rel, action)?;
+                    vec![rel.to_string()]
+                };
+            // Kept for later comparisons (Keep in sync's next pass), which apply it while
+            // the files stay as they are; a pass soon applies it.
+            state.remember_choices(chosen.iter().map(String::as_str));
             state.refresh_rows();
+            state.nudge_watch();
             Ok(())
         },
     }
@@ -796,7 +811,10 @@ pub fn specs() -> Vec<CommandSpec> {
 mod tests {
     #![allow(clippy::expect_used)]
     use super::*;
+    use crate::sync_hub::SyncState;
+    use fm_sync::Status;
     use serde_json::json;
+    use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
     fn pump_until_idle(s: &mut Session) {
@@ -1118,6 +1136,109 @@ mod tests {
             .expect("start again");
         assert!(s.sync.current_state().is_some_and(|st| st.watching()));
         s.dispatch("sync.watch.stop", &json!({})).expect("stop");
+    }
+
+    /// Two-way sync of `l` and `r` where `a.txt` was synced and then edited on both sides.
+    fn two_way_conflict(tmp: &std::path::Path, watch: bool) -> (Session, PathBuf, PathBuf) {
+        let (l, r, c) = (tmp.join("l"), tmp.join("r"), tmp.join("cfg"));
+        for d in [&l, &r, &c] {
+            std::fs::create_dir_all(d).expect("mkdir");
+        }
+        std::fs::write(l.join("a.txt"), "base").expect("w");
+        let mut s = session_with(&l, &r, &c);
+        s.dispatch(
+            "sync.profile.set",
+            &json!({"patch": {"mode": "TwoWay", "watch": {"enabled": watch}}}),
+        )
+        .expect("set");
+        s.dispatch("sync.compare", &json!({})).expect("compare");
+        pump_until_idle(&mut s);
+        s.dispatch("sync.run", &json!({})).expect("run");
+        pump_until_idle(&mut s);
+        assert_eq!(std::fs::read_to_string(r.join("a.txt")).expect("r"), "base");
+        std::thread::sleep(Duration::from_millis(1100));
+        std::fs::write(l.join("a.txt"), "left edit").expect("w");
+        std::fs::write(r.join("a.txt"), "right edit, longer").expect("w");
+        (s, l, r)
+    }
+
+    fn row(s: &Session, rel: &str) -> Option<(Status, Action)> {
+        let plan = s.sync.current_state()?.plan.as_ref()?;
+        plan.find(rel).map(|it| (it.status, it.action))
+    }
+
+    #[test]
+    fn a_conflict_decided_while_keeping_in_sync_is_applied_by_the_next_pass() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (mut s, l, r) = two_way_conflict(tmp.path(), true);
+        s.dispatch("sync.watch.start", &json!({})).expect("watch");
+        pump_until_idle(&mut s);
+        s.dispatch("sync.watch.confirm", &json!({}))
+            .expect("confirm");
+        pump_until_idle(&mut s);
+        assert_eq!(row(&s, "a.txt").map(|r| r.0), Some(Status::Conflict));
+        assert_eq!(
+            std::fs::read_to_string(r.join("a.txt")).expect("r"),
+            "right edit, longer",
+            "an open conflict is held back"
+        );
+        s.dispatch(
+            "sync.set_action",
+            &json!({"rel": "a.txt", "action": "copy_to_right"}),
+        )
+        .expect("decide");
+        let end = Instant::now() + Duration::from_secs(20);
+        while std::fs::read_to_string(r.join("a.txt")).ok().as_deref() != Some("left edit")
+            && Instant::now() < end
+        {
+            s.poll();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            std::fs::read_to_string(r.join("a.txt")).expect("r"),
+            "left edit",
+            "the next pass applies the choice"
+        );
+        assert_eq!(
+            std::fs::read_to_string(l.join("a.txt")).expect("l"),
+            "left edit"
+        );
+        s.dispatch("sync.watch.stop", &json!({})).expect("stop");
+    }
+
+    #[test]
+    fn a_chosen_action_survives_compare_again_until_a_file_changes() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (mut s, l, _r) = two_way_conflict(tmp.path(), false);
+        s.dispatch("sync.compare", &json!({})).expect("compare");
+        pump_until_idle(&mut s);
+        assert_eq!(row(&s, "a.txt"), Some((Status::Conflict, Action::Skip)));
+        s.dispatch(
+            "sync.set_action",
+            &json!({"rel": "a.txt", "action": "copy_to_left"}),
+        )
+        .expect("decide");
+        assert_eq!(
+            s.sync.current_state().map(SyncState::open_conflicts),
+            Some(0)
+        );
+        s.dispatch("sync.compare", &json!({})).expect("again");
+        pump_until_idle(&mut s);
+        assert_eq!(
+            row(&s, "a.txt"),
+            Some((Status::Conflict, Action::CopyToLeft)),
+            "compare again keeps the choice"
+        );
+        // The file changes: the choice was for the old contents, so it is asked again.
+        std::thread::sleep(Duration::from_millis(1100));
+        std::fs::write(l.join("a.txt"), "left edited again").expect("w");
+        s.dispatch("sync.compare", &json!({})).expect("again");
+        pump_until_idle(&mut s);
+        assert_eq!(row(&s, "a.txt"), Some((Status::Conflict, Action::Skip)));
+        assert_eq!(
+            s.sync.current_state().map(SyncState::open_conflicts),
+            Some(1)
+        );
     }
 
     #[test]
