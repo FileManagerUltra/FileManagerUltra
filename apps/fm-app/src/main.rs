@@ -361,6 +361,7 @@ impl App {
         }
         self.last_ws_tick = std::time::Instant::now();
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        self.persist_archive_refs();
         let Some(text) = self.session.workspace_tick() else {
             return;
         };
@@ -370,6 +371,20 @@ impl App {
         if let Err(err) = fm_engine::workspace::save_file(dir, &text) {
             eprintln!("failed to save workspaces: {err}");
             self.session.workspace_retry();
+        }
+    }
+
+    /// Write `archives.json` when archives were opened since the last save, so restored
+    /// locations inside archives open again after a restart.
+    fn persist_archive_refs(&self) {
+        let Some(dir) = &self.config_dir else {
+            return;
+        };
+        if let Some(text) = fm_engine::archive_cmds::refs_tick()
+            && let Err(err) = fm_engine::archive_cmds::save_refs_file(dir, &text)
+        {
+            eprintln!("failed to save archive locations: {err}");
+            fm_engine::archive_cmds::refs_retry();
         }
     }
 }
@@ -778,6 +793,10 @@ fn main() -> eframe::Result {
         session
             .thumbs
             .set_cache_dir(fm_engine::prefs::default_cache_dir().map(|d| d.join("thumbs")));
+    }
+    // Before workspaces: restored panes inside archives need the handle table.
+    if let Some(dir) = &config_dir {
+        fm_engine::archive_cmds::load_refs_file(dir);
     }
     if let Some(dir) = &config_dir
         && let Some(text) = fm_engine::workspace::load_file(dir)

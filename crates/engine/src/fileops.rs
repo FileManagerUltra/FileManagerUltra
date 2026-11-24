@@ -417,6 +417,13 @@ pub struct OpJob {
     retry: Option<OpRequest>,
 }
 
+impl OpJob {
+    /// Sources and destinations of the job (for "is this archive in use").
+    pub(crate) fn touched_uris(&self) -> impl Iterator<Item = VfsUri> + '_ {
+        self.uris.iter().cloned()
+    }
+}
+
 /// The jobs table (insertion order).
 #[derive(Debug, Default)]
 pub struct FileOps {

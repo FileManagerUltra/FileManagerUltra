@@ -48,6 +48,103 @@ pub struct Mounts {
     opened: Vec<VfsUri>,
     /// A job that stopped because an archive needs a password, waiting for one.
     pub password_ask: Option<PasswordAsk>,
+    /// Opened archives nothing shows or uses, since when (idle release).
+    idle_since: HashMap<String, std::time::Instant>,
+    last_idle_check: Option<std::time::Instant>,
+}
+
+/// An opened archive nothing uses for this long frees its memory (passwords stay).
+pub const IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(600);
+/// At most this many archives stay opened; the longest-idle unused ones go first.
+pub const MAX_OPENED_MOUNTS: usize = 16;
+const IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Handles in use: panes inside them, previews of their files, running jobs on them, a
+/// waiting password dialog, and every archive those sit inside.
+fn handles_in_use(s: &Session) -> std::collections::HashSet<String> {
+    let mut uris: Vec<VfsUri> = s
+        .layout
+        .states
+        .values()
+        .map(|st| st.location.clone())
+        .collect();
+    uris.extend(
+        s.previews
+            .slots
+            .values()
+            .flat_map(|slot| slot.subjects.iter().map(|e| e.uri.clone())),
+    );
+    uris.extend(
+        s.fileops
+            .jobs()
+            .iter()
+            .filter(|j| j.state.is_running())
+            .flat_map(|j| j.touched_uris()),
+    );
+    uris.extend(s.archives.password_ask.iter().map(|a| a.uri.clone()));
+    let mut used = std::collections::HashSet::new();
+    for uri in uris {
+        let mut at = uri;
+        for _ in 0..=fm_archive::limits::MAX_NESTING {
+            let Some(h) = at.archive_handle().map(str::to_string) else {
+                break;
+            };
+            used.insert(h);
+            match container_of(&at) {
+                Some(r) => at = r.container,
+                None => break,
+            }
+        }
+    }
+    used
+}
+
+/// Free archives nothing has used for [`IDLE_RELEASE`], and keep at most
+/// [`MAX_OPENED_MOUNTS`] opened. Released archives open again on their next read, with
+/// their passwords. Called from `poll`; does real work every [`IDLE_CHECK`].
+pub(crate) fn idle_tick(s: &mut Session, now: std::time::Instant) {
+    if s.archives
+        .last_idle_check
+        .is_some_and(|t| now.saturating_duration_since(t) < IDLE_CHECK)
+    {
+        return;
+    }
+    s.archives.last_idle_check = Some(now);
+    let used = handles_in_use(s);
+    let opened: Vec<String> = s
+        .archives
+        .lazies
+        .iter()
+        .filter(|(_, m)| m.opened().is_some())
+        .map(|(h, _)| h.clone())
+        .collect();
+    s.archives
+        .idle_since
+        .retain(|h, _| opened.contains(h) && !used.contains(h));
+    for h in &opened {
+        if !used.contains(h) {
+            s.archives.idle_since.entry(h.clone()).or_insert(now);
+        }
+    }
+    let mut idle: Vec<(String, std::time::Instant)> = s
+        .archives
+        .idle_since
+        .iter()
+        .map(|(h, t)| (h.clone(), *t))
+        .collect();
+    idle.sort_by_key(|(_, t)| *t);
+    let mut still_open = opened.len();
+    for (h, since) in idle {
+        let expired = now.saturating_duration_since(since) >= IDLE_RELEASE;
+        if !expired && still_open <= MAX_OPENED_MOUNTS {
+            continue;
+        }
+        if let Some(m) = s.archives.lazies.get(&h) {
+            m.release();
+        }
+        s.archives.idle_since.remove(&h);
+        still_open -= 1;
+    }
 }
 
 /// An Extract or Open job stopped for a password: the dialog asks for it and the job
@@ -182,6 +279,9 @@ pub fn up_from_root(uri: &VfsUri) -> Option<(VfsUri, String)> {
 
 fn remember(handle: &str, r: ArchiveRef) {
     if let Ok(mut refs) = REFS.write() {
+        if refs.get(handle) == Some(&r) {
+            return;
+        }
         if refs.len() >= MAX_REFS && !refs.contains_key(handle) {
             let victim = refs.keys().next().cloned();
             if let Some(v) = victim {
@@ -189,7 +289,102 @@ fn remember(handle: &str, r: ArchiveRef) {
             }
         }
         refs.insert(handle.to_string(), r);
+        REFS_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// The handle table changed since it was last saved.
+static REFS_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// File in the config directory that keeps the handle table across restarts, so restored
+/// panes, tabs, history and bookmarks inside archives open again (tasks 2.2/4.1).
+pub const REFS_FILE: &str = "archives.json";
+
+/// Largest `archives.json` read.
+const MAX_REFS_BYTES: u64 = 2 << 20;
+
+#[derive(serde::Serialize)]
+struct RefsFile {
+    version: u32,
+    refs: HashMap<String, ArchiveRef>,
+}
+
+/// The handle table as JSON when it changed since the last call (the app writes it).
+pub fn refs_tick() -> Option<String> {
+    if !REFS_DIRTY.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    let refs = REFS.read().ok()?.clone();
+    serde_json::to_string(&RefsFile { version: 1, refs }).ok()
+}
+
+/// `refs_tick` could not be written: try again on the next tick.
+pub fn refs_retry() {
+    REFS_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Write `archives.json` (owner-only, atomic).
+pub fn save_refs_file(dir: &std::path::Path, text: &str) -> Result<(), FmError> {
+    crate::prefs::write_atomic(dir, REFS_FILE, text.as_bytes())
+}
+
+/// Read `archives.json` from the config directory (size-capped) and load it.
+pub fn load_refs_file(dir: &std::path::Path) -> usize {
+    let path = dir.join(REFS_FILE);
+    if std::fs::metadata(&path).map_or(true, |m| m.len() > MAX_REFS_BYTES) {
+        return 0;
+    }
+    std::fs::read_to_string(path).map_or(0, |text| load_refs(&text))
+}
+
+/// Load a saved handle table. Hostile or stale input is dropped entry by entry: a handle
+/// must be the hash of its own container (so a hand-edited file cannot point a location
+/// at another file), containers must parse, and at most [`MAX_REFS`] are kept. Returns how
+/// many entries were taken.
+pub fn load_refs(text: &str) -> usize {
+    #[derive(serde::Deserialize)]
+    struct Loose {
+        version: u32,
+        refs: serde_json::Map<String, serde_json::Value>,
+    }
+    let Ok(file) = serde_json::from_str::<Loose>(text) else {
+        return 0;
+    };
+    if file.version != 1 {
+        return 0;
+    }
+    let Ok(mut refs) = REFS.write() else {
+        return 0;
+    };
+    let mut taken = 0;
+    // Entry by entry, so one bad entry costs only itself.
+    let entries = file
+        .refs
+        .into_iter()
+        .filter_map(|(h, v)| serde_json::from_value::<ArchiveRef>(v).ok().map(|r| (h, r)));
+    for (handle, r) in entries {
+        if taken >= MAX_REFS || refs.len() >= MAX_REFS {
+            break;
+        }
+        let format = match r.format.as_deref() {
+            None => None,
+            Some(id) => match FormatId::from_id(id) {
+                Some(f) => Some(f),
+                None => continue,
+            },
+        };
+        // The derived `Deserialize` skips `parse`'s checks: the container must survive a
+        // display/parse round trip unchanged (normalised, within the caps).
+        let normal = VfsUri::parse(&r.container.to_string()).ok();
+        if fm_archive::handle_for(&r.container, r.offset, format) != handle
+            || normal.as_ref() != Some(&r.container)
+        {
+            continue;
+        }
+        refs.entry(handle).or_insert(r);
+        taken += 1;
+    }
+    taken
 }
 
 /// Register `container` as an archive and return its root location. Registering again
@@ -733,6 +928,53 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "listing timed out");
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn idle_archives_free_their_memory_but_keep_passwords() {
+        let (mut s, zip) = session_with("idle.zip", &zip_bytes(Some("pw")));
+        s.dispatch("archive.enter", &json!({"uri": zip.to_string()}))
+            .expect("enter");
+        let root = s
+            .layout
+            .state(s.layout.focused())
+            .expect("pane")
+            .location
+            .clone();
+        wait_listing(&mut s, &root);
+        s.dispatch("archive.password", &json!({"password": "pw"}))
+            .expect("password");
+        let mount = s.archives.for_uri(&root).cloned().expect("mount");
+        assert!(mount.opened().is_some());
+        let t0 = std::time::Instant::now();
+        idle_tick(&mut s, t0);
+        idle_tick(&mut s, t0 + IDLE_RELEASE * 2);
+        assert!(mount.opened().is_some(), "a pane is inside it: kept");
+
+        let outside = zip.parent().expect("dir");
+        s.dispatch("nav.open", &Params::String(outside.to_string()))
+            .expect("leave");
+        idle_tick(&mut s, t0 + IDLE_RELEASE * 3);
+        assert!(mount.opened().is_some(), "idle only just started");
+        idle_tick(
+            &mut s,
+            t0 + IDLE_RELEASE * 3 + std::time::Duration::from_secs(30),
+        );
+        assert!(mount.opened().is_some(), "not idle long enough");
+        idle_tick(&mut s, t0 + IDLE_RELEASE * 5);
+        assert!(mount.opened().is_none(), "released after ten idle minutes");
+        assert!(!mount.passwords().is_empty(), "passwords stay");
+        // The next read opens it again, password and all.
+        let page = root
+            .join("www")
+            .and_then(|w| w.join("index.html"))
+            .expect("page");
+        let vfs = s.backends.require(&page).expect("backend");
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut vfs.open_read(&page).expect("open"), &mut text)
+            .expect("read");
+        assert_eq!(text, "<h1>hi</h1>");
+        assert!(mount.opened().is_some(), "opened again");
     }
 
     #[test]

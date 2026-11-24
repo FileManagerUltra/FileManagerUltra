@@ -11,7 +11,7 @@
 ## 2. Locations and display (`fm-vfs`)
 
 - [x] 2.1 `Scheme::Archive` (`archive://<handle>/<path>`), handle = 16 hex digits of SHA-256 over the canonical container URI; parse/display round-trip and hostile-input tests
-- [ ] 2.2 `ArchiveRef { handle, container }` stored beside archive URIs in history, tabs, workspaces and bookmarks (serde default, bounded); migration-free loading of old files
+- [x] 2.2 `ArchiveRef { handle, container }` stored beside archive URIs in history, tabs, workspaces and bookmarks (serde default, bounded); migration-free loading of old files — 2026-11-24: done as one process-wide handle table saved to `archives.json` (owner-only, atomic, written on the workspace tick, loaded before workspaces) instead of a ref beside every saved URI: history, tabs, workspaces and bookmarks all resolve through it; entries are taken one by one, only when the handle is the hash of its own container and the container round-trips through `parse`; old files without it load unchanged
 - [ ] 2.3 Display form and typed-path resolution (left to right, entering archive files, nesting cap 8) in `path-display`; Linux and Windows display tests — display form done (`archive_cmds::display`, used by `display_path`); typed-path resolution still open
 
 ## 3. Reading archives (`fm-archive`)
@@ -30,7 +30,7 @@
 
 ## 4. Engine: mounting and browsing
 
-- [ ] 4.1 Mount table (handle → container, max 16 mounted, 10-minute idle unmount for clean mounts), backend registration per handle, re-mount on restore; unavailable-location state when the container is gone — `LazyArchive` per handle, process-wide handle table, re-registration from it; persistence across restarts, the 16-mount cap and idle unmount still open
+- [x] 4.1 Mount table (handle → container, max 16 mounted, 10-minute idle unmount for clean mounts), backend registration per handle, re-mount on restore; unavailable-location state when the container is gone — `LazyArchive` per handle, process-wide handle table, re-registration from it; persistence across restarts, the 16-mount cap and idle unmount still open — 2026-11-24: persistence via `archives.json` (2.2); `idle_tick` releases opened archives unused for 10 minutes (passwords kept, `LazyArchive::release`) and keeps at most 16 opened (longest-idle first); in use = pane locations, preview subjects, running jobs, a waiting password dialog, and every archive those sit inside; a gone container reads as its "not found" error
 - [x] 4.2 `JobLane::Archive` (2 workers) and `BulkArchive`; `lane_for`/`bulk_lane_for` (one thread per lane, like the other lanes)
 - [ ] 4.3 Recognition patterns in prefs (`archives.patterns`, `archives.enter`: browse/open), signature check on mount with the "is not a … archive" error — `archives_browse` pref, Preferences checkbox and signature check done; editable patterns still open
 - [x] 4.4 `archive_cmds.rs`: `archive.enter`, `archive.unmount`, `archive.password`; Enter/double-click and tree expansion route archives to `archive.enter` according to the preference; context menu "Browse inside" / "Open with default app"; extend `commands.rs` `specs()`; malformed-params fuzz and per-command bad-param tests — commands, `file.open` routing, Up from the root, context menu and tree expansion done

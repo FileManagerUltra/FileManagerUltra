@@ -79,6 +79,14 @@ impl LazyArchive {
         self.cancel.store(true, Ordering::Relaxed);
     }
 
+    /// Free the opened archive's memory but keep its passwords; the next use opens it
+    /// again (idle release, design 4.1).
+    pub fn release(&self) {
+        if let Ok(mut s) = self.state.lock() {
+            *s = None;
+        }
+    }
+
     /// Close the archive and forget its passwords; the next use opens it again.
     pub fn unmount(&self) {
         if let Ok(mut s) = self.state.lock() {

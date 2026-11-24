@@ -433,3 +433,9 @@ change is visible: the changelog explains it and the preference restores the old
   plain zip costs no folder listing. Spanned zips (D16 spike) are read by rewriting the
   central directory in memory (≤ 256 MiB). The listing shows "part n" (not "of N") in the
   Type column. Closing an archive now also drops its cached listings.
+- Restoring after a restart (2026-11-24): the handle table is saved as `archives.json`
+  rather than an `ArchiveRef` beside every saved URI; one table covers workspaces,
+  history, tabs and bookmarks. Loading checks each handle against its container's hash
+  and that the container is normalised (the derived `Deserialize` bypasses `parse`).
+  Idle archives are released (memory only; passwords stay) after 10 minutes, and at most
+  16 stay opened.

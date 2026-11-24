@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Split archives open as one: press Enter on any part of `backup.7z.001`, `.002`, … (any format), or on a zip split into `site.z01`, `site.z02`, …, `site.zip`, and you see the whole archive. Extract Here on any part extracts everything. If a part is missing you are told which one ("Part 4 of backup.7z is missing"). All parts are shown in the archive colour, and later parts show their number in the Type column.
 
+- Folders inside archives are remembered across restarts: workspaces, tabs, history and bookmarks that point into an archive open there again. Archives you have not looked at for ten minutes free their memory (a password you gave is kept until you close the archive).
+
 ### Fixed
 
 - Extracting a hostile archive cannot write outside the new folder: names with `..`, absolute paths and drive letters stay inside it, nothing is written through a link, device files and FIFOs are left out, and setuid/setgid bits are never kept. A file in an archive that turns out larger than its header says stops with an error and leaves no partial file.
