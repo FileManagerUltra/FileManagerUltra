@@ -921,6 +921,10 @@ fn preferences_dialog_dark_light() {
                 } else {
                     egui::Theme::Light
                 });
+                // Whether 7-Zip or unrar is installed differs per machine.
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(egui::Id::NULL.with("fm-rar-tool-found"), None::<String>)
+                });
                 fm_ui::preferences::show(ui.ctx(), &mut session, &tokens);
             });
         harness.run();

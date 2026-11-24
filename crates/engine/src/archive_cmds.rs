@@ -607,8 +607,9 @@ pub fn is_password_message(message: &str) -> bool {
 
 /// Whether a file with this name opens as a folder when activated.
 pub fn is_archive_name(name: &str) -> bool {
-    // ISO and RAR keep opening with their application until their readers land.
-    let readable = |f: FormatId| !matches!(f, FormatId::Iso | FormatId::Rar);
+    // ISO keeps opening with its application until its reader lands; RAR goes through an
+    // installed 7-Zip or unrar (the pane says what to install when none is found).
+    let readable = |f: FormatId| f != FormatId::Iso;
     if fm_archive::by_name(name).is_some_and(readable) {
         return true;
     }
@@ -618,6 +619,13 @@ pub fn is_archive_name(name: &str) -> bool {
         Some(p) => fm_archive::by_name(&p.base).is_some_and(readable),
         None => false,
     }
+}
+
+/// Whether `uri` lies inside a RAR (its password goes to the 7-Zip or unrar process).
+pub fn is_rar_location(uri: &VfsUri) -> bool {
+    container_of(uri)
+        .and_then(|r| r.container.file_name().map(str::to_string))
+        .is_some_and(|n| fm_archive::by_name(&n) == Some(FormatId::Rar))
 }
 
 /// A split archive's part after the first (`.002`…, `.z01`…): shown with its part

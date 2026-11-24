@@ -2348,6 +2348,7 @@ dependencies = [
  "sevenz-rust2",
  "sha2",
  "tar",
+ "tempfile",
  "zeroize",
  "zip",
 ]

@@ -15,7 +15,7 @@ use crate::session::Session;
 const KEYS: &str = "accent (\"default\"|\"#rrggbb\"), density (compact|normal|comfortable), \
     font_size 9-24, terminal_font_size 9-24, terminal_scrollback_rows 5000-1000000, size_units (binary|decimal|bytes), \
     date_format (iso|isoseconds|us|eu), show_hidden, single_click_open, confirm_delete, \
-    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), media_hardware_decoding (bool), media_autoplay_on_add (bool), diagnostics_log (bool), windows_renderer (direct3d|opengl), workspace_tab_order (recent|cycle), unsaved_workspaces (ask|save|discard), media_skip_back_secs 5-300, media_skip_forward_secs 5-300, thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120";
+    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), media_hardware_decoding (bool), media_autoplay_on_add (bool), diagnostics_log (bool), windows_renderer (direct3d|opengl), workspace_tab_order (recent|cycle), unsaved_workspaces (ask|save|discard), media_skip_back_secs 5-300, media_skip_forward_secs 5-300, thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120, archives_rar_tool (\"\"|absolute path of 7-Zip or unrar)";
 
 fn bad(key: &str, expect: &str) -> FmError {
     FmError::InvalidParams(format!("{key} must be {expect}"))
@@ -171,6 +171,19 @@ pub fn set(s: &mut Session, key: &str, value: &Value) -> Result<(), FmError> {
             }
             s.thumbs.clear_memory();
         }
+        "archives_rar_tool" => {
+            let text = value.as_str().ok_or_else(|| bad(key, "a string"))?.trim();
+            let path = std::path::Path::new(text);
+            let ok = text.is_empty()
+                || (text.len() <= 4096
+                    && !text.chars().any(char::is_control)
+                    && path.is_absolute()
+                    && path.is_file());
+            if !ok {
+                return Err(bad(key, "empty or the full path of 7-Zip or unrar"));
+            }
+            s.prefs.archives_rar_tool = text.to_string();
+        }
         "preview_time_secs" => {
             s.prefs.preview_time_secs = ranged(key, value, &PREVIEW_TIME_RANGE)?;
         }
@@ -190,6 +203,15 @@ pub fn apply_runtime(prefs: &Prefs, s: &Session) {
         .set_memory_cap((prefs.thumb_memory_mib.clamp(32, 2048) as usize) << 20);
     s.thumbs
         .set_disk_cap(prefs.thumb_disk_mib.clamp(32, 8192) << 20);
+    let tool = Some(prefs.archives_rar_tool.trim())
+        .filter(|t| !t.is_empty())
+        .map(std::path::PathBuf::from);
+    fm_archive::format::rar::set_tool_override(tool);
+}
+
+/// The RAR tool that would be used now (Preferences choice or the search), for display.
+pub fn rar_tool_found() -> Option<String> {
+    fm_archive::format::rar::find_tool().map(|t| format!("{} ({})", t.label(), t.path.display()))
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -302,6 +324,27 @@ mod tests {
         assert!(!s.prefs.media_hardware_decoding);
         set_via(&mut s, "media_hardware_decoding", json!(true)).expect("hardware on");
         assert!(s.prefs.media_hardware_decoding);
+    }
+
+    #[test]
+    fn rar_tool_path_is_checked() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let tool = tmp.path().join("unrar");
+        std::fs::write(&tool, b"").expect("tool");
+        let mut s = Session::new().expect("session");
+        set_via(&mut s, "archives_rar_tool", json!(tool.to_string_lossy())).expect("set");
+        assert_eq!(s.prefs.archives_rar_tool, tool.to_string_lossy());
+        assert!(rar_tool_found().is_some_and(|t| t.contains("unrar")));
+        for bad in [
+            json!("relative/7z"),
+            json!("/no/such/7z"),
+            json!(3),
+            json!("/a\nb"),
+        ] {
+            assert!(set_via(&mut s, "archives_rar_tool", bad).is_err());
+        }
+        set_via(&mut s, "archives_rar_tool", json!("")).expect("clear");
+        assert!(s.prefs.archives_rar_tool.is_empty());
     }
 
     #[test]

@@ -429,7 +429,7 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                 let response = ui
                     .checkbox(&mut browse, "Enter browses inside archives")
                     .on_hover_text(
-                        "Enter or a double click on a zip, tar or 7z file shows its contents \
+                        "Enter or a double click on a zip, tar, 7z or RAR file shows its contents \
                          like a folder. Turn this off to open archives with their \
                          application; the right-click menu always offers both.",
                     );
@@ -453,6 +453,7 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                 if response.changed() {
                     s.dispatch_or_notice("prefs.archives.tree", &json!({"value": in_tree}));
                 }
+                rar_tool_row(ui, s, tokens);
             });
             section(ui, tokens, "Display", None, |ui| {
                 let units = [
@@ -1246,6 +1247,48 @@ fn media_open_choices(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
             s.dispatch_or_notice("prefs.media_open", &json!({"kind": kind, "target": key}));
         }
     }
+}
+
+/// The program that reads RAR archives: empty searches for 7-Zip or unrar.
+fn rar_tool_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
+    let id = Id::NULL.with("fm-rar-tool");
+    let found_id = Id::NULL.with("fm-rar-tool-found");
+    let mut text = ui
+        .data_mut(|d| d.get_temp::<String>(id))
+        .unwrap_or_else(|| s.prefs.archives_rar_tool.clone());
+    ui.horizontal(|ui| {
+        let caption = ui.label("RAR program");
+        let response = ui
+            .add(
+                egui::TextEdit::singleline(&mut text)
+                    .hint_text("Find 7-Zip or unrar")
+                    .desired_width(260.0),
+            )
+            .labelled_by(caption.id);
+        let enter = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+        if ui.button("Apply").clicked() || enter {
+            set(s, "archives_rar_tool", json!(text.trim()));
+            ui.data_mut(|d| d.remove::<Option<String>>(found_id));
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(id, text));
+    // Searching PATH every frame is wasteful: remember the answer until Apply.
+    let found = match ui.data(|d| d.get_temp::<Option<String>>(found_id)) {
+        Some(found) => found,
+        None => {
+            let found = fm_engine::display_prefs_cmds::rar_tool_found();
+            ui.data_mut(|d| d.insert_temp(found_id, found.clone()));
+            found
+        }
+    };
+    hint(
+        ui,
+        tokens,
+        &match found {
+            Some(tool) => format!("RAR archives open through {tool}."),
+            None => "No 7-Zip or unrar found: RAR archives cannot be opened until one is installed or chosen here.".to_string(),
+        },
+    );
 }
 
 fn set(s: &mut Session, key: &str, value: serde_json::Value) {

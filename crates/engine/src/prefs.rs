@@ -231,6 +231,9 @@ pub struct Prefs {
     /// the archive the pane is inside (`false`, the default).
     #[serde(default)]
     pub archives_in_tree: bool,
+    /// The program that reads RAR archives (7-Zip or unrar); empty searches `PATH`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub archives_rar_tool: String,
     #[serde(default)]
     pub theme: ThemePreference,
     #[serde(default)]
@@ -640,6 +643,7 @@ impl Default for Prefs {
             check_updates: true,
             archives_browse: true,
             archives_in_tree: false,
+            archives_rar_tool: String::new(),
             theme: ThemePreference::default(),
             window_maximized: false,
             window_geometry: None,

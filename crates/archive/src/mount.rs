@@ -99,6 +99,49 @@ impl LazyArchive {
         self.container.file_name().unwrap_or("archive").to_string()
     }
 
+    /// A RAR through the installed tool (design D9): its volumes are found by name first
+    /// (a missing one is named before the tool runs); a remote set is copied to a private
+    /// temporary folder.
+    fn open_rar(
+        &self,
+        name: &str,
+        progress: &Progress<'_>,
+    ) -> Result<Box<dyn format::Reader>, FmError> {
+        use crate::format::rar;
+        let tool = rar::find_tool().ok_or_else(rar::needs_tool_error)?;
+        let folder = self
+            .container
+            .parent()
+            .ok_or_else(|| FmError::NotFound(self.container.to_string()))?;
+        let listing = self.container_vfs.read_dir(&folder)?;
+        let volumes = crate::split::resolve_rar(name, listing.iter().map(|e| e.name.as_str()))?;
+        let local = (self.container.scheme() == Scheme::File && self.offset == 0)
+            .then(|| self.container.local_path())
+            .flatten();
+        let (path, spool) = match local {
+            Some(path) => (path, None),
+            None => {
+                let mut sources = Vec::with_capacity(volumes.len());
+                for v in &volumes {
+                    let uri = folder.join(v)?;
+                    let src: Arc<dyn Source> =
+                        Arc::new(VfsSource::open(self.container_vfs.clone(), uri)?);
+                    sources.push((v.clone(), src));
+                }
+                let (dir, first) = rar::spool(&sources, progress.cancelled)?;
+                (first, Some(dir))
+            }
+        };
+        Ok(Box::new(rar::RarReader::open(
+            tool,
+            path,
+            name,
+            &self.passwords,
+            progress,
+            spool,
+        )?))
+    }
+
     /// A split archive's parts read as one file (design D16): the first numbered part
     /// brings the rest of its set, and a zip whose end record spans several disks brings
     /// its `.z01`… parts. Parts are found by name in the container's folder only.
@@ -198,8 +241,11 @@ impl LazyArchive {
             report: &report,
             cancelled: &cancelled,
         };
-        let reader =
-            format::guarded(|| format::open(src, format, &name, &self.passwords, &progress));
+        let reader = if format == FormatId::Rar {
+            format::guarded(|| self.open_rar(&name, &progress))
+        } else {
+            format::guarded(|| format::open(src, format, &name, &self.passwords, &progress))
+        };
         self.total.store(0, Ordering::Relaxed);
         let fs = Arc::new(ArchiveFs::new(
             self.root.clone(),
@@ -368,6 +414,45 @@ mod tests {
                 .contains("Part 1 of site.zip is missing (site.z01)"),
             "{err}"
         );
+    }
+
+    /// A RAR on a remote backend is copied to a private folder for the tool, which goes
+    /// away with the mount.
+    #[cfg(unix)]
+    #[test]
+    fn a_remote_rar_is_spooled_for_the_tool_and_cleaned_up() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tools = tempfile::tempdir().expect("tools");
+        let script = tools.path().join("7z");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nfor a; do last=$a; done\nprintf '%s' \"$last\" > \"$(dirname \"$0\")/archive.txt\"\nprintf 'Path = a.txt\\nSize = 1\\n'\n",
+        )
+        .expect("script");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        format::rar::set_tool_override(Some(script));
+        let mem = Arc::new(fm_testkit::MemFs::new().with_scheme(Scheme::Sftp));
+        mem.mkdirs_str("/data").expect("dir");
+        let uri = VfsUri::parse("sftp://u@h/data/x.rar").expect("uri");
+        mem.put_file(&uri, b"Rar!\x1a\x07\x01\x00").expect("rar");
+        let vfs: Arc<dyn Vfs> = mem;
+        let root = VfsUri::archive_root(&crate::handle_for(&uri, 0, None)).expect("root");
+        let lazy = LazyArchive::new(root.clone(), uri, vfs, None, 0);
+        assert_eq!(names(&lazy, &root), vec!["a.txt"]);
+        let seen = std::fs::read_to_string(tools.path().join("archive.txt")).expect("arg");
+        let copy = std::path::PathBuf::from(&seen);
+        assert!(copy.is_file() && seen.contains("fm-rar-"), "{seen}");
+        #[cfg(unix)]
+        {
+            let mode = std::fs::metadata(copy.parent().expect("dir"))
+                .expect("meta")
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o700, "private folder");
+        }
+        lazy.unmount();
+        assert!(!copy.exists(), "the copy goes with the mount");
+        format::rar::set_tool_override(None);
     }
 
     #[test]

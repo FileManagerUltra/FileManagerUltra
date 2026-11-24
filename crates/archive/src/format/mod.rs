@@ -11,6 +11,7 @@ use crate::secret::Secret;
 use crate::source::Source;
 
 pub mod compress;
+pub mod rar;
 pub mod sevenz;
 pub mod single;
 pub mod tar;

@@ -21,6 +21,9 @@ pub enum SplitKind {
     Numbered,
     /// `site.z01`, `site.z02`, …, `site.zip` (last): a zip with per-disk offsets.
     ZipSpanned,
+    /// `data.part1.rar`, `data.part2.rar`, … or `data.rar`, `data.r00`, …: RAR's own
+    /// volumes, read through the tool from the first one.
+    RarVolume,
 }
 
 /// What a part's name says about its set.
@@ -35,12 +38,49 @@ pub struct PartName {
     width: usize,
 }
 
-/// Parse a part name: `backup.7z.003` (numbered, its base an archive name) or `site.z02`.
-/// Plain archive names (including `site.zip`) are not parts by name.
+/// Parse a part name: `backup.7z.003` (numbered, its base an archive name), `site.z02`,
+/// `data.part2.rar` or `data.r00`. Plain archive names (`site.zip`, `data.rar`) are not
+/// parts by name.
 pub fn parse(name: &str) -> Option<PartName> {
     let (stem, suffix) = name.rsplit_once('.')?;
     if stem.is_empty() {
         return None;
+    }
+    if suffix.eq_ignore_ascii_case("rar")
+        && let Some((b, part)) = stem.rsplit_once('.')
+        && let Some(digits) = part.get(4..).filter(|_| {
+            part.get(..4)
+                .is_some_and(|p| p.eq_ignore_ascii_case("part"))
+        })
+        && !b.is_empty()
+        && !digits.is_empty()
+        && digits.bytes().all(|c| c.is_ascii_digit())
+    {
+        let number: u32 = digits.parse().ok()?;
+        return (number >= 1).then(|| PartName {
+            kind: SplitKind::RarVolume,
+            base: format!("{b}.{suffix}"),
+            number,
+            width: digits.len(),
+        });
+    }
+    if let Some(digits) = suffix.strip_prefix(['r', 'R'])
+        && digits.len() >= 2
+        && digits.bytes().all(|c| c.is_ascii_digit())
+    {
+        // `data.rar` is volume 1, `data.r00` volume 2.
+        let n: u32 = digits.parse().ok()?;
+        let rar = if suffix.starts_with('R') {
+            "RAR"
+        } else {
+            "rar"
+        };
+        return Some(PartName {
+            kind: SplitKind::RarVolume,
+            base: format!("{stem}.{rar}"),
+            number: n.checked_add(2)?,
+            width: 0,
+        });
     }
     if suffix.len() >= 3 && suffix.bytes().all(|b| b.is_ascii_digit()) {
         let number: u32 = suffix.parse().ok()?;
@@ -82,6 +122,7 @@ pub fn canonical(name: &str) -> Option<String> {
     Some(match p.kind {
         SplitKind::Numbered => numbered_name(&p.base, 1, p.width),
         SplitKind::ZipSpanned => p.base,
+        SplitKind::RarVolume => rar_first(name, &p),
     })
 }
 
@@ -102,6 +143,73 @@ pub fn numbered_format(name: &str) -> Option<FormatId> {
     parse(name)
         .filter(|p| p.kind == SplitKind::Numbered)
         .and_then(|p| by_name(&p.base))
+}
+
+/// The first volume of the RAR set `p` (parsed from `name`).
+fn rar_first(name: &str, p: &PartName) -> String {
+    if p.width == 0 {
+        return p.base.clone();
+    }
+    rar_part_name(name, p, 1)
+}
+
+/// `data.part07.rar` for volume `n`, keeping the spelling of `name`.
+fn rar_part_name(name: &str, p: &PartName, n: u32) -> String {
+    let (stem, ext) = name.rsplit_once('.').unwrap_or((name, "rar"));
+    let (b, part) = stem.rsplit_once('.').unwrap_or((stem, "part1"));
+    let word = part.get(..4).unwrap_or("part");
+    format!("{b}.{word}{n:0w$}.{ext}", w = p.width)
+}
+
+/// The volumes of the RAR set `first` (as [`canonical`] names it, or a plain `data.rar`)
+/// belongs to, in order, from the names in its folder. A plain RAR with no volumes beside
+/// it is a set of one. Fails naming the first missing volume.
+pub fn resolve_rar<'a>(
+    first: &str,
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<Vec<String>, FmError> {
+    let names: Vec<&str> = names.into_iter().collect();
+    let new_style = parse(first).filter(|p| p.kind == SplitKind::RarVolume && p.width > 0);
+    let base = new_style
+        .as_ref()
+        .map_or_else(|| first.to_string(), |p| p.base.clone());
+    let mut found: Vec<(u32, String)> = names
+        .iter()
+        .filter_map(|n| {
+            let q = parse(n).filter(|q| q.kind == SplitKind::RarVolume)?;
+            let same = match &new_style {
+                Some(p) => q.width > 0 && q.base == p.base,
+                None => q.width == 0 && q.base.eq_ignore_ascii_case(first),
+            };
+            same.then(|| (q.number, (*n).to_string()))
+        })
+        .collect();
+    if new_style.is_none() {
+        found.push((1, first.to_string()));
+    }
+    found.sort();
+    found.dedup_by_key(|(n, _)| *n);
+    let last = found.last().map_or(1, |(n, _)| *n);
+    if last > MAX_PARTS {
+        return Err(too_many());
+    }
+    let mut parts = Vec::with_capacity(found.len());
+    for want in 1..=last {
+        match found.get(parts.len()) {
+            Some((n, name)) if *n == want => parts.push(name.clone()),
+            _ => {
+                let name = match &new_style {
+                    Some(p) => rar_part_name(first, p, want),
+                    None => {
+                        let stem = first.get(..first.len().saturating_sub(4)).unwrap_or(first);
+                        format!("{stem}.r{:02}", want - 2)
+                    }
+                };
+                return Err(missing(&base, want, &name));
+            }
+        }
+    }
+    Ok(parts)
 }
 
 fn numbered_name(base: &str, n: u32, width: usize) -> String {
@@ -443,6 +551,55 @@ pub(crate) mod tests {
         assert!(is_later_part("site.z01") && !is_later_part("site.zip"));
         assert_eq!(part_label("backup.7z.012").as_deref(), Some("part 12"));
         assert_eq!(numbered_format("data.tar.gz.001"), Some(FormatId::TarGz));
+    }
+
+    #[test]
+    fn rar_volumes_resolve_in_both_spellings() {
+        assert_eq!(
+            canonical("data.part2.rar").as_deref(),
+            Some("data.part1.rar")
+        );
+        assert_eq!(
+            canonical("data.PART03.RAR").as_deref(),
+            Some("data.PART01.RAR")
+        );
+        assert_eq!(canonical("data.r00").as_deref(), Some("data.rar"));
+        assert!(is_later_part("data.part2.rar") && !is_later_part("data.part1.rar"));
+        assert!(is_later_part("data.r00"));
+        assert_eq!(part_label("data.r00").as_deref(), Some("part 2"));
+        assert_eq!(parse("data.rar"), None, "a plain rar is not a part by name");
+        let new = [
+            "data.part3.rar",
+            "data.part1.rar",
+            "data.part2.rar",
+            "x.part1.rar",
+        ];
+        assert_eq!(
+            resolve_rar("data.part1.rar", new).expect("set"),
+            vec!["data.part1.rar", "data.part2.rar", "data.part3.rar"]
+        );
+        let err =
+            resolve_rar("data.part1.rar", ["data.part1.rar", "data.part3.rar"]).expect_err("gap");
+        assert!(
+            err.to_string()
+                .contains("Part 2 of data.rar is missing (data.part2.rar)"),
+            "{err}"
+        );
+        let old = ["data.r01", "data.rar", "data.r00"];
+        assert_eq!(
+            resolve_rar("data.rar", old).expect("old"),
+            vec!["data.rar", "data.r00", "data.r01"]
+        );
+        let err = resolve_rar("data.rar", ["data.rar", "data.r01"]).expect_err("gap");
+        assert!(
+            err.to_string()
+                .contains("Part 2 of data.rar is missing (data.r00)"),
+            "{err}"
+        );
+        assert_eq!(
+            resolve_rar("single.rar", ["single.rar", "other.r00"]).expect("one"),
+            vec!["single.rar"]
+        );
     }
 
     #[test]

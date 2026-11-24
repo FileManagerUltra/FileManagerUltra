@@ -439,3 +439,9 @@ change is visible: the changelog explains it and the preference restores the old
   and that the container is normalised (the derived `Deserialize` bypasses `parse`).
   Idle archives are released (memory only; passwords stay) after 10 minutes, and at most
   16 stay opened.
+- RAR (2026-11-24): implemented per D9 in `format/rar.rs`; the tool is found per mount
+  (Preferences path first). The pane state for "no tool" is the mount error with the
+  install hint. A wrong password on a member read is known only when the tool exits, so
+  it shows "Wrong password" but does not count toward the three-in-a-row limit; listings
+  (hidden names) count. Not yet checked against a real 7-Zip/unrar (none on the dev
+  machine): listing parsers follow the documented `-slt` / `lt` formats.

@@ -22,6 +22,12 @@ pub fn prompt(ui: &mut Ui, s: &mut Session, location: &VfsUri, message: &str, to
     ui.label(
         tokens.muted("Enter its password to open it. It is kept only while the archive is open."),
     );
+    if fm_engine::archive_cmds::is_rar_location(location) {
+        ui.label(tokens.muted(
+            "RAR archives are read by 7-Zip or unrar: the password is handed to that program \
+             while it reads, where other programs running as you could see it.",
+        ));
+    }
     let mut text = ui
         .data_mut(|d| d.get_temp::<String>(id))
         .unwrap_or_default();
