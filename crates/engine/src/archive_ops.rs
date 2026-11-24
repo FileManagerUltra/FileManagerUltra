@@ -124,6 +124,7 @@ pub(crate) fn extract(
 ) -> Result<OpReport, FmError> {
     let archive = backends.require(root)?;
     let entries = archive.read_dir(root)?;
+    probe_password(archive.as_ref(), root)?;
     let dest_vfs = backends.require(dest_dir)?;
     let target = free(dest_vfs.as_ref(), dest_dir, name, "", false)?;
     dest_vfs.create_dir(&target)?;
@@ -170,6 +171,40 @@ pub(crate) fn extract(
     report.created = vec![target];
     Ok(report)
 }
+
+/// Open the first file of the archive before anything is written, so an encrypted
+/// archive without its password stops here (and asks) instead of failing every file.
+fn probe_password(archive: &dyn Vfs, root: &VfsUri) -> Result<(), FmError> {
+    let mut dirs = vec![root.clone()];
+    let mut seen = 0usize;
+    while let Some(dir) = dirs.pop() {
+        for e in archive.read_dir(&dir)? {
+            seen += 1;
+            if seen > PROBE_ENTRIES {
+                return Ok(());
+            }
+            match e.kind {
+                EntryKind::Dir => dirs.push(e.uri),
+                EntryKind::File => {
+                    return match archive.open_read(&e.uri) {
+                        Err(err)
+                            if err.wants_password() || fm_archive::format::is_gave_up(&err) =>
+                        {
+                            Err(err)
+                        }
+                        // Other errors belong to that one file and show up in the report.
+                        _ => Ok(()),
+                    };
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Entries looked at to find a first file for [`probe_password`].
+const PROBE_ENTRIES: usize = 10_000;
 
 /// Where the archive is written before it is put in place.
 struct Temp {

@@ -33,6 +33,9 @@ impl SevenZReader {
             match Archive::read_with_memory_limit(&mut reader, &Password::empty(), MEM_LIMIT_KB) {
                 Ok(a) => (a, None),
                 Err(sevenz_rust2::Error::PasswordRequired) => {
+                    if passwords.gave_up() {
+                        return Err(super::gave_up_error(name));
+                    }
                     let known = passwords.list();
                     if known.is_empty() {
                         return Err(FmError::PasswordRequired(name.to_string()));
@@ -50,7 +53,15 @@ impl SevenZReader {
                             break;
                         }
                     }
-                    found.ok_or_else(|| FmError::WrongPassword(name.to_string()))?
+                    match found {
+                        Some(f) => {
+                            if let Some(pw) = &f.1 {
+                                passwords.fitted(pw);
+                            }
+                            f
+                        }
+                        None => return Err(passwords.failed(name)),
+                    }
                 }
                 Err(e) => return Err(sz_err(e, name)),
             };
@@ -182,6 +193,9 @@ impl Reader for SevenZReader {
         let mut candidates: Vec<Secret> = self.header_password.iter().cloned().collect();
         candidates.extend(passwords.list());
         let password = if node.meta.encrypted {
+            if passwords.gave_up() {
+                return Err(super::gave_up_error(&self.name));
+            }
             if candidates.is_empty() {
                 return Err(FmError::PasswordRequired(self.name.clone()));
             }
@@ -202,7 +216,13 @@ impl Reader for SevenZReader {
                     Err(_) => {}
                 }
             }
-            Some(ok.ok_or_else(|| FmError::WrongPassword(self.name.clone()))?)
+            match ok {
+                Some(pw) => {
+                    passwords.fitted(&pw);
+                    Some(pw)
+                }
+                None => return Err(passwords.failed(&self.name)),
+            }
         } else {
             None
         };

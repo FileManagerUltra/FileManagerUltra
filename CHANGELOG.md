@@ -17,9 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extracting an archive that claims to unpack to more than 1 GB at over 1000 times its own size now asks first ("This can be a decompression bomb meant to fill the disk. Extract anyway?"). Cancel leaves nothing behind.
 - Copies, moves and extractions list the items they leave out, with the reason, in the Activity panel: device files, FIFOs and sockets, links in an archive that point at files outside it, and names no folder can hold. One such item no longer stops the whole job.
 
+- Encrypted files inside an archive show a small padlock. Previewing one asks for the password right in the preview, and the file appears once it is given. Extracting or opening from an encrypted archive asks for the password first and then carries on by itself. After three wrong passwords in a row it stops asking; choose Forget Password or close the archive to try again.
+
 ### Fixed
 
 - Extracting a hostile archive cannot write outside the new folder: names with `..`, absolute paths and drive letters stay inside it, nothing is written through a link, device files and FIFOs are left out, and setuid/setgid bits are never kept. A file in an archive that turns out larger than its header says stops with an error and leaves no partial file.
+- Entering a password for an archive that two panes show at once no longer leaves one of them stuck loading.
 - When the destination disk fills up, a copy, move or extraction now stops right away with "not enough free space for … free some space or choose another folder" instead of failing on every remaining file.
 - On Windows, files from network servers or archives whose names Windows cannot store (such as `a:b`, `CON` or `name.`) are saved as `a_b`, `CON_` and `name_` instead of failing or ending up as a hidden stream of another file.
 - Disk images the system mounted, such as an ISO opened with its default application, can now be dismounted from Places › Devices. On Linux they were refused as possibly belonging to VeraCrypt; on Windows they were not listed at all. VeraCrypt volumes are still left to VeraCrypt.

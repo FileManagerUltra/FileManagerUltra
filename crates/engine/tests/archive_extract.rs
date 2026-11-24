@@ -347,3 +347,219 @@ fn a_bomb_like_ratio_asks_first_and_no_leaves_nothing() {
     assert!(f.work.join("bomb").is_dir());
     assert!(f.work.join("bomb/ok.txt").is_file());
 }
+
+fn aes_zip(password: &str) -> Vec<u8> {
+    let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default()
+        .with_aes_encryption(zip::AesMode::Aes256, password);
+    w.start_file("docs/a.txt", opts).expect("start");
+    w.write_all(b"alpha").expect("w");
+    w.finish().expect("finish").into_inner()
+}
+
+fn last_state(s: &Session) -> OpState {
+    s.fileops.jobs().last().expect("job").state.clone()
+}
+
+#[test]
+fn extracting_an_encrypted_zip_asks_then_runs_again_with_the_password() {
+    let f = fixture();
+    let zip = f.work.join("secret.zip");
+    std::fs::write(&zip, aes_zip("right")).expect("zip");
+    let mut s = Session::new().expect("session");
+    assert!(!s.command_enabled("archive.password.cancel"));
+    s.dispatch("archive.extract", &json!({"uri": uri(&zip)}))
+        .expect("extract");
+    wait_idle(&mut s);
+    assert!(matches!(last_state(&s), OpState::Failed(m) if m.contains("needs a password")));
+    assert_eq!(
+        tree(&f.work),
+        vec!["secret.zip"],
+        "nothing written before asking"
+    );
+    let ask = s
+        .archives
+        .password_ask
+        .clone()
+        .expect("asks for the password");
+    assert!(!ask.wrong);
+    assert!(s.command_enabled("archive.password.cancel"));
+
+    // A wrong password: the job runs again, stops again, and the dialog says so.
+    s.dispatch(
+        "archive.password",
+        &json!({"uri": ask.uri.to_string(), "password": "nope"}),
+    )
+    .expect("wrong password");
+    wait_idle(&mut s);
+    assert_eq!(s.fileops.jobs().len(), 2, "the job ran again");
+    let ask = s.archives.password_ask.clone().expect("asks again");
+    assert!(ask.wrong, "says the password was wrong");
+    assert_eq!(tree(&f.work), vec!["secret.zip"]);
+
+    s.dispatch(
+        "archive.password",
+        &json!({"uri": ask.uri.to_string(), "password": "right"}),
+    )
+    .expect("right password");
+    wait_idle(&mut s);
+    assert_eq!(last_state(&s), OpState::Finished);
+    assert!(s.archives.password_ask.is_none());
+    assert_eq!(
+        std::fs::read(f.work.join("secret/docs/a.txt")).expect("extracted"),
+        b"alpha"
+    );
+}
+
+#[test]
+fn three_wrong_passwords_stop_asking_until_forgotten() {
+    let f = fixture();
+    let zip = f.work.join("secret.zip");
+    std::fs::write(&zip, aes_zip("right")).expect("zip");
+    let mut s = Session::new().expect("session");
+    s.dispatch("archive.extract", &json!({"uri": uri(&zip)}))
+        .expect("extract");
+    wait_idle(&mut s);
+    let root = s.archives.password_ask.clone().expect("ask").uri;
+    for (i, pw) in ["one", "two", "three"].iter().enumerate() {
+        s.dispatch(
+            "archive.password",
+            &json!({"uri": root.to_string(), "password": pw}),
+        )
+        .expect("password");
+        wait_idle(&mut s);
+        let asked = s.archives.password_ask.is_some();
+        assert_eq!(asked, i < 2, "after wrong password {}", i + 1);
+    }
+    assert!(
+        matches!(last_state(&s), OpState::Failed(m) if m.contains("Forget Password")),
+        "{:?}",
+        last_state(&s)
+    );
+    let refused = s.dispatch(
+        "archive.password",
+        &json!({"uri": root.to_string(), "password": "right"}),
+    );
+    assert!(refused.is_err(), "no fourth try without forgetting");
+    s.dispatch("archive.password.forget", &json!({"uri": root.to_string()}))
+        .expect("forget");
+    s.dispatch("archive.extract", &json!({"uri": uri(&zip)}))
+        .expect("extract again");
+    wait_idle(&mut s);
+    assert!(
+        s.archives.password_ask.is_some(),
+        "asks again after forgetting"
+    );
+    s.dispatch(
+        "archive.password",
+        &json!({"uri": root.to_string(), "password": "right"}),
+    )
+    .expect("right");
+    wait_idle(&mut s);
+    assert_eq!(last_state(&s), OpState::Finished);
+}
+
+#[test]
+fn cancelling_the_password_dialog_drops_the_retry() {
+    let f = fixture();
+    let zip = f.work.join("secret.zip");
+    std::fs::write(&zip, aes_zip("right")).expect("zip");
+    let mut s = Session::new().expect("session");
+    assert!(s.dispatch("archive.password.cancel", &json!(null)).is_err());
+    s.dispatch("archive.extract", &json!({"uri": uri(&zip)}))
+        .expect("extract");
+    wait_idle(&mut s);
+    assert!(s.archives.password_ask.is_some());
+    assert!(
+        s.dispatch("archive.password.cancel", &json!({"x": 1}))
+            .is_err()
+    );
+    s.dispatch("archive.password.cancel", &json!(null))
+        .expect("cancel");
+    assert!(s.archives.password_ask.is_none());
+    assert_eq!(s.fileops.jobs().len(), 1, "nothing ran again");
+}
+
+#[test]
+fn encrypted_entries_are_known_for_the_lock_badge() {
+    let f = fixture();
+    let zip = f.work.join("secret.zip");
+    std::fs::write(&zip, aes_zip("right")).expect("zip");
+    let mut s = Session::new().expect("session");
+    s.dispatch("archive.enter", &json!({"uri": uri(&zip)}))
+        .expect("enter");
+    let root = s
+        .layout
+        .state(s.layout.focused())
+        .expect("pane")
+        .location
+        .clone();
+    let docs = root.join("docs").expect("docs");
+    poll_until(&mut s, "the archive to open", |s| {
+        s.archives.opened_fs(&root).is_some()
+    });
+    assert!(s.archives.is_encrypted(&docs.join("a.txt").expect("a")));
+    assert!(!s.archives.is_encrypted(&docs), "folders carry no lock");
+}
+
+#[test]
+fn a_preview_inside_an_encrypted_zip_shows_after_the_password() {
+    use fm_engine::preview_cmds::Body;
+    use fm_layout::PaneKind;
+    use fm_preview::Preview;
+    let f = fixture();
+    let zip = f.work.join("secret.zip");
+    std::fs::write(&zip, aes_zip("right")).expect("zip");
+    let mut s = Session::new().expect("session");
+    s.dispatch("archive.enter", &json!({"uri": uri(&zip)}))
+        .expect("enter");
+    let root = s
+        .layout
+        .state(s.layout.focused())
+        .expect("pane")
+        .location
+        .clone();
+    let file = root
+        .join("docs")
+        .and_then(|d| d.join("a.txt"))
+        .expect("file");
+    let docs = root.join("docs").expect("docs");
+    s.dispatch("nav.open", &json!(docs.to_string()))
+        .expect("into docs");
+    poll_until(&mut s, "the docs listing", |s| {
+        s.dirs.state(&docs).is_ready()
+    });
+    s.dispatch("preview.open", &json!({"uri": file.to_string()}))
+        .expect("preview");
+    let pane = s
+        .layout
+        .panes()
+        .into_iter()
+        .find(|id| s.pane_kind(*id) == Some(PaneKind::Preview))
+        .expect("preview pane");
+    let body_text = |s: &Session| match s.preview_slot(pane).map(|slot| &slot.body) {
+        Some(Body::Static(p)) => match &**p {
+            Preview::Error(e) => Some(format!("error: {e}")),
+            Preview::Text(_) => Some("text".to_string()),
+            other => Some(format!("{other:?}").chars().take(40).collect()),
+        },
+        _ => None,
+    };
+    poll_until(&mut s, "the password error", |s| {
+        body_text(s).is_some_and(|t| t.starts_with("error:"))
+    });
+    let shown = body_text(&s).expect("body");
+    assert!(
+        fm_engine::archive_cmds::is_password_message(shown.trim_start_matches("error: ")),
+        "{shown}"
+    );
+    s.dispatch(
+        "archive.password",
+        &json!({"uri": file.to_string(), "password": "right"}),
+    )
+    .expect("password");
+    poll_until(&mut s, "the text after the password", |s| {
+        body_text(s).as_deref() == Some("text")
+    });
+    assert!(s.dirs.state(&docs).is_ready(), "the listing came back too");
+}

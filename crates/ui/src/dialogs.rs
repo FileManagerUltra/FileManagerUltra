@@ -224,6 +224,7 @@ impl Dialogs {
     pub fn show(&mut self, ctx: &Context, s: &mut Session, tokens: &Tokens) {
         conflict_dialog(ctx, s, tokens);
         question_dialog(ctx, s, tokens);
+        archive_password_dialog(ctx, s, tokens);
         kind_switch_dialog(ctx, s, tokens);
         busy_quit_dialog(ctx, s, tokens);
         unsaved_dialog(ctx, s, tokens);
@@ -907,6 +908,36 @@ fn kind_switch_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             &json!({"kind": kind.as_str(), "pane": pane, "confirm": true}),
         );
         s.pending_kind = None;
+    }
+}
+
+/// An Extract or Open job stopped because its archive needs a password: ask for it here;
+/// the job runs again once one is given. Cancel, Escape or closing drops the retry.
+fn archive_password_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    let Some(ask) = s.archives.password_ask.clone() else {
+        return;
+    };
+    let name = fm_engine::archive_cmds::container_of(&ask.uri)
+        .and_then(|r| r.container.file_name().map(str::to_string))
+        .unwrap_or_else(|| "archive".to_string());
+    let message = if ask.wrong {
+        format!("wrong password for {name}")
+    } else {
+        format!("{name} needs a password")
+    };
+    let mut open = true;
+    let mut cancel = false;
+    crate::dialog_style::window(ctx, tokens, "Password needed", &mut open)
+        .id(Id::NULL.with("fm-archive-password-dialog"))
+        .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
+            crate::archive_password::prompt(ui, s, &ask.uri, &message, tokens);
+            if ui.button("Cancel").clicked() {
+                cancel = true;
+            }
+        });
+    if !open || cancel || ctx.input(|i| i.key_pressed(Key::Escape)) {
+        s.dispatch_or_notice("archive.password.cancel", &json!(null));
     }
 }
 

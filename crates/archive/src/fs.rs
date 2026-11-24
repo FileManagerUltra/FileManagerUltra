@@ -45,6 +45,14 @@ impl ArchiveFs {
         &self.passwords
     }
 
+    /// Whether the entry at `uri` is stored encrypted (the listing's lock badge).
+    pub fn is_encrypted(&self, uri: &VfsUri) -> bool {
+        self.node_of(uri)
+            .ok()
+            .and_then(|id| self.index().node(id))
+            .is_some_and(|n| n.meta.encrypted)
+    }
+
     fn node_of(&self, uri: &VfsUri) -> Result<NodeId, FmError> {
         if uri.scheme() != Scheme::Archive || uri.authority() != self.root.authority() {
             return Err(FmError::NotFound(uri.to_string()));

@@ -33,6 +33,8 @@ pub fn prompt(ui: &mut Ui, s: &mut Session, location: &VfsUri, message: &str, to
                 .hint_text("Password")
                 .desired_width(220.0),
         );
+        field
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::PasswordInput, true, "Password"));
         if !field.has_focus() && text.is_empty() {
             field.request_focus();
         }

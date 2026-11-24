@@ -46,6 +46,26 @@ pub struct Mounts {
     /// Archive files opened this session, oldest first: the tree keeps showing them as
     /// folders until they are closed (Close Archive).
     opened: Vec<VfsUri>,
+    /// A job that stopped because an archive needs a password, waiting for one.
+    pub password_ask: Option<PasswordAsk>,
+}
+
+/// An Extract or Open job stopped for a password: the dialog asks for it and the job
+/// runs again once one is given (archive-browsing "Encrypted archives open with a
+/// password").
+#[derive(Clone, Debug)]
+pub struct PasswordAsk {
+    /// A location inside the archive (its root).
+    pub uri: VfsUri,
+    /// The last password given did not fit.
+    pub wrong: bool,
+    retry: crate::fileops::OpRequest,
+}
+
+impl PasswordAsk {
+    pub(crate) fn new(uri: VfsUri, wrong: bool, retry: crate::fileops::OpRequest) -> Self {
+        Self { uri, wrong, retry }
+    }
 }
 
 /// Most archives the tree keeps as opened.
@@ -67,6 +87,16 @@ impl Mounts {
     /// The mount serving `uri`, if `uri` is inside an archive.
     pub fn for_uri(&self, uri: &VfsUri) -> Option<&Arc<LazyArchive>> {
         uri.archive_handle().and_then(|h| self.lazies.get(h))
+    }
+
+    /// Whether the entry at `uri` (inside an opened archive) is stored encrypted.
+    pub fn is_encrypted(&self, uri: &VfsUri) -> bool {
+        self.opened_fs(uri).is_some_and(|fs| fs.is_encrypted(uri))
+    }
+
+    /// The opened archive serving `uri`, for per-row lookups in one frame.
+    pub fn opened_fs(&self, uri: &VfsUri) -> Option<Arc<fm_archive::ArchiveFs>> {
+        self.for_uri(uri).and_then(|m| m.opened())
     }
 
     /// Whether the tree shows this archive file as a folder (opened and not closed since).
@@ -421,9 +451,23 @@ fn reload(s: &mut Session, mount: &LazyArchive) {
         .map(|p| p.location.clone())
         .filter(|l| l.archive_handle().map(str::to_string) == handle)
         .collect();
+    let mut shown = shown;
+    shown.sort_by_key(ToString::to_string);
+    // Two panes on one folder must re-read it once: a second invalidate would drop the
+    // read the first one started.
+    shown.dedup();
     for uri in shown {
-        s.dirs.invalidate(&uri);
-        let _ = s.ensure_read(uri);
+        let _ = s.refresh_read(uri);
+    }
+    // Previews of files inside it render again (in place, no spinner).
+    for slot in s.previews.slots.values_mut() {
+        let inside = slot
+            .subjects
+            .iter()
+            .any(|e| e.uri.archive_handle().map(str::to_string) == handle);
+        if inside {
+            slot.stale = true;
+        }
     }
 }
 
@@ -509,9 +553,40 @@ pub fn password() -> CommandSpec {
                 )));
             }
             let mount = target_mount(s, params)?;
+            if mount.passwords().gave_up() {
+                let name = mount.container().file_name().unwrap_or("archive");
+                return Err(fm_archive::format::gave_up_error(name));
+            }
             mount.passwords().add(Secret::new(pw));
             reload(s, &mount);
+            // A job that stopped for this archive's password runs again.
+            let same = |a: &PasswordAsk| a.uri.archive_handle() == mount.root().archive_handle();
+            if let Some(ask) = s.archives.password_ask.take_if(|a| same(a)) {
+                s.submit_op(ask.retry)?;
+            }
             Ok(())
+        },
+    }
+}
+
+/// `archive.password.cancel` — close the password dialog of a stopped job.
+pub fn cancel_password() -> CommandSpec {
+    CommandSpec {
+        id: "archive.password.cancel",
+        label: "Cancel Password",
+        menu: &["File", "Archive", "Cancel Password"],
+        shortcut: None,
+        params: "none",
+        enabled: |s| s.archives.password_ask.is_some(),
+        run: |s, params: &Params| {
+            if !params.is_null() && !params.as_object().is_some_and(|m| m.is_empty()) {
+                return Err(FmError::InvalidParams("expected no parameters".into()));
+            }
+            s.archives
+                .password_ask
+                .take()
+                .map(|_| ())
+                .ok_or_else(|| FmError::InvalidParams("no password is being asked".into()))
         },
     }
 }
@@ -566,6 +641,7 @@ pub fn specs() -> Vec<CommandSpec> {
         open_app(),
         unmount(),
         password(),
+        cancel_password(),
         forget_password(),
     ]
 }

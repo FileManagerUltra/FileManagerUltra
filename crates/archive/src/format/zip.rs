@@ -114,6 +114,9 @@ impl ZipReader {
             archive.by_index(i).map_err(|e| zip_err(e, &self.name))?;
             return Ok(None);
         }
+        if passwords.gave_up() {
+            return Err(super::gave_up_error(&self.name));
+        }
         let known = passwords.list();
         if known.is_empty() {
             return Err(FmError::PasswordRequired(self.name.clone()));
@@ -122,12 +125,15 @@ impl ZipReader {
             match archive
                 .by_index_with_options(i, ZipReadOptions::new().password(Some(pw.as_bytes())))
             {
-                Ok(_) => return Ok(Some(pw.as_bytes().to_vec())),
+                Ok(_) => {
+                    passwords.fitted(&pw);
+                    return Ok(Some(pw.as_bytes().to_vec()));
+                }
                 Err(ZipError::InvalidPassword) => {}
                 Err(e) => return Err(zip_err(e, &self.name)),
             }
         }
-        Err(FmError::WrongPassword(self.name.clone()))
+        Err(passwords.failed(&self.name))
     }
 }
 

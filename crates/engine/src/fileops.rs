@@ -413,6 +413,8 @@ pub struct OpJob {
     removes: Vec<VfsUri>,
     shared: Arc<Mutex<Shared>>,
     resolver: Sender<Decision>,
+    /// Extract and Open jobs on an archive: run again once a missing password is given.
+    retry: Option<OpRequest>,
 }
 
 /// The jobs table (insertion order).
@@ -682,6 +684,17 @@ fn run(
     }
 }
 
+impl OpRequest {
+    /// The archive location an Extract or Open job reads from.
+    fn archive_uri(&self) -> Option<VfsUri> {
+        match self {
+            Self::Extract { root, .. } => Some(root.clone()),
+            Self::OpenRemote { uri, .. } => uri.archive_handle().map(|_| uri.root()),
+            _ => None,
+        }
+    }
+}
+
 impl Session {
     /// Validate and enqueue a mutating job. Returns immediately; the work runs on the
     /// lane of the destination (or source) and reports through [`Session::poll`].
@@ -717,6 +730,13 @@ impl Session {
             }
             _ => Vec::new(),
         };
+        let retry = match &request {
+            OpRequest::Extract { .. } => Some(request.clone()),
+            OpRequest::OpenRemote { uri, .. } if uri.archive_handle().is_some() => {
+                Some(request.clone())
+            }
+            _ => None,
+        };
         let worker_shared = shared.clone();
         let retarget_links = self.prefs.retarget_links;
         let id = self.jobs.submit(lane, move |ctx| {
@@ -745,6 +765,7 @@ impl Session {
             removes,
             shared,
             resolver,
+            retry,
         });
         Ok(id)
     }
@@ -895,6 +916,18 @@ impl Session {
         job.conflict = None;
         job.question = None;
         job.summary = report.as_ref().map(OpSummary::from);
+        // Stopped because the archive needs a password: ask, and run it again after.
+        let ask = match (&job.state, job.retry.take()) {
+            (OpState::Failed(message), Some(retry))
+                if crate::archive_cmds::is_password_message(message) =>
+            {
+                retry.archive_uri().map(|uri| {
+                    let wrong = message.starts_with("wrong password for ");
+                    crate::archive_cmds::PasswordAsk::new(uri, wrong, retry)
+                })
+            }
+            _ => None,
+        };
         let pdf_outcome = (
             job.state.clone(),
             report
@@ -921,6 +954,9 @@ impl Session {
         }
         self.leave_removed_folders(&removed);
         self.pdf_save_finished(id, &pdf_outcome.0, &pdf_outcome.1);
+        if ask.is_some() {
+            self.archives.password_ask = ask;
+        }
         self.fileops.trim();
         true
     }

@@ -228,35 +228,106 @@ pub struct Info {
     pub names_encrypted: bool,
 }
 
-/// Passwords known for one mounted archive (at most 8), tried in order.
+/// Passwords known for one mounted archive (at most 8), tried in order, and how many
+/// entered passwords in a row did not fit.
 #[derive(Debug, Default)]
-pub struct Passwords(Mutex<Vec<Secret>>);
+pub struct Passwords(Mutex<PasswordState>);
+
+#[derive(Debug, Default)]
+struct PasswordState {
+    known: Vec<Secret>,
+    /// A password was added and no check has judged it yet.
+    fresh: bool,
+    /// Entered passwords in a row that fitted nothing (only the first check after each
+    /// new password counts, so many reads of one wrong password count once).
+    wrong_in_a_row: u8,
+}
 
 pub const MAX_PASSWORDS: usize = 8;
 
+/// Wrong passwords in a row after which reads stop asking (archive-browsing spec).
+pub const MAX_WRONG: u8 = 3;
+
 impl Passwords {
+    fn state(&self) -> std::sync::MutexGuard<'_, PasswordState> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     pub fn list(&self) -> Vec<Secret> {
-        self.0.lock().map(|v| v.clone()).unwrap_or_default()
+        self.state().known.clone()
     }
 
     pub fn add(&self, secret: Secret) {
-        if let Ok(mut v) = self.0.lock()
-            && !v.contains(&secret)
-        {
-            v.insert(0, secret);
-            v.truncate(MAX_PASSWORDS);
+        let mut st = self.state();
+        if !st.known.contains(&secret) {
+            st.known.insert(0, secret);
+            st.known.truncate(MAX_PASSWORDS);
         }
+        st.fresh = true;
     }
 
+    /// Forget every password and the wrong-password count.
     pub fn forget(&self) {
-        if let Ok(mut v) = self.0.lock() {
-            v.clear();
-        }
+        *self.state() = PasswordState::default();
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.lock().map(|v| v.is_empty()).unwrap_or(true)
+        self.state().known.is_empty()
     }
+
+    /// Whether three entered passwords in a row were wrong: reads stop asking until the
+    /// passwords are forgotten or the archive is closed.
+    pub fn gave_up(&self) -> bool {
+        self.state().wrong_in_a_row >= MAX_WRONG
+    }
+
+    /// `pw` opened something. When it is the newest password the user entered, the
+    /// wrong-password run ends; an older password opening another member says nothing
+    /// about the one just typed.
+    pub fn fitted(&self, pw: &Secret) {
+        let mut st = self.state();
+        if st.known.first() == Some(pw) {
+            st.fresh = false;
+            st.wrong_in_a_row = 0;
+        }
+    }
+
+    /// No known password fits what `name` needs. A password entered since the last
+    /// check counts as wrong ("wrong password for …"); otherwise a member that simply needs
+    /// another password asks for one ("… needs a password"); after [`MAX_WRONG`] wrong ones
+    /// the read stops with an error that no longer asks.
+    pub fn failed(&self, name: &str) -> FmError {
+        let mut st = self.state();
+        if st.fresh {
+            st.fresh = false;
+            st.wrong_in_a_row = st.wrong_in_a_row.saturating_add(1);
+        }
+        if st.wrong_in_a_row >= MAX_WRONG {
+            gave_up_error(name)
+        } else if st.wrong_in_a_row > 0 {
+            FmError::WrongPassword(name.to_string())
+        } else {
+            FmError::PasswordRequired(name.to_string())
+        }
+    }
+}
+
+/// Whether `err` is [`gave_up_error`]: reads of this archive stop until its passwords
+/// are forgotten.
+pub fn is_gave_up(err: &FmError) -> bool {
+    matches!(err, FmError::Backend { message, .. } if message.starts_with(&format!("wrong password {MAX_WRONG} times")))
+}
+
+/// The error once [`MAX_WRONG`] wrong passwords were entered: actionable, and not a
+/// password error, so nothing asks again by itself.
+pub fn gave_up_error(name: &str) -> FmError {
+    FmError::backend(
+        "archive",
+        format!(
+            "wrong password {MAX_WRONG} times for {name}; choose Forget Password or close \
+             the archive to try again"
+        ),
+    )
 }
 
 /// One opened archive: its tree and member data.
@@ -508,6 +579,45 @@ mod tests {
         for f in ALL {
             assert_eq!(FormatId::from_id(f.id()), Some(f));
         }
+    }
+
+    #[test]
+    fn three_wrong_passwords_in_a_row_stop_asking() {
+        let pw = Passwords::default();
+        assert!(matches!(pw.failed("a.zip"), FmError::PasswordRequired(_)));
+        for round in 1..MAX_WRONG {
+            pw.add(Secret::new(format!("wrong{round}")));
+            // Several reads judge the same new password: it counts once.
+            for _ in 0..3 {
+                assert!(matches!(pw.failed("a.zip"), FmError::WrongPassword(_)));
+            }
+            assert!(!pw.gave_up());
+        }
+        pw.add(Secret::new("wrong3"));
+        let err = pw.failed("a.zip");
+        assert!(!err.wants_password(), "stops asking: {err}");
+        assert!(err.to_string().contains("Forget Password"), "{err}");
+        assert!(is_gave_up(&err) && !is_gave_up(&FmError::Cancelled));
+        assert!(pw.gave_up());
+        pw.forget();
+        assert!(!pw.gave_up() && pw.is_empty());
+        assert!(matches!(pw.failed("a.zip"), FmError::PasswordRequired(_)));
+    }
+
+    #[test]
+    fn a_fitting_password_ends_the_run_and_other_members_ask_plainly() {
+        let pw = Passwords::default();
+        pw.add(Secret::new("bad"));
+        assert!(matches!(pw.failed("a.zip"), FmError::WrongPassword(_)));
+        pw.add(Secret::new("bad2"));
+        // An older password opening another member does not judge the new one.
+        pw.fitted(&Secret::new("bad"));
+        assert!(matches!(pw.failed("a.zip"), FmError::WrongPassword(_)));
+        pw.add(Secret::new("good"));
+        pw.fitted(&Secret::new("good"));
+        // b.txt uses yet another password: it needs one, nobody typed a wrong one.
+        assert!(matches!(pw.failed("a.zip"), FmError::PasswordRequired(_)));
+        assert_eq!(pw.list().len(), 3);
     }
 
     #[test]

@@ -2134,3 +2134,66 @@ fn bomb_question_cancel_stops_the_extraction() {
         assert!(!dir.path().join("bomb").exists(), "no folder left behind");
     }
 }
+
+/// Extract on an encrypted zip stops before writing and asks for the password in a
+/// dialog; typing it and pressing Open runs the extraction again (add-archive-vfs 4.5).
+#[test]
+fn password_dialog_reruns_the_extraction() {
+    for tokens in [Tokens::dark(), Tokens::light()] {
+        let dir = tempfile::tempdir().expect("tmp");
+        let zip = dir.path().join("locked.zip");
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/locked.zip"),
+            &zip,
+        )
+        .expect("fixture");
+        let mut s = Session::new().expect("session");
+        let uri = VfsUri::parse(&zip.to_string_lossy()).expect("uri");
+        s.dispatch("archive.extract", &json!({"uri": uri.to_string()}))
+            .expect("extract");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while s.archives.password_ask.is_none() {
+            s.poll();
+            assert!(std::time::Instant::now() < deadline, "no password ask");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!dir.path().join("locked").exists(), "nothing written yet");
+        let mut dialogs = Dialogs::default();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                    dialogs.show(ui.ctx(), s, &tokens);
+                },
+                s,
+            );
+        h.run_steps(3);
+        assert!(
+            h.query_by_label_contains("locked.zip is encrypted")
+                .is_some()
+        );
+        h.get_by_label("Password").type_text("pw");
+        h.run();
+        h.get_by_label("Open").click();
+        h.run();
+        while h.state().archives.password_ask.is_some()
+            || h.state()
+                .fileops
+                .jobs()
+                .iter()
+                .any(|j| j.state.is_running())
+        {
+            h.state_mut().poll();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "extraction did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(
+            std::fs::read(dir.path().join("locked/docs/secret.txt")).expect("extracted"),
+            b"top secret\n"
+        );
+    }
+}

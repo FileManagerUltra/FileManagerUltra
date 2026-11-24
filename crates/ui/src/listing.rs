@@ -325,6 +325,28 @@ pub(crate) fn paint_archive_icon(
     }
 }
 
+/// A small padlock: the badge of an encrypted entry inside an archive (add-archive-vfs
+/// 7.6; colour is never the only cue).
+pub(crate) fn paint_lock_icon(painter: &egui::Painter, origin: egui::Pos2, color: egui::Color32) {
+    let stroke = egui::Stroke::new(1.0, color);
+    let body = egui::Rect::from_min_size(
+        egui::pos2(origin.x + 1.0, origin.y - 1.0),
+        egui::vec2(8.0, 6.0),
+    );
+    painter.rect_filled(body, 1.0, color);
+    let (l, r) = (body.left() + 2.0, body.right() - 2.0);
+    let top = body.top() - 3.5;
+    painter.line_segment(
+        [egui::pos2(l, body.top()), egui::pos2(l, top + 1.0)],
+        stroke,
+    );
+    painter.line_segment(
+        [egui::pos2(r, body.top()), egui::pos2(r, top + 1.0)],
+        stroke,
+    );
+    painter.line_segment([egui::pos2(l + 0.5, top), egui::pos2(r - 0.5, top)], stroke);
+}
+
 /// One continuous layout shared by header, hit-testing and entry rows.
 fn columns(rect: egui::Rect, sizing: ColumnSizing) -> Columns {
     let [size_w, mtime_w, type_w] = sizing.fit(rect.width());
@@ -1180,6 +1202,7 @@ fn entry_row_ui(
     // Archive files and everything inside an archive carry the archive colour (D14).
     let archive_file = entry.is_file() && fm_engine::archive_cmds::is_archive_name(&entry.name);
     let in_archive = entry.uri.scheme() == fm_vfs::Scheme::Archive;
+    let encrypted = in_archive && entry.is_file() && s.archives.is_encrypted(&entry.uri);
     let text_color = if selected {
         tokens.selection_text
     } else if let Some(tint) = marks.tint_of(mark, tokens) {
@@ -1218,6 +1241,9 @@ fn entry_row_ui(
         } else if archive_file {
             let origin = cols.name.left_center() + egui::vec2(tokens.padding, 0.0);
             paint_archive_icon(ui.painter(), origin, text_color);
+        } else if encrypted {
+            let origin = cols.name.left_center() + egui::vec2(tokens.padding, 0.0);
+            paint_lock_icon(ui.painter(), origin, text_color);
         }
         cell.min.x += ICON_GUTTER;
         paint_cell(

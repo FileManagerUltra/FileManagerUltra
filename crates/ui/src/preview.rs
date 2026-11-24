@@ -232,8 +232,24 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         let tokens = &content_tokens;
         ui.data_mut(|d| d.insert_temp(Id::NULL.with("pv-content-scale"), scale));
         ui.data_mut(|d| d.insert_temp(svg_background_id(), s.prefs.svg_background));
+        // A file inside an encrypted archive asks for its password right here.
+        let password_for = s.preview_slot(pane).and_then(|slot| match &slot.body {
+            Body::Static(p) => match (&**p, slot.subject.as_ref()) {
+                (Preview::Error(e), Some(subject))
+                    if subject.uri.archive_handle().is_some()
+                        && fm_engine::archive_cmds::is_password_message(e) =>
+                {
+                    Some((subject.uri.clone(), e.clone()))
+                }
+                _ => None,
+            },
+            _ => None,
+        });
         if s.pane_diff(pane).is_some_and(|d| d.active) {
             crate::diff::show(ui, s, pane, tokens);
+        } else if let Some((uri, message)) = password_for {
+            ui.add_space(4.0);
+            crate::archive_password::prompt(ui, s, &uri, &message, tokens);
         } else if let Some(slot) = s.preview_slot(pane) {
             match &slot.body {
                 Body::Empty => centered(ui, tokens, "Select a file to preview it"),
