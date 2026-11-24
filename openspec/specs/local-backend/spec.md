@@ -33,7 +33,6 @@ Directory reads SHALL be capped at a configured maximum entry count, and the UI 
 - **WHEN** `fm-ui` and `fm-app` sources are inspected (review + layering: only `fm-engine` above L0 performs filesystem work)
 - **THEN** no widget or app module calls `std::fs` or a `Vfs` method directly — reads arrive as job events applied in `Session::poll`
 
-
 ### Requirement: Windows drives
 On Windows the local root `file:///` SHALL be a virtual **This PC** folder listing every existing drive root (A:–Z:) as a folder; it is the default tree root, it appears in Places, `This PC` and a bare `D:` are accepted in the location bar, and Up from a drive root returns to it. It has no OS path, so writes to it fail with an error. Uris map to OS paths only through `VfsUri::local_path` (`/C:/x` → `C:\x`, `/C:` → `C:\`, `/server/share` → `\\server\share`), and paths are shown, copied and passed to child processes in that native form.
 
@@ -50,3 +49,26 @@ On Windows the local root `file:///` SHALL be a virtual **This PC** folder listi
 - **THEN** the error names the affected path and explains that the drive may be unformatted, encrypted/locked, unsupported or damaged
 - **AND** it suggests unlocking/mounting encrypted volumes with the appropriate software, or checking Windows Disk Management
 - **AND** it warns against formatting a drive containing needed data, retains the error code for diagnostics, and never starts formatting
+
+### Requirement: Local backend reads and writes full attributes
+`fm-fs-local` SHALL implement `stat_full`, `set_attrs` and `attr_caps` with safe APIs only: mtime/atime (and creation time where the platform allows) through `std::fs::FileTimes`, mode, uid/gid and xattrs (including `system.posix_acl_*` as opaque blobs) through `rustix` on Unix. Symlinks SHALL be handled without following them. On Windows, owner, group and DACL SHALL be read and written through `fm-winsec` as an opaque, size-capped security descriptor, with failures from missing privileges reported per attribute. Platform gaps (Linux creation time; ACL/owner between Windows and Unix pairs) SHALL be reported in `attr_caps`, not as errors.
+
+#### Scenario: Round trip on a temp tree
+- **WHEN** a file's times, mode and an xattr are read with `stat_full` and applied to another file
+- **THEN** the second file reports the same values, or the report lists the attribute as unsupported on a filesystem without it
+
+#### Scenario: Symlink attributes
+- **WHEN** `set_attrs` targets a symlink
+- **THEN** the link's own times are set and its target is untouched
+
+### Requirement: Windows security descriptors are isolated
+`fm-winsec` SHALL be the only crate besides the approved exceptions that contains `unsafe` for security descriptors; it SHALL deny `unsafe_code` crate-wide and allow it only in one module, validate inputs in safe code and cap descriptor size.
+
+#### Scenario: Oversized descriptor
+- **WHEN** a descriptor larger than the cap is passed to `set_attrs`
+- **THEN** it is rejected with an error before any API call
+
+#### Scenario: Missing privilege
+- **WHEN** setting the owner requires a privilege the process lacks
+- **THEN** the report lists owner as `PermissionDenied` and the other attributes are applied
+

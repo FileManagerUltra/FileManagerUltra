@@ -96,7 +96,10 @@ Captured so they are not lost; each becomes an OpenSpec proposal (`/opsx-propose
 
 ### Next: archives, disk images and Docker as folders
 
-Three proposed OpenSpec changes, in order (proposals written 2026-11-23, not started):
+Three OpenSpec changes, in order (proposals written 2026-11-23). `add-archive-vfs` is in
+progress: browsing (zip, tar family, 7z, nested, remote, encrypted), tree expansion,
+Extract and Compress have landed; split reading, ISO, RAR, editing with Save, and
+restoring open archives after a restart are still open. The other two are not started:
 
 - **`add-archive-vfs`**: zip, tar (gz/bz2/xz/zst), 7z, ISO and RAR (read-only, through an
   installed 7-Zip or unrar) open like folders with Enter, on every backend and nested,
@@ -140,7 +143,8 @@ zoom, Find and theme conventions.
 
 ### File synchronization
 
-Implemented as OpenSpec change `add-file-sync` (`fm-sync`, `sync.*` commands, File >
+Implemented as OpenSpec change `add-file-sync`, archived 2026-11-24 together with
+`add-path-picker` (`fm-sync`, `sync.*` commands, File >
 Synchronize Folders): Update, Mirror and Two-way modes, reviewable plan, filters,
 saved profiles, "Keep in sync" watching, attribute carry-over. See
 `docs/architecture.md` §12b. Open follow-ups: grid sorting by size/time, more
