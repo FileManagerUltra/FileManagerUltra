@@ -426,3 +426,10 @@ change is visible: the changelog explains it and the preference restores the old
   near-black text: ΔE 1.75:1 contrast for #5cb2ff). Candidates must be 4.5:1 on rows,
   CIE76 ΔE ≥ 30 from the text and ≥ 12 (then 8) from `accent_text`; grey accents take the
   readable candidate furthest from the text. `archive_muted` from D14 is not used.
+- Split archives (2026-11-24): numbered parts and zip spanned sets mount through
+  `LazyArchive::join_parts`; the mount's container is canonicalised by name (first part,
+  or the `.zip`), so entering any part reuses one mount and display shows the first part.
+  A spanned zip is detected by its end record's disk number, not by sibling names, so a
+  plain zip costs no folder listing. Spanned zips (D16 spike) are read by rewriting the
+  central directory in memory (≤ 256 MiB). The listing shows "part n" (not "of N") in the
+  Type column. Closing an archive now also drops its cached listings.

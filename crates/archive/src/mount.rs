@@ -91,6 +91,50 @@ impl LazyArchive {
         self.container.file_name().unwrap_or("archive").to_string()
     }
 
+    /// A split archive's parts read as one file (design D16): the first numbered part
+    /// brings the rest of its set, and a zip whose end record spans several disks brings
+    /// its `.z01`… parts. Parts are found by name in the container's folder only.
+    fn join_parts(&self, name: &str, file: Arc<dyn Source>) -> Result<Arc<dyn Source>, FmError> {
+        if self.offset > 0 || self.forced.is_some() {
+            return Ok(file);
+        }
+        let numbered =
+            crate::split::parse(name).is_some_and(|p| p.kind == crate::split::SplitKind::Numbered);
+        let disks = if !numbered && format::by_name(name) == Some(FormatId::Zip) {
+            crate::split::zip_disks(file.as_ref())?.unwrap_or(1)
+        } else {
+            1
+        };
+        if !numbered && disks <= 1 {
+            return Ok(file);
+        }
+        let folder = self
+            .container
+            .parent()
+            .ok_or_else(|| FmError::NotFound(self.container.to_string()))?;
+        let listing = self.container_vfs.read_dir(&folder)?;
+        let names = listing.iter().map(|e| e.name.as_str());
+        let parts = if numbered {
+            crate::split::resolve_numbered(name, names)?
+        } else {
+            crate::split::resolve_spanned(name, disks, names)?
+        };
+        let mut sources: Vec<Arc<dyn Source>> = Vec::with_capacity(parts.len());
+        for part in &parts {
+            if part == name {
+                sources.push(file.clone());
+            } else {
+                let uri = folder.join(part)?;
+                sources.push(Arc::new(VfsSource::open(self.container_vfs.clone(), uri)?));
+            }
+        }
+        if numbered {
+            Ok(crate::split::join(sources))
+        } else {
+            crate::split::spanned_zip(sources)
+        }
+    }
+
     /// Open the archive now (blocking; call from a job lane).
     pub fn mount(&self) -> Result<Arc<ArchiveFs>, FmError> {
         let mut state = self
@@ -106,6 +150,7 @@ impl LazyArchive {
             self.container_vfs.clone(),
             self.container.clone(),
         )?);
+        let file = self.join_parts(&name, file)?;
         let src: Arc<dyn Source> = if self.offset > 0 {
             let len = file.len().saturating_sub(self.offset);
             Arc::new(SliceSource::new(file, self.offset, len))
@@ -122,7 +167,8 @@ impl LazyArchive {
             at += n;
         }
         head.truncate(at);
-        let format = match self.forced.or_else(|| format::by_name(&name)) {
+        let by_name = format::by_name(&name).or_else(|| crate::split::numbered_format(&name));
+        let format = match self.forced.or(by_name) {
             Some(f) if format::signature_fits(f, &head) => f,
             Some(f) => {
                 return Err(FmError::backend(
@@ -232,6 +278,86 @@ mod tests {
         let err = lazy.read_dir(&root).expect_err("not a zip");
         assert!(
             err.to_string().contains("notes.zip is not a zip archive"),
+            "{err}"
+        );
+    }
+
+    fn names(lazy: &LazyArchive, root: &VfsUri) -> Vec<String> {
+        let mut v: Vec<String> = lazy
+            .read_dir(root)
+            .expect("list")
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn numbered_parts_mount_as_one_archive_and_name_a_missing_part() {
+        let zip = format::zip::tests::sample_zip();
+        let mem = Arc::new(fm_testkit::MemFs::new());
+        mem.mkdirs_str("/data").expect("dir");
+        let size = zip.len().div_ceil(3);
+        for (i, chunk) in zip.chunks(size).enumerate() {
+            mem.put_str(&format!("/data/site.zip.{:03}", i + 1), chunk)
+                .expect("part");
+        }
+        let vfs: Arc<dyn Vfs> = mem.clone();
+        let first = VfsUri::parse("/data/site.zip.001").expect("uri");
+        let root = VfsUri::archive_root(&crate::handle_for(&first, 0, None)).expect("root");
+        let lazy = LazyArchive::new(root.clone(), first.clone(), vfs.clone(), None, 0);
+        assert_eq!(names(&lazy, &root), vec!["big.bin", "evil.txt", "www"]);
+
+        mem.remove(&VfsUri::parse("/data/site.zip.002").expect("uri"))
+            .expect("rm");
+        let lazy = LazyArchive::new(root.clone(), first, vfs, None, 0);
+        let err = lazy.read_dir(&root).expect_err("gap");
+        assert!(
+            err.to_string()
+                .contains("Part 2 of site.zip is missing (site.zip.002)"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_spanned_zip_mounts_from_its_zip_and_names_a_missing_disk() {
+        let zip = format::zip::tests::sample_zip();
+        let parts = crate::split::tests::span(&zip, zip.len() / 3);
+        let mem = Arc::new(fm_testkit::MemFs::new());
+        mem.mkdirs_str("/data").expect("dir");
+        let last = parts.len();
+        for (i, p) in parts.iter().enumerate() {
+            let name = if i + 1 == last {
+                "site.zip".to_string()
+            } else {
+                format!("site.z{:02}", i + 1)
+            };
+            mem.put_str(&format!("/data/{name}"), p).expect("part");
+        }
+        let vfs: Arc<dyn Vfs> = mem.clone();
+        let uri = VfsUri::parse("/data/site.zip").expect("uri");
+        let root = VfsUri::archive_root(&crate::handle_for(&uri, 0, None)).expect("root");
+        let lazy = LazyArchive::new(root.clone(), uri.clone(), vfs.clone(), None, 0);
+        assert_eq!(names(&lazy, &root), vec!["big.bin", "evil.txt", "www"]);
+        let page = root
+            .join("www")
+            .and_then(|w| w.join("index.html"))
+            .expect("page");
+        let mut text = String::new();
+        lazy.open_read(&page)
+            .expect("open")
+            .read_to_string(&mut text)
+            .expect("read");
+        assert_eq!(text, "<h1>hi</h1>");
+
+        mem.remove(&VfsUri::parse("/data/site.z01").expect("uri"))
+            .expect("rm");
+        let lazy = LazyArchive::new(root.clone(), uri, vfs, None, 0);
+        let err = lazy.read_dir(&root).expect_err("gap");
+        assert!(
+            err.to_string()
+                .contains("Part 1 of site.zip is missing (site.z01)"),
             "{err}"
         );
     }

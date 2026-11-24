@@ -563,3 +563,75 @@ fn a_preview_inside_an_encrypted_zip_shows_after_the_password() {
     });
     assert!(s.dirs.state(&docs).is_ready(), "the listing came back too");
 }
+
+#[test]
+fn any_part_of_a_split_archive_opens_and_extracts_the_whole_set() {
+    let f = fixture();
+    let mut noise = Vec::with_capacity(300_000);
+    let mut x = 0x9e37_79b9_u32;
+    for _ in 0..300_000 {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        noise.push(x as u8);
+    }
+    std::fs::write(f.work.join("big.bin"), &noise).expect("big");
+    let mut s = Session::new().expect("session");
+    s.dispatch(
+        "archive.compress",
+        &json!({"sources": [uri(&f.work.join("big.bin"))], "target": uri(&f.work.join("backup.7z")), "format": "7z", "split": 100_000}),
+    )
+    .expect("split");
+    wait_idle(&mut s);
+    std::fs::remove_file(f.work.join("big.bin")).expect("rm");
+    assert!(f.work.join("backup.7z.003").is_file());
+
+    let root_of = |s: &mut Session, part: &str| {
+        s.dispatch("archive.enter", &json!({"uri": uri(&f.work.join(part))}))
+            .expect("enter");
+        s.layout
+            .state(s.layout.focused())
+            .expect("pane")
+            .location
+            .clone()
+    };
+    let from_third = root_of(&mut s, "backup.7z.003");
+    poll_until(&mut s, "the set's listing", |s| {
+        s.dirs.state(&from_third).is_ready()
+    });
+    let from_first = root_of(&mut s, "backup.7z.001");
+    assert_eq!(from_third, from_first, "every part opens the same mount");
+    let shown = fm_engine::item_cmds::display_path(&from_third);
+    assert!(shown.ends_with("backup.7z.001"), "{shown}");
+
+    s.dispatch(
+        "archive.extract",
+        &json!({"uri": uri(&f.work.join("backup.7z.002"))}),
+    )
+    .expect("extract");
+    wait_idle(&mut s);
+    assert_eq!(last_state(&s), OpState::Finished);
+    assert_eq!(
+        std::fs::read(f.work.join("backup/big.bin")).expect("extracted"),
+        noise
+    );
+
+    // Without part 2 the set does not open, and says which part is missing.
+    std::fs::rename(f.work.join("backup.7z.002"), f.root.join("elsewhere")).expect("mv");
+    s.dispatch(
+        "archive.unmount",
+        &json!({"uri": uri(&f.work.join("backup.7z.001"))}),
+    )
+    .expect("close");
+    let root = root_of(&mut s, "backup.7z.001");
+    poll_until(&mut s, "the failed listing", |s| {
+        matches!(s.dirs.state(&root), fm_engine::DirState::Failed { .. })
+    });
+    let fm_engine::DirState::Failed { message, .. } = s.dirs.state(&root) else {
+        panic!("the listing did not fail")
+    };
+    assert!(
+        message.contains("Part 2 of backup.7z is missing (backup.7z.002)"),
+        "{message}"
+    );
+}

@@ -1282,7 +1282,11 @@ fn entry_row_ui(
         );
     }
     if cols.ty.width() >= 1.0 {
-        let label = type_label(&entry.kind);
+        // Later parts of a split archive say which part they are (design D16).
+        let part = (archive_file && fm_engine::archive_cmds::is_later_part(&entry.name))
+            .then(|| fm_engine::archive_cmds::part_label(&entry.name))
+            .flatten();
+        let label = part.as_deref().unwrap_or_else(|| type_label(&entry.kind));
         paint_cell(
             ui.painter(),
             cols.ty.shrink2(egui::vec2(tokens.padding, 0.0)),

@@ -5772,3 +5772,47 @@ fn encrypted_zip_listing_dark_light() {
         results.extend_harness(&mut harness);
     }
 }
+
+/// A folder with a split 7z and a spanned zip: every part in the archive colour, later
+/// parts naming their part number (add-archive-vfs 7.6/7.7).
+#[test]
+fn split_archive_parts_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let mem = MemFs::new();
+        for name in [
+            "backup.7z.001",
+            "backup.7z.002",
+            "backup.7z.003",
+            "site.z01",
+            "site.zip",
+            "notes.txt",
+        ] {
+            mem.put_file_at(
+                &VfsUri::parse(&format!("/home/alice/{name}")).expect("uri"),
+                &[0u8; 2048],
+                FIXED_MTIME,
+            )
+            .expect("put");
+        }
+        let mut s = test_session();
+        s.backends.register(Arc::new(mem));
+        let uri = VfsUri::parse("/home/alice").expect("uri");
+        s.layout.state_mut(1).expect("pane").location = uri.clone();
+        s.submit_read(uri.clone()).expect("submit");
+        wait_ready(&mut s, &uri);
+        let mut session = s;
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            let _ = pane::show(ui, &mut session, 1, &tokens);
+        });
+        harness.set_size(egui::vec2(900.0, 360.0));
+        harness.run();
+        harness.snapshot(format!("archive_split_parts_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}

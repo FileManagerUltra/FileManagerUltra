@@ -413,7 +413,9 @@ fn copy_cancellable(
 
 /// The folder name Extract here uses for an archive file (`site.tar.gz` → `site`).
 pub fn extract_name(archive_name: &str) -> String {
-    let (stem, _) = fm_archive::format::split_suffix(archive_name);
+    // A part of a split archive extracts the whole set, named after the archive.
+    let base = fm_archive::split::parse(archive_name).map(|p| p.base);
+    let (stem, _) = fm_archive::format::split_suffix(base.as_deref().unwrap_or(archive_name));
     if stem.is_empty() {
         "extracted".to_string()
     } else {

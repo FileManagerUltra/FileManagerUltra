@@ -19,9 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Encrypted files inside an archive show a small padlock. Previewing one asks for the password right in the preview, and the file appears once it is given. Extracting or opening from an encrypted archive asks for the password first and then carries on by itself. After three wrong passwords in a row it stops asking; choose Forget Password or close the archive to try again.
 
+- Split archives open as one: press Enter on any part of `backup.7z.001`, `.002`, … (any format), or on a zip split into `site.z01`, `site.z02`, …, `site.zip`, and you see the whole archive. Extract Here on any part extracts everything. If a part is missing you are told which one ("Part 4 of backup.7z is missing"). All parts are shown in the archive colour, and later parts show their number in the Type column.
+
 ### Fixed
 
 - Extracting a hostile archive cannot write outside the new folder: names with `..`, absolute paths and drive letters stay inside it, nothing is written through a link, device files and FIFOs are left out, and setuid/setgid bits are never kept. A file in an archive that turns out larger than its header says stops with an error and leaves no partial file.
+- Closing an archive and opening it again reads it afresh instead of showing what it held before.
 - Entering a password for an archive that two panes show at once no longer leaves one of them stuck loading.
 - When the destination disk fills up, a copy, move or extraction now stops right away with "not enough free space for … free some space or choose another folder" instead of failing on every remaining file.
 - On Windows, files from network servers or archives whose names Windows cannot store (such as `a:b`, `CON` or `name.`) are saved as `a_b`, `CON_` and `name_` instead of failing or ending up as a hidden stream of another file.

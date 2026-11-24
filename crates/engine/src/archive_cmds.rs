@@ -210,6 +210,12 @@ pub(crate) fn mount_as(
             "Archives nested more than 8 deep cannot be opened; copy this one out first",
         ));
     }
+    let canonical = canonical_container(container);
+    let container = if offset == 0 && format.is_none() {
+        &canonical
+    } else {
+        container
+    };
     let handle = fm_archive::handle_for(container, offset, format);
     let root = VfsUri::archive_root(&handle)?;
     remember(
@@ -331,7 +337,7 @@ pub(crate) fn reveal_in_trees(s: &mut Session) -> bool {
 /// The archive file `uri` names: an archive location's archive, or an archive file itself.
 fn container_for(uri: &VfsUri) -> Option<VfsUri> {
     if uri.archive_handle().is_none() && uri.file_name().is_some_and(is_archive_name) {
-        return Some(uri.clone());
+        return Some(canonical_container(uri));
     }
     container_of(uri).map(|r| r.container)
 }
@@ -358,6 +364,11 @@ pub(crate) fn close(s: &mut Session, container: &VfsUri) {
             m.unmount();
         }
     }
+    // Its listings go too: opening it again reads the (possibly changed) file afresh.
+    s.dirs.invalidate_where(|u| {
+        u.archive_handle()
+            .is_some_and(|h| inner.iter().any(|i| i == h))
+    });
     s.archives
         .opened
         .retain(|c| c != container && !within(c, &handle));
@@ -402,7 +413,36 @@ pub fn is_password_message(message: &str) -> bool {
 /// Whether a file with this name opens as a folder when activated.
 pub fn is_archive_name(name: &str) -> bool {
     // ISO and RAR keep opening with their application until their readers land.
-    fm_archive::by_name(name).is_some_and(|f| !matches!(f, FormatId::Iso | FormatId::Rar))
+    let readable = |f: FormatId| !matches!(f, FormatId::Iso | FormatId::Rar);
+    if fm_archive::by_name(name).is_some_and(readable) {
+        return true;
+    }
+    // Any part of a split archive opens the whole set (design D16).
+    match fm_archive::split::parse(name) {
+        Some(p) if p.kind == fm_archive::split::SplitKind::ZipSpanned => true,
+        Some(p) => fm_archive::by_name(&p.base).is_some_and(readable),
+        None => false,
+    }
+}
+
+/// A split archive's part after the first (`.002`…, `.z01`…): shown with its part
+/// number and not as its own archive in the tree.
+pub fn is_later_part(name: &str) -> bool {
+    fm_archive::split::is_later_part(name)
+}
+
+/// "part 3" for a split archive's part (the listing's type column).
+pub fn part_label(name: &str) -> Option<String> {
+    fm_archive::split::part_label(name)
+}
+
+/// The file that stands for a split archive's whole set (its first numbered part, or the
+/// `.zip` of a spanned set); any other file unchanged. Every part shares one mount.
+pub fn canonical_container(uri: &VfsUri) -> VfsUri {
+    uri.file_name()
+        .and_then(fm_archive::split::canonical)
+        .and_then(|name| uri.parent()?.join(&name).ok())
+        .unwrap_or_else(|| uri.clone())
 }
 
 fn uri_of(params: &Params) -> Result<Option<VfsUri>, FmError> {

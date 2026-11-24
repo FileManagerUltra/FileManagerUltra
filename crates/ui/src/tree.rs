@@ -132,7 +132,9 @@ fn collect_rows(s: &Session, pane: PaneId, root: &VfsUri) -> Vec<Row> {
                     || s.archives.is_opened(&e.uri)
                     || s.prefs.archives_in_tree
                         && s.prefs.archives_browse
-                        && fm_engine::archive_cmds::is_archive_name(&e.name))
+                        && fm_engine::archive_cmds::is_archive_name(&e.name)
+                        // A split archive shows once, as its first part.
+                        && !fm_engine::archive_cmds::is_later_part(&e.name))
         };
         let mut children: Vec<&fm_vfs::Entry> = entries
             .iter()

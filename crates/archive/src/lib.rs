@@ -12,6 +12,7 @@ pub mod limits;
 pub mod mount;
 pub mod secret;
 pub mod source;
+pub mod split;
 pub mod time;
 pub mod write;
 
