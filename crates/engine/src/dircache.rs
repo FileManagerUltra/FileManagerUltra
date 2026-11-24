@@ -61,6 +61,13 @@ enum Slot {
         revision: u64,
         message: String,
     },
+    /// Still being read by `job`, with what has been read so far. Readers see it as
+    /// `Ready`; the job's result replaces it.
+    Filling {
+        job: JobId,
+        revision: u64,
+        entries: Arc<[Entry]>,
+    },
 }
 
 /// What a staged read produced (written by the worker, read by `poll`).
@@ -86,7 +93,12 @@ impl DirCache {
         match self.slots.get(uri) {
             None => DirState::Absent,
             Some(Slot::Loading { job }) => DirState::Loading { job: *job },
-            Some(Slot::Ready { revision, entries }) => DirState::Ready {
+            Some(
+                Slot::Ready { revision, entries }
+                | Slot::Filling {
+                    revision, entries, ..
+                },
+            ) => DirState::Ready {
                 revision: *revision,
                 entries: entries.clone(),
             },
@@ -109,7 +121,10 @@ impl DirCache {
     /// Rewrite the slot from a staged outcome. Returns the uri if this job was
     /// the one loading it (so the caller can refresh views), else `None`.
     pub fn apply(&mut self, uri: &VfsUri, outcome: ReadOutcome) -> Option<u64> {
-        let is_mine = matches!(self.slots.get(uri), Some(Slot::Loading { .. }));
+        let is_mine = matches!(
+            self.slots.get(uri),
+            Some(Slot::Loading { .. } | Slot::Filling { .. })
+        );
         if !is_mine {
             return None;
         }
@@ -119,6 +134,40 @@ impl DirCache {
             ReadOutcome::Err(message) => Slot::Failed { revision, message },
         };
         self.slots.insert(uri.clone(), slot);
+        Some(revision)
+    }
+
+    /// Whether `uri` shows what a running read has found so far.
+    pub fn is_filling(&self, uri: &VfsUri) -> bool {
+        matches!(self.slots.get(uri), Some(Slot::Filling { .. }))
+    }
+
+    /// Folders whose read has not finished (loading, or showing a partial listing).
+    pub fn unfinished(&self) -> impl Iterator<Item = &VfsUri> {
+        self.slots.iter().filter_map(|(uri, slot)| {
+            matches!(slot, Slot::Loading { .. } | Slot::Filling { .. }).then_some(uri)
+        })
+    }
+
+    /// Show `entries` read so far for a folder whose read is still running. `None` when
+    /// the slot is not being read or nothing changed.
+    pub fn set_partial(&mut self, uri: &VfsUri, entries: Arc<[Entry]>) -> Option<u64> {
+        let job = match self.slots.get(uri) {
+            Some(Slot::Loading { job }) => *job,
+            Some(Slot::Filling {
+                job, entries: old, ..
+            }) if **old != *entries => *job,
+            _ => return None,
+        };
+        let revision = self.take_revision();
+        self.slots.insert(
+            uri.clone(),
+            Slot::Filling {
+                job,
+                revision,
+                entries,
+            },
+        );
         Some(revision)
     }
 
@@ -207,6 +256,41 @@ mod tests {
         assert!(st.is_ready());
         assert_eq!(st.revision(), Some(0));
         assert_eq!(st.entries().map(|e| e.len()), Some(1));
+    }
+
+    #[test]
+    fn a_folder_still_being_read_shows_what_was_found_until_the_job_lands() {
+        let mut c = DirCache::new();
+        let u = uri("/d");
+        assert!(c.set_partial(&u, Arc::from(vec![entry("a")])).is_none());
+        c.begin_load(u.clone(), 4);
+        assert!(!c.is_filling(&u));
+        let r1 = c
+            .set_partial(&u, Arc::from(vec![entry("a")]))
+            .expect("first");
+        assert!(c.is_filling(&u) && c.state(&u).is_ready());
+        assert_eq!(c.entries(&u).map(|e| e.len()), Some(1));
+        assert!(c.set_partial(&u, Arc::from(vec![entry("a")])).is_none());
+        let r2 = c
+            .set_partial(&u, Arc::from(vec![entry("a"), entry("b")]))
+            .expect("more");
+        assert!(r2 > r1);
+        assert_eq!(c.unfinished().count(), 1);
+        c.apply(
+            &u,
+            ReadOutcome::Ok(Arc::from(vec![entry("a"), entry("b"), entry("c")])),
+        )
+        .expect("job result");
+        assert!(!c.is_filling(&u));
+        assert_eq!(c.entries(&u).map(|e| e.len()), Some(3));
+        assert!(c.set_partial(&u, Arc::from(vec![])).is_none(), "done");
+        assert_eq!(c.unfinished().count(), 0);
+        // A failed open replaces the partial listing.
+        c.begin_load(u.clone(), 5);
+        c.set_partial(&u, Arc::from(vec![entry("a")]));
+        c.apply(&u, ReadOutcome::Err("boom".into()))
+            .expect("failed");
+        assert!(matches!(c.state(&u), DirState::Failed { .. }));
     }
 
     #[test]

@@ -10,19 +10,30 @@ use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
 use fm_vfs::FmError;
 
+use super::blocks::{Blocks, Rule};
 use super::{Declared, FormatId, Info, Passwords, Progress, Reader};
 use crate::Secret;
-use crate::index::{Index, Meta, NodeId, NodeKind};
+use crate::index::{Index, LiveIndex, Meta, NodeId, NodeKind};
 use crate::source::Source;
 
-/// Longest a listing may take before the tool is stopped.
+/// Longest a listing of a small archive may take before the tool is stopped.
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The listing time allowed for a set of `bytes`: the tool reads every volume, so big sets
+/// get five more seconds per GiB, up to an hour. Leaving the folder still stops it at once.
+pub fn list_timeout(bytes: u64) -> Duration {
+    let extra = (bytes >> 30).saturating_mul(5).min(3600);
+    LIST_TIMEOUT
+        .saturating_add(Duration::from_secs(extra))
+        .min(Duration::from_secs(3600))
+}
 /// Most listing output read from the tool.
 pub const MAX_LISTING: u64 = 64 << 20;
 /// Most error output kept from the tool.
@@ -254,38 +265,81 @@ pub fn run_capture(
     cap: u64,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Captured, FmError> {
+    run_stream(tool, args, timeout, cap, cancelled, &mut |_| {})
+}
+
+/// [`run_capture`] that also hands every piece of stdout to `on_chunk` as it arrives.
+pub fn run_stream(
+    tool: &Tool,
+    args: &[OsString],
+    timeout: Duration,
+    cap: u64,
+    cancelled: &dyn Fn() -> bool,
+    on_chunk: &mut dyn FnMut(&[u8]),
+) -> Result<Captured, FmError> {
     let mut child = spawn(&mut command(tool, args), tool)?;
-    let out = child.stdout.take().map(|o| read_capped(o, cap));
     let err = child.stderr.take().map(|e| read_capped(e, MAX_STDERR));
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
-            Err(e) => return Err(FmError::Io(e)),
-        }
-        if cancelled() || start.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(if cancelled() {
-                FmError::Cancelled
-            } else {
-                FmError::backend(
-                    "archive",
-                    format!("{} took longer than {} s", tool.label(), timeout.as_secs()),
-                )
-            });
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    let stdout = out.and_then(|h| h.join().ok()).unwrap_or_default();
-    let stderr = err.and_then(|h| h.join().ok()).unwrap_or_default();
-    if stdout.len() as u64 > cap {
-        return Err(FmError::backend(
-            "archive",
-            "the archive listing is too large",
-        ));
+    let (tx, rx) = sync_channel::<Vec<u8>>(16);
+    if let Some(mut out) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let mut buf = vec![0u8; 64 << 10];
+            while let Ok(n) = out.read(&mut buf) {
+                let Some(piece) = buf.get(..n).filter(|p| !p.is_empty()) else {
+                    break;
+                };
+                if tx.send(piece.to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+    } else {
+        drop(tx);
     }
+    let start = Instant::now();
+    let stop = |child: &mut Child, error: FmError| {
+        let _ = child.kill();
+        let _ = child.wait();
+        error
+    };
+    let timed_out = || {
+        FmError::backend(
+            "archive",
+            format!("{} took longer than {} s", tool.label(), timeout.as_secs()),
+        )
+    };
+    let mut stdout = Vec::new();
+    let mut open = true;
+    let status = loop {
+        if open {
+            match rx.recv_timeout(Duration::from_millis(10)) {
+                Ok(chunk) => {
+                    if stdout.len() as u64 + chunk.len() as u64 > cap {
+                        return Err(stop(
+                            &mut child,
+                            FmError::backend("archive", "the archive listing is too large"),
+                        ));
+                    }
+                    on_chunk(&chunk);
+                    stdout.extend_from_slice(&chunk);
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => open = false,
+            }
+        } else {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                Err(e) => return Err(FmError::Io(e)),
+            }
+        }
+        if cancelled() {
+            return Err(stop(&mut child, FmError::Cancelled));
+        }
+        if start.elapsed() >= timeout {
+            return Err(stop(&mut child, timed_out()));
+        }
+    };
+    let stderr = err.and_then(|h| h.join().ok()).unwrap_or_default();
     Ok(Captured {
         status,
         stdout,
@@ -465,6 +519,7 @@ pub use crate::spool::SpoolDir;
 /// under their own names; returns the folder and the first volume's path.
 pub fn spool(
     volumes: &[(String, Arc<dyn Source>)],
+    report: &dyn Fn(u64, u64),
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(SpoolDir, PathBuf), FmError> {
     let total: u64 = volumes
@@ -479,6 +534,7 @@ pub fn spool(
     }
     let dir = SpoolDir::create("fm-rar")?;
     let mut first = None;
+    let mut copied = 0u64;
     for (name, src) in volumes {
         // Names come from a folder listing: a plain name, never a path.
         if name.is_empty() || name.contains(['/', '\\']) || name == "." || name == ".." {
@@ -501,6 +557,8 @@ pub fn spool(
             file.write_all(buf.get(..n).unwrap_or_default())
                 .map_err(FmError::Io)?;
             at += n as u64;
+            copied = copied.saturating_add(n as u64);
+            report(copied, total);
         }
         first.get_or_insert(path);
     }
@@ -521,8 +579,93 @@ pub struct RarReader {
     _spool: Option<SpoolDir>,
 }
 
+/// The entries a listing run has produced, in the order of the tool's own numbering.
+#[derive(Default)]
+struct Listing {
+    raw: Vec<String>,
+    any_encrypted: bool,
+    error: Option<FmError>,
+}
+
+impl Listing {
+    /// Run the tool, adding each entry to `live` as soon as the tool has printed it.
+    fn run(
+        &mut self,
+        tool: &Tool,
+        args: &[OsString],
+        timeout: Duration,
+        cancelled: &dyn Fn() -> bool,
+        live: &LiveIndex,
+    ) -> Result<Captured, FmError> {
+        *self = Self::default();
+        live.clear();
+        let rule = match tool.kind {
+            ToolKind::SevenZip => Rule::BlankLine,
+            ToolKind::Unrar => Rule::LineStart("Name:"),
+        };
+        let parse = match tool.kind {
+            ToolKind::SevenZip => parse_7z_slt,
+            ToolKind::Unrar => parse_unrar_lt,
+        };
+        let mut blocks = Blocks::new(rule);
+        let mut take = |block: &str| {
+            for e in parse(block) {
+                self.add(live, e);
+            }
+        };
+        let result = run_stream(tool, args, timeout, MAX_LISTING, cancelled, &mut |chunk| {
+            blocks.feed(chunk, &mut take);
+        });
+        if result.is_ok() {
+            blocks.finish(&mut take);
+        }
+        match (result, self.error.take()) {
+            (Ok(out), None) => {
+                if !out.status.success() {
+                    live.clear();
+                }
+                Ok(out)
+            }
+            (_, Some(e)) => {
+                live.clear();
+                Err(e)
+            }
+            (Err(e), None) => {
+                live.clear();
+                Err(e)
+            }
+        }
+    }
+
+    fn add(&mut self, live: &LiveIndex, e: Listed) {
+        if self.error.is_some() {
+            return;
+        }
+        self.any_encrypted |= e.encrypted;
+        let kind = if e.dir {
+            NodeKind::Dir
+        } else if let Some(target) = e.link.clone() {
+            NodeKind::Symlink(target)
+        } else {
+            NodeKind::File
+        };
+        let meta = Meta {
+            size: e.size,
+            packed: e.packed,
+            modified: e.modified,
+            encrypted: e.encrypted,
+            locator: self.raw.len() as u64,
+            ..Meta::default()
+        };
+        match live.add(&e.path, kind, meta) {
+            Ok(_) => self.raw.push(e.path),
+            Err(err) => self.error = Some(err),
+        }
+    }
+}
+
 impl RarReader {
-    /// List `path` (a local RAR, the first volume of a set) with `tool`.
+    /// List `path` (a local RAR, the first volume of a set of `bytes` in all) with `tool`.
     pub fn open(
         tool: Tool,
         path: PathBuf,
@@ -530,8 +673,10 @@ impl RarReader {
         passwords: &Passwords,
         progress: &Progress<'_>,
         spool: Option<SpoolDir>,
+        bytes: u64,
     ) -> Result<Self, FmError> {
-        Self::open_with(tool, path, name, passwords, progress, spool, LIST_TIMEOUT)
+        let timeout = list_timeout(bytes);
+        Self::open_with(tool, path, name, passwords, progress, spool, timeout)
     }
 
     fn open_with(
@@ -543,17 +688,20 @@ impl RarReader {
         spool: Option<SpoolDir>,
         timeout: Duration,
     ) -> Result<Self, FmError> {
-        let list = |pw: Option<&Secret>| {
-            run_capture(
+        let own = LiveIndex::new();
+        let live = progress.live.unwrap_or(&own);
+        let mut listing = Listing::default();
+        let mut list = |pw: Option<&Secret>| {
+            listing.run(
                 &tool,
                 &list_args(tool.kind, pw, &path),
                 timeout,
-                MAX_LISTING,
                 progress.cancelled,
+                live,
             )
         };
         let mut header_password = None;
-        let mut out = list(None)?;
+        let out = list(None)?;
         if !out.status.success() {
             let err = classify(
                 &tool,
@@ -580,44 +728,19 @@ impl RarReader {
                 let attempt = list(Some(&pw))?;
                 if attempt.status.success() {
                     passwords.fitted(&pw);
-                    found = Some((attempt, pw));
+                    found = Some(pw);
                     break;
                 }
             }
-            let Some((attempt, pw)) = found else {
+            let Some(pw) = found else {
                 return Err(passwords.failed(name));
             };
-            out = attempt;
             header_password = Some(pw);
         }
-        let text = String::from_utf8_lossy(&out.stdout);
-        let entries = match tool.kind {
-            ToolKind::SevenZip => parse_7z_slt(&text),
-            ToolKind::Unrar => parse_unrar_lt(&text),
-        };
-        let mut index = Index::new();
-        let mut raw = Vec::with_capacity(entries.len());
-        let mut any_encrypted = false;
-        for e in entries {
-            any_encrypted |= e.encrypted;
-            let kind = if e.dir {
-                NodeKind::Dir
-            } else if let Some(target) = e.link.clone() {
-                NodeKind::Symlink(target)
-            } else {
-                NodeKind::File
-            };
-            let meta = Meta {
-                size: e.size,
-                packed: e.packed,
-                modified: e.modified,
-                encrypted: e.encrypted,
-                locator: raw.len() as u64,
-                ..Meta::default()
-            };
-            index.add(&e.path, kind, meta)?;
-            raw.push(e.path);
-        }
+        let Listing {
+            raw, any_encrypted, ..
+        } = listing;
+        let index = live.take();
         let info = Info {
             methods: vec![format!("RAR (through {})", tool.label())],
             encrypted: any_encrypted || header_password.is_some(),
@@ -825,6 +948,17 @@ mod tests {
     }
 
     #[test]
+    fn big_sets_get_more_listing_time_up_to_an_hour() {
+        assert_eq!(list_timeout(0), LIST_TIMEOUT);
+        let set = 36 * (4u64 << 30);
+        assert_eq!(
+            list_timeout(set),
+            LIST_TIMEOUT + Duration::from_secs(36 * 4 * 5)
+        );
+        assert_eq!(list_timeout(u64::MAX), Duration::from_secs(3600));
+    }
+
+    #[test]
     fn tool_search_order() {
         let dir = tempfile::tempdir().expect("tmp");
         let bin = dir.path().join("bin");
@@ -863,7 +997,7 @@ mod tests {
     }
 
     /// A stand-in tool: lists `listing.txt`, prints a member, says "Wrong password" for
-    /// `-pbad`, sleeps for `slow.rar`, and records its arguments.
+    /// `-pbad`, sleeps for `slow.rar`, lists `stream.rar` in two steps, and records its arguments.
     #[cfg(unix)]
     fn fake_tool(dir: &Path) -> Tool {
         use std::os::unix::fs::PermissionsExt as _;
@@ -873,9 +1007,9 @@ mod tests {
             r#"#!/bin/sh
 d=$(dirname "$0")
 printf '%s\n' "$@" > "$d/args.txt"
-for a; do last=$a; case "$a" in -pbad) echo "ERROR: Wrong password : x" >&2; exit 2;; *slow.rar) sleep 5;; esac; done
+for a; do last=$a; case "$a" in -pbad) echo "ERROR: Wrong password : x" >&2; exit 2;; *slow.rar) sleep 5;; *stream.rar) s=1;; esac; done
 case "$1" in
-  l) cat "$d/listing.txt";;
+  l) if [ -n "$s" ]; then printf 'Path = one.txt\nSize = 1\n\n'; sleep 2; printf 'Path = two.txt\nSize = 2\n\n'; else cat "$d/listing.txt"; fi;;
   e) printf 'data';;
 esac
 "#,
@@ -897,8 +1031,16 @@ esac
         let rar = dir.path().join("test.rar");
         std::fs::write(&rar, b"Rar!").expect("rar");
         let pw = Passwords::default();
-        let r = RarReader::open(tool.clone(), rar, "test.rar", &pw, &Progress::none(), None)
-            .expect("listing");
+        let r = RarReader::open(
+            tool.clone(),
+            rar,
+            "test.rar",
+            &pw,
+            &Progress::none(),
+            None,
+            0,
+        )
+        .expect("listing");
         let a = r.index().lookup("docs/a.txt").expect("a");
         let evil = r.index().lookup("evil").expect("clamped inside the root");
         let mut s = String::new();
@@ -925,6 +1067,28 @@ esac
             err.to_string().starts_with("wrong password for test.rar"),
             "{err}"
         );
+        // Entries can be used while the tool is still printing.
+        let stream = dir.path().join("stream.rar");
+        std::fs::write(&stream, b"Rar!").expect("stream");
+        let live = LiveIndex::new();
+        let progress = Progress {
+            live: Some(&live),
+            ..Progress::none()
+        };
+        let (tool2, pw2) = (tool.clone(), Passwords::default());
+        let seen = std::thread::scope(|s| {
+            let open =
+                s.spawn(|| RarReader::open(tool2, stream, "stream.rar", &pw2, &progress, None, 0));
+            let started = Instant::now();
+            while live.is_empty() && started.elapsed() < Duration::from_secs(1) {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let seen = live.len();
+            let done = open.join().expect("thread").expect("listing");
+            (seen, done.index().len())
+        });
+        assert_eq!(seen, (1, 2), "one entry before the tool ended, both after");
+        assert!(live.is_empty(), "the finished index moved to the reader");
         // The listing stops at its timeout.
         let slow = dir.path().join("slow.rar");
         std::fs::write(&slow, b"Rar!").expect("slow");

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Big archives show what has been read so far while they are still opening: a large compressed tar or a RAR read through unrar lists its folders as entries are found (also in the folder tree), with a "Still reading… N entries" note, instead of waiting for the whole archive. 7-Zip prints its RAR listing only at the end, so that case shows "Opening… N s".
 - Split archives (`name.7z.001`, `.002`, … and the same for zip, tar and others) can now be changed and saved: the new parts keep the original part size, the old ones are replaced only once the new ones are complete, and a save that fails leaves them as they were. If a save is interrupted, File › Archive › Restore Previous Version puts the old parts back (or Delete Backup Parts keeps the new ones); the pane offers both. A copy of a split archive is saved as one file. Spanned zips (`.z01`) and RAR sets stay read-only.
 - Archives open like folders: press Enter or double-click a zip, tar, tar.gz, tar.bz2, tar.xz, tar.zst or 7z file to see what is inside, preview files and copy them out, also when the archive is on a network share, on an SFTP server or inside another archive. Backspace leaves the archive with the cursor on it. Archives and everything inside them are shown in a shade of your accent colour (a bit lighter in the dark theme, a bit darker in the light theme), and archive files have a small box icon. A single compressed file such as `access.log.gz` opens as a folder holding that file. Encrypted zip and 7z archives ask for their password in the pane; it is kept only while the archive is open. To open archives with their application instead, turn off Preferences › Files › "Enter browses inside archives"; the right-click menu always offers both. Changing files inside archives comes later.
 - Opening a disk image (ISO, IMG, DMG, VHD) from the file manager now takes the pane into it as soon as the system has mounted it, with a short "disc.iso is mounted as …" message. Opening an image that is already mounted goes straight to it instead of mounting it a second time.
@@ -40,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quitting or closing asks one question at most: unsaved workspaces, filled-in PDFs, archives with unsaved changes and work still running are listed together in one prompt with Save, Don't save and Cancel, instead of one prompt after another.
 
 ### Fixed
+- Opening a large RAR archive made up of many volumes no longer freezes the window: the pane shows how long it has been opening, and leaving the folder stops it. Big sets are also given more time to be read (up to an hour) instead of failing after two minutes.
+- Dropping files on an archive that is open in the folder tree now adds them as unsaved changes (with the Save / Discard bar, and a warning when you close) instead of saving the archive straight away.
 - Audio and video inside an archive now play in the Media pane when you double-click them (if Preferences › Media is set to the Media pane) and when you drag them onto it, like the "Play in Media" menu item already did.
 - A repository folder now shows the modified marker when a file directly in its root is edited, not only when a file in a subfolder is.
 

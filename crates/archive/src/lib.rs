@@ -21,8 +21,8 @@ pub mod write;
 
 pub use format::{FormatId, Info, Passwords, Progress, Reader, by_name, signature_fits, sniff};
 pub use fs::ArchiveFs;
-pub use index::{Index, Meta, Node, NodeId, NodeKind};
-pub use mount::LazyArchive;
+pub use index::{Index, LiveIndex, Meta, Node, NodeId, NodeKind};
+pub use mount::{LazyArchive, OpenGuard};
 pub use secret::Secret;
 pub use source::{ConcatSource, MemSource, SliceSource, Source, SourceReader, VfsSource};
 

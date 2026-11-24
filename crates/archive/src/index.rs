@@ -5,6 +5,7 @@
 //! control pictures) and every limit in [`crate::limits`] is enforced while building.
 
 use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::SystemTime;
 
 use fm_vfs::FmError;
@@ -321,6 +322,55 @@ fn visible(c: char) -> char {
         '\u{7f}' => '\u{2421}',
         c if c.is_control() => '\u{fffd}',
         c => c,
+    }
+}
+
+/// An index that a format fills while the pane can already list what is in it, for archives
+/// that must be read from the start (compressed tars, RAR sets). The builder adds entries
+/// one by one and takes the finished index at the end; every lock is short.
+#[derive(Default)]
+pub struct LiveIndex(Mutex<Index>);
+
+impl LiveIndex {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Index> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn add(
+        &self,
+        raw_name: &str,
+        kind: NodeKind,
+        meta: Meta,
+    ) -> Result<Option<NodeId>, FmError> {
+        self.lock().add(raw_name, kind, meta)
+    }
+
+    /// Entries added so far.
+    pub fn len(&self) -> usize {
+        self.lock().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Look at what is there so far.
+    pub fn read<R>(&self, f: impl FnOnce(&Index) -> R) -> R {
+        f(&self.lock())
+    }
+
+    /// The finished index; the live one starts again empty.
+    pub fn take(&self) -> Index {
+        std::mem::take(&mut *self.lock())
+    }
+
+    /// Start over (a failed or retried read).
+    pub fn clear(&self) {
+        *self.lock() = Index::new();
     }
 }
 

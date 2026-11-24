@@ -125,8 +125,8 @@ pub fn extract_to() -> CommandSpec {
 
 /// `archive.add {uri, sources?, dir?}` — add the selection to the archive file `uri`
 /// (into its folder `dir`, default the top), asking about names it already has, and save
-/// it in the same job. When the archive already has unsaved changes the selection is only
-/// staged on top of them.
+/// it in the same job. When the archive is open in the tree or has unsaved changes, the
+/// selection is only staged on top of them.
 pub fn add() -> CommandSpec {
     CommandSpec {
         id: "archive.add",
@@ -173,7 +173,13 @@ pub fn add() -> CommandSpec {
                     "dir must be a folder inside the archive".into(),
                 ));
             }
-            let save = (!lazy.is_dirty()).then(|| crate::archive_ops::SaveTarget {
+            // An archive that is open (a pane has been in it, the tree shows it) is being
+            // edited: the items are staged for the unsaved bar and the close prompt.
+            let editing = lazy.is_dirty()
+                || s.archives.is_opened(&uri)
+                || s.archives
+                    .is_opened(&crate::archive_cmds::canonical_container(&uri));
+            let save = (!editing).then(|| crate::archive_ops::SaveTarget {
                 mount: lazy,
                 copy_to: None,
                 backup: None,

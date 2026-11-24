@@ -10,6 +10,7 @@ use crate::index::{Index, NodeId};
 use crate::secret::Secret;
 use crate::source::Source;
 
+mod blocks;
 pub mod compress;
 pub mod iso;
 pub mod rar;
@@ -350,6 +351,9 @@ pub trait Reader: Send + Sync {
 pub struct Progress<'a> {
     pub report: &'a (dyn Fn(u64, u64) + Sync),
     pub cancelled: &'a (dyn Fn() -> bool + Sync),
+    /// Where a format that reads from the start adds its entries as it finds them, so they
+    /// can be listed before it is done. `None` builds privately.
+    pub live: Option<&'a crate::index::LiveIndex>,
 }
 
 impl Progress<'_> {
@@ -357,6 +361,7 @@ impl Progress<'_> {
         Progress {
             report: &|_, _| {},
             cancelled: &|| false,
+            live: None,
         }
     }
 }

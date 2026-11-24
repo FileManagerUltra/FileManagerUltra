@@ -79,18 +79,9 @@ pub fn show(
 
     match dir_state {
         DirState::Absent | DirState::Loading { .. } => {
-            let progress = s.archives.for_uri(&location).and_then(|m| m.progress());
-            match progress {
-                Some((done, total)) if total > 0 => {
-                    let name = fm_engine::archive_cmds::container_of(&location)
-                        .and_then(|r| r.container.file_name().map(str::to_string))
-                        .unwrap_or_default();
-                    let pct = (done.min(total) as f64 * 100.0 / total as f64).round();
-                    ui.label(tokens.muted(format!("Reading {name}… {pct:.0} %")));
-                    ui.ctx()
-                        .request_repaint_after(std::time::Duration::from_millis(200));
-                }
-                _ => {
+            match fm_engine::archive_fill::reading(s, &location) {
+                Some(r) => reading_note(ui, &r, false, tokens),
+                None => {
                     ui.label(tokens.muted("Loading…"));
                 }
             }
@@ -105,10 +96,35 @@ pub fn show(
             ui.label(tokens.muted("Ctrl+R to retry"));
         }
         DirState::Ready { .. } => {
+            if s.dirs.is_filling(&location)
+                && let Some(r) = fm_engine::archive_fill::reading(s, &location)
+            {
+                reading_note(ui, &r, true, tokens);
+            }
             open = ready_rows(ui, s, pane, tokens, pane_focused, parent.as_ref(), sizing);
         }
     }
     open
+}
+
+/// What an archive being read is doing: a percentage when the format knows one, how many
+/// entries are listed when the folder is already filling, else how long it has taken.
+fn reading_note(ui: &mut Ui, r: &fm_engine::archive_fill::Reading, filling: bool, tokens: &Tokens) {
+    let text = match (r.percent, filling) {
+        (Some(pct), _) => format!("Reading {}… {pct} %", r.name),
+        (None, true) => format!(
+            "Still reading {}… {} entries so far ({} s)",
+            r.name, r.entries, r.secs
+        ),
+        (None, false) if r.secs >= 1 => format!(
+            "Opening {}… {} s (large archives take a while; leave the folder to stop)",
+            r.name, r.secs
+        ),
+        (None, false) => "Loading…".to_string(),
+    };
+    ui.label(tokens.muted(text));
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(500));
 }
 
 /// Name takes spare space; only details compress below their content widths.

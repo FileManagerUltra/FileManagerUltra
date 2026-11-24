@@ -62,6 +62,17 @@ Mounting, indexing and member reads SHALL run off the UI thread on the archive j
 - **WHEN** the user enters a 2 GiB `dump.tar.xz`
 - **THEN** the pane shows "Reading dump.tar.xz… 35 %" while frames keep rendering, then the listing
 
+### Requirement: Large archives list as they are read
+A format that reads an archive from the start (compressed tars, RAR through a tool) SHALL make the entries it has read so far browsable while the rest is still being read: the folder being opened, and the tree, show them, and the pane says it is still reading and how many entries it has. When the read finishes the complete listing replaces the partial one; when it fails or is cancelled the pane shows the error. Formats whose index sits at the end (zip, 7z, ISO) list when complete. Copies of the partial listing SHALL be paced so that a big archive never costs a frame noticeable time.
+
+#### Scenario: A big RAR set fills while it is read
+- **WHEN** the user enters `backup.part01.rar` of 36 volumes and the tool has printed 5 000 entries
+- **THEN** the pane lists the top-level entries found so far, with "Still reading backup.part01.rar… 5000 entries so far"
+
+#### Scenario: The read fails half way
+- **WHEN** the tool stops with an error after some entries were shown
+- **THEN** the partial listing is replaced by the error
+
 ### Requirement: Encrypted archives open with a password
 Encrypted zip (WinZip AES-128/192/256 and traditional ZipCrypto), 7z (AES-256, including encrypted file names) and RAR (through the tool, including encrypted file names) SHALL open after the user enters the password in an in-app dialog: when entering the archive if its file names are encrypted, otherwise when an encrypted member is first read. Encrypted entries SHALL carry a lock badge in the listing, and the archive preview SHALL name the encryption method. A password that opened one member SHALL be tried first for the others; a member it does not open SHALL ask again, keeping at most 8 passwords per archive. A wrong password SHALL show "Wrong password" and ask again; after three failures in a row the read stops. A CRC failure after a ZipCrypto read SHALL be reported as "Wrong password or damaged file".
 

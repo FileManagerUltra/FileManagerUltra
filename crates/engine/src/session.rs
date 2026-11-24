@@ -480,6 +480,7 @@ impl Session {
         self.note_files_dir();
         changed |= crate::archive_cmds::reveal_in_trees(self);
         crate::archive_cmds::idle_tick(self, std::time::Instant::now());
+        changed |= crate::archive_fill::tick(self, std::time::Instant::now());
         changed |= self.media_tick();
         changed |= self.media_store_tick();
         changed |= self.pump_sync();

@@ -13,7 +13,7 @@ use fm_vfs::FmError;
 
 use super::compress::{Codec, decoder};
 use super::{Declared, FormatId, Info, Passwords, Progress, Reader, pipe, read_small};
-use crate::index::{Index, Meta, NodeId, NodeKind, normalize};
+use crate::index::{Index, LiveIndex, Meta, NodeId, NodeKind, normalize};
 use crate::limits::INLINE_MEMBER;
 use crate::source::{SliceSource, Source, SourceReader};
 
@@ -68,7 +68,10 @@ fn build<R: Read>(
     done: &dyn Fn() -> u64,
     progress: &Progress<'_>,
 ) -> Result<Index, FmError> {
-    let mut index = Index::new();
+    // Entries go to the caller's live index when there is one, so they can be listed while
+    // the rest is still being read.
+    let private = LiveIndex::new();
+    let index = progress.live.unwrap_or(&private);
     // Data location of every regular file, for hard links that point at it.
     let mut data: HashMap<Vec<String>, (u64, u64, Meta)> = HashMap::new();
     for (n, entry) in entries.enumerate() {
@@ -133,7 +136,7 @@ fn build<R: Read>(
         index.add(&raw, kind, meta)?;
     }
     (progress.report)(done(), total);
-    Ok(index)
+    Ok(index.take())
 }
 
 impl Reader for TarReader {
@@ -319,6 +322,7 @@ pub(crate) mod tests {
         let cancelled = Progress {
             report: &|_, _| {},
             cancelled: &|| true,
+            live: None,
         };
         let src: Arc<dyn Source> = Arc::new(MemSource::new(bytes));
         assert!(matches!(
@@ -330,10 +334,44 @@ pub(crate) mod tests {
         let p = Progress {
             report: &report,
             cancelled: &|| false,
+            live: None,
         };
         TarReader::open(src, FormatId::TarGz, &p).expect("open");
         let seen = seen.lock().expect("lock");
         let last = seen.last().expect("reported");
         assert!(last.0 > 0 && last.0 <= last.1);
+    }
+
+    #[test]
+    fn entries_can_be_listed_while_the_archive_is_still_read() {
+        use std::io::Write as _;
+        let mut builder = tar::Builder::new(Vec::new());
+        for i in 0..600 {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(1);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, format!("dir/f{i}.txt"), &b"x"[..])
+                .expect("append");
+        }
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(&builder.into_inner().expect("tar"))
+            .expect("gz");
+        let src: Arc<dyn Source> = Arc::new(MemSource::new(gz.finish().expect("gz")));
+        let live = LiveIndex::new();
+        // The report after 256 entries sees what the build has added by then.
+        let seen = std::sync::Mutex::new(Vec::new());
+        let report = |_: u64, _: u64| seen.lock().expect("lock").push(live.len());
+        let p = Progress {
+            report: &report,
+            cancelled: &|| false,
+            live: Some(&live),
+        };
+        let reader = TarReader::open(src, FormatId::TarGz, &p).expect("open");
+        let seen = seen.lock().expect("lock");
+        assert!(seen.iter().any(|n| *n > 256 && *n < 600), "{seen:?}");
+        assert_eq!(reader.index().len(), 601, "600 files and their folder");
+        assert!(live.is_empty(), "the finished index moved to the reader");
     }
 }

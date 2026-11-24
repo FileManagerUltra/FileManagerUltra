@@ -842,6 +842,30 @@ fn add_to_an_archive_with_staged_changes_only_stages() {
 }
 
 #[test]
+fn add_to_an_opened_archive_stages_for_the_unsaved_bar() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let p = dir.path();
+    let zip = p.join("site.zip");
+    std::fs::write(&zip, zip_bytes()).expect("zip");
+    let sources = add_sources(p, 1);
+    let mut s = Session::new().expect("session");
+    let root = open_zip(&mut s, &zip);
+    let container = VfsUri::parse(zip.to_str().expect("utf8")).expect("uri");
+    poll_until(&mut s, "tree", |s| s.archives.is_opened(&container));
+    let before = zip_names(&zip);
+    s.dispatch(
+        "archive.add",
+        &json!({"uri": uri(&zip), "sources": sources}),
+    )
+    .expect("add");
+    assert!(wait_done(&mut s).iter().all(|st| *st == OpState::Finished));
+    assert_eq!(zip_names(&zip), before, "not saved behind the user's back");
+    let mount = s.archives.for_uri(&root).cloned().expect("mount");
+    assert!(mount.is_dirty());
+    assert_eq!(fm_engine::archive_cmds::dirty_handles(&s).len(), 1);
+}
+
+#[test]
 fn add_to_a_folder_inside_the_archive() {
     let dir = tempfile::tempdir().expect("tmp");
     let p = dir.path();
@@ -856,7 +880,11 @@ fn add_to_a_folder_inside_the_archive() {
     )
     .expect("add");
     assert!(wait_done(&mut s).iter().all(|st| *st == OpState::Finished));
-    assert!(zip_names(&zip).contains(&"docs/f0.txt".to_string()));
+    let docs = root.join("docs").expect("d");
+    s.dispatch("nav.open", &json!(docs.to_string()))
+        .expect("open docs");
+    poll_until(&mut s, "listing", |s| s.dirs.state(&docs).is_ready());
+    assert!(names(&s, &docs).contains(&"f0.txt".to_string()));
 }
 
 #[test]

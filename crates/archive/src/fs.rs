@@ -243,45 +243,7 @@ impl ArchiveFs {
     }
 
     fn entry(&self, uri: VfsUri, id: NodeId) -> Entry {
-        let Some(node) = self.index().node(id) else {
-            return Entry::new(uri, EntryKind::Other);
-        };
-        let kind = match &node.kind {
-            NodeKind::File => EntryKind::File,
-            NodeKind::Dir => EntryKind::Dir,
-            NodeKind::Symlink(target) => EntryKind::Symlink {
-                target: target.clone(),
-            },
-            NodeKind::Other => EntryKind::Other,
-        };
-        let link_to_dir = matches!(&node.kind, NodeKind::Symlink(t) if self.link_is_dir(id, t));
-        let mut e = Entry::new(uri, kind);
-        e.size = match node.kind {
-            NodeKind::Dir => None,
-            _ => node.meta.size,
-        };
-        e.modified = node.meta.modified;
-        e.permissions = node.meta.mode;
-        e.link_to_dir = link_to_dir;
-        e
-    }
-
-    /// A link that resolves, inside the archive, to a folder (never outside it).
-    fn link_is_dir(&self, id: NodeId, target: &str) -> bool {
-        let Some(node) = self.index().node(id) else {
-            return false;
-        };
-        let base = if target.starts_with('/') {
-            String::new()
-        } else {
-            self.index().path_of(node.parent)
-        };
-        let joined = format!("{base}/{target}");
-        crate::index::normalize(&joined)
-            .ok()
-            .and_then(|parts| self.index().lookup(&parts.join("/")))
-            .and_then(|t| self.index().node(t))
-            .is_some_and(|n| n.kind == NodeKind::Dir)
+        index_entry(self.index(), uri, id)
     }
 
     fn open_base(&self, id: NodeId, uri: &VfsUri) -> Result<Box<dyn Read + Send>, FmError> {
@@ -481,6 +443,49 @@ impl Vfs for ArchiveFs {
     fn space(&self, _: &VfsUri) -> Result<Option<SpaceInfo>, FmError> {
         Ok(None)
     }
+}
+
+/// The listing entry for node `id` of `index`, at `uri`.
+pub(crate) fn index_entry(index: &Index, uri: VfsUri, id: NodeId) -> Entry {
+    let Some(node) = index.node(id) else {
+        return Entry::new(uri, EntryKind::Other);
+    };
+    let kind = match &node.kind {
+        NodeKind::File => EntryKind::File,
+        NodeKind::Dir => EntryKind::Dir,
+        NodeKind::Symlink(target) => EntryKind::Symlink {
+            target: target.clone(),
+        },
+        NodeKind::Other => EntryKind::Other,
+    };
+    let link_to_dir = matches!(&node.kind, NodeKind::Symlink(t) if link_is_dir(index, id, t));
+    let mut e = Entry::new(uri, kind);
+    e.size = match node.kind {
+        NodeKind::Dir => None,
+        _ => node.meta.size,
+    };
+    e.modified = node.meta.modified;
+    e.permissions = node.meta.mode;
+    e.link_to_dir = link_to_dir;
+    e
+}
+
+/// A link that resolves, inside the archive, to a folder (never outside it).
+fn link_is_dir(index: &Index, id: NodeId, target: &str) -> bool {
+    let Some(node) = index.node(id) else {
+        return false;
+    };
+    let base = if target.starts_with('/') {
+        String::new()
+    } else {
+        index.path_of(node.parent)
+    };
+    let joined = format!("{base}/{target}");
+    crate::index::normalize(&joined)
+        .ok()
+        .and_then(|parts| index.lookup(&parts.join("/")))
+        .and_then(|t| index.node(t))
+        .is_some_and(|n| n.kind == NodeKind::Dir)
 }
 
 #[cfg(test)]

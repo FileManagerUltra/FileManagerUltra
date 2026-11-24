@@ -8,6 +8,7 @@
 pub mod app_cmds;
 pub mod archive_cmds;
 pub mod archive_edit_cmds;
+pub mod archive_fill;
 pub mod archive_job_cmds;
 pub mod archive_ops;
 pub mod archive_parts;

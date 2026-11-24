@@ -57,6 +57,8 @@ pub struct Mounts {
     /// Opened archives nothing shows or uses, since when (idle release).
     idle_since: HashMap<String, std::time::Instant>,
     last_idle_check: Option<std::time::Instant>,
+    /// Paces the copies of what an archive being read has found (`archive_fill`).
+    pub(crate) fill: crate::archive_fill::Pacer,
 }
 
 /// An opened archive nothing uses for this long frees its memory (passwords stay).
@@ -185,6 +187,15 @@ impl std::fmt::Debug for Mounts {
 impl Mounts {
     pub fn get(&self, handle: &str) -> Option<&Arc<LazyArchive>> {
         self.lazies.get(handle)
+    }
+
+    /// The archives being opened right now.
+    pub(crate) fn being_read(&self) -> Vec<Arc<LazyArchive>> {
+        self.lazies
+            .values()
+            .filter(|m| m.opening_for().is_some())
+            .cloned()
+            .collect()
     }
 
     /// The mount serving `uri`, if `uri` is inside an archive.

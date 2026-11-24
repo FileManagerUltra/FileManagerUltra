@@ -5,11 +5,13 @@
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use fm_vfs::{Attrs, Entry, FmError, Scheme, SpaceInfo, Vfs, VfsUri, WriteOpts};
 
 use crate::format::{self, FormatId, Passwords, Progress};
-use crate::fs::ArchiveFs;
+use crate::fs::{ArchiveFs, index_entry};
+use crate::index::LiveIndex;
 use crate::source::{SliceSource, Source, VfsSource};
 use crate::split::PartSet;
 
@@ -23,10 +25,35 @@ pub struct LazyArchive {
     forced: Option<FormatId>,
     offset: u64,
     passwords: Arc<Passwords>,
+    /// The opened archive; only ever locked briefly, so the UI can ask about it while an
+    /// open runs.
     state: Mutex<Option<Arc<ArchiveFs>>>,
+    /// Held by the open itself, which can take minutes (a large RAR set).
+    opening: Mutex<()>,
+    started: Mutex<Option<Instant>>,
+    /// What the open in progress has read so far (formats that read from the start).
+    live: LiveIndex,
     done: AtomicU64,
     total: AtomicU64,
     cancel: AtomicBool,
+}
+
+/// An open in progress; see [`LazyArchive::open_guard`].
+pub struct OpenGuard<'a>(&'a LazyArchive);
+
+impl OpenGuard<'_> {
+    /// The entries read so far.
+    pub fn live(&self) -> &LiveIndex {
+        &self.0.live
+    }
+}
+
+impl Drop for OpenGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut started) = self.0.started.lock() {
+            *started = None;
+        }
+    }
 }
 
 impl LazyArchive {
@@ -46,6 +73,9 @@ impl LazyArchive {
             offset,
             passwords: Arc::new(Passwords::default()),
             state: Mutex::new(None),
+            opening: Mutex::new(()),
+            started: Mutex::new(None),
+            live: LiveIndex::new(),
             done: AtomicU64::new(0),
             total: AtomicU64::new(0),
             cancel: AtomicBool::new(false),
@@ -73,6 +103,63 @@ impl LazyArchive {
     pub fn progress(&self) -> Option<(u64, u64)> {
         let total = self.total.load(Ordering::Relaxed);
         (total > 0 && self.opened().is_none()).then(|| (self.done.load(Ordering::Relaxed), total))
+    }
+
+    /// Mark an open as running until the guard drops: what the open adds to
+    /// [`OpenGuard::live`] can be listed meanwhile. [`mount`](Self::mount) holds one for the
+    /// whole open; callers outside this crate only need one to stand in for it in tests.
+    pub fn open_guard(&self) -> OpenGuard<'_> {
+        self.live.clear();
+        if let Ok(mut started) = self.started.lock() {
+            *started = Some(Instant::now());
+        }
+        OpenGuard(self)
+    }
+
+    /// How long the current open has been running, while one does.
+    pub fn opening_for(&self) -> Option<Duration> {
+        self.started
+            .lock()
+            .ok()
+            .and_then(|s| s.map(|at| at.elapsed()))
+    }
+
+    /// Entries the open in progress has read so far; `None` when none is running.
+    pub fn read_so_far(&self) -> Option<usize> {
+        self.opening_for().map(|_| self.live.len())
+    }
+
+    /// While an open runs: the entries of folder `dir` read so far and how many entries
+    /// the archive has shown in all. `None` when nothing is opening or `dir` has not been
+    /// reached yet. A copy of memory only, safe to ask for in a frame.
+    pub fn partial_read_dir(&self, dir: &VfsUri) -> Option<(Vec<Entry>, usize)> {
+        self.opening_for()?;
+        if dir.scheme() != Scheme::Archive || dir.authority() != self.root.authority() {
+            return None;
+        }
+        let key = dir.path_str().trim_start_matches('/').to_string();
+        self.live.read(|index| {
+            // Empty: nothing read yet, or the finished index has just moved out.
+            if index.is_empty() {
+                return None;
+            }
+            let id = index.lookup(&key)?;
+            if index
+                .node(id)
+                .is_none_or(|n| n.kind != crate::index::NodeKind::Dir)
+            {
+                return None;
+            }
+            let entries = index
+                .children(id)
+                .iter()
+                .filter_map(|&child| {
+                    let name = index.node(child)?.name.clone();
+                    Some(index_entry(index, dir.join(&name).ok()?, child))
+                })
+                .collect();
+            Some((entries, index.len()))
+        })
     }
 
     /// Stop an index build in progress (leaving the location).
@@ -138,6 +225,11 @@ impl LazyArchive {
             .ok_or_else(|| FmError::NotFound(self.container.to_string()))?;
         let listing = self.container_vfs.read_dir(&folder)?;
         let volumes = crate::split::resolve_rar(name, listing.iter().map(|e| e.name.as_str()))?;
+        let bytes = listing
+            .iter()
+            .filter(|e| volumes.contains(&e.name))
+            .filter_map(|e| e.size)
+            .fold(0u64, u64::saturating_add);
         let local = (self.container.scheme() == Scheme::File && self.offset == 0)
             .then(|| self.container.local_path())
             .flatten();
@@ -151,7 +243,7 @@ impl LazyArchive {
                         Arc::new(VfsSource::open(self.container_vfs.clone(), uri)?);
                     sources.push((v.clone(), src));
                 }
-                let (dir, first) = rar::spool(&sources, progress.cancelled)?;
+                let (dir, first) = rar::spool(&sources, progress.report, progress.cancelled)?;
                 (first, Some(dir))
             }
         };
@@ -162,6 +254,7 @@ impl LazyArchive {
             &self.passwords,
             progress,
             spool,
+            bytes,
         )?))
     }
 
@@ -218,14 +311,29 @@ impl LazyArchive {
 
     /// Open the archive now (blocking; call from a job lane).
     pub fn mount(&self) -> Result<Arc<ArchiveFs>, FmError> {
-        let mut state = self
-            .state
+        let _opening = self
+            .opening
             .lock()
             .map_err(|_| FmError::backend("archive", "archive state poisoned"))?;
-        if let Some(fs) = state.as_ref() {
-            return Ok(fs.clone());
+        if let Some(fs) = self.opened() {
+            return Ok(fs);
         }
         self.cancel.store(false, Ordering::Relaxed);
+        let guard = self.open_guard();
+        let result = self.build();
+        if result.is_err() {
+            guard.live().clear();
+        }
+        drop(guard);
+        let fs = result?;
+        self.state
+            .lock()
+            .map_err(|_| FmError::backend("archive", "archive state poisoned"))?
+            .replace(fs.clone());
+        Ok(fs)
+    }
+
+    fn build(&self) -> Result<Arc<ArchiveFs>, FmError> {
         let name = self.name();
         let opened = VfsSource::open(self.container_vfs.clone(), self.container.clone())?;
         let stamp = (opened.len(), opened.modified());
@@ -265,12 +373,27 @@ impl LazyArchive {
                 )
             })?,
         };
-        self.total.store(src.len(), Ordering::Relaxed);
-        let report = |d: u64, _t: u64| self.done.store(d, Ordering::Relaxed);
+        // The RAR tool reads the whole set and reports nothing; only copying a remote set does.
+        self.done.store(0, Ordering::Relaxed);
+        self.total.store(
+            if format == FormatId::Rar {
+                0
+            } else {
+                src.len()
+            },
+            Ordering::Relaxed,
+        );
+        let report = |d: u64, t: u64| {
+            if t > 0 {
+                self.total.store(t, Ordering::Relaxed);
+            }
+            self.done.store(d, Ordering::Relaxed);
+        };
         let cancelled = || self.cancel.load(Ordering::Relaxed);
         let progress = Progress {
             report: &report,
             cancelled: &cancelled,
+            live: Some(&self.live),
         };
         let reader = if format == FormatId::Rar {
             format::guarded(|| self.open_rar(&name, &progress))
@@ -298,7 +421,6 @@ impl LazyArchive {
         } else {
             fs
         });
-        *state = Some(fs.clone());
         Ok(fs)
     }
 }
@@ -359,6 +481,49 @@ mod tests {
         mem.mkdirs_str("/data").expect("dir");
         mem.put_file(&uri, bytes).expect("put");
         (mem, uri)
+    }
+
+    #[test]
+    fn asking_about_an_archive_never_waits_for_its_open() {
+        let (vfs, uri) = fs_with("site.zip", &format::zip::tests::sample_zip());
+        let root = VfsUri::archive_root(&crate::handle_for(&uri, 0, None)).expect("root");
+        let lazy = Arc::new(LazyArchive::new(root, uri, vfs, None, 0));
+        // An open in progress holds this for as long as it runs.
+        let open = lazy.opening.lock().expect("opening");
+        let asker = lazy.clone();
+        let handle = std::thread::spawn(move || {
+            (asker.opened().is_none(), asker.is_dirty(), asker.progress())
+        });
+        assert_eq!(handle.join().expect("asker"), (true, false, None));
+        drop(open);
+        assert!(lazy.mount().is_ok());
+    }
+
+    #[test]
+    fn folders_can_be_listed_while_the_archive_is_still_opening() {
+        let (vfs, uri) = fs_with("site.zip", &format::zip::tests::sample_zip());
+        let root = VfsUri::archive_root(&crate::handle_for(&uri, 0, None)).expect("root");
+        let lazy = LazyArchive::new(root.clone(), uri, vfs, None, 0);
+        assert!(lazy.partial_read_dir(&root).is_none(), "nothing is opening");
+        {
+            let open = lazy.open_guard();
+            assert!(lazy.partial_read_dir(&root).is_none(), "nothing read yet");
+            let add = |name: &str, kind| open.live().add(name, kind, crate::Meta::default());
+            add("docs/a.txt", crate::NodeKind::File).expect("a");
+            let (entries, total) = lazy.partial_read_dir(&root).expect("root");
+            assert_eq!(
+                (entries.len(), total),
+                (1, 2),
+                "docs is made up from the path of a.txt"
+            );
+            let docs = root.join("docs").expect("docs");
+            assert_eq!(lazy.partial_read_dir(&docs).map(|(e, _)| e.len()), Some(1));
+            assert!(
+                lazy.partial_read_dir(&root.join("later").expect("later"))
+                    .is_none()
+            );
+        }
+        assert!(lazy.partial_read_dir(&root).is_none(), "the open is over");
     }
 
     #[test]

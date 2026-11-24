@@ -752,6 +752,16 @@ lane as `fileops` jobs; a job that needs a password parks and the pane asks for 
 Selecting an archive file in a Preview pane builds its card (`engine::archive_preview`)
 from a private, unregistered `LazyArchive`, so previewing mounts nothing.
 
+Progressive listing: builders that read from the start (tar*, RAR through the tool) add
+entries to the mount's `LiveIndex` (`Progress::live`) while the opening job runs;
+`LazyArchive::partial_read_dir` copies a folder from it and never waits for the open.
+`engine::archive_fill::tick` (from `Session::poll`, paced 250 ms up to 10 s with the
+entry count) puts that into `DirCache` as `Slot::Filling`, which readers see as `Ready`
+and which the job's own result replaces (Ok or Failed). The RAR tool's stdout is cut
+into per-entry blocks (`format/blocks.rs`) as it arrives (`rar::run_stream`); 7-Zip
+prints nothing until it has read every volume, so only unrar fills live. The pane's
+"Still reading…" note comes from `archive_fill::reading`.
+
 ## 13. Change history
 
 | Date | Change |
