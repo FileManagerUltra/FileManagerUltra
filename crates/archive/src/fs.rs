@@ -113,6 +113,38 @@ impl ArchiveFs {
         self.ov().clear();
     }
 
+    /// The password change staged for Save, if any.
+    pub fn password_change(&self) -> Option<crate::overlay::PasswordChange> {
+        self.ov().password_change().cloned()
+    }
+
+    /// Stage setting, changing (`Some` new password) or removing (`None`) the password;
+    /// zip and 7z only.
+    pub fn stage_password(&self, change: crate::overlay::PasswordChange) -> Result<(), FmError> {
+        self.writable()?;
+        match self.format() {
+            FormatId::Zip | FormatId::SevenZ => {}
+            _ => {
+                return Err(FmError::InvalidParams(
+                    "tar has no encryption; compress to zip or 7z to protect it".into(),
+                ));
+            }
+        }
+        if change.new.as_ref().is_some_and(crate::Secret::is_empty) {
+            return Err(FmError::InvalidParams("the password is empty".into()));
+        }
+        let info = self.info();
+        let encrypted = info.encrypted || info.names_encrypted;
+        let mut ov = self.ov();
+        // Removing a password the archive never had (and none staged) changes nothing.
+        if change.new.is_none() && !encrypted {
+            ov.set_password_change(None);
+            return Ok(());
+        }
+        ov.set_password_change(Some(change));
+        Ok(())
+    }
+
     /// `Err` with the reason when this archive cannot take changes.
     pub fn writable(&self) -> Result<(), FmError> {
         if let Some(why) = self.read_only {

@@ -580,7 +580,8 @@ pub(crate) fn save(
             // The temporary file is always on this machine's disk.
             let local: Arc<dyn Vfs> = Arc::new(fm_fs_local::LocalFs::new());
             let src = Arc::new(fm_archive::source::VfsSource::open(local, tmp_uri)?);
-            fm_archive::save::verify(src, fs.format(), fs.passwords(), &expect)
+            let check = fm_archive::save::saved_passwords(&fs);
+            fm_archive::save::verify(src, fs.format(), &check, &expect)
         })();
         if let Err(e) = written {
             temp.cleanup();
@@ -614,6 +615,9 @@ pub(crate) fn save(
     // Saved over the archive, or saved as a copy: either way the staged set is done
     // with. A replaced file opens again from disk; after a copy the original's index
     // still fits it.
+    if target.copy_to.is_none() {
+        fm_archive::save::adopt_password(&fs);
+    }
     fs.discard();
     if target.copy_to.is_none() {
         mount.reopen();

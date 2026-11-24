@@ -59,12 +59,22 @@ pub struct Change {
     pub kind: &'static str,
 }
 
+/// A password change applied on Save: every member is encrypted with `new`, or stored
+/// without encryption when it is `None`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PasswordChange {
+    pub new: Option<crate::Secret>,
+    /// 7z: hide the file names too (asks for the password before listing).
+    pub encrypt_names: bool,
+}
+
 #[derive(Default)]
 pub struct Overlay {
     entries: BTreeMap<String, OvEntry>,
     spool: Option<SpoolDir>,
     staged: u64,
     seq: u64,
+    password: Option<PasswordChange>,
 }
 
 fn parent_of(path: &str) -> &str {
@@ -89,7 +99,7 @@ fn missing(e: &str) -> FmError {
 
 impl Overlay {
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.is_empty() && self.password.is_none()
     }
 
     /// Drop every staged change (Discard) and the spooled bytes.
@@ -97,6 +107,15 @@ impl Overlay {
         self.entries.clear();
         self.spool = None;
         self.staged = 0;
+        self.password = None;
+    }
+
+    pub fn password_change(&self) -> Option<&PasswordChange> {
+        self.password.as_ref()
+    }
+
+    pub fn set_password_change(&mut self, change: Option<PasswordChange>) {
+        self.password = change;
     }
 
     /// Whether a proper ancestor of `path` hides the archive's items below it.
@@ -374,9 +393,20 @@ impl Overlay {
         Ok(())
     }
 
-    /// The staged changes, one per changed item that is not inside a new folder.
+    /// The staged changes, one per changed item that is not inside a new folder; a
+    /// password change comes first, with an empty path.
     pub fn changes(&self, index: &Index) -> Vec<Change> {
         let mut out = Vec::new();
+        if let Some(change) = &self.password {
+            out.push(Change {
+                path: String::new(),
+                kind: if change.new.is_some() {
+                    "password"
+                } else {
+                    "no password"
+                },
+            });
+        }
         for (path, e) in &self.entries {
             // Items inside a folder added in the overlay are part of that change.
             let mut at = path.as_str();

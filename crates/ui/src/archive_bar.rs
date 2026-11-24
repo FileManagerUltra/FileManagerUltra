@@ -120,16 +120,17 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
                     .max_height(140.0)
                     .show(ui, |ui| {
                         for c in &changes {
-                            let what = match c.kind {
-                                "added" => "Added",
-                                "replaced" => "Replaced",
-                                "folder" => "New folder",
-                                _ => "Removed",
+                            let line = match c.kind {
+                                "password" => "The password changes when you save".to_string(),
+                                "no password" => {
+                                    "The password is removed when you save".to_string()
+                                }
+                                "added" => format!("Added: {}", c.path),
+                                "replaced" => format!("Replaced: {}", c.path),
+                                "folder" => format!("New folder: {}", c.path),
+                                _ => format!("Removed: {}", c.path),
                             };
-                            ui.label(
-                                RichText::new(format!("{what}: {}", c.path))
-                                    .color(tokens.text_muted),
-                            );
+                            ui.label(RichText::new(line).color(tokens.text_muted));
                         }
                     });
             }

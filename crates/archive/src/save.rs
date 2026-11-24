@@ -88,22 +88,29 @@ pub fn save<W: Write + Seek>(
     let w = plan(fs, hooks.cancelled)?;
     let expect = expect_of(&w);
     let info = fs.info();
-    let password = if info.encrypted || info.names_encrypted {
-        Some(fitting_password(fs)?)
-    } else {
-        None
+    // A staged password change re-encrypts (or decrypts) every member; otherwise the
+    // archive keeps the password that opens it.
+    let (password, encrypt_names, keep_stored) = match fs.password_change() {
+        Some(change) => {
+            let names = change.encrypt_names && change.new.is_some();
+            (change.new, names, false)
+        }
+        None if info.encrypted || info.names_encrypted => {
+            (Some(fitting_password(fs)?), info.names_encrypted, true)
+        }
+        None => (None, false, true),
     };
     let me: Arc<dyn Vfs> = fs.clone();
     let vfs_for: VfsFor = Arc::new(move |_| Ok(me.clone()));
     let out = match fs.format() {
-        FormatId::Zip => save_zip(out, &w, fs, &vfs_for, password, hooks)?,
+        FormatId::Zip => save_zip(out, &w, fs, &vfs_for, password, keep_stored, hooks)?,
         format => {
             let opts = CompressOptions {
                 format,
                 level: Level::Normal,
                 password,
                 zip_crypto: false,
-                encrypt_names: info.names_encrypted,
+                encrypt_names,
             };
             compress(out, &w, &vfs_for, &opts, hooks)?
         }
@@ -117,9 +124,10 @@ fn save_zip<W: Write + Seek>(
     fs: &ArchiveFs,
     vfs_for: &VfsFor,
     password: Option<Secret>,
+    keep_stored: bool,
     hooks: &mut Hooks<'_>,
 ) -> Result<W, FmError> {
-    let mut stored = fs.reader().zip_archive();
+    let mut stored = fs.reader().zip_archive().filter(|_| keep_stored);
     let mut zw = zip::ZipWriter::new(out);
     let mut done = 0u64;
     for item in &w.items {
@@ -167,6 +175,30 @@ fn save_zip<W: Write + Seek>(
         }
     }
     zw.finish().map_err(zip_err)
+}
+
+/// The passwords that open the archive as [`save`] writes it.
+pub fn saved_passwords(fs: &ArchiveFs) -> Arc<Passwords> {
+    match fs.password_change() {
+        Some(change) => {
+            let p = Passwords::default();
+            if let Some(new) = change.new {
+                p.add(new);
+            }
+            Arc::new(p)
+        }
+        None => fs.passwords().clone(),
+    }
+}
+
+/// After saving over the archive: its mount knows the new password (or none).
+pub fn adopt_password(fs: &ArchiveFs) {
+    if let Some(change) = fs.password_change() {
+        fs.passwords().forget();
+        if let Some(new) = change.new {
+            fs.passwords().add(new);
+        }
+    }
 }
 
 /// Open the written archive and check that it holds what was planned.
@@ -385,6 +417,109 @@ mod tests {
             save(&fs, Cursor::new(Vec::new()), &mut hooks),
             Err(FmError::PasswordRequired(_))
         ));
+    }
+
+    #[test]
+    fn a_staged_password_is_set_changed_or_removed_on_save() {
+        use crate::overlay::PasswordChange;
+        // Set: every member of a plain zip is AES-encrypted afterwards.
+        let fs = mount(fixture(FormatId::Zip, None), FormatId::Zip, None);
+        fs.stage_password(PasswordChange {
+            new: Some(Secret::new("new")),
+            encrypt_names: false,
+        })
+        .expect("stage");
+        assert!(fs.is_dirty(), "a password change alone is a change");
+        assert_eq!(fs.changes().first().map(|c| c.kind), Some("password"));
+        let (bytes, expect) = save_to_vec(&fs);
+        verify(
+            Arc::new(MemSource::new(bytes.clone())),
+            FormatId::Zip,
+            &saved_passwords(&fs),
+            &expect,
+        )
+        .expect("verify with the new password");
+        let mut z = zip::ZipArchive::new(Cursor::new(bytes.clone())).expect("zip");
+        for i in 0..z.len() {
+            let e = z.by_index_raw(i).expect("entry");
+            assert!(
+                e.is_dir() || e.encrypted(),
+                "{}",
+                e.name_raw().escape_ascii()
+            );
+        }
+        let saved = mount(bytes, FormatId::Zip, Some("new"));
+        assert_eq!(read(&saved, "readme"), "hello");
+
+        // Remove: an encrypted 7z with hidden names opens without a password afterwards.
+        let fs = mount(
+            fixture(FormatId::SevenZ, Some("pw")),
+            FormatId::SevenZ,
+            Some("pw"),
+        );
+        fs.stage_password(PasswordChange {
+            new: None,
+            encrypt_names: false,
+        })
+        .expect("stage");
+        let (bytes, _) = save_to_vec(&fs);
+        let saved = mount(bytes, FormatId::SevenZ, None);
+        assert_eq!(read(&saved, "docs/a.txt"), "alpha");
+        assert!(!saved.info().encrypted && !saved.info().names_encrypted);
+
+        // Change: the old password no longer opens a 7z, the new one does (names hidden).
+        let fs = mount(
+            fixture(FormatId::SevenZ, Some("pw")),
+            FormatId::SevenZ,
+            Some("pw"),
+        );
+        fs.stage_password(PasswordChange {
+            new: Some(Secret::new("other")),
+            encrypt_names: true,
+        })
+        .expect("stage");
+        let (bytes, _) = save_to_vec(&fs);
+        let old = Passwords::default();
+        old.add(Secret::new("pw"));
+        assert!(
+            format::open(
+                Arc::new(MemSource::new(bytes.clone())),
+                FormatId::SevenZ,
+                "t",
+                &old,
+                &Progress::none()
+            )
+            .is_err()
+        );
+        let saved = mount(bytes, FormatId::SevenZ, Some("other"));
+        assert_eq!(read(&saved, "readme"), "hello");
+
+        // Tar has no encryption; an empty password is refused.
+        let fs = mount(fixture(FormatId::TarGz, None), FormatId::TarGz, None);
+        assert!(
+            fs.stage_password(PasswordChange {
+                new: Some(Secret::new("x")),
+                encrypt_names: false
+            })
+            .is_err()
+        );
+        let fs = mount(fixture(FormatId::Zip, None), FormatId::Zip, None);
+        assert!(
+            fs.stage_password(PasswordChange {
+                new: Some(Secret::new("")),
+                encrypt_names: false
+            })
+            .is_err()
+        );
+        fs.stage_password(PasswordChange {
+            new: None,
+            encrypt_names: false,
+        })
+        .expect("no-op");
+        assert!(
+            !fs.is_dirty(),
+            "removing a password it never had changes nothing"
+        );
     }
 
     #[test]

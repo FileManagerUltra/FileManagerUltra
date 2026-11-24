@@ -5,7 +5,7 @@
 use fm_vfs::{FmError, Scheme, VfsUri};
 use serde_json::json;
 
-use crate::archive_cmds::{after_save, target_mount, uri_of};
+use crate::archive_cmds::{MAX_PASSWORD, after_save, target_mount, uri_of};
 use crate::archive_ops::SaveTarget;
 use crate::fileops::OpRequest;
 use crate::registry::{CommandSpec, Params};
@@ -181,8 +181,106 @@ pub fn changes() -> CommandSpec {
     }
 }
 
+/// The focused pane is inside a writable zip or 7z (they can carry a password).
+fn focused_can_encrypt(s: &Session) -> bool {
+    s.layout
+        .state(s.layout.focused())
+        .and_then(|p| s.archives.for_uri(&p.location))
+        .and_then(|m| m.opened())
+        .is_some_and(|fs| {
+            fs.writable().is_ok()
+                && matches!(
+                    fs.format(),
+                    fm_archive::FormatId::Zip | fm_archive::FormatId::SevenZ
+                )
+        })
+}
+
+fn stage_password(
+    s: &mut Session,
+    params: &Params,
+    new: Option<fm_archive::Secret>,
+) -> Result<(), FmError> {
+    let mount = target_mount(s, params)?;
+    let fs = mount
+        .opened()
+        .ok_or_else(|| FmError::InvalidParams("the archive is not open".into()))?;
+    let encrypt_names = match field(params, "encrypt_names") {
+        None | Some(Params::Null) => true,
+        Some(v) => v
+            .as_bool()
+            .ok_or_else(|| FmError::InvalidParams("encrypt_names must be true or false".into()))?,
+    };
+    fs.stage_password(fm_archive::overlay::PasswordChange { new, encrypt_names })?;
+    let root = mount.root().clone();
+    after_save(s, &root);
+    Ok(())
+}
+
+/// `archive.password.set {uri?, password?, encrypt_names?}` — stage a new password for
+/// a zip or 7z (applied on Save: every member is encrypted with AES-256; 7z hides the
+/// names unless `encrypt_names` is false). Without `password` the password is removed.
+pub fn password_set() -> CommandSpec {
+    CommandSpec {
+        id: "archive.password.set",
+        label: "Set Password…",
+        menu: &["File", "Archive", "Set Password…"],
+        shortcut: None,
+        params: "{uri?: string, password?: string (1–1024 bytes; absent removes it), encrypt_names?: bool (7z, default true)}",
+        enabled: focused_can_encrypt,
+        run: |s, params: &Params| {
+            check_shape(params)?;
+            let new = match field(params, "password") {
+                None | Some(Params::Null) => None,
+                Some(Params::String(pw)) if !pw.is_empty() && pw.len() <= MAX_PASSWORD => {
+                    Some(fm_archive::Secret::new(pw.clone()))
+                }
+                Some(_) => {
+                    return Err(FmError::InvalidParams(format!(
+                        "password must be 1 to {MAX_PASSWORD} bytes"
+                    )));
+                }
+            };
+            stage_password(s, params, new)
+        },
+    }
+}
+
+/// `archive.password.remove {uri?}` — stage removing the password (applied on Save).
+pub fn password_remove() -> CommandSpec {
+    CommandSpec {
+        id: "archive.password.remove",
+        label: "Remove Password",
+        menu: &["File", "Archive", "Remove Password"],
+        shortcut: None,
+        params: "{uri?: string}",
+        enabled: |s| {
+            focused_can_encrypt(s)
+                && s.layout
+                    .state(s.layout.focused())
+                    .and_then(|p| s.archives.for_uri(&p.location))
+                    .and_then(|m| m.opened())
+                    .is_some_and(|fs| {
+                        let info = fs.info();
+                        info.encrypted || info.names_encrypted
+                    })
+        },
+        run: |s, params: &Params| {
+            check_shape(params)?;
+            stage_password(s, params, None)
+        },
+    }
+}
+
 pub fn specs() -> Vec<CommandSpec> {
-    vec![save(), save_as(), discard(), changes()]
+    vec![
+        save(),
+        save_as(),
+        discard(),
+        changes(),
+        password_set(),
+        password_remove(),
+    ]
 }
 
 #[cfg(test)]
@@ -197,6 +295,8 @@ mod tests {
             "archive.save_as",
             "archive.discard",
             "archive.changes",
+            "archive.password.set",
+            "archive.password.remove",
         ] {
             assert!(s.dispatch(id, &json!({})).is_err(), "{id}");
             assert!(s.dispatch(id, &json!({"uri": "/tmp"})).is_err(), "{id}");

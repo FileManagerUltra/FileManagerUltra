@@ -458,3 +458,6 @@ change is visible: the changelog explains it and the preference restores the old
   change can be lost between writing and clearing the staged set. Split sets and
   archives embedded at an offset stay read-only until 5.7. Discard and Save as copy keep
   the opened index (the file did not change); Save reopens from the new file.
+- Passwords (2026-11-24): set/change/remove is a staged `PasswordChange` in the overlay.
+  The zip writer cannot produce ZipCrypto, so the "weak ZipCrypto when chosen" option of
+  the spec is not offered; zips are always AES-256.

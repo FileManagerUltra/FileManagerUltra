@@ -2243,3 +2243,75 @@ fn password_dialog_reruns_the_extraction() {
         );
     }
 }
+
+/// Change Password asks for the new password twice; a match stages the change (Save
+/// applies it), a mismatch says so and stages nothing (add-archive-vfs 5.6).
+#[test]
+fn the_archive_password_dialog_needs_the_password_twice() {
+    let fs = fm_testkit::MemFs::new();
+    fs.put_file_at(
+        &VfsUri::parse("/home/alice/locked.zip").expect("uri"),
+        include_bytes!("fixtures/locked.zip"),
+        std::time::SystemTime::UNIX_EPOCH,
+    )
+    .expect("put");
+    let mut s = Session::new().expect("session");
+    s.backends.register(std::sync::Arc::new(fs));
+    s.dispatch("archive.enter", &json!({"uri": "/home/alice/locked.zip"}))
+        .expect("enter");
+    let root = s
+        .layout
+        .state(s.layout.focused())
+        .expect("pane")
+        .location
+        .clone();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !s.dirs.state(&root).is_ready() {
+        s.poll();
+        assert!(std::time::Instant::now() < deadline, "listing");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let tokens = Tokens::dark();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 800.0))
+        .build_ui_state(
+            move |ui, (dialogs, s): &mut (Dialogs, Session)| {
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                dialogs.show(ui.ctx(), s, &tokens);
+            },
+            (Dialogs::default(), s),
+        );
+    let ctx = h.ctx.clone();
+    fm_ui::archive_lock::ask(&ctx, &h.state().1);
+    h.run();
+    assert!(
+        h.query_by_label("Change password").is_some(),
+        "an encrypted zip: change"
+    );
+    for (label, text) in [("Password", "one"), ("Type it again", "two")] {
+        h.get_by_label(label).click();
+        h.run();
+        h.get_by_label(label).type_text(text);
+        h.run();
+    }
+    h.get_by_label("Change").click();
+    h.run();
+    assert!(h.query_by_label("The passwords do not match").is_some());
+    let dirty = |h: &Harness<'_, (Dialogs, Session)>| {
+        let s = &h.state().1;
+        s.archives.for_uri(&root).is_some_and(|m| m.is_dirty())
+    };
+    assert!(!dirty(&h));
+    h.get_by_label("Type it again").click();
+    h.run();
+    for _ in 0..3 {
+        h.key_press(egui::Key::Backspace);
+        h.run();
+    }
+    h.get_by_label("Type it again").type_text("one");
+    h.run();
+    h.get_by_label("Change").click();
+    h.run();
+    assert!(dirty(&h), "staged");
+    assert!(!fm_ui::archive_lock::is_open(&ctx));
+}

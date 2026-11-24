@@ -106,6 +106,8 @@ pub const ARCHIVE_SAVE_AS: &str = "archive.save_as";
 pub const ARCHIVE_DISCARD: &str = "archive.discard";
 pub const ARCHIVE_CHANGES: &str = "archive.changes";
 pub const ARCHIVE_CLOSE: &str = "archive.unmount";
+pub const ARCHIVE_PASSWORD_SET: &str = "archive.password.set";
+pub const ARCHIVE_PASSWORD_REMOVE: &str = "archive.password.remove";
 pub const EDIT_UNDO: &str = "edit.undo";
 pub const FILE_CLIP_COPY: &str = "file.clip_copy";
 pub const FILE_CLIP_CUT: &str = "file.clip_cut";
@@ -669,6 +671,18 @@ fn item(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs, id: &st
             _ => {}
         }
     }
+    if id == ARCHIVE_PASSWORD_SET
+        && session
+            .layout
+            .state(session.layout.focused())
+            .and_then(|p| session.archives.opened_fs(&p.location))
+            .is_some_and(|fs| {
+                let info = fs.info();
+                info.encrypted || info.names_encrypted
+            })
+    {
+        label = "Change Password…".to_string();
+    }
     let enabled = (spec.enabled)(session);
     let mut button = egui::Button::new(label);
     if let Some(shortcut) = spec.shortcut {
@@ -678,6 +692,9 @@ fn item(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs, id: &st
     if ui.add_enabled(enabled, button).clicked() {
         if id == TERM_PASTE {
             fm_ui::terminal::request_paste(ui.ctx());
+        } else if id == ARCHIVE_PASSWORD_SET {
+            // The new password is typed twice in a dialog.
+            fm_ui::archive_lock::ask(ui.ctx(), session);
         } else if id == ARCHIVE_DISCARD {
             // The unsaved bar asks first.
             fm_ui::archive_bar::ask_discard(ui.ctx(), session.layout.focused());
@@ -808,6 +825,9 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
                 item(ui, session, dialogs, ARCHIVE_SAVE_AS);
                 item(ui, session, dialogs, ARCHIVE_DISCARD);
                 item(ui, session, dialogs, ARCHIVE_CHANGES);
+                ui.separator();
+                item(ui, session, dialogs, ARCHIVE_PASSWORD_SET);
+                item(ui, session, dialogs, ARCHIVE_PASSWORD_REMOVE);
                 ui.separator();
                 item(ui, session, dialogs, ARCHIVE_CLOSE);
             });

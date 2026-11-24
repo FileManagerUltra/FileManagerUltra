@@ -223,6 +223,7 @@ impl Dialogs {
         conflict_dialog(ctx, s, tokens);
         question_dialog(ctx, s, tokens);
         archive_password_dialog(ctx, s, tokens);
+        crate::archive_lock::show(ctx, s, tokens);
         kind_switch_dialog(ctx, s, tokens);
         unsaved_dialog(ctx, s, tokens);
         if let Some(Some(dialog)) = ctx.data_mut(|d| d.remove_temp::<Option<Dialog>>(queue_id())) {

@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Zip, tar and 7z archives can be changed like folders: copy or move files in, make folders, rename and delete. Nothing is written until you press Save in the bar above the listing; Discard drops the changes, and "Save as copy…" writes the changed archive to another folder. Saving leaves the original untouched until the new archive has been written and checked, refuses to overwrite an archive another program changed meanwhile, keeps encrypted archives encrypted, and copies unchanged zip entries without recompressing them. Split archives stay read-only for now.
 
+- Zip and 7z archives can get a password, a new password or have theirs removed (File › Archive › Set Password…). The new password is typed twice and applied when the archive is saved; zip uses AES-256, and 7z can hide the file names too.
+
 ### Changed
 
 - Quitting or closing asks one question at most: unsaved workspaces, filled-in PDFs, archives with unsaved changes and work still running are listed together in one prompt with Save, Don't save and Cancel, instead of one prompt after another.

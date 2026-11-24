@@ -455,3 +455,55 @@ fn closing_the_last_pane_on_a_dirty_archive_asks() {
         "changes dropped"
     );
 }
+
+/// Set Password is a staged change; Save encrypts every entry and the archive keeps
+/// reading without asking (the mount knows the new password).
+#[test]
+fn a_password_set_on_a_zip_is_applied_on_save() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let zip = dir.path().join("site.zip");
+    std::fs::write(&zip, zip_bytes()).expect("zip");
+    let mut s = Session::new().expect("session");
+    let root = open_zip(&mut s, &zip);
+    for bad in [
+        json!({"password": ""}),
+        json!({"password": 3}),
+        json!({"encrypt_names": "yes", "password": "x"}),
+    ] {
+        assert!(s.dispatch("archive.password.set", &bad).is_err(), "{bad}");
+    }
+    s.dispatch(
+        "archive.password.set",
+        &json!({"uri": root.to_string(), "password": "s3cret"}),
+    )
+    .expect("stage");
+    let mount = s.archives.for_uri(&root).cloned().expect("mount");
+    assert!(mount.is_dirty());
+    s.dispatch("archive.save", &json!({"uri": root.to_string()}))
+        .expect("save");
+    assert_eq!(
+        wait_done(&mut s).last(),
+        Some(&OpState::Finished),
+        "{:?}",
+        s.fileops.jobs()
+    );
+    let mut z = zip::ZipArchive::new(std::fs::File::open(&zip).expect("open")).expect("zip");
+    for i in 0..z.len() {
+        let e = z.by_index_raw(i).expect("entry");
+        assert!(e.is_dir() || e.encrypted());
+    }
+    let vfs = s.backends.require(&root).expect("backend");
+    let mut text = String::new();
+    std::io::Read::read_to_string(
+        &mut vfs
+            .open_read(&root.join("readme").expect("r"))
+            .expect("open"),
+        &mut text,
+    )
+    .expect("read without asking");
+    assert_eq!(text, "hi");
+    // Removing it again is offered and staged.
+    s.dispatch("archive.password.remove", &json!({"uri": root.to_string()}))
+        .expect("remove");
+    assert!(mount.is_dirty());
+}
