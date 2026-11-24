@@ -96,6 +96,19 @@ impl LazyArchive {
         self.opened().is_some_and(|fs| fs.is_dirty())
     }
 
+    /// Open the archive again from its file on next use (after Save), keeping its
+    /// passwords; staged changes are dropped.
+    pub fn reopen(&self) {
+        if let Ok(mut s) = self.state.lock() {
+            *s = None;
+        }
+    }
+
+    /// The backend holding the archive file.
+    pub fn container_vfs(&self) -> &Arc<dyn Vfs> {
+        &self.container_vfs
+    }
+
     /// Close the archive and forget its passwords; the next use opens it again.
     pub fn unmount(&self) {
         if let Ok(mut s) = self.state.lock() {
@@ -206,10 +219,9 @@ impl LazyArchive {
         }
         self.cancel.store(false, Ordering::Relaxed);
         let name = self.name();
-        let file: Arc<dyn Source> = Arc::new(VfsSource::open(
-            self.container_vfs.clone(),
-            self.container.clone(),
-        )?);
+        let opened = VfsSource::open(self.container_vfs.clone(), self.container.clone())?;
+        let stamp = (opened.len(), opened.modified());
+        let file: Arc<dyn Source> = Arc::new(opened);
         let single = file.clone();
         let file = self.join_parts(&name, file)?;
         // Saving split sets comes later: until then they are read-only.
@@ -259,9 +271,12 @@ impl LazyArchive {
             format::guarded(|| format::open(src, format, &name, &self.passwords, &progress))
         };
         self.total.store(0, Ordering::Relaxed);
-        let fs = ArchiveFs::new(self.root.clone(), reader?, self.passwords.clone());
+        let fs =
+            ArchiveFs::new(self.root.clone(), reader?, self.passwords.clone()).with_stamp(stamp);
         let fs = Arc::new(if split {
             fs.with_read_only("split archives are read-only for now")
+        } else if self.offset > 0 {
+            fs.with_read_only("archives inside another file are read-only")
         } else {
             fs
         });

@@ -340,6 +340,14 @@ fn accept() -> CommandSpec {
                         )?;
                     }
                 }
+                "archive.save_as" => {
+                    if let Some(root) = s.archives.save_as_pending.take() {
+                        s.dispatch(
+                            "archive.save_as",
+                            &json!({ "uri": root.to_string(), "dest": chosen.to_string() }),
+                        )?;
+                    }
+                }
                 side @ ("sync.left" | "sync.right") => {
                     let field = side.trim_start_matches("sync.");
                     s.dispatch("sync.profile.set", &json!({ "patch": { field: shown } }))?;

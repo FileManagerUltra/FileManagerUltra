@@ -27,8 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ISO disc images open like folders too, with their long names (Rock Ridge or Joliet), also from network shares and SFTP servers and without mounting anything. To have the system mount an ISO instead, use "Open with Default App" in the right-click menu (or turn off Preferences › Files › "Enter browses inside archives").
 
+- Zip, tar and 7z archives can be changed like folders: copy or move files in, make folders, rename and delete. Nothing is written until you press Save in the bar above the listing; Discard drops the changes, and "Save as copy…" writes the changed archive to another folder. Saving leaves the original untouched until the new archive has been written and checked, refuses to overwrite an archive another program changed meanwhile, keeps encrypted archives encrypted, and copies unchanged zip entries without recompressing them. Split archives stay read-only for now.
+
+### Changed
+
+- Quitting or closing asks one question at most: unsaved workspaces, filled-in PDFs, archives with unsaved changes and work still running are listed together in one prompt with Save, Don't save and Cancel, instead of one prompt after another.
+
 ### Fixed
 
+- Git colours and markers in a file list no longer vanish for a moment when you come back to the window after it has been idle for a while.
 - Extracting a hostile archive cannot write outside the new folder: names with `..`, absolute paths and drive letters stay inside it, nothing is written through a link, device files and FIFOs are left out, and setuid/setgid bits are never kept. A file in an archive that turns out larger than its header says stops with an error and leaves no partial file.
 - Closing an archive and opening it again reads it afresh instead of showing what it held before.
 - Entering a password for an archive that two panes show at once no longer leaves one of them stuck loading.

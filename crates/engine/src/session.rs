@@ -63,11 +63,11 @@ pub struct Session {
     pub layout: Layout,
     /// Open workspace tabs and the saved set (capability `workspaces`).
     pub workspaces: crate::workspace::Workspaces,
-    /// Raised when quitting or closing a tab would lose unsaved workspace changes.
+    /// Raised when quitting, closing a tab or closing a pane would lose something: unsaved
+    /// workspaces, PDFs and archives, and on quit work still running, in one prompt.
     pub unsaved_prompt: Option<crate::workspace::UnsavedPrompt>,
-    /// Raised when quitting would stop work still running in the background: one line per
-    /// copy, move or delete job and per sync that is running or keeping folders in sync.
-    pub busy_quit: Option<Vec<String>>,
+    /// Saves started from that prompt; the quit or close goes on when they finish.
+    pub(crate) pending_close: Option<crate::close_guard::PendingClose>,
     /// The focused thumbnail grid's selection, published by the UI each frame.
     pub grid_selection: Option<crate::file_cmds::GridSelection>,
     /// Files cut or copied for a later paste.
@@ -110,10 +110,6 @@ pub struct Session {
     /// Shared state of table previews (the UI waker).
     pub tables: crate::preview_table::TableHub,
     pub(crate) pdf_inbox: crate::pdf_view::PdfInbox,
-    /// Raised when quitting or closing a pane would lose unsaved PDF changes.
-    pub pdf_unsaved: Option<crate::pdf_form_cmds::PdfUnsaved>,
-    /// What to do once the saves the user asked for at that prompt finish.
-    pub(crate) pdf_after_save: Option<crate::pdf_form_cmds::PdfAfter>,
     /// Remembered visual signatures (loaded on request) and their folder.
     pub pdf_saved: Vec<crate::pdf_sign_cmds::SavedSignature>,
     pub pdf_saved_loading: bool,
@@ -220,7 +216,7 @@ impl Default for Session {
             layout: first_layout.clone(),
             workspaces: crate::workspace::Workspaces::new(&first_layout),
             unsaved_prompt: None,
-            busy_quit: None,
+            pending_close: None,
             grid_selection: None,
             clipboard: None,
             clipboard_outbox: None,
@@ -243,8 +239,6 @@ impl Default for Session {
             pdf: Default::default(),
             tables: Default::default(),
             pdf_inbox: Default::default(),
-            pdf_unsaved: None,
-            pdf_after_save: None,
             pdf_saved: Vec::new(),
             pdf_saved_loading: false,
             pdf_signatures_dir: crate::pdf_sign_cmds::default_dir(),

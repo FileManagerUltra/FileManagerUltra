@@ -179,21 +179,6 @@ impl std::fmt::Debug for FormMsg {
     }
 }
 
-/// What the unsaved-changes prompt guards.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PdfAfter {
-    Quit,
-    ClosePane(PaneId),
-}
-
-/// "Save / Don't save / Cancel" for PDFs with unsaved changes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PdfUnsaved {
-    pub after: PdfAfter,
-    pub panes: Vec<PaneId>,
-    pub names: Vec<String>,
-}
-
 pub(crate) fn session_mut(s: &mut Session, pane: PaneId) -> Result<&mut PdfSession, FmError> {
     s.pdf_view_mut(pane)
         .and_then(|v| v.fill.as_mut())
@@ -699,7 +684,7 @@ impl Session {
             Err(e) => {
                 session.save = SaveState::Failed(e.clone());
                 self.notice = Some(format!("The PDF was not saved: {e}"));
-                self.pdf_after_failed();
+                self.close_save_failed();
                 return;
             }
         };
@@ -738,7 +723,7 @@ impl Session {
                     session.save = SaveState::Failed(e.to_string());
                 }
                 self.notice = Some(format!("The PDF was not saved: {e}"));
-                self.pdf_after_failed();
+                self.close_save_failed();
             }
         }
     }
@@ -787,24 +772,24 @@ impl Session {
                     );
                 }
                 self.info = Some((info, std::time::Instant::now()));
-                self.pdf_after_saved();
+                self.close_save_finished(&crate::fileops::OpState::Finished);
             }
             crate::fileops::OpState::Finished => {
                 // Skipped at the conflict prompt: nothing written, changes kept.
                 session.save = SaveState::Idle;
                 session.saving_bytes = None;
-                self.pdf_after_failed();
+                self.close_save_failed();
             }
             crate::fileops::OpState::Cancelled => {
                 session.save = SaveState::Idle;
                 session.saving_bytes = None;
-                self.pdf_after_failed();
+                self.close_save_failed();
             }
             crate::fileops::OpState::Failed(e) => {
                 session.save = SaveState::Failed(e.clone());
                 session.saving_bytes = None;
                 self.notice = Some(format!("The PDF was not saved: {e}"));
-                self.pdf_after_failed();
+                self.close_save_failed();
             }
             crate::fileops::OpState::Running => {}
         }
@@ -829,99 +814,6 @@ impl Session {
                     .then(|| (*p, f.uri.file_name().unwrap_or("PDF").to_string()))
             })
             .collect()
-    }
-
-    /// Ask before quitting or closing `after` loses PDF changes; true when asked.
-    pub(crate) fn pdf_guard(&mut self, after: PdfAfter) -> bool {
-        let panes: Vec<(PaneId, String)> = self
-            .pdf_unsaved_panes()
-            .into_iter()
-            .filter(|(p, _)| match &after {
-                PdfAfter::Quit => true,
-                PdfAfter::ClosePane(c) => c == p,
-            })
-            .collect();
-        if panes.is_empty() {
-            return false;
-        }
-        self.pdf_unsaved = Some(PdfUnsaved {
-            after,
-            panes: panes.iter().map(|(p, _)| *p).collect(),
-            names: panes.into_iter().map(|(_, n)| n).collect(),
-        });
-        true
-    }
-
-    fn pdf_continue(&mut self, after: PdfAfter) -> Result<(), FmError> {
-        match after {
-            PdfAfter::Quit => {
-                self.quit_after_pdf_check();
-                Ok(())
-            }
-            PdfAfter::ClosePane(p) => {
-                if self.layout.panes().len() > 1 {
-                    self.layout.close(p)?;
-                    self.drop_terminal(p);
-                    self.media_visibility_changed();
-                }
-                Ok(())
-            }
-        }
-    }
-
-    fn pdf_after_saved(&mut self) {
-        let Some(after) = self.pdf_after_save.clone() else {
-            return;
-        };
-        let still = self
-            .pdf_unsaved_panes()
-            .into_iter()
-            .any(|(p, _)| match &after {
-                PdfAfter::Quit => true,
-                PdfAfter::ClosePane(c) => *c == p,
-            });
-        if !still {
-            self.pdf_after_save = None;
-            if let Err(e) = self.pdf_continue(after) {
-                self.notice = Some(e.to_string());
-            }
-        }
-    }
-
-    fn pdf_after_failed(&mut self) {
-        // A failed or skipped save cancels the pending quit or close: nothing is lost.
-        self.pdf_after_save = None;
-    }
-
-    /// Answer the PDF unsaved-changes prompt.
-    pub fn pdf_resolve_unsaved(&mut self, choice: &str) -> Result<(), FmError> {
-        let Some(prompt) = self.pdf_unsaved.take() else {
-            return Ok(());
-        };
-        match choice {
-            "cancel" => Ok(()),
-            "discard" => {
-                for p in &prompt.panes {
-                    if let Some(v) = self.pdf_view_mut(*p) {
-                        v.fill = None;
-                    }
-                }
-                self.pdf_continue(prompt.after)
-            }
-            "save" => {
-                self.pdf_after_save = Some(prompt.after.clone());
-                for p in prompt.panes {
-                    if let Err(e) = self.start_save(p, SaveTarget::Copy, true, None) {
-                        self.pdf_after_save = None;
-                        return Err(e);
-                    }
-                }
-                Ok(())
-            }
-            _ => Err(FmError::InvalidParams(
-                "choice must be save, discard or cancel".into(),
-            )),
-        }
     }
 }
 
@@ -1021,28 +913,6 @@ pub fn specs() -> Vec<CommandSpec> {
                 s.pdf_view(pane).is_some_and(|v| v.fill.is_some())
             },
             run: discard,
-        },
-        CommandSpec {
-            id: "pdf.unsaved.resolve",
-            label: "Answer Unsaved PDF Changes",
-            menu: &["Preview", "PDF", "Unsaved Changes"],
-            shortcut: None,
-            params: "{choice: \"save\"|\"discard\"|\"cancel\"}",
-            enabled: |s| s.pdf_unsaved.is_some(),
-            run: |s, params| {
-                let choice = params
-                    .as_object()
-                    .and_then(|m| m.get("choice"))
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| FmError::InvalidParams("choice is required".into()))?
-                    .to_string();
-                if !["save", "discard", "cancel"].contains(&choice.as_str()) {
-                    return Err(FmError::InvalidParams(
-                        "choice must be save, discard or cancel".into(),
-                    ));
-                }
-                s.pdf_resolve_unsaved(&choice)
-            },
         },
     ]
 }
@@ -1216,16 +1086,20 @@ pub(crate) mod tests {
         .expect("set");
         s.request_quit();
         assert!(s.running, "not quit yet");
-        assert!(s.pdf_unsaved.is_some());
-        s.dispatch("pdf.unsaved.resolve", &json!({"choice": "cancel"}))
+        assert_eq!(
+            s.unsaved_prompt.as_ref().map(|p| p.pdfs.len()),
+            Some(1),
+            "the one prompt lists the PDF"
+        );
+        s.dispatch("workspace.prompt", &json!({"choice": "cancel"}))
             .expect("cancel");
         assert!(s.running && s.pdf_view(pane).is_some_and(|v| v.holds()));
+        s.request_quit();
         assert!(
-            s.dispatch("pdf.unsaved.resolve", &json!({"choice": "maybe"}))
+            s.dispatch("workspace.prompt", &json!({"choice": "maybe"}))
                 .is_err()
         );
-        s.request_quit();
-        s.dispatch("pdf.unsaved.resolve", &json!({"choice": "discard"}))
+        s.dispatch("workspace.prompt", &json!({"choice": "discard"}))
             .expect("discard");
         assert!(!s.running, "quit after discarding");
     }

@@ -133,6 +133,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
             };
             if kind.is_files() {
                 crate::remote::stale_banner(ui, s, pane, tokens);
+                crate::archive_bar::show(ui, s, pane, tokens);
             }
             if kind == PaneKind::Terminal {
                 crate::terminal::show(ui, s, pane, tokens, focused);

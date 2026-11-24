@@ -423,6 +423,204 @@ pub fn extract_name(archive_name: &str) -> String {
     }
 }
 
+/// What [`save`] writes: the archive file itself, or a copy at a new place.
+#[derive(Clone)]
+pub struct SaveTarget {
+    pub mount: Arc<fm_archive::mount::LazyArchive>,
+    /// `None`: replace the archive file; `Some(dir/name)`: Save as copy (numbered when
+    /// taken).
+    pub copy_to: Option<VfsUri>,
+}
+
+impl SaveTarget {
+    pub fn root(&self) -> VfsUri {
+        self.mount.root().clone()
+    }
+
+    /// The folder the written file lands in.
+    pub fn dest_dir(&self) -> Option<VfsUri> {
+        match &self.copy_to {
+            Some(to) => to.parent(),
+            None => self.mount.container().parent(),
+        }
+    }
+}
+
+impl std::fmt::Debug for SaveTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SaveTarget")
+            .field("archive", self.mount.container())
+            .field("copy_to", &self.copy_to)
+            .finish()
+    }
+}
+
+impl PartialEq for SaveTarget {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.mount, &other.mount) && self.copy_to == other.copy_to
+    }
+}
+
+impl Eq for SaveTarget {}
+
+/// Replace `dst` with `tmp` (both in one folder on `vfs`), keeping the old file as a
+/// backup until the new one is in place; on failure the old file is restored.
+fn swap_in(vfs: &dyn Vfs, tmp: &VfsUri, dst: &VfsUri, dir: &VfsUri) -> Result<(), FmError> {
+    let exists = match vfs.stat(dst) {
+        Ok(_) => true,
+        Err(FmError::NotFound(_)) => false,
+        Err(e) => return Err(e),
+    };
+    if !exists {
+        return vfs.rename(tmp, dst);
+    }
+    let name = dst.file_name().unwrap_or("archive");
+    let backup = dir.join(&format!(".{name}.fmbak-{}", std::process::id()))?;
+    vfs.rename(dst, &backup)?;
+    if let Err(e) = vfs.rename(tmp, dst) {
+        let _ = vfs.rename(&backup, dst);
+        return Err(e);
+    }
+    let _ = vfs.remove(&backup);
+    Ok(())
+}
+
+/// Write an archive with its staged changes (add-archive-vfs D7): check the file did not
+/// change since it was opened, write the new archive to a temporary file, read it back,
+/// then put it in place. The original stays untouched, and the staged changes stay, until
+/// the new file is complete; afterwards the archive opens again from the saved file.
+pub(crate) fn save(
+    backends: &VfsRegistry,
+    target: &SaveTarget,
+    cancelled: &(dyn Fn() -> bool + Sync),
+    progress: &mut dyn FnMut(&Progress),
+) -> Result<OpReport, FmError> {
+    let mount = &target.mount;
+    let fs = mount
+        .opened()
+        .ok_or_else(|| FmError::InvalidParams("the archive is not open".into()))?;
+    fs.writable()?;
+    if target.copy_to.is_none() && !fs.is_dirty() {
+        return Err(FmError::InvalidParams(
+            "the archive has no unsaved changes".into(),
+        ));
+    }
+    let container = mount.container().clone();
+    let cvfs = mount.container_vfs().clone();
+    if target.copy_to.is_none() {
+        let now = cvfs.stat(&container)?;
+        if fs.stamp() != Some((now.size.unwrap_or(0), now.modified)) {
+            return Err(FmError::backend(
+                "archive",
+                "The archive changed on disk since it was opened: save it as a copy, or \
+                 discard the changes",
+            ));
+        }
+    }
+    let (dir, dvfs, final_uri) = match &target.copy_to {
+        None => {
+            let dir = container
+                .parent()
+                .ok_or_else(|| FmError::InvalidParams("the archive has no folder".into()))?;
+            (dir, cvfs.clone(), container)
+        }
+        Some(to) => {
+            let dir = to
+                .parent()
+                .ok_or_else(|| FmError::InvalidParams("the copy needs a folder".into()))?;
+            let dvfs = backends.require(&dir)?;
+            let name = to
+                .file_name()
+                .ok_or_else(|| FmError::InvalidParams("the copy needs a name".into()))?;
+            let (stem, suffix) = fm_archive::format::split_suffix(name);
+            let free_uri = free(dvfs.as_ref(), &dir, &stem, &suffix, false)?;
+            (dir, dvfs, free_uri)
+        }
+    };
+    let final_name = final_uri.file_name().unwrap_or("archive").to_string();
+    if !fs.set_saving(true) {
+        return Err(FmError::InvalidParams(
+            "this archive is already being saved".into(),
+        ));
+    }
+    let result = (|| -> Result<OpReport, FmError> {
+        let local_dir = dir.local_path().filter(|_| dvfs.is_native_local());
+        let temp = match &local_dir {
+            Some(d) => Temp {
+                path: d.join(format!(".{final_name}.fmtmp-{}", std::process::id())),
+                dir: None,
+            },
+            None => {
+                let d = crate::open_cmds::private_temp_dir()?;
+                Temp {
+                    path: d.join(&final_name),
+                    dir: Some(d),
+                }
+            }
+        };
+        let written = (|| -> Result<(), FmError> {
+            let total = fm_archive::save::plan(&fs, cancelled)?.bytes;
+            let mut report_progress = |done: u64, current: &str| {
+                progress(&Progress {
+                    bytes: TransferProgress { done, total },
+                    items: TransferProgress::default(),
+                    current: current.to_string(),
+                });
+            };
+            let file = std::fs::File::create(&temp.path)?;
+            let mut hooks = Hooks {
+                progress: &mut report_progress,
+                cancelled,
+            };
+            let (out, expect) = fm_archive::save::save(&fs, BufWriter::new(file), &mut hooks)?;
+            let file = out.into_inner().map_err(|e| FmError::Io(e.into_error()))?;
+            file.sync_all()?;
+            drop(file);
+            let tmp_uri = VfsUri::parse(&temp.path.to_string_lossy())?;
+            // The temporary file is always on this machine's disk.
+            let local: Arc<dyn Vfs> = Arc::new(fm_fs_local::LocalFs::new());
+            let src = Arc::new(fm_archive::source::VfsSource::open(local, tmp_uri)?);
+            fm_archive::save::verify(src, fs.format(), fs.passwords(), &expect)
+        })();
+        if let Err(e) = written {
+            temp.cleanup();
+            return Err(e);
+        }
+        if cancelled() {
+            temp.cleanup();
+            return Err(FmError::Cancelled);
+        }
+        let placed = match &local_dir {
+            Some(d) => std::fs::rename(&temp.path, d.join(&final_name)).map_err(FmError::Io),
+            None => {
+                let tmp_uri = dir.join(&format!(".{final_name}.fmtmp-{}", std::process::id()))?;
+                upload(dvfs.as_ref(), &temp.path, &tmp_uri, cancelled).and_then(|()| {
+                    swap_in(dvfs.as_ref(), &tmp_uri, &final_uri, &dir).inspect_err(|_| {
+                        let _ = dvfs.remove(&tmp_uri);
+                    })
+                })
+            }
+        };
+        temp.cleanup();
+        placed?;
+        Ok(OpReport {
+            done: 1,
+            created: vec![final_uri.clone()],
+            ..OpReport::default()
+        })
+    })();
+    fs.set_saving(false);
+    let report = result?;
+    // Saved over the archive, or saved as a copy: either way the staged set is done
+    // with. A replaced file opens again from disk; after a copy the original's index
+    // still fits it.
+    fs.discard();
+    if target.copy_to.is_none() {
+        mount.reopen();
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,6 +648,75 @@ mod tests {
         assert!(
             peta.contains("4.5 PB") && peta.contains("42.0 KB"),
             "{peta}"
+        );
+    }
+
+    fn zip_with_readme() -> Vec<u8> {
+        use std::io::Write as _;
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        w.start_file("readme", zip::write::SimpleFileOptions::default())
+            .expect("f");
+        w.write_all(b"hi").expect("w");
+        w.finish().expect("finish").into_inner()
+    }
+
+    #[test]
+    fn a_cancelled_save_keeps_everything_and_a_remote_save_swaps_whole() {
+        let mem = Arc::new(fm_testkit::MemFs::new());
+        mem.mkdirs_str("/srv").expect("dir");
+        let original = zip_with_readme();
+        mem.put_str("/srv/site.zip", &original).expect("zip");
+        let vfs: Arc<dyn Vfs> = mem.clone();
+        let mut backends = VfsRegistry::default();
+        backends.register(vfs.clone());
+        let container = VfsUri::parse("/srv/site.zip").expect("uri");
+        let root =
+            VfsUri::archive_root(&fm_archive::handle_for(&container, 0, None)).expect("root");
+        let mount = Arc::new(fm_archive::mount::LazyArchive::new(
+            root.clone(),
+            container,
+            vfs,
+            None,
+            0,
+        ));
+        mount
+            .create_dir(&root.join("new").expect("n"))
+            .expect("staged");
+        let target = SaveTarget {
+            mount: mount.clone(),
+            copy_to: None,
+        };
+        let listing = |mem: &fm_testkit::MemFs| {
+            let dir = VfsUri::parse("/srv").expect("dir");
+            let mut v: Vec<String> = mem
+                .read_dir(&dir)
+                .expect("ls")
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
+            v.sort();
+            v
+        };
+        let r = save(&backends, &target, &|| true, &mut |_| {});
+        assert!(matches!(r, Err(FmError::Cancelled)), "{r:?}");
+        assert_eq!(mem.get_str("/srv/site.zip").expect("read"), original);
+        assert_eq!(listing(&mem), vec!["site.zip"], "no temporary file left");
+        assert!(mount.is_dirty(), "the staged change is kept");
+
+        save(&backends, &target, &|| false, &mut |_| {}).expect("save");
+        assert_eq!(
+            listing(&mem),
+            vec!["site.zip"],
+            "no backup or temporary file left"
+        );
+        let saved = mem.get_str("/srv/site.zip").expect("read");
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(saved)).expect("zip");
+        assert!(z.by_name("new/").is_ok() && z.by_name("readme").is_ok());
+        assert!(!mount.is_dirty());
+        assert_eq!(
+            mount.read_dir(&root).expect("reopened").len(),
+            2,
+            "opens from the saved file"
         );
     }
 }

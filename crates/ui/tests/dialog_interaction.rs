@@ -535,6 +535,7 @@ fn closing_unsaved_prompt_does_not_quit_or_discard() {
         s.unsaved_prompt = Some(fm_engine::workspace::UnsavedPrompt {
             after: fm_engine::workspace::AfterPrompt::Quit,
             names: vec!["Files".into()],
+            ..Default::default()
         });
         let mut dialogs = Dialogs::default();
         let mut h = Harness::builder()
@@ -587,11 +588,56 @@ fn clear_all_keeps_the_activity_panel_still_under_the_pointer() {
     }
 }
 
+fn busy(lines: &[&str]) -> fm_engine::workspace::UnsavedPrompt {
+    fm_engine::workspace::UnsavedPrompt {
+        busy: lines.iter().map(|l| (*l).to_string()).collect(),
+        ..Default::default()
+    }
+}
+
+/// Unsaved workspaces, PDFs and archives and running work share one prompt, never one
+/// after another.
+#[test]
+fn one_prompt_lists_everything_quitting_would_lose() {
+    for tokens in [Tokens::dark(), Tokens::light()] {
+        let mut s = Session::new().expect("session");
+        s.unsaved_prompt = Some(fm_engine::workspace::UnsavedPrompt {
+            names: vec!["Work".into()],
+            workspaces: vec![7],
+            pdfs: vec![(1, "form.pdf".into())],
+            archives: vec![(
+                VfsUri::archive_root("00000000000000ab").expect("root"),
+                "site.zip".into(),
+            )],
+            busy: vec!["Copying 3 items".into()],
+            ..Default::default()
+        });
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1000.0, 800.0))
+            .build_ui_state(
+                move |ui, (dialogs, s): &mut (Dialogs, Session)| {
+                    fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                    dialogs.show(ui.ctx(), s, &tokens);
+                },
+                (Dialogs::default(), s),
+            );
+        h.run();
+        assert!(h.query_by_label("Quit with unsaved changes?").is_some());
+        for item in ["Work", "form.pdf", "site.zip", "Copying 3 items"] {
+            assert!(h.query_by_label(&format!("  {item}")).is_some(), "{item}");
+        }
+        assert!(h.query_by_label("Save and quit").is_some());
+        h.get_by_label("Cancel").click();
+        h.run();
+        assert!(h.state().1.unsaved_prompt.is_none() && h.state().1.running);
+    }
+}
+
 #[test]
 fn quitting_with_background_work_asks_first() {
     for tokens in [Tokens::dark(), Tokens::light()] {
         let mut s = Session::new().expect("session");
-        s.busy_quit = Some(vec!["Keeping \u{201c}Photos\u{201d} in sync".into()]);
+        s.unsaved_prompt = Some(busy(&["Keeping \u{201c}Photos\u{201d} in sync"]));
         let mut h = Harness::builder()
             .with_size(egui::vec2(1000.0, 800.0))
             .build_ui_state(
@@ -606,8 +652,8 @@ fn quitting_with_background_work_asks_first() {
         assert!(h.query_by_label_contains("Photos").is_some());
         h.get_by_label("Keep running").click();
         h.run();
-        assert!(h.state().1.busy_quit.is_none() && h.state().1.running);
-        h.state_mut().1.busy_quit = Some(vec!["Copying 3 items".into()]);
+        assert!(h.state().1.unsaved_prompt.is_none() && h.state().1.running);
+        h.state_mut().1.unsaved_prompt = Some(busy(&["Copying 3 items"]));
         h.run();
         h.get_by_label("Quit anyway").click();
         h.run();
@@ -690,8 +736,8 @@ fn unsaved_workspaces_dont_ask_again_remembers_the_answer() {
             (Dialogs::default(), s),
         );
     h.run();
-    assert!(h.query_by_label("Unsaved workspace changes").is_some());
-    h.get_by_label("Don't ask again").click();
+    assert!(h.query_by_label("Quit with unsaved changes?").is_some());
+    h.get_by_label("Don't ask again for workspaces").click();
     h.run();
     assert!(
         h.query_by_label_contains("Preferences › Workspaces")

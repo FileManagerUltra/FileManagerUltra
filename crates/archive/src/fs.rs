@@ -17,6 +17,10 @@ pub struct ArchiveFs {
     overlay: Arc<Mutex<Overlay>>,
     /// Why changes are refused (`None` for writable archives).
     read_only: Option<&'static str>,
+    /// Size and modification time of the archive file when it was opened.
+    stamp: Option<(u64, Option<std::time::SystemTime>)>,
+    /// A save is writing the archive: changes wait until it is done.
+    saving: std::sync::atomic::AtomicBool,
 }
 
 impl ArchiveFs {
@@ -31,6 +35,31 @@ impl ArchiveFs {
             passwords,
             overlay: Arc::new(Mutex::new(Overlay::default())),
             read_only,
+            stamp: None,
+            saving: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Remember the archive file's size and modification time (checked before Save).
+    pub fn with_stamp(mut self, stamp: (u64, Option<std::time::SystemTime>)) -> Self {
+        self.stamp = Some(stamp);
+        self
+    }
+
+    pub fn stamp(&self) -> Option<(u64, Option<std::time::SystemTime>)> {
+        self.stamp
+    }
+
+    /// The archive member whose bytes `uri` shows unchanged (moved or renamed counts as
+    /// unchanged), so Save can copy it as stored.
+    pub fn base_member(&self, uri: &VfsUri) -> Option<NodeId> {
+        match self.resolve(uri).ok()? {
+            Resolved::Base(id)
+            | Resolved::Over(OvEntry::File {
+                data: Data::Base(id),
+                ..
+            }) => Some(id),
+            Resolved::Over(_) => None,
         }
     }
 
@@ -86,9 +115,33 @@ impl ArchiveFs {
 
     /// `Err` with the reason when this archive cannot take changes.
     pub fn writable(&self) -> Result<(), FmError> {
-        match self.read_only {
-            Some(why) => Err(FmError::Unsupported(why)),
-            None => Ok(()),
+        if let Some(why) = self.read_only {
+            return Err(FmError::Unsupported(why));
+        }
+        if self.saving.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(FmError::Unsupported(
+                "the archive is being saved; try again when it is done",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn is_saving(&self) -> bool {
+        self.saving.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Mark a save as running (`true`) or done; while it runs changes are refused, so
+    /// none can slip in between writing the archive and clearing the staged set.
+    /// Returns `false` when another save already runs.
+    pub fn set_saving(&self, on: bool) -> bool {
+        use std::sync::atomic::Ordering;
+        if on {
+            self.saving
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        } else {
+            self.saving.store(false, Ordering::Release);
+            true
         }
     }
 

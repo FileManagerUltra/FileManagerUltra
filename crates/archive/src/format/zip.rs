@@ -150,6 +150,10 @@ impl Reader for ZipReader {
         self.info.clone()
     }
 
+    fn zip_archive(&self) -> Option<ZipArchive<SourceReader>> {
+        Some(self.archive.clone())
+    }
+
     fn open(&self, id: NodeId, passwords: &Passwords) -> Result<Box<dyn Read + Send>, FmError> {
         let node = self
             .index

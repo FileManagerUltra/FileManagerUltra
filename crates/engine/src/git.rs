@@ -55,6 +55,7 @@ pub struct GitState {
     looking: std::collections::HashSet<PathBuf>,
     checking: bool,
     last_stamp_check: Option<Instant>,
+    last_tick: Option<Instant>,
 }
 
 impl std::fmt::Debug for GitState {
@@ -230,6 +231,15 @@ impl Session {
                     .map(|r| (r.root.clone(), r.stamp))
                     .collect();
                 self.git.spawn_check(dirs, repos);
+            }
+        }
+        // The UI repaints only on events: after a long idle gap nothing could have touched
+        // `used`, so dropping the cache now would blank every mark until a rescan lands.
+        let idle_gap = self.git.last_tick.is_some_and(|t| t.elapsed() >= GRACE);
+        self.git.last_tick = Some(now);
+        if idle_gap {
+            for r in &mut self.git.repos {
+                r.used = now;
             }
         }
         self.git

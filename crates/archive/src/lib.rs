@@ -11,6 +11,7 @@ pub mod index;
 pub mod limits;
 pub mod mount;
 pub mod overlay;
+pub mod save;
 pub mod secret;
 pub mod source;
 pub mod split;

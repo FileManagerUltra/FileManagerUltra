@@ -1361,18 +1361,18 @@ mod tests {
             .expect("start syncing");
         pump_until_idle(&mut s);
         s.dispatch("app.quit", &json!({})).expect("quit");
-        let work = s.busy_quit.clone().expect("asks first");
+        let work = s.unsaved_prompt.clone().expect("asks first").busy;
         assert!(s.running);
         assert!(work.iter().any(|w| w.contains("Photos")), "{work:?}");
         for bad in [json!({}), json!({"choice": "later"}), json!({"choice": 1})] {
-            assert!(s.dispatch("app.quit.busy", &bad).is_err(), "{bad}");
+            assert!(s.dispatch("workspace.prompt", &bad).is_err(), "{bad}");
         }
-        s.dispatch("app.quit.busy", &json!({"choice": "cancel"}))
+        s.dispatch("workspace.prompt", &json!({"choice": "cancel"}))
             .expect("keep running");
-        assert!(s.running && s.busy_quit.is_none());
+        assert!(s.running && s.unsaved_prompt.is_none());
         assert!(s.sync.current_state().is_some_and(|st| st.watching()));
         s.dispatch("app.quit", &json!({})).expect("quit again");
-        s.dispatch("app.quit.busy", &json!({"choice": "quit"}))
+        s.dispatch("workspace.prompt", &json!({"choice": "discard"}))
             .expect("quit anyway");
         assert!(!s.running);
     }

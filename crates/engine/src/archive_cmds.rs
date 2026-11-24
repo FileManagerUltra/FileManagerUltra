@@ -48,6 +48,10 @@ pub struct Mounts {
     opened: Vec<VfsUri>,
     /// A job that stopped because an archive needs a password, waiting for one.
     pub password_ask: Option<PasswordAsk>,
+    /// The archive (root) whose staged changes Save as copy is choosing a folder for.
+    pub save_as_pending: Option<VfsUri>,
+    /// The archive (root) whose list of staged changes is shown (`archive.changes`).
+    pub changes_shown: Option<VfsUri>,
     /// Opened archives nothing shows or uses, since when (idle release).
     idle_since: HashMap<String, std::time::Instant>,
     last_idle_check: Option<std::time::Instant>,
@@ -669,7 +673,7 @@ pub fn canonical_container(uri: &VfsUri) -> VfsUri {
         .unwrap_or_else(|| uri.clone())
 }
 
-fn uri_of(params: &Params) -> Result<Option<VfsUri>, FmError> {
+pub(crate) fn uri_of(params: &Params) -> Result<Option<VfsUri>, FmError> {
     let raw = match params {
         Params::Null => None,
         Params::String(s) => Some(s.as_str()),
@@ -689,7 +693,7 @@ fn uri_of(params: &Params) -> Result<Option<VfsUri>, FmError> {
 }
 
 /// The archive a command acts on: its `uri` param, else the focused pane's location.
-fn target_mount(s: &Session, params: &Params) -> Result<Arc<LazyArchive>, FmError> {
+pub(crate) fn target_mount(s: &Session, params: &Params) -> Result<Arc<LazyArchive>, FmError> {
     let uri = match uri_of(params)? {
         Some(u) => u,
         None => s
@@ -702,6 +706,73 @@ fn target_mount(s: &Session, params: &Params) -> Result<Arc<LazyArchive>, FmErro
         .for_uri(&uri)
         .cloned()
         .ok_or_else(|| FmError::InvalidParams("not inside an archive".into()))
+}
+
+/// The archive at `root` was saved, or its staged changes discarded: forget what was
+/// listed from it and read again what shows it.
+pub(crate) fn after_save(s: &mut Session, root: &VfsUri) {
+    let Some(mount) = s.archives.for_uri(root).cloned() else {
+        return;
+    };
+    if let Some(handle) = root.archive_handle() {
+        s.dirs
+            .invalidate_where(|u| u.archive_handle() == Some(handle));
+    }
+    // Panes in a folder that existed only as a staged change go up to what remains (the
+    // opened archive answers from memory; a reopened one keeps every saved folder).
+    if let Some(fs) = mount.opened() {
+        use fm_vfs::Vfs as _;
+        for pane in s.layout.panes() {
+            let Some(state) = s.layout.state_mut(pane) else {
+                continue;
+            };
+            if state.location.archive_handle() != root.archive_handle() {
+                continue;
+            }
+            let mut at = state.location.clone();
+            while fs.stat(&at).is_err() {
+                match at.parent() {
+                    Some(p) => at = p,
+                    None => break,
+                }
+            }
+            if at != state.location {
+                state.navigate(at);
+            }
+        }
+    }
+    reload(s, &mount);
+    // The saved file's own folder shows a new size and time.
+    if let Some(dir) = mount.container().parent()
+        && !matches!(s.dirs.state(&dir), crate::DirState::Absent)
+    {
+        let _ = s.refresh_read(dir);
+    }
+}
+
+/// Handles of the opened archives with unsaved staged changes.
+pub fn dirty_handles(s: &Session) -> Vec<String> {
+    s.archives
+        .lazies
+        .iter()
+        .filter(|(_, m)| m.is_dirty())
+        .map(|(h, _)| h.clone())
+        .collect()
+}
+
+/// Unsaved staged changes of every opened archive: `(root, archive file, count)`.
+pub fn dirty_archives(s: &Session) -> Vec<(VfsUri, VfsUri, usize)> {
+    let mut out: Vec<(VfsUri, VfsUri, usize)> = s
+        .archives
+        .lazies
+        .values()
+        .filter_map(|m| {
+            let fs = m.opened().filter(|fs| fs.is_dirty())?;
+            Some((m.root().clone(), m.container().clone(), fs.changes().len()))
+        })
+        .collect();
+    out.sort_by_key(|(_, c, _)| c.to_string());
+    out
 }
 
 /// Read again whatever shows the archive (after a password was given or forgotten).

@@ -26,7 +26,6 @@ use crate::workspace_cmds;
 pub fn specs() -> Vec<CommandSpec> {
     let mut specs = vec![
         app_cmds::quit(),
-        app_cmds::quit_busy(),
         app_cmds::about(),
         app_cmds::licenses(),
         prefs_cmds::preferences(),
@@ -127,6 +126,7 @@ pub fn specs() -> Vec<CommandSpec> {
     specs.extend(crate::picker_cmds::specs());
     specs.extend(crate::archive_cmds::specs());
     specs.extend(crate::archive_job_cmds::specs());
+    specs.extend(crate::archive_edit_cmds::specs());
     specs.extend(crate::openwith_cmds::specs());
     specs.extend(crate::diag_cmds::specs());
     specs

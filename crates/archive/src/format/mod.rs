@@ -340,6 +340,10 @@ pub trait Reader: Send + Sync {
     /// The data of a file node. Encrypted members try the known passwords and fail with
     /// `PasswordRequired` / `WrongPassword` when none fits.
     fn open(&self, id: NodeId, passwords: &Passwords) -> Result<Box<dyn Read + Send>, FmError>;
+    /// The zip directory, for copying unchanged members as stored on Save.
+    fn zip_archive(&self) -> Option<::zip::ZipArchive<crate::source::SourceReader>> {
+        None
+    }
 }
 
 /// Hooks for long index builds (a compressed tar is read once from the start).

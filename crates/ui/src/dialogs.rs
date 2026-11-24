@@ -94,8 +94,6 @@ pub fn window_owns_keyboard(s: &Session) -> bool {
         || s.search.is_some()
         || s.properties.is_some()
         || s.unsaved_prompt.is_some()
-        || s.pdf_unsaved.is_some()
-        || s.busy_quit.is_some()
         || s.remote.sftp_prompt.is_some()
         || s.remote.login_prompt.is_some()
 }
@@ -226,9 +224,7 @@ impl Dialogs {
         question_dialog(ctx, s, tokens);
         archive_password_dialog(ctx, s, tokens);
         kind_switch_dialog(ctx, s, tokens);
-        busy_quit_dialog(ctx, s, tokens);
         unsaved_dialog(ctx, s, tokens);
-        pdf_unsaved_dialog(ctx, s, tokens);
         if let Some(Some(dialog)) = ctx.data_mut(|d| d.remove_temp::<Option<Dialog>>(queue_id())) {
             self.request(dialog);
         }
@@ -657,154 +653,108 @@ fn pattern_dialog(
 }
 
 /// Quitting while copies or syncs are still running in the background.
-fn busy_quit_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
-    let Some(work) = s.busy_quit.clone() else {
-        return;
-    };
-    let mut choice: Option<&str> = None;
-    let mut open = true;
-    crate::dialog_style::window(ctx, tokens, "Quit while work is running?", &mut open)
-        .id(Id::NULL.with("fm-busy-quit"))
-        .show(ctx, |ui| {
-            crate::dialog_style::apply(ui, tokens);
-            ui.set_max_width(460.0);
-            ui.label(RichText::new("This is still running:").color(tokens.text));
-            for line in work.iter().take(8) {
-                ui.label(RichText::new(format!("  {line}")).color(tokens.warning));
-            }
-            if work.len() > 8 {
-                ui.label(
-                    RichText::new(format!("  and {} more", work.len() - 8))
-                        .color(tokens.text_muted),
-                );
-            }
-            ui.label(
-                RichText::new(
-                    "Quitting stops it: a copy keeps the files finished so far, and keeping \
-                     folders in sync stops until you start it again.",
-                )
-                .color(tokens.text_muted),
-            );
-            ui.horizontal(|ui| {
-                if ui.button("Keep running").clicked() {
-                    choice = Some("cancel");
-                }
-                if ui.button("Quit anyway").clicked() {
-                    choice = Some("quit");
-                }
-            });
-        });
-    if !open || ctx.input(|i| i.key_pressed(Key::Escape)) {
-        choice = Some("cancel");
-    }
-    if let Some(choice) = choice {
-        s.dispatch_or_notice("app.quit.busy", &json!({ "choice": choice }));
-    }
-}
-
-/// Quitting or closing a pane would lose filled-in PDF values or placed signatures.
-fn pdf_unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
-    let Some(prompt) = s.pdf_unsaved.clone() else {
-        return;
-    };
-    let quitting = prompt.after == fm_engine::pdf_form_cmds::PdfAfter::Quit;
-    let mut choice: Option<&str> = None;
-    let mut open = true;
-    crate::dialog_style::window(ctx, tokens, "Unsaved PDF changes", &mut open)
-        .id(Id::NULL.with("fm-unsaved-pdf"))
-        .show(ctx, |ui| {
-            crate::dialog_style::apply(ui, tokens);
-            ui.label(
-                RichText::new("Filled-in fields or signatures in these PDFs are not saved:")
-                    .color(tokens.text),
-            );
-            for name in &prompt.names {
-                ui.label(RichText::new(format!("  {name}")).color(tokens.warning));
-            }
-            crate::dialog_style::hint(
-                ui,
-                tokens,
-                "Save writes a copy next to each original; the originals are not changed.",
-            );
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if ui.button("Save copies").clicked() {
-                    choice = Some("save");
-                }
-                if ui
-                    .button(if quitting {
-                        "Quit without saving"
-                    } else {
-                        "Close without saving"
-                    })
-                    .clicked()
-                {
-                    choice = Some("discard");
-                }
-                if ui.button("Cancel").clicked() {
-                    choice = Some("cancel");
-                }
-            });
-        });
-    if !open || ctx.input(|i| i.key_pressed(Key::Escape)) {
-        choice = Some("cancel");
-    }
-    if let Some(choice) = choice {
-        s.dispatch_or_notice("pdf.unsaved.resolve", &json!({ "choice": choice }));
-        s.pdf_unsaved = None;
-    }
-}
-
-/// Quitting or closing a workspace tab that has changes the user has not saved.
+/// The one prompt before quitting or closing loses anything: unsaved workspaces, PDFs and
+/// archives, and (on quit) work still running, listed together.
 fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    use fm_engine::workspace::AfterPrompt;
     let Some(prompt) = s.unsaved_prompt.clone() else {
         return;
     };
-    let quitting = prompt.after == fm_engine::workspace::AfterPrompt::Quit;
+    let quitting = prompt.after == AfterPrompt::Quit;
+    let unsaved =
+        !(prompt.names.is_empty() && prompt.pdfs.is_empty() && prompt.archives.is_empty());
     let mut choice: Option<&str> = None;
     let mut open = true;
     let remember_id = Id::NULL.with("fm-unsaved-remember");
     let mut remember = ctx.data(|d| d.get_temp::<bool>(remember_id).unwrap_or(false));
-    crate::dialog_style::window(ctx, tokens, "Unsaved workspace changes", &mut open)
+    let title = match (unsaved, quitting) {
+        (false, _) => "Quit while work is running?",
+        (true, true) => "Quit with unsaved changes?",
+        (true, false) => "Close with unsaved changes?",
+    };
+    let list = |ui: &mut egui::Ui, heading: &str, items: &[String], note: Option<&str>| {
+        if items.is_empty() {
+            return;
+        }
+        ui.add_space(4.0);
+        ui.label(RichText::new(heading).color(tokens.text));
+        for item in items.iter().take(8) {
+            ui.label(RichText::new(format!("  {item}")).color(tokens.warning));
+        }
+        if items.len() > 8 {
+            ui.label(
+                RichText::new(format!("  and {} more", items.len() - 8)).color(tokens.text_muted),
+            );
+        }
+        if let Some(note) = note {
+            crate::dialog_style::hint(ui, tokens, note);
+        }
+    };
+    crate::dialog_style::window(ctx, tokens, title, &mut open)
         .id(Id::NULL.with("fm-unsaved-workspaces"))
         .show(ctx, |ui| {
             crate::dialog_style::apply(ui, tokens);
-            let noun = if prompt.names.len() == 1 {
-                "workspace has"
-            } else {
-                "workspaces have"
-            };
-            ui.label(RichText::new(format!("These {noun} unsaved changes:")).color(tokens.text));
-            for name in &prompt.names {
-                ui.label(RichText::new(format!("  {name}")).color(tokens.warning));
-            }
-            ui.add_space(4.0);
-            ui.checkbox(&mut remember, "Don't ask again")
-                .on_hover_text("Remember Save or Don't save for later quits and closed tabs");
-            if remember {
-                crate::dialog_style::hint(
-                    ui,
-                    tokens,
-                    "Your answer is used from now on. Change it in Preferences › Workspaces.",
-                );
+            ui.set_max_width(480.0);
+            list(ui, "Workspaces with unsaved changes:", &prompt.names, None);
+            let pdfs: Vec<String> = prompt.pdfs.iter().map(|(_, n)| n.clone()).collect();
+            list(
+                ui,
+                "PDFs with filled-in fields or signatures not saved:",
+                &pdfs,
+                Some("Save writes a copy next to each original; the originals are not changed."),
+            );
+            let archives: Vec<String> = prompt.archives.iter().map(|(_, n)| n.clone()).collect();
+            list(ui, "Archives with unsaved changes:", &archives, None);
+            list(
+                ui,
+                "Still running:",
+                &prompt.busy,
+                Some(
+                    "Quitting stops it: a copy keeps the files finished so far, and keeping \
+                     folders in sync stops until you start it again.",
+                ),
+            );
+            if !prompt.names.is_empty() {
+                ui.add_space(4.0);
+                ui.checkbox(&mut remember, "Don't ask again for workspaces")
+                    .on_hover_text("Remember Save or Don't save for later quits and closed tabs");
+                if remember {
+                    crate::dialog_style::hint(
+                        ui,
+                        tokens,
+                        "Your answer is used from now on. Change it in Preferences › Workspaces.",
+                    );
+                }
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
-                    choice = Some("save");
-                }
-                if ui
-                    .button(if quitting {
+                if unsaved {
+                    let save = if quitting {
+                        "Save and quit"
+                    } else {
+                        "Save and close"
+                    };
+                    if ui.button(save).clicked() {
+                        choice = Some("save");
+                    }
+                    let skip = if quitting {
                         "Quit without saving"
                     } else {
                         "Close without saving"
-                    })
-                    .clicked()
-                {
-                    choice = Some("discard");
-                }
-                if ui.button("Cancel").clicked() {
-                    choice = Some("cancel");
+                    };
+                    if ui.button(skip).clicked() {
+                        choice = Some("discard");
+                    }
+                    if ui.button("Cancel").clicked() {
+                        choice = Some("cancel");
+                    }
+                } else {
+                    if ui.button("Keep running").clicked() {
+                        choice = Some("cancel");
+                    }
+                    if ui.button("Quit anyway").clicked() {
+                        choice = Some("discard");
+                    }
                 }
             });
         });

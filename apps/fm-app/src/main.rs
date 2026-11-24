@@ -642,10 +642,7 @@ impl eframe::App for App {
 
         if !self.session.running {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        } else if self.session.unsaved_prompt.is_some()
-            || self.session.pdf_unsaved.is_some()
-            || self.session.busy_quit.is_some()
-        {
+        } else if self.session.unsaved_prompt.is_some() {
             ctx.request_repaint();
         }
         // Textures and pictures of panes that were not drawn this frame (closed workspaces

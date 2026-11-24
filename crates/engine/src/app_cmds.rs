@@ -1,7 +1,5 @@
 //! Application commands: quit, about.
 
-use fm_vfs::FmError;
-
 use crate::registry::{CommandSpec, Params};
 
 /// `app.quit` — ask the shell to stop (the eframe loop observes `running == false`); with
@@ -16,36 +14,6 @@ pub fn quit() -> CommandSpec {
         enabled: |_session| true,
         run: |session, _params: &Params| {
             session.request_quit();
-            Ok(())
-        },
-    }
-}
-
-/// `app.quit.busy` — answer "Quit while work is running?": `quit` stops the work and goes on
-/// quitting (unsaved workspaces still ask), `cancel` keeps everything running.
-pub fn quit_busy() -> CommandSpec {
-    CommandSpec {
-        id: "app.quit.busy",
-        label: "Quit While Work Is Running",
-        menu: &["File", "Quit While Work Is Running"],
-        shortcut: None,
-        params: r#"{ choice: "quit"|"cancel" }"#,
-        enabled: |session| session.busy_quit.is_some(),
-        run: |session, params: &Params| {
-            let choice = params
-                .as_object()
-                .and_then(|m| m.get("choice"))
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| FmError::InvalidParams("choice: quit or cancel".into()))?;
-            match choice {
-                "cancel" => session.busy_quit = None,
-                "quit" => session.quit_checking_workspaces(),
-                other => {
-                    return Err(FmError::InvalidParams(format!(
-                        "choice must be quit or cancel, not {other:?}"
-                    )));
-                }
-            }
             Ok(())
         },
     }

@@ -55,7 +55,7 @@ pub fn tab_bar(ui: &mut Ui, s: &mut Session, tokens: &Tokens, dialogs: &mut Dial
                     } else {
                         tab.name.clone()
                     };
-                    if tab.dirty {
+                    if tab.dirty || s.tab_shows_unsaved_archive(ix) {
                         label.push_str(" •");
                     }
                     let hint = flags_hint(s, tab.uid);

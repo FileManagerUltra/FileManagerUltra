@@ -45,7 +45,7 @@ Save SHALL run as a file job with progress and cancel. It SHALL first check that
 - **THEN** the archive shows its contents as on disk and the unsaved bar disappears
 
 ### Requirement: Unsaved archive changes are never lost silently
-Closing the last pane or tab showing an archive with staged changes, and quitting the app, SHALL ask Save, Don't save or Cancel per archive, through the same prompt as other unsaved documents. An archive with staged changes SHALL stay mounted while navigating elsewhere in the same tab, and the bar SHALL return when the pane comes back to it.
+Closing the last pane or tab showing an archive with staged changes, and quitting the app, SHALL ask Save, Don't save or Cancel, listing the archives in the same single prompt as other unsaved work (see app-shell: one prompt before anything is lost). An archive with staged changes SHALL stay mounted while navigating elsewhere in the same tab, and the bar SHALL return when the pane comes back to it.
 
 #### Scenario: Quit with unsaved changes
 - **WHEN** `site.zip` has staged changes and the user quits

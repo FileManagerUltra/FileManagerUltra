@@ -4,6 +4,7 @@
 
 pub mod about;
 pub mod activity_card;
+pub mod archive_bar;
 pub mod archive_password;
 pub mod arrange;
 pub mod compare_with;

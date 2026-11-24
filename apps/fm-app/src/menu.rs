@@ -101,6 +101,11 @@ pub const REMOTE_DISCONNECT: &str = "remote.disconnect";
 pub const FILE_DELETE: &str = "file.delete";
 pub const FILE_DELETE_PERMANENT: &str = "file.delete_permanent";
 pub const TRASH_OPEN: &str = "trash.open";
+pub const ARCHIVE_SAVE: &str = "archive.save";
+pub const ARCHIVE_SAVE_AS: &str = "archive.save_as";
+pub const ARCHIVE_DISCARD: &str = "archive.discard";
+pub const ARCHIVE_CHANGES: &str = "archive.changes";
+pub const ARCHIVE_CLOSE: &str = "archive.unmount";
 pub const EDIT_UNDO: &str = "edit.undo";
 pub const FILE_CLIP_COPY: &str = "file.clip_copy";
 pub const FILE_CLIP_CUT: &str = "file.clip_cut";
@@ -650,13 +655,19 @@ fn item(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs, id: &st
     };
     let mut label = spec.label.to_string();
     // Remote locations have no trash: the same command deletes permanently there.
-    if id == FILE_DELETE
-        && session
-            .layout
-            .state(session.layout.focused())
-            .is_some_and(|p| p.location.scheme() != fm_vfs::Scheme::File)
-    {
-        label = "Delete Permanently".to_string();
+    let scheme = session
+        .layout
+        .state(session.layout.focused())
+        .map(|p| p.location.scheme());
+    if id == FILE_DELETE {
+        match scheme {
+            // Inside an archive a delete is staged until the archive is saved.
+            Some(fm_vfs::Scheme::Archive) => label = "Remove from Archive".to_string(),
+            Some(sch) if sch != fm_vfs::Scheme::File => {
+                label = "Delete Permanently".to_string();
+            }
+            _ => {}
+        }
     }
     let enabled = (spec.enabled)(session);
     let mut button = egui::Button::new(label);
@@ -667,6 +678,9 @@ fn item(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs, id: &st
     if ui.add_enabled(enabled, button).clicked() {
         if id == TERM_PASTE {
             fm_ui::terminal::request_paste(ui.ctx());
+        } else if id == ARCHIVE_DISCARD {
+            // The unsaved bar asks first.
+            fm_ui::archive_bar::ask_discard(ui.ctx(), session.layout.focused());
         } else {
             dispatch(session, dialogs, id);
         }
@@ -789,6 +803,14 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, FIND_FILES);
             item(ui, session, dialogs, FIND_EVERYWHERE);
             item(ui, session, dialogs, SYNC_OPEN);
+            ui.menu_button("Archive", |ui| {
+                item(ui, session, dialogs, ARCHIVE_SAVE);
+                item(ui, session, dialogs, ARCHIVE_SAVE_AS);
+                item(ui, session, dialogs, ARCHIVE_DISCARD);
+                item(ui, session, dialogs, ARCHIVE_CHANGES);
+                ui.separator();
+                item(ui, session, dialogs, ARCHIVE_CLOSE);
+            });
             ui.separator();
             item(ui, session, dialogs, REMOTE_CONNECT);
             item(ui, session, dialogs, NETWORK_CONNECT);

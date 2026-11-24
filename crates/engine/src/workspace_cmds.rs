@@ -239,10 +239,10 @@ pub fn specs() -> Vec<CommandSpec> {
         },
         CommandSpec {
             id: "workspace.prompt",
-            label: "Answer Unsaved Workspaces Prompt",
+            label: "Answer Unsaved Changes Prompt",
             menu: &["Workspace", "Unsaved changes"],
             shortcut: None,
-            params: "{choice: save|discard|cancel, remember?: bool (\"Don't ask again\": later quits and closes save or discard without asking)}",
+            params: "{choice: save|discard|cancel, remember?: bool} — the one quit/close prompt: save saves every listed workspace, PDF copy and archive, then goes on; discard goes on without saving (and stops running work on quit); remember (\"Don't ask again\") keeps the answer for workspaces",
             enabled: |s| s.unsaved_prompt.is_some(),
             run: |s, p| {
                 let remember = match p.get("remember") {

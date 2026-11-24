@@ -238,11 +238,11 @@ pub fn compress<W: Write + Seek>(
 }
 
 /// A file's data, counted for progress and stopped by cancel.
-struct Counted<'a, 'b> {
-    inner: Box<dyn Read + Send>,
-    hooks: &'a mut Hooks<'b>,
-    done: &'a mut u64,
-    name: &'a str,
+pub(crate) struct Counted<'a, 'b> {
+    pub(crate) inner: Box<dyn Read + Send>,
+    pub(crate) hooks: &'a mut Hooks<'b>,
+    pub(crate) done: &'a mut u64,
+    pub(crate) name: &'a str,
 }
 
 const CANCELLED: &str = "fm-archive: cancelled";
@@ -259,7 +259,7 @@ impl Read for Counted<'_, '_> {
     }
 }
 
-fn io_err(e: io::Error) -> FmError {
+pub(crate) fn io_err(e: io::Error) -> FmError {
     if e.to_string().contains(CANCELLED) {
         FmError::Cancelled
     } else {
@@ -271,7 +271,7 @@ fn open(vfs_for: &VfsFor, item: &WalkItem) -> Result<Box<dyn Read + Send>, FmErr
     vfs_for(&item.uri)?.open_read(&item.uri)
 }
 
-fn zip_time(t: Option<SystemTime>) -> zip::DateTime {
+pub(crate) fn zip_time(t: Option<SystemTime>) -> zip::DateTime {
     let Some(t) = t else {
         return zip::DateTime::default();
     };
@@ -282,7 +282,7 @@ fn zip_time(t: Option<SystemTime>) -> zip::DateTime {
         .unwrap_or_default()
 }
 
-fn zip_err(e: zip::result::ZipError) -> FmError {
+pub(crate) fn zip_err(e: zip::result::ZipError) -> FmError {
     match e {
         zip::result::ZipError::Io(io) => io_err(io),
         other => FmError::backend("archive", other.to_string()),

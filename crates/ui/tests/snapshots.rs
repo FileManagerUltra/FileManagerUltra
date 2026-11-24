@@ -5777,6 +5777,64 @@ fn encrypted_zip_listing_dark_light() {
     }
 }
 
+/// Inside an archive with staged changes: the unsaved bar with its list of changes above
+/// the listing (add-archive-vfs D8).
+#[test]
+fn archive_unsaved_bar_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let mem = MemFs::new();
+        mem.put_file_at(
+            &VfsUri::parse("/home/alice/locked.zip").expect("uri"),
+            include_bytes!("fixtures/locked.zip"),
+            FIXED_MTIME,
+        )
+        .expect("put");
+        let mut s = with_fixed_places(Session::new().expect("session"));
+        s.backends.register(Arc::new(mem));
+        s.dispatch(
+            "archive.enter",
+            &serde_json::json!({"uri": "/home/alice/locked.zip"}),
+        )
+        .expect("enter");
+        let root = s.layout.state(1).expect("pane").location.clone();
+        wait_ready(&mut s, &root);
+        let vfs = s.backends.require(&root).expect("backend");
+        vfs.create_dir(&root.join("drafts").expect("d"))
+            .expect("mkdir");
+        vfs.remove(
+            &root
+                .join("docs")
+                .and_then(|d| d.join("notes.txt"))
+                .expect("n"),
+        )
+        .expect("rm");
+        s.dispatch(
+            "archive.changes",
+            &serde_json::json!({"uri": root.to_string()}),
+        )
+        .expect("changes");
+        // The listing of docs/ (zip times only; a new folder would show today's date).
+        let docs = root.join("docs").expect("docs");
+        s.dispatch("nav.open", &serde_json::json!(docs.to_string()))
+            .expect("docs");
+        wait_ready(&mut s, &docs);
+        let mut session = s;
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            let _ = pane::show(ui, &mut session, 1, &tokens);
+        });
+        harness.set_size(egui::vec2(640.0, 300.0));
+        harness.run();
+        harness.snapshot(format!("archive_unsaved_bar_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}
+
 /// A folder with a split 7z and a spanned zip: every part in the archive colour, later
 /// parts naming their part number (add-archive-vfs 7.6/7.7).
 #[test]

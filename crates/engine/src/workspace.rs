@@ -123,17 +123,29 @@ struct Walk {
 }
 
 /// What the unsaved-changes dialog is guarding.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum AfterPrompt {
+    #[default]
     Quit,
+    /// A workspace tab, by uid.
     Close(u64),
+    ClosePane(PaneId),
 }
 
-/// Raised when quitting or closing would lose changes the user has not saved.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Raised when quitting or closing would lose something: one prompt lists it all
+/// (`close_guard`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UnsavedPrompt {
     pub after: AfterPrompt,
+    /// Workspaces with unsaved changes: names, and their tab uids.
     pub names: Vec<String>,
+    pub workspaces: Vec<u64>,
+    /// PDFs with filled-in fields or signatures not saved: pane and file name.
+    pub pdfs: Vec<(PaneId, String)>,
+    /// Archives with staged changes: root and file name.
+    pub archives: Vec<(VfsUri, String)>,
+    /// On quit: work still running, one line each.
+    pub busy: Vec<String>,
 }
 
 /// Which per-workspace flag a command sets.
@@ -341,6 +353,38 @@ pub fn home_location() -> VfsUri {
 }
 
 impl Session {
+    /// Whether a pane of tab `ix` shows an archive with unsaved staged changes (the tab
+    /// bar marks it).
+    pub fn tab_shows_unsaved_archive(&self, ix: usize) -> bool {
+        let dirty = crate::archive_cmds::dirty_handles(self);
+        if dirty.is_empty() {
+            return false;
+        }
+        self.tab_locations(ix).iter().any(|(_, uri)| {
+            uri.archive_handle()
+                .is_some_and(|h| dirty.iter().any(|d| d == h))
+        })
+    }
+
+    /// The panes of tab `ix` (active or parked) and their locations.
+    pub(crate) fn tab_locations(&self, ix: usize) -> Vec<(PaneId, VfsUri)> {
+        let layout = if ix == self.workspaces.active {
+            Some(&self.layout)
+        } else {
+            self.workspaces.tabs.get(ix).and_then(|t| t.layout.as_ref())
+        };
+        layout
+            .map(|l| {
+                l.panes()
+                    .into_iter()
+                    .filter_map(|p| l.state(p).map(|st| (p, st.location.clone())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+impl Session {
     pub(crate) fn evacuate_volume(&mut self, mount: &VfsUri, home: &VfsUri) {
         fn evacuate(layout: &mut Layout, mount: &VfsUri, home: &VfsUri) {
             for id in layout.panes() {
@@ -407,7 +451,7 @@ impl Session {
     }
 
     /// Whether tab `ix` differs from what was last saved (auto-saved tabs never do).
-    fn compute_dirty(&self, ix: usize) -> bool {
+    pub(crate) fn compute_dirty(&self, ix: usize) -> bool {
         let Some(tab) = self.workspaces.tabs.get(ix) else {
             return false;
         };
@@ -809,34 +853,22 @@ impl Session {
         self.tab_value(self.workspaces.active)
     }
 
-    /// Close tab `ix`, asking first when it has unsaved changes.
+    /// Close tab `ix`, asking first when it has unsaved changes (or shows an archive or
+    /// PDF with unsaved changes no other tab shows).
     pub fn workspace_close(&mut self, ix: usize) -> Result<(), FmError> {
-        let tab = self
+        let uid = self
             .workspaces
             .tabs
             .get(ix)
+            .map(|t| t.uid)
             .ok_or_else(|| FmError::NotFound(format!("workspace tab {}", ix + 1)))?;
-        if self.compute_dirty(ix) {
-            let (uid, name) = (tab.uid, tab.name.clone());
-            if !self.answer_unsaved_unasked(&[uid]) {
-                self.unsaved_prompt = Some(UnsavedPrompt {
-                    after: AfterPrompt::Close(uid),
-                    names: vec![name],
-                });
-                return Ok(());
-            }
-            let Some(ix) = self.workspaces.tabs.iter().position(|t| t.uid == uid) else {
-                return Ok(());
-            };
-            return self.workspace_close_now(ix);
-        }
-        self.workspace_close_now(ix)
+        self.close_or_ask(AfterPrompt::Close(uid))
     }
 
     /// Apply the remembered answer to "Unsaved workspace changes" (`unsaved_workspaces`)
     /// to tabs `uids`. False when the question must be asked: no answer remembered, or
     /// saving failed (the notice says why), so nothing is lost without asking.
-    fn answer_unsaved_unasked(&mut self, uids: &[u64]) -> bool {
+    pub(crate) fn answer_unsaved_unasked(&mut self, uids: &[u64]) -> bool {
         match self.prefs.unsaved_workspaces {
             crate::prefs::UnsavedWorkspaces::Ask => false,
             crate::prefs::UnsavedWorkspaces::Discard => true,
@@ -859,96 +891,11 @@ impl Session {
         Ok(())
     }
 
-    /// `app.quit` (and closing the window): ask first when work is still running in the
-    /// background, then when workspaces have unsaved changes, else stop now.
+    /// `app.quit` (and closing the window): one prompt when anything would be lost or
+    /// work is still running, else stop now.
     pub fn request_quit(&mut self) {
-        if self.pdf_guard(crate::pdf_form_cmds::PdfAfter::Quit) {
-            return;
-        }
-        self.quit_after_pdf_check();
-    }
-
-    /// The quit once no PDF holds unsaved changes: running work and workspaces still ask.
-    pub(crate) fn quit_after_pdf_check(&mut self) {
-        let busy = self.background_work();
-        if !busy.is_empty() {
-            self.busy_quit = Some(busy);
-            return;
-        }
-        self.quit_checking_workspaces();
-    }
-
-    /// The quit after the background-work question: unsaved workspaces still ask.
-    pub fn quit_checking_workspaces(&mut self) {
-        self.busy_quit = None;
-        let unsaved = self.workspace_unsaved();
-        let uids: Vec<u64> = unsaved.iter().map(|(uid, _)| *uid).collect();
-        if unsaved.is_empty() || self.answer_unsaved_unasked(&uids) {
-            self.running = false;
-            return;
-        }
-        self.unsaved_prompt = Some(UnsavedPrompt {
-            after: AfterPrompt::Quit,
-            names: unsaved.into_iter().map(|(_, n)| n).collect(),
-        });
-    }
-
-    /// Answer the unsaved-changes dialog: `save`, `discard` or `cancel`. `remember`
-    /// ("Don't ask again") keeps a save or discard answer for later quits and closes;
-    /// cancel is not an answer and remembers nothing.
-    pub fn workspace_resolve_prompt(
-        &mut self,
-        choice: &str,
-        remember: bool,
-    ) -> Result<(), FmError> {
-        let Some(prompt) = self.unsaved_prompt.clone() else {
-            return Ok(());
-        };
-        let remembered = match choice {
-            "save" => crate::prefs::UnsavedWorkspaces::Save,
-            "discard" => crate::prefs::UnsavedWorkspaces::Discard,
-            _ => crate::prefs::UnsavedWorkspaces::Ask,
-        };
-        match choice {
-            "cancel" => {}
-            "discard" => self.after_prompt(&prompt.after)?,
-            "save" => {
-                let uids: Vec<u64> = match &prompt.after {
-                    AfterPrompt::Close(uid) => vec![*uid],
-                    AfterPrompt::Quit => self
-                        .workspace_unsaved()
-                        .into_iter()
-                        .map(|(uid, _)| uid)
-                        .collect(),
-                };
-                self.save_tabs(&uids)?;
-                self.after_prompt(&prompt.after)?;
-            }
-            other => {
-                return Err(FmError::InvalidParams(format!(
-                    "choice must be save, discard or cancel, not {other:?}"
-                )));
-            }
-        }
-        if remember && choice != "cancel" {
-            self.prefs.unsaved_workspaces = remembered;
-        }
-        self.unsaved_prompt = None;
-        Ok(())
-    }
-
-    fn after_prompt(&mut self, after: &AfterPrompt) -> Result<(), FmError> {
-        match after {
-            AfterPrompt::Quit => {
-                self.running = false;
-                Ok(())
-            }
-            AfterPrompt::Close(uid) => {
-                match self.workspaces.tabs.iter().position(|t| t.uid == *uid) {
-                    Some(ix) => self.workspace_close_now(ix),
-                    None => Ok(()),
-                }
-            }
+        if let Err(e) = self.close_or_ask(AfterPrompt::Quit) {
+            self.notice = Some(e.to_string());
         }
     }
 

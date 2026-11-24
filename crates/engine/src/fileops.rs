@@ -110,6 +110,8 @@ pub enum OpRequest {
         options: fm_archive::write::CompressOptions,
         split: Option<u64>,
     },
+    /// Write an archive with its staged changes, over itself or as a copy.
+    ArchiveSave(crate::archive_ops::SaveTarget),
 }
 
 /// Bytes shared with a job; compared by identity (they can be large).
@@ -164,7 +166,9 @@ impl OpRequest {
             Self::NewFile { .. } => OpKind::NewFile,
             Self::Rename { .. } => OpKind::Rename,
             Self::Undo(_) | Self::Chmod { .. } => return None,
-            Self::OpenRemote { .. } | Self::WriteBytes { .. } => return None,
+            Self::OpenRemote { .. } | Self::WriteBytes { .. } | Self::ArchiveSave(_) => {
+                return None;
+            }
             Self::Extract { .. } | Self::Compress { .. } => OpKind::Copy,
         })
     }
@@ -192,6 +196,10 @@ impl OpRequest {
             Self::Compress {
                 sources, target, ..
             } => format!("Compress {} to {}", items(sources.len()), leaf(target)),
+            Self::ArchiveSave(t) => match &t.copy_to {
+                None => format!("Save {}", leaf(t.mount.container())),
+                Some(to) => format!("Save {} as {}", leaf(t.mount.container()), leaf(to)),
+            },
         }
     }
 
@@ -210,6 +218,7 @@ impl OpRequest {
             Self::WriteBytes { dest, .. } => Some(dest.clone()),
             Self::Extract { root, .. } => Some(root.clone()),
             Self::Compress { target, .. } => Some(target.clone()),
+            Self::ArchiveSave(t) => t.dest_dir(),
         }
     }
 
@@ -238,6 +247,11 @@ impl OpRequest {
                 if let Some(dir) = target.parent() {
                     all.push(dir);
                 }
+                all
+            }
+            Self::ArchiveSave(t) => {
+                let mut all = vec![t.root()];
+                all.extend(t.dest_dir());
                 all
             }
         }
@@ -270,6 +284,7 @@ impl OpRequest {
             Self::WriteBytes { dest, .. } => add(dest.parent()),
             Self::Extract { dest_dir, .. } => add(Some(dest_dir.clone())),
             Self::Compress { target, .. } => add(target.parent()),
+            Self::ArchiveSave(t) => add(t.dest_dir()),
             Self::Undo(record) => undo_uris(record).iter().for_each(|u| add(u.parent())),
         }
         dirs
@@ -415,6 +430,8 @@ pub struct OpJob {
     resolver: Sender<Decision>,
     /// Extract and Open jobs on an archive: run again once a missing password is given.
     retry: Option<OpRequest>,
+    /// An archive save: the archive whose listings change when it finishes.
+    request_root: Option<VfsUri>,
 }
 
 impl OpJob {
@@ -548,6 +565,20 @@ fn run(
         lock(shared).report = Some(report);
         return Ok(());
     }
+    if let OpRequest::ArchiveSave(target) = request {
+        let mut last_sent: Option<Instant> = None;
+        let mut on_progress = |p: &Progress| {
+            lock(shared).progress = p.clone();
+            if last_sent.is_none_or(|t| t.elapsed() >= PROGRESS_EVERY) {
+                last_sent = Some(Instant::now());
+                ctx.report(p.bytes.done, p.bytes.total);
+            }
+        };
+        let cancelled = || ctx.is_cancelled();
+        let report = crate::archive_ops::save(backends, target, &cancelled, &mut on_progress)?;
+        lock(shared).report = Some(report);
+        return Ok(());
+    }
     let mut last_sent: Option<Instant> = None;
     let mut on_progress = |p: &Progress| {
         lock(shared).progress = p.clone();
@@ -672,7 +703,9 @@ fn run(
         } => crate::archive_ops::extract(
             backends, root, container, dest_dir, name, &mut octx, &mut ask,
         )?,
-        OpRequest::OpenRemote { .. } | OpRequest::Compress { .. } => return Ok(()),
+        OpRequest::OpenRemote { .. } | OpRequest::Compress { .. } | OpRequest::ArchiveSave(_) => {
+            return Ok(());
+        }
     };
     let cancelled = report.cancelled;
     // A full destination stopped the job: say so as the job's own failure.
@@ -696,6 +729,7 @@ impl OpRequest {
     fn archive_uri(&self) -> Option<VfsUri> {
         match self {
             Self::Extract { root, .. } => Some(root.clone()),
+            Self::ArchiveSave(t) => Some(t.root()),
             Self::OpenRemote { uri, .. } => uri.archive_handle().map(|_| uri.root()),
             _ => None,
         }
@@ -738,10 +772,14 @@ impl Session {
             _ => Vec::new(),
         };
         let retry = match &request {
-            OpRequest::Extract { .. } => Some(request.clone()),
+            OpRequest::Extract { .. } | OpRequest::ArchiveSave(_) => Some(request.clone()),
             OpRequest::OpenRemote { uri, .. } if uri.archive_handle().is_some() => {
                 Some(request.clone())
             }
+            _ => None,
+        };
+        let request_root = match &request {
+            OpRequest::ArchiveSave(t) => Some(t.root()),
             _ => None,
         };
         let worker_shared = shared.clone();
@@ -773,6 +811,7 @@ impl Session {
             shared,
             resolver,
             retry,
+            request_root,
         });
         Ok(id)
     }
@@ -942,6 +981,11 @@ impl Session {
                 .map(|r| r.created.clone())
                 .unwrap_or_default(),
         );
+        let archive_save_state = job.request_root.as_ref().map(|_| job.state.clone());
+        let saved = match (&job.state, &job.request_root) {
+            (OpState::Finished, Some(root)) => Some(root.clone()),
+            _ => None,
+        };
         let kind = job.kind;
         let touched = std::mem::take(&mut job.touched);
         // Only a delete that finished whole is known to have removed every source.
@@ -963,6 +1007,12 @@ impl Session {
         self.pdf_save_finished(id, &pdf_outcome.0, &pdf_outcome.1);
         if ask.is_some() {
             self.archives.password_ask = ask;
+        }
+        if let Some(root) = saved {
+            crate::archive_cmds::after_save(self, &root);
+        }
+        if let Some(state) = archive_save_state {
+            self.close_save_finished(&state);
         }
         self.fileops.trim();
         true
