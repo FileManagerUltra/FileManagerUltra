@@ -83,8 +83,17 @@ impl LazyArchive {
     /// again (idle release, design 4.1).
     pub fn release(&self) {
         if let Ok(mut s) = self.state.lock() {
+            // Staged changes live in the opened archive: never drop them silently.
+            if s.as_ref().is_some_and(|fs| fs.is_dirty()) {
+                return;
+            }
             *s = None;
         }
+    }
+
+    /// Whether the opened archive has staged changes not yet saved.
+    pub fn is_dirty(&self) -> bool {
+        self.opened().is_some_and(|fs| fs.is_dirty())
     }
 
     /// Close the archive and forget its passwords; the next use opens it again.
@@ -201,7 +210,10 @@ impl LazyArchive {
             self.container_vfs.clone(),
             self.container.clone(),
         )?);
+        let single = file.clone();
         let file = self.join_parts(&name, file)?;
+        // Saving split sets comes later: until then they are read-only.
+        let split = !Arc::ptr_eq(&single, &file);
         let src: Arc<dyn Source> = if self.offset > 0 {
             let len = file.len().saturating_sub(self.offset);
             Arc::new(SliceSource::new(file, self.offset, len))
@@ -247,11 +259,12 @@ impl LazyArchive {
             format::guarded(|| format::open(src, format, &name, &self.passwords, &progress))
         };
         self.total.store(0, Ordering::Relaxed);
-        let fs = Arc::new(ArchiveFs::new(
-            self.root.clone(),
-            reader?,
-            self.passwords.clone(),
-        ));
+        let fs = ArchiveFs::new(self.root.clone(), reader?, self.passwords.clone());
+        let fs = Arc::new(if split {
+            fs.with_read_only("split archives are read-only for now")
+        } else {
+            fs
+        });
         *state = Some(fs.clone());
         Ok(fs)
     }

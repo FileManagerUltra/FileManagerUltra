@@ -40,9 +40,9 @@
 
 ## 5. Staged editing and save
 
-- [ ] 5.1 `Overlay`: added/replaced files spooled to the private temp folder, created folders, renames (subtree), deletions; merged `read_dir`/`stat`/`open_read`; size cap
-- [ ] 5.2 Writes on `ArchiveFs` go to the overlay; read-only formats return `Unsupported("read-only archive")`; existing copy/move/delete/rename/new-folder/F4 jobs work unchanged (tests)
-- [ ] 5.3 Delete inside an archive is staged, never trashed; confirmation text
+- [x] 5.1 `Overlay`: added/replaced files spooled to the private temp folder, created folders, renames (subtree), deletions; merged `read_dir`/`stat`/`open_read`; size cap — 2026-11-24: `fm-archive` `overlay.rs` (BTreeMap of File{Base|Spool}/Dir{opaque}/Deleted; rename = re-point + mark deleted, no copying; merged resolve/children; 8 GiB staging cap; spool in a 0700 `fm-stage-*` folder freed on Discard/drop)
+- [x] 5.2 Writes on `ArchiveFs` go to the overlay; read-only formats return `Unsupported("read-only archive")`; existing copy/move/delete/rename/new-folder/F4 jobs work unchanged (tests) — `ArchiveFs` routes every read and write through the overlay (`StageWriter` stages on flush); read-only formats and, for now, split/spanned sets refuse with their reason; copy, move (rename fast path), delete, rename and new folder work unchanged (engine tests/archive_edit.rs); whole-file writes only (no append)
+- [x] 5.3 Delete inside an archive is staged, never trashed; confirmation text — `file.delete` inside an archive submits the staged delete; the confirmation says "Remove n items from site.zip? … removed when you save; Discard brings them back. Nothing goes to the trash."; Close Archive / Forget Password refuse while changes are staged (until 5.9's prompt)
 - [ ] 5.4 Save writers: zip (raw copy of unchanged members, new members with the dominant method, encryption kept), tar family (recompress whole stream), 7z (recompress, same method and block size); verify by re-index; temp next to container; rename-replace; re-mount
 - [ ] 5.5 Save job: changed-on-disk check (size + mtime), progress, cancel, failure leaves original and overlay intact and removes the temp file; tests for each, including remote via the in-memory `Vfs`
 - [ ] 5.6 Password changes: `archive.password.set` (set/change/remove; AES-256 or chosen ZipCrypto; 7z encrypted names) as a staged change; Save re-encrypts or decrypts every member; unsaved bar text; tests that the result opens only with the new password (and in 7-Zip)

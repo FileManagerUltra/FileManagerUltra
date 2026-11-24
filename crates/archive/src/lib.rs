@@ -10,9 +10,11 @@ pub mod fs;
 pub mod index;
 pub mod limits;
 pub mod mount;
+pub mod overlay;
 pub mod secret;
 pub mod source;
 pub mod split;
+pub mod spool;
 pub mod time;
 pub mod write;
 

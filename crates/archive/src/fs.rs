@@ -2,27 +2,42 @@
 //! file jobs, Find and previews work inside it unchanged.
 
 use std::io::{Read, Write};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use fm_vfs::{Attrs, Entry, EntryKind, FmError, Scheme, SpaceInfo, Vfs, VfsUri, WriteOpts};
 
 use crate::format::{FormatId, Info, Passwords, Reader};
 use crate::index::{Index, NodeId, NodeKind};
+use crate::overlay::{Change, Data, OvEntry, Overlay, Resolved};
 
 pub struct ArchiveFs {
     root: VfsUri,
-    reader: Box<dyn Reader>,
+    reader: Arc<dyn Reader>,
     passwords: Arc<Passwords>,
+    overlay: Arc<Mutex<Overlay>>,
+    /// Why changes are refused (`None` for writable archives).
+    read_only: Option<&'static str>,
 }
 
 impl ArchiveFs {
-    /// Serve `reader` under `root` (`archive://<handle>/`).
+    /// Serve `reader` under `root` (`archive://<handle>/`). Formats the app can write
+    /// accept staged changes; the others are read-only.
     pub fn new(root: VfsUri, reader: Box<dyn Reader>, passwords: Arc<Passwords>) -> Self {
+        let read_only = (!crate::write::WRITABLE.contains(&reader.format()))
+            .then_some("this kind of archive is read-only");
         Self {
             root: root.root(),
-            reader,
+            reader: Arc::from(reader),
             passwords,
+            overlay: Arc::new(Mutex::new(Overlay::default())),
+            read_only,
         }
+    }
+
+    /// Refuse changes with `why` (split sets, spanned zips).
+    pub fn with_read_only(mut self, why: &'static str) -> Self {
+        self.read_only = Some(why);
+        self
     }
 
     pub fn root(&self) -> &VfsUri {
@@ -45,21 +60,85 @@ impl ArchiveFs {
         &self.passwords
     }
 
-    /// Whether the entry at `uri` is stored encrypted (the listing's lock badge).
-    pub fn is_encrypted(&self, uri: &VfsUri) -> bool {
-        self.node_of(uri)
-            .ok()
-            .and_then(|id| self.index().node(id))
-            .is_some_and(|n| n.meta.encrypted)
+    /// The reader, for writing the archive again on Save.
+    pub fn reader(&self) -> &Arc<dyn Reader> {
+        &self.reader
     }
 
-    fn node_of(&self, uri: &VfsUri) -> Result<NodeId, FmError> {
+    fn ov(&self) -> MutexGuard<'_, Overlay> {
+        self.overlay.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Whether changes are staged and not yet saved.
+    pub fn is_dirty(&self) -> bool {
+        !self.ov().is_empty()
+    }
+
+    /// The staged changes (`archive.changes`).
+    pub fn changes(&self) -> Vec<Change> {
+        self.ov().changes(self.index())
+    }
+
+    /// Drop every staged change (Discard).
+    pub fn discard(&self) {
+        self.ov().clear();
+    }
+
+    /// `Err` with the reason when this archive cannot take changes.
+    pub fn writable(&self) -> Result<(), FmError> {
+        match self.read_only {
+            Some(why) => Err(FmError::Unsupported(why)),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether the entry at `uri` is stored encrypted (the listing's lock badge).
+    pub fn is_encrypted(&self, uri: &VfsUri) -> bool {
+        let Ok(key) = self.key(uri) else {
+            return false;
+        };
+        let id = match self.ov().resolve(self.index(), &key) {
+            Some(Resolved::Base(id)) => id,
+            Some(Resolved::Over(OvEntry::File {
+                data: Data::Base(id),
+                ..
+            })) => id,
+            _ => return false,
+        };
+        self.index().node(id).is_some_and(|n| n.meta.encrypted)
+    }
+
+    /// The archive path of `uri` (no leading slash), if `uri` is in this mount.
+    fn key(&self, uri: &VfsUri) -> Result<String, FmError> {
         if uri.scheme() != Scheme::Archive || uri.authority() != self.root.authority() {
             return Err(FmError::NotFound(uri.to_string()));
         }
-        self.index()
-            .lookup(uri.path_str())
+        Ok(uri.path_str().trim_start_matches('/').to_string())
+    }
+
+    fn resolve(&self, uri: &VfsUri) -> Result<Resolved, FmError> {
+        let key = self.key(uri)?;
+        self.ov()
+            .resolve(self.index(), &key)
             .ok_or_else(|| FmError::NotFound(uri.to_string()))
+    }
+
+    fn entry_of(&self, uri: VfsUri, r: &Resolved) -> Entry {
+        match r {
+            Resolved::Base(id) => self.entry(uri, *id),
+            Resolved::Over(OvEntry::File { size, modified, .. }) => {
+                let mut e = Entry::new(uri, EntryKind::File);
+                e.size = Some(*size);
+                e.modified = *modified;
+                e
+            }
+            Resolved::Over(OvEntry::Dir { modified, .. }) => {
+                let mut e = Entry::new(uri, EntryKind::Dir);
+                e.modified = *modified;
+                e
+            }
+            Resolved::Over(OvEntry::Deleted) => Entry::new(uri, EntryKind::Other),
+        }
     }
 
     fn entry(&self, uri: VfsUri, id: NodeId) -> Entry {
@@ -104,45 +183,7 @@ impl ArchiveFs {
             .is_some_and(|n| n.kind == NodeKind::Dir)
     }
 
-    fn read_only(&self) -> FmError {
-        FmError::Unsupported("changes inside archives are not supported yet")
-    }
-}
-
-impl Vfs for ArchiveFs {
-    fn scheme(&self) -> Scheme {
-        Scheme::Archive
-    }
-
-    fn read_dir(&self, uri: &VfsUri) -> Result<Vec<Entry>, FmError> {
-        let id = self.node_of(uri)?;
-        let node = self
-            .index()
-            .node(id)
-            .ok_or_else(|| FmError::NotFound(uri.to_string()))?;
-        if node.kind != NodeKind::Dir {
-            return Err(FmError::NotADirectory(uri.to_string()));
-        }
-        let mut out = Vec::with_capacity(self.index().children(id).len());
-        for &child in self.index().children(id) {
-            let Some(c) = self.index().node(child) else {
-                continue;
-            };
-            let Ok(child_uri) = uri.join(&c.name) else {
-                continue;
-            };
-            out.push(self.entry(child_uri, child));
-        }
-        Ok(out)
-    }
-
-    fn stat(&self, uri: &VfsUri) -> Result<Entry, FmError> {
-        let id = self.node_of(uri)?;
-        Ok(self.entry(uri.clone(), id))
-    }
-
-    fn open_read(&self, uri: &VfsUri) -> Result<Box<dyn Read + Send>, FmError> {
-        let id = self.node_of(uri)?;
+    fn open_base(&self, id: NodeId, uri: &VfsUri) -> Result<Box<dyn Read + Send>, FmError> {
         match self.index().node(id).map(|n| &n.kind) {
             Some(NodeKind::File) => {
                 let r = crate::format::guarded(|| self.reader.open(id, &self.passwords))?;
@@ -154,25 +195,171 @@ impl Vfs for ArchiveFs {
             )),
         }
     }
+}
 
-    fn open_write(&self, _: &VfsUri, _: WriteOpts) -> Result<Box<dyn Write + Send>, FmError> {
-        Err(self.read_only())
+/// A new member being written into the overlay's private folder; `flush` stages it.
+struct StageWriter {
+    file: Option<std::fs::File>,
+    path: std::path::PathBuf,
+    key: String,
+    size: u64,
+    overlay: Arc<Mutex<Overlay>>,
+    reader: Arc<dyn Reader>,
+    committed: bool,
+}
+
+impl StageWriter {
+    fn ov(&self) -> MutexGuard<'_, Overlay> {
+        self.overlay.lock().unwrap_or_else(|p| p.into_inner())
+    }
+}
+
+impl Write for StageWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.ov()
+            .reserve(buf.len() as u64)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::StorageFull, e.to_string()))?;
+        let file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| std::io::Error::other("already saved"))?;
+        file.write_all(buf)?;
+        self.size += buf.len() as u64;
+        Ok(buf.len())
     }
 
-    fn create_dir(&self, _: &VfsUri) -> Result<(), FmError> {
-        Err(self.read_only())
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.committed {
+            return Ok(());
+        }
+        if let Some(mut file) = self.file.take() {
+            file.flush()?;
+        }
+        let (path, key, size) = (self.path.clone(), self.key.clone(), self.size);
+        let reader = self.reader.clone();
+        self.ov()
+            .put_file(reader.index(), &key, path, size)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for StageWriter {
+    fn drop(&mut self) {
+        // Dropping without flush is best-effort (Vfs contract): stage what was written.
+        if !self.committed && self.flush().is_err() {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+impl Vfs for ArchiveFs {
+    fn scheme(&self) -> Scheme {
+        Scheme::Archive
     }
 
-    fn remove(&self, _: &VfsUri) -> Result<(), FmError> {
-        Err(self.read_only())
+    fn read_dir(&self, uri: &VfsUri) -> Result<Vec<Entry>, FmError> {
+        let key = self.key(uri)?;
+        let children = self
+            .ov()
+            .children(self.index(), &key)
+            .map_err(|e| match e {
+                FmError::NotFound(_) => FmError::NotFound(uri.to_string()),
+                FmError::NotADirectory(_) => FmError::NotADirectory(uri.to_string()),
+                other => other,
+            })?;
+        let mut out = Vec::with_capacity(children.len());
+        for (name, r) in children {
+            let Ok(child_uri) = uri.join(&name) else {
+                continue;
+            };
+            out.push(self.entry_of(child_uri, &r));
+        }
+        Ok(out)
     }
 
-    fn rename(&self, _: &VfsUri, _: &VfsUri) -> Result<(), FmError> {
-        Err(self.read_only())
+    fn stat(&self, uri: &VfsUri) -> Result<Entry, FmError> {
+        let r = self.resolve(uri)?;
+        Ok(self.entry_of(uri.clone(), &r))
+    }
+
+    fn open_read(&self, uri: &VfsUri) -> Result<Box<dyn Read + Send>, FmError> {
+        match self.resolve(uri)? {
+            Resolved::Base(id)
+            | Resolved::Over(OvEntry::File {
+                data: Data::Base(id),
+                ..
+            }) => self.open_base(id, uri),
+            Resolved::Over(OvEntry::File {
+                data: Data::Spool(path),
+                ..
+            }) => Ok(Box::new(std::fs::File::open(path).map_err(FmError::Io)?)),
+            Resolved::Over(_) => Err(FmError::NotADirectory(uri.to_string())),
+        }
+    }
+
+    fn open_write(&self, uri: &VfsUri, opts: WriteOpts) -> Result<Box<dyn Write + Send>, FmError> {
+        self.writable()?;
+        if opts.append || !opts.truncate {
+            return Err(FmError::Unsupported(
+                "files inside archives can only be written whole",
+            ));
+        }
+        let key = self.key(uri)?;
+        let path = {
+            let mut ov = self.ov();
+            ov.can_write(self.index(), &key)?;
+            if !opts.create && ov.resolve(self.index(), &key).is_none() {
+                return Err(FmError::NotFound(uri.to_string()));
+            }
+            ov.spool_file()?
+        };
+        let file = std::fs::File::create(&path).map_err(FmError::Io)?;
+        Ok(Box::new(StageWriter {
+            file: Some(file),
+            path,
+            key,
+            size: 0,
+            overlay: self.overlay.clone(),
+            reader: self.reader.clone(),
+            committed: false,
+        }))
+    }
+
+    fn create_dir(&self, uri: &VfsUri) -> Result<(), FmError> {
+        self.writable()?;
+        let key = self.key(uri)?;
+        self.ov().create_dir(self.index(), &key)
+    }
+
+    fn remove(&self, uri: &VfsUri) -> Result<(), FmError> {
+        self.writable()?;
+        let key = self.key(uri)?;
+        self.ov().remove(self.index(), &key)
+    }
+
+    fn rename(&self, from: &VfsUri, to: &VfsUri) -> Result<(), FmError> {
+        self.writable()?;
+        let (a, b) = (self.key(from)?, self.key(to)?);
+        self.ov().rename(self.index(), &a, &b)
     }
 
     fn stat_full(&self, uri: &VfsUri) -> Result<Attrs, FmError> {
-        let id = self.node_of(uri)?;
+        let id = match self.resolve(uri)? {
+            Resolved::Base(id)
+            | Resolved::Over(OvEntry::File {
+                data: Data::Base(id),
+                ..
+            }) => id,
+            Resolved::Over(OvEntry::File { modified, .. } | OvEntry::Dir { modified, .. }) => {
+                return Ok(Attrs {
+                    mtime: modified,
+                    ..Attrs::default()
+                });
+            }
+            Resolved::Over(OvEntry::Deleted) => return Err(FmError::NotFound(uri.to_string())),
+        };
         let node = self
             .index()
             .node(id)
@@ -241,7 +428,10 @@ mod tests {
         assert!(fs.open_read(&www).is_err());
         let other = VfsUri::archive_root("ffffffffffffffff").expect("other");
         assert!(fs.stat(&other).is_err(), "another mount's uri is not ours");
-        assert!(fs.create_dir(&root.join("new").expect("new")).is_err());
+        assert!(!fs.is_dirty());
+        fs.create_dir(&root.join("new").expect("new"))
+            .expect("staged");
+        assert!(fs.is_dirty(), "a zip takes staged changes");
         let link = www.join("link").expect("link");
         let e = fs.stat(&link).expect("link");
         assert!(e.is_symlink() && !e.link_to_dir);

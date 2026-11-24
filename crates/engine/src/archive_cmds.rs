@@ -537,6 +537,26 @@ fn container_for(uri: &VfsUri) -> Option<VfsUri> {
     container_of(uri).map(|r| r.container)
 }
 
+/// `Err` when the archive `handle` (or one inside it) has unsaved staged changes:
+/// closing it would lose them.
+fn refuse_if_dirty(s: &Session, handle: &str) -> Result<(), FmError> {
+    let dirty = s.archives.lazies.iter().find(|(h, m)| {
+        m.is_dirty()
+            && (h.as_str() == handle
+                || VfsUri::archive_root(h)
+                    .ok()
+                    .and_then(|root| container_of(&root))
+                    .is_some_and(|r| within(&r.container, handle)))
+    });
+    match dirty {
+        Some((_, m)) => Err(FmError::InvalidParams(format!(
+            "{} has unsaved changes: save or discard them first",
+            m.container().file_name().unwrap_or("the archive")
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// Close an archive: free its memory and passwords (and those of archives inside it), take
 /// it out of the tree, and move panes inside it to the folder holding it.
 pub(crate) fn close(s: &mut Session, container: &VfsUri) {
@@ -764,6 +784,7 @@ pub fn unmount() -> CommandSpec {
             };
             let container = container_for(&uri)
                 .ok_or_else(|| FmError::InvalidParams("not an archive".into()))?;
+            refuse_if_dirty(s, &fm_archive::handle_for(&container, 0, None))?;
             close(s, &container);
             if let Some(dir) = container.parent() {
                 let _ = s.ensure_read(dir);
@@ -851,6 +872,9 @@ pub fn forget_password() -> CommandSpec {
         },
         run: |s, params: &Params| {
             let mount = target_mount(s, params)?;
+            if let Some(h) = mount.root().archive_handle() {
+                refuse_if_dirty(s, h)?;
+            }
             mount.unmount();
             reload(s, &mount);
             Ok(())

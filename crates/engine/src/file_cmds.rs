@@ -327,6 +327,15 @@ pub fn delete() -> CommandSpec {
             if sources.is_empty() {
                 return Ok(());
             }
+            // Inside an archive a delete is staged until Save (Discard undoes it).
+            if sources
+                .iter()
+                .all(|u| u.scheme() == fm_vfs::Scheme::Archive)
+            {
+                return s
+                    .submit_op(OpRequest::DeletePermanent { sources })
+                    .map(|_| ());
+            }
             if sources.iter().any(|u| u.scheme() != fm_vfs::Scheme::File) {
                 return Err(FmError::Unsupported(
                     "remote locations have no trash; use Delete Permanently",

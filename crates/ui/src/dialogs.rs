@@ -394,8 +394,14 @@ impl Dialogs {
                 }
             }
             Dialog::ConfirmDelete { sources } => {
+                // Inside an archive nothing is gone until Save, and Discard brings it back.
+                let archive = sources
+                    .first()
+                    .filter(|_| sources.iter().all(|u| u.scheme() == Scheme::Archive))
+                    .and_then(fm_engine::archive_cmds::container_of)
+                    .and_then(|r| r.container.file_name().map(str::to_string));
                 let (go, cancel) = if s.prefs.confirm_delete {
-                    confirm_delete(ctx, tokens, sources.len())
+                    confirm_delete(ctx, tokens, sources.len(), archive.as_deref())
                 } else {
                     (true, false)
                 };
@@ -820,22 +826,56 @@ fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
     }
 }
 
-fn confirm_delete(ctx: &Context, tokens: &Tokens, count: usize) -> (bool, bool) {
+fn confirm_delete(
+    ctx: &Context,
+    tokens: &Tokens,
+    count: usize,
+    archive: Option<&str>,
+) -> (bool, bool) {
     let (mut go, mut cancel) = (false, false);
     let mut open = true;
-    crate::dialog_style::window(ctx, tokens, "Delete permanently", &mut open)
+    let title = if archive.is_some() {
+        "Remove from archive"
+    } else {
+        "Delete permanently"
+    };
+    crate::dialog_style::window(ctx, tokens, title, &mut open)
         .id(Id::NULL.with("fm-confirm-delete"))
         .show(ctx, |ui| {
             crate::dialog_style::apply(ui, tokens);
             let noun = if count == 1 { "item" } else { "items" };
-            ui.label(
-                RichText::new(format!("Permanently delete {count} {noun}?")).color(tokens.text),
-            );
-            ui.label(
-                RichText::new("This cannot be undone and bypasses the trash.").color(tokens.error),
-            );
+            match archive {
+                Some(name) => {
+                    ui.label(
+                        RichText::new(format!("Remove {count} {noun} from {name}?"))
+                            .color(tokens.text),
+                    );
+                    ui.label(
+                        RichText::new(
+                            "They are removed from the archive when you save it; until then \
+                             Discard brings them back. Nothing goes to the trash.",
+                        )
+                        .color(tokens.text_muted),
+                    );
+                }
+                None => {
+                    ui.label(
+                        RichText::new(format!("Permanently delete {count} {noun}?"))
+                            .color(tokens.text),
+                    );
+                    ui.label(
+                        RichText::new("This cannot be undone and bypasses the trash.")
+                            .color(tokens.error),
+                    );
+                }
+            }
             ui.horizontal(|ui| {
-                if ui.button("Delete").clicked() {
+                let label = if archive.is_some() {
+                    "Remove"
+                } else {
+                    "Delete"
+                };
+                if ui.button(label).clicked() {
                     go = true;
                 }
                 if ui.button("Cancel").clicked() {

@@ -459,40 +459,7 @@ fn classify(
     )
 }
 
-/// A private, owner-only folder holding a copy of a remote RAR set; removed when dropped.
-pub struct SpoolDir(PathBuf);
-
-impl SpoolDir {
-    fn create() -> Result<Self, FmError> {
-        use std::sync::atomic::{AtomicU32, Ordering};
-        static SEQ: AtomicU32 = AtomicU32::new(0);
-        let name = format!(
-            "fm-rar-{}-{}",
-            std::process::id(),
-            SEQ.fetch_add(1, Ordering::Relaxed)
-        );
-        let dir = std::env::temp_dir().join(name);
-        let builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        let builder = {
-            let mut b = builder;
-            std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
-            b
-        };
-        builder.create(&dir).map_err(FmError::Io)?;
-        Ok(Self(dir))
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for SpoolDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+pub use crate::spool::SpoolDir;
 
 /// Copy the volumes of a remote RAR set (`(name, source)` in order) into a private folder
 /// under their own names; returns the folder and the first volume's path.
@@ -510,7 +477,7 @@ pub fn spool(
             "remote RAR archives over 4 GiB cannot be opened here; copy it to this computer first",
         ));
     }
-    let dir = SpoolDir::create()?;
+    let dir = SpoolDir::create("fm-rar")?;
     let mut first = None;
     for (name, src) in volumes {
         // Names come from a folder listing: a plain name, never a path.
