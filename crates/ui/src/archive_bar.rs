@@ -1,6 +1,7 @@
 //! The unsaved-changes bar above a Files pane inside an archive with staged changes
 //! (add-archive-vfs D8): "site.zip has 3 unsaved changes · Save · Discard", a list of
-//! the changes on click, and an inline confirmation before Discard.
+//! the changes on click, and an inline confirmation before Discard. A split archive whose
+//! save was interrupted gets its own bar offering to restore or delete the backup parts.
 
 use egui::{Id, RichText, Ui};
 use fm_engine::Session;
@@ -29,9 +30,22 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
     let Some(mount) = s.archives.for_uri(&location).cloned() else {
         return;
     };
-    let Some(fs) = mount.opened().filter(|fs| fs.is_dirty()) else {
+    let Some(fs) = mount.opened() else {
         return;
     };
+    if !fs.is_dirty() {
+        if fs.parts().is_some_and(|p| !p.backups.is_empty()) {
+            show_backups(
+                ui,
+                s,
+                pane,
+                mount.container().file_name().unwrap_or("The archive"),
+                &mount.root().to_string(),
+                tokens,
+            );
+        }
+        return;
+    }
     let root = mount.root().clone();
     let name = mount
         .container()
@@ -138,5 +152,49 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
     if let Some((id, params)) = act {
         let _ = s.layout.focus_pane(pane);
         s.dispatch_or_notice(id, &params);
+    }
+}
+
+/// "An earlier save of x.7z.001 was interrupted · Restore previous version · Delete backups".
+fn show_backups(
+    ui: &mut Ui,
+    s: &mut Session,
+    pane: PaneId,
+    name: &str,
+    root_s: &str,
+    tokens: &Tokens,
+) {
+    let mut act: Option<&str> = None;
+    egui::Frame::NONE
+        .fill(tokens.panel)
+        .stroke(egui::Stroke::new(tokens.border_width, tokens.warning))
+        .corner_radius(tokens.corner_radius)
+        .inner_margin(egui::Margin::symmetric(tokens.padding as i8, 2))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(format!("An earlier save of {name} was interrupted"))
+                        .color(tokens.text),
+                );
+                if ui
+                    .button("Restore previous version")
+                    .on_hover_text("Put back the parts the save set aside")
+                    .clicked()
+                {
+                    act = Some("archive.backup.restore");
+                }
+                if ui
+                    .button("Delete backups")
+                    .on_hover_text("Keep the parts now in place and delete the set-aside ones")
+                    .clicked()
+                {
+                    act = Some("archive.backup.discard");
+                }
+            });
+        });
+    if let Some(id) = act {
+        let _ = s.layout.focus_pane(pane);
+        s.dispatch_or_notice(id, &json!({"uri": root_s}));
     }
 }

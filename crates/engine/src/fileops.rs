@@ -112,6 +112,19 @@ pub enum OpRequest {
     },
     /// Write an archive with its staged changes, over itself or as a copy.
     ArchiveSave(crate::archive_ops::SaveTarget),
+    /// Concatenate the numbered parts `first` belongs to into one file.
+    Join {
+        first: VfsUri,
+        target: Option<VfsUri>,
+    },
+    /// Stage `sources` in the archive folder `dest` (asking about names already there),
+    /// and save the archive in the same job when `save` is set.
+    Add {
+        sources: Vec<VfsUri>,
+        dest: VfsUri,
+        policy: ConflictPolicy,
+        save: Option<crate::archive_ops::SaveTarget>,
+    },
 }
 
 /// Bytes shared with a job; compared by identity (they can be large).
@@ -165,11 +178,13 @@ impl OpRequest {
             Self::Mkdir { .. } => OpKind::Mkdir,
             Self::NewFile { .. } => OpKind::NewFile,
             Self::Rename { .. } => OpKind::Rename,
-            Self::Undo(_) | Self::Chmod { .. } => return None,
+            Self::Undo(_) | Self::Chmod { .. } | Self::Add { save: Some(_), .. } => return None,
             Self::OpenRemote { .. } | Self::WriteBytes { .. } | Self::ArchiveSave(_) => {
                 return None;
             }
-            Self::Extract { .. } | Self::Compress { .. } => OpKind::Copy,
+            Self::Extract { .. } | Self::Compress { .. } | Self::Add { .. } | Self::Join { .. } => {
+                OpKind::Copy
+            }
         })
     }
 
@@ -196,18 +211,31 @@ impl OpRequest {
             Self::Compress {
                 sources, target, ..
             } => format!("Compress {} to {}", items(sources.len()), leaf(target)),
-            Self::ArchiveSave(t) => match &t.copy_to {
-                None => format!("Save {}", leaf(t.mount.container())),
-                Some(to) => format!("Save {} as {}", leaf(t.mount.container()), leaf(to)),
+            Self::Join { first, .. } => format!("Join parts of {}", leaf(first)),
+            Self::Add { sources, dest, .. } => {
+                format!("Add {} to {}", items(sources.len()), leaf(&dest.root()))
+            }
+            Self::ArchiveSave(t) => match (&t.backup, &t.copy_to) {
+                (Some(crate::archive_parts::BackupAction::Restore), _) => {
+                    format!("Restore {}", leaf(t.mount.container()))
+                }
+                (Some(crate::archive_parts::BackupAction::Discard), _) => {
+                    format!("Delete backup parts of {}", leaf(t.mount.container()))
+                }
+                (None, None) => format!("Save {}", leaf(t.mount.container())),
+                (None, Some(to)) => {
+                    format!("Save {} as {}", leaf(t.mount.container()), leaf(to))
+                }
             },
         }
     }
 
     fn lane_uri(&self) -> Option<VfsUri> {
         match self {
-            Self::Copy { dest, .. } | Self::Move { dest, .. } | Self::Duplicate { dest, .. } => {
-                Some(dest.clone())
-            }
+            Self::Copy { dest, .. }
+            | Self::Move { dest, .. }
+            | Self::Duplicate { dest, .. }
+            | Self::Add { dest, .. } => Some(dest.clone()),
             Self::Trash { sources }
             | Self::DeletePermanent { sources }
             | Self::Chmod { sources, .. } => sources.first().cloned(),
@@ -218,6 +246,7 @@ impl OpRequest {
             Self::WriteBytes { dest, .. } => Some(dest.clone()),
             Self::Extract { root, .. } => Some(root.clone()),
             Self::Compress { target, .. } => Some(target.clone()),
+            Self::Join { first, target } => Some(target.clone().unwrap_or_else(|| first.clone())),
             Self::ArchiveSave(t) => t.dest_dir(),
         }
     }
@@ -226,7 +255,8 @@ impl OpRequest {
         match self {
             Self::Copy { sources, dest, .. }
             | Self::Move { sources, dest, .. }
-            | Self::Duplicate { sources, dest, .. } => {
+            | Self::Duplicate { sources, dest, .. }
+            | Self::Add { sources, dest, .. } => {
                 let mut all = sources.clone();
                 all.push(dest.clone());
                 all
@@ -249,6 +279,11 @@ impl OpRequest {
                 }
                 all
             }
+            Self::Join { first, target } => {
+                let mut all = vec![first.clone()];
+                all.extend(target.clone());
+                all
+            }
             Self::ArchiveSave(t) => {
                 let mut all = vec![t.root()];
                 all.extend(t.dest_dir());
@@ -268,7 +303,9 @@ impl OpRequest {
             }
         };
         match self {
-            Self::Copy { dest, .. } | Self::Duplicate { dest, .. } => add(Some(dest.clone())),
+            Self::Copy { dest, .. } | Self::Duplicate { dest, .. } | Self::Add { dest, .. } => {
+                add(Some(dest.clone()))
+            }
             Self::Move { sources, dest, .. } => {
                 add(Some(dest.clone()));
                 sources.iter().for_each(|s| add(s.parent()));
@@ -284,6 +321,7 @@ impl OpRequest {
             Self::WriteBytes { dest, .. } => add(dest.parent()),
             Self::Extract { dest_dir, .. } => add(Some(dest_dir.clone())),
             Self::Compress { target, .. } => add(target.parent()),
+            Self::Join { first, target } => add(target.as_ref().unwrap_or(first).parent()),
             Self::ArchiveSave(t) => add(t.dest_dir()),
             Self::Undo(record) => undo_uris(record).iter().for_each(|u| add(u.parent())),
         }
@@ -626,7 +664,8 @@ fn run(
     let policy = match request {
         OpRequest::Copy { policy, .. }
         | OpRequest::Move { policy, .. }
-        | OpRequest::Duplicate { policy, .. } => *policy,
+        | OpRequest::Duplicate { policy, .. }
+        | OpRequest::Add { policy, .. } => *policy,
         _ => ConflictPolicy::Ask,
     };
     let mut octx = OpCtx::new(policy, &mut on_progress, &mut on_conflict)
@@ -637,6 +676,73 @@ fn run(
         OpRequest::Copy { sources, dest, .. } => fm_ops::copy(backends, sources, dest, &mut octx)?,
         OpRequest::Duplicate { sources, dest, .. } => {
             fm_ops::duplicate(backends, sources, dest, &mut octx)?
+        }
+        OpRequest::Add {
+            sources,
+            dest,
+            save,
+            ..
+        } => {
+            // `save` is only set when nothing was staged before: the archive is then
+            // saved when every item was staged, and left as it was when the job is
+            // cancelled or fails.
+            let discard = || {
+                if let Some(fs) = save.as_ref().and_then(|t| t.mount.opened()) {
+                    fs.discard();
+                }
+            };
+            let report = match fm_ops::copy(backends, sources, dest, &mut octx) {
+                Ok(report) => report,
+                Err(e) => {
+                    discard();
+                    return Err(e);
+                }
+            };
+            if report.cancelled {
+                discard();
+            }
+            if let Some(target) = save
+                && !report.cancelled
+                && report.failed.is_empty()
+                && report.done > 0
+            {
+                let mut last_sent: Option<Instant> = None;
+                let mut save_progress = |p: &Progress| {
+                    lock(shared).progress = p.clone();
+                    if last_sent.is_none_or(|t| t.elapsed() >= PROGRESS_EVERY) {
+                        last_sent = Some(Instant::now());
+                        ctx.report(p.bytes.done, p.bytes.total);
+                    }
+                };
+                let cancelled = || ctx.is_cancelled();
+                if let Err(e) =
+                    crate::archive_ops::save(backends, target, &cancelled, &mut save_progress)
+                {
+                    discard();
+                    lock(shared).report = Some(report);
+                    return Err(e);
+                }
+            }
+            report
+        }
+        OpRequest::Join { first, target } => {
+            let mut last_sent: Option<Instant> = None;
+            let mut join_progress = |p: &Progress| {
+                lock(shared).progress = p.clone();
+                if last_sent.is_none_or(|t| t.elapsed() >= PROGRESS_EVERY) {
+                    last_sent = Some(Instant::now());
+                    ctx.report(p.bytes.done, p.bytes.total);
+                }
+            };
+            let cancelled = || ctx.is_cancelled();
+            crate::archive_ops::join(
+                backends,
+                first,
+                target.as_ref(),
+                &mut ask,
+                &cancelled,
+                &mut join_progress,
+            )?
         }
         OpRequest::Move { sources, dest, .. } => fm_ops::move_(backends, sources, dest, &mut octx)?,
         OpRequest::Trash { sources } => fm_ops::trash_items(sources, &mut octx),
@@ -730,6 +836,7 @@ impl OpRequest {
         match self {
             Self::Extract { root, .. } => Some(root.clone()),
             Self::ArchiveSave(t) => Some(t.root()),
+            Self::Add { dest, .. } => dest.archive_handle().map(|_| dest.root()),
             Self::OpenRemote { uri, .. } => uri.archive_handle().map(|_| uri.root()),
             _ => None,
         }
@@ -752,6 +859,14 @@ impl Session {
                 "too many items (limit {MAX_SOURCES})"
             )));
         }
+        if let OpRequest::Move { sources, .. } = &request
+            && let Some(why) = sources.iter().find_map(|u| self.archives.move_blocked(u))
+        {
+            return Err(FmError::backend(
+                "archive",
+                format!("Cannot move out of this archive: {why}. Copy the items instead."),
+            ));
+        }
         let lane_uri = request
             .lane_uri()
             .ok_or_else(|| FmError::InvalidParams("nothing to do".to_string()))?;
@@ -772,7 +887,9 @@ impl Session {
             _ => Vec::new(),
         };
         let retry = match &request {
-            OpRequest::Extract { .. } | OpRequest::ArchiveSave(_) => Some(request.clone()),
+            OpRequest::Extract { .. } | OpRequest::ArchiveSave(_) | OpRequest::Add { .. } => {
+                Some(request.clone())
+            }
             OpRequest::OpenRemote { uri, .. } if uri.archive_handle().is_some() => {
                 Some(request.clone())
             }
@@ -780,6 +897,7 @@ impl Session {
         };
         let request_root = match &request {
             OpRequest::ArchiveSave(t) => Some(t.root()),
+            OpRequest::Add { save: Some(t), .. } => Some(t.root()),
             _ => None,
         };
         let worker_shared = shared.clone();
@@ -982,8 +1100,11 @@ impl Session {
                 .unwrap_or_default(),
         );
         let archive_save_state = job.request_root.as_ref().map(|_| job.state.clone());
+        // A failed or cancelled add drops what it staged: panes read the archive again.
         let saved = match (&job.state, &job.request_root) {
-            (OpState::Finished, Some(root)) => Some(root.clone()),
+            (OpState::Finished | OpState::Failed(_) | OpState::Cancelled, Some(root)) => {
+                Some(root.clone())
+            }
             _ => None,
         };
         let kind = job.kind;

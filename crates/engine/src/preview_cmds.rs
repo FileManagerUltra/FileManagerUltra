@@ -1245,6 +1245,9 @@ fn render_budgeted(
             Ok(rules) => rules,
             Err(error) => return Preview::Error(error.to_string()),
         };
+        if let Some(card) = crate::archive_preview::card(&vfs, &entry) {
+            return card;
+        }
         fm_preview::render_configured(
             &*vfs,
             &entry,

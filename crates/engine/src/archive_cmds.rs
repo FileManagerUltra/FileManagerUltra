@@ -48,6 +48,8 @@ pub struct Mounts {
     opened: Vec<VfsUri>,
     /// A job that stopped because an archive needs a password, waiting for one.
     pub password_ask: Option<PasswordAsk>,
+    /// The selection Add to Archive… is choosing an archive for.
+    pub add_pending: Option<Vec<VfsUri>>,
     /// The archive (root) whose staged changes Save as copy is choosing a folder for.
     pub save_as_pending: Option<VfsUri>,
     /// The archive (root) whose list of staged changes is shown (`archive.changes`).
@@ -198,6 +200,15 @@ impl Mounts {
     /// The opened archive serving `uri`, for per-row lookups in one frame.
     pub fn opened_fs(&self, uri: &VfsUri) -> Option<Arc<fm_archive::ArchiveFs>> {
         self.for_uri(uri).and_then(|m| m.opened())
+    }
+
+    /// Why `uri` (inside an opened archive) cannot be taken out by a move, if it cannot:
+    /// read-only archives offer copy only.
+    pub fn move_blocked(&self, uri: &VfsUri) -> Option<&'static str> {
+        match self.opened_fs(uri)?.writable() {
+            Err(FmError::Unsupported(why)) => Some(why),
+            _ => None,
+        }
     }
 
     /// Whether the tree shows this archive file as a folder (opened and not closed since).
@@ -644,6 +655,17 @@ pub fn is_archive_name(name: &str) -> bool {
         Some(p) => fm_archive::by_name(&p.base).is_some_and(readable),
         None => false,
     }
+}
+
+/// Whether the archive file `name` can take changes, judged by its name alone (an opened
+/// archive answers for itself): a format the app writes, or numbered parts of one.
+pub fn is_writable_archive_name(name: &str) -> bool {
+    let base = match fm_archive::split::parse(name) {
+        Some(p) if p.kind == fm_archive::split::SplitKind::Numbered => p.base,
+        Some(_) => return false,
+        None => name.to_string(),
+    };
+    fm_archive::by_name(&base).is_some_and(|f| fm_archive::write::WRITABLE.contains(&f))
 }
 
 /// Whether `uri` lies inside a RAR (its password goes to the 7-Zip or unrar process).

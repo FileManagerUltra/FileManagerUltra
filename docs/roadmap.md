@@ -13,9 +13,9 @@ Five OpenSpec changes, in order. Each change proposes, implements and archives i
 
 Additional change, done and archived: `git-status-and-diff` (git status markers, Diff view in the Preview pane) — see `docs/architecture.md` §12a.
 
-**Latest release:** 0.3.0 (2026-11-19): Synchronize Folders (guided setup and Advanced view, Update/Mirror/Two-way, Keep in sync), a Browse… chooser for every path field, and the first signed and notarized macOS download. 0.2.3 (2026-11-15) brought per-pane and per-terminal zoom, Ctrl+Tab workspace switching, a diagnostic log and Direct3D 12 drawing on Windows. 0.2.0 (2026-11-12) brought the Media pane, Find Files redesign and Activity panel. The Mac App Store build (sandboxed) is planned as its own change. Free Windows code signing through SignPath Foundation is prepared but not yet applied for (`docs/development.md`, "Windows code signing"). Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
+**Latest release:** 0.3.2 (2026-11-23): CSV/TSV table view and drag-to-pan pictures in the Preview pane, Ctrl+wheel and pinch zoom per pane, and fixes to Synchronize Folders, terminal start folders and sharp photos at 100%. 0.3.1 (2026-11-20) added PDF fill-in and signing. 0.3.0 (2026-11-19) brought Synchronize Folders and the first signed and notarized macOS download. 0.2.3 (2026-11-15) brought per-pane and per-terminal zoom, Ctrl+Tab workspace switching, a diagnostic log and Direct3D 12 drawing on Windows. 0.2.0 (2026-11-12) brought the Media pane, Find Files redesign and Activity panel. Archives (`add-archive-vfs`) are unreleased: see `[Unreleased]` in `CHANGELOG.md`. The Mac App Store build (sandboxed) is planned as its own change. Free Windows code signing through SignPath Foundation is prepared but not yet applied for (`docs/development.md`, "Windows code signing"). Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
 
-**Current focus:** see "Current focus" below: the `windows-wgpu` redraw fix (task 3.4), then release 0.2.4.
+**Current focus:** finish `add-archive-vfs` (see "Next: archives, disk images and Docker as folders"), then release it; `add-disk-images` and `add-docker` follow.
 
 Session persistence is already delivered by `workspaces` (saved pane layouts and
 startup behavior). Release packaging is also configured in `.github/workflows/release.yml`:
@@ -26,10 +26,16 @@ not implementing persistence or packaging from scratch.
 **Security is a standing concern, not a change.** The `security` OpenSpec capability starts in change 1 (hostile input, secrets, state-file permissions, symlink policy, no `unsafe`) and each change that adds a behaviour area extends it in the same change: change 3 adds drag & drop / `ops` containment and overwrite rules; change 4 adds credentials, host keys and remote listing caps. A change that adds security-relevant behaviour without a spec + failing-test proof is not done.
 
 Additional capabilities have landed alongside these milestones: previews, workspace
-tabs, file/content search and terminal panes. Archives (proposed, see below), plugins and CLI/MCP automation
+tabs, file/content search and terminal panes. Plugins and CLI/MCP automation
 remain future work (the command registry is already in place).
 
-## Current focus
+## Recently shipped
+
+0.3.x: `add-file-sync` and `add-path-picker` (Synchronize Folders, Browse… on every path
+field; archived 2026-11-24), `add-pdf-preview` (PDF view, form-fill and signing; 0.3.1),
+`add-table-preview` (CSV/TSV table view; 0.3.2) and `add-quality-gate`. What is in
+progress is under "Next: archives, disk images and Docker as folders" below; everything
+older follows.
 
 `add-media-pane` shipped in 0.2.0 and is archived (2026-11-15): shared native audio pipeline
 with Preview sound, the Media pane (persisted queue with lockable playlist folders,
@@ -96,10 +102,14 @@ Captured so they are not lost; each becomes an OpenSpec proposal (`/opsx-propose
 
 ### Next: archives, disk images and Docker as folders
 
-Three OpenSpec changes, in order (proposals written 2026-11-23). `add-archive-vfs` is in
-progress: browsing (zip, tar family, 7z, nested, remote, encrypted), tree expansion,
-Extract and Compress have landed; split reading, ISO, RAR, editing with Save, and
-restoring open archives after a restart are still open. The other two are not started:
+Three OpenSpec changes, in order (proposals written 2026-11-23). `add-archive-vfs` is
+nearly done: browsing (zip, tar family, 7z, nested, remote, encrypted, ISO, RAR through an
+installed tool), split archives (open, and save back as parts of the original size with a
+rollback-able swap and recovery after an interrupted save), tree expansion, restoring open
+archives after a restart, editing with Save / Save as copy / Discard, password
+set/change/remove, Extract and Compress (also in parts) and adding a selection to an archive (menu or drop), Join Parts, move-out rules and the archive preview card have landed. Still open (see its
+`tasks.md`): the tab marker for unsaved archives, the RAR and nesting-limit pane states and the manual smoke on Linux and
+Windows. The other two are not started:
 
 - **`add-archive-vfs`**: zip, tar (gz/bz2/xz/zst), 7z, ISO and RAR (read-only, through an
   installed 7-Zip or unrar) open like folders with Enter, on every backend and nested,
@@ -120,14 +130,10 @@ restoring open archives after a restart are still open. The other two are not st
 
 Planned next; each becomes its own OpenSpec proposal. All render off the UI thread, are
 bounded for hostile input like the existing previews, and follow the Preview pane's
-zoom, Find and theme conventions.
+zoom, Find and theme conventions. Already shipped: the PDF view with form-fill and
+signing (0.3.1, `add-pdf-preview`; `docs/architecture.md` §12c) and the CSV / TSV table
+view (0.3.2, `add-table-preview`).
 
-- **PDF view with form-fill and signing**: shipped in 0.3.1 (OpenSpec change
-  `add-pdf-preview`, archived 2026-11-23; specs `pdf-view`, `pdf-forms`, `pdf-signing`):
-  hayro renderer, lopdf editing, visual and PAdES digital signatures, signature
-  verification; see `docs/architecture.md` §12c.
-- **CSV / TSV table view**: delimiter detection, header row, virtualized rows and
-  columns for large files, column sorting and Find. Read-only first.
 - **draw.io diagram view**: render `.drawio` / `.dio` files (including compressed
   diagrams and multiple pages) as an SVG-style preview through the shared SVG service,
   with Copy as image like Mermaid.
@@ -140,6 +146,16 @@ zoom, Find and theme conventions.
   It runs on a built-in sandbox of example files (in-memory/temp, never the user's
   folders), so nothing it demonstrates can change, copy or delete real data. Skippable,
   restartable, every step dispatches normal commands against the sample tree.
+
+### Near-future: select with a rectangle
+
+- **Rubber-band selection**: drag a rectangle over empty space in a Files pane to
+  select the files/items it touches, in the list, grid and thumbnail views. Ctrl adds
+  to the selection, Shift/Ctrl-drag toggles; the rectangle scrolls the pane near its
+  edges. Open questions for the proposal: virtualized rows (hit-test by row index, not
+  by drawn widgets), interaction with drag & drop starting on an item, and a command
+  id so it stays dispatchable (`selection.*`). This is a planned feature idea, not
+  approved implementation scope.
 
 ### File synchronization
 

@@ -11,6 +11,7 @@ use fm_vfs::{Attrs, Entry, FmError, Scheme, SpaceInfo, Vfs, VfsUri, WriteOpts};
 use crate::format::{self, FormatId, Passwords, Progress};
 use crate::fs::ArchiveFs;
 use crate::source::{SliceSource, Source, VfsSource};
+use crate::split::PartSet;
 
 /// Bytes read to recognise a format (enough for the ISO signature at 32 769).
 const HEAD: usize = 32_774;
@@ -167,9 +168,13 @@ impl LazyArchive {
     /// A split archive's parts read as one file (design D16): the first numbered part
     /// brings the rest of its set, and a zip whose end record spans several disks brings
     /// its `.z01`… parts. Parts are found by name in the container's folder only.
-    fn join_parts(&self, name: &str, file: Arc<dyn Source>) -> Result<Arc<dyn Source>, FmError> {
+    fn join_parts(
+        &self,
+        name: &str,
+        file: Arc<dyn Source>,
+    ) -> Result<(Arc<dyn Source>, Option<PartSet>), FmError> {
         if self.offset > 0 || self.forced.is_some() {
-            return Ok(file);
+            return Ok((file, None));
         }
         let numbered =
             crate::split::parse(name).is_some_and(|p| p.kind == crate::split::SplitKind::Numbered);
@@ -179,18 +184,21 @@ impl LazyArchive {
             1
         };
         if !numbered && disks <= 1 {
-            return Ok(file);
+            return Ok((file, None));
         }
         let folder = self
             .container
             .parent()
             .ok_or_else(|| FmError::NotFound(self.container.to_string()))?;
         let listing = self.container_vfs.read_dir(&folder)?;
-        let names = listing.iter().map(|e| e.name.as_str());
-        let parts = if numbered {
-            crate::split::resolve_numbered(name, names)?
-        } else {
-            crate::split::resolve_spanned(name, disks, names)?
+        let set = numbered
+            .then(|| PartSet::read(name, &listing))
+            .transpose()?;
+        let parts = match &set {
+            Some(set) => set.names.clone(),
+            None => {
+                crate::split::resolve_spanned(name, disks, listing.iter().map(|e| e.name.as_str()))?
+            }
         };
         let mut sources: Vec<Arc<dyn Source>> = Vec::with_capacity(parts.len());
         for part in &parts {
@@ -202,9 +210,9 @@ impl LazyArchive {
             }
         }
         if numbered {
-            Ok(crate::split::join(sources))
+            Ok((crate::split::join(sources), set))
         } else {
-            crate::split::spanned_zip(sources)
+            Ok((crate::split::spanned_zip(sources)?, None))
         }
     }
 
@@ -223,8 +231,7 @@ impl LazyArchive {
         let stamp = (opened.len(), opened.modified());
         let file: Arc<dyn Source> = Arc::new(opened);
         let single = file.clone();
-        let file = self.join_parts(&name, file)?;
-        // Saving split sets comes later: until then they are read-only.
+        let (file, set) = self.join_parts(&name, file)?;
         let split = !Arc::ptr_eq(&single, &file);
         let src: Arc<dyn Source> = if self.offset > 0 {
             let len = file.len().saturating_sub(self.offset);
@@ -273,8 +280,19 @@ impl LazyArchive {
         self.total.store(0, Ordering::Relaxed);
         let fs =
             ArchiveFs::new(self.root.clone(), reader?, self.passwords.clone()).with_stamp(stamp);
-        let fs = Arc::new(if split {
-            fs.with_read_only("split archives are read-only for now")
+        let fs = Arc::new(if let Some(set) = set {
+            let interrupted = !set.backups.is_empty();
+            let fs = fs.with_parts(set);
+            if interrupted {
+                fs.with_read_only(
+                    "an earlier save was interrupted: restore its backup parts or delete \
+                     them first",
+                )
+            } else {
+                fs
+            }
+        } else if split {
+            fs.with_read_only("spanned zips are read-only")
         } else if self.offset > 0 {
             fs.with_read_only("archives inside another file are read-only")
         } else {

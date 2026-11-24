@@ -1,12 +1,14 @@
 //! Saving and discarding staged archive changes (`archive-editing`): `archive.save`,
-//! `archive.save_as`, `archive.discard` and `archive.changes`. Saving runs as a file job
-//! (`archive_ops::save`).
+//! `archive.save_as`, `archive.discard` and `archive.changes`, plus `archive.backup.restore`
+//! and `archive.backup.discard` for the backup parts an interrupted split save leaves.
+//! Saving runs as a file job (`archive_ops::save`).
 
 use fm_vfs::{FmError, Scheme, VfsUri};
 use serde_json::json;
 
 use crate::archive_cmds::{MAX_PASSWORD, after_save, target_mount, uri_of};
 use crate::archive_ops::SaveTarget;
+use crate::archive_parts::BackupAction;
 use crate::fileops::OpRequest;
 use crate::registry::{CommandSpec, Params};
 use crate::session::Session;
@@ -60,6 +62,7 @@ pub fn save() -> CommandSpec {
             s.submit_op(OpRequest::ArchiveSave(SaveTarget {
                 mount,
                 copy_to: None,
+                backup: None,
             }))
             .map(|_| ())
         },
@@ -117,10 +120,15 @@ pub fn save_as() -> CommandSpec {
                 .container()
                 .file_name()
                 .ok_or_else(|| FmError::InvalidParams("the archive has no name".into()))?;
-            let copy_to = dir.join(name)?;
+            // A copy of a split archive is one file, named by what the parts make up.
+            let name = fm_archive::split::parse(name)
+                .filter(|p| p.kind == fm_archive::split::SplitKind::Numbered)
+                .map_or(name.to_string(), |p| p.base);
+            let copy_to = dir.join(&name)?;
             s.submit_op(OpRequest::ArchiveSave(SaveTarget {
                 mount,
                 copy_to: Some(copy_to),
+                backup: None,
             }))
             .map(|_| ())
         },
@@ -178,6 +186,88 @@ pub fn changes() -> CommandSpec {
             s.archives.changes_shown = Some(mount.root().clone());
             Ok(())
         },
+    }
+}
+
+/// The focused pane is inside a split archive that has backup parts of an interrupted save.
+fn focused_has_backups(s: &Session) -> bool {
+    s.layout
+        .state(s.layout.focused())
+        .and_then(|p| s.archives.for_uri(&p.location))
+        .and_then(|m| m.opened())
+        .and_then(|fs| fs.parts().map(|p| !p.backups.is_empty()))
+        .unwrap_or(false)
+}
+
+/// The split archive a backup command acts on: its `uri` (a location inside the archive,
+/// or any part file of the set), else the focused pane's archive.
+fn backup_mount(
+    s: &mut Session,
+    params: &Params,
+) -> Result<std::sync::Arc<fm_archive::mount::LazyArchive>, FmError> {
+    match uri_of(params)? {
+        Some(uri) if uri.archive_handle().is_none() => {
+            let name = uri
+                .file_name()
+                .ok_or_else(|| FmError::InvalidParams("not a file".into()))?;
+            let numbered = fm_archive::split::parse(name)
+                .is_some_and(|p| p.kind == fm_archive::split::SplitKind::Numbered);
+            if !numbered {
+                return Err(FmError::InvalidParams(
+                    "not a part of a split archive".into(),
+                ));
+            }
+            let root = crate::archive_cmds::mount(s, &uri)?;
+            s.archives
+                .for_uri(&root)
+                .cloned()
+                .ok_or_else(|| FmError::InvalidParams("not inside an archive".into()))
+        }
+        _ => target_mount(s, params),
+    }
+}
+
+fn backup_command(s: &mut Session, params: &Params, action: BackupAction) -> Result<(), FmError> {
+    check_shape(params)?;
+    let mount = backup_mount(s, params)?;
+    if mount.is_dirty() {
+        return Err(FmError::InvalidParams(
+            "discard or save the staged changes first".into(),
+        ));
+    }
+    s.submit_op(OpRequest::ArchiveSave(SaveTarget {
+        mount,
+        copy_to: None,
+        backup: Some(action),
+    }))
+    .map(|_| ())
+}
+
+/// `archive.backup.restore {uri?}` — put back the parts a split save set aside when it
+/// was interrupted (the saved changes in the new parts are dropped).
+pub fn backup_restore() -> CommandSpec {
+    CommandSpec {
+        id: "archive.backup.restore",
+        label: "Restore Previous Version",
+        menu: &["File", "Archive", "Restore Previous Version"],
+        shortcut: None,
+        params: "{uri?: string} — a location inside the split archive, or one of its part files",
+        enabled: focused_has_backups,
+        run: |s, params: &Params| backup_command(s, params, BackupAction::Restore),
+    }
+}
+
+/// `archive.backup.discard {uri?}` — delete the backup parts of an interrupted split save
+/// and keep the parts now in place.
+pub fn backup_discard() -> CommandSpec {
+    CommandSpec {
+        id: "archive.backup.discard",
+        label: "Delete Backup Parts",
+        menu: &["File", "Archive", "Delete Backup Parts"],
+        shortcut: None,
+        params: "{uri?: string} — a location inside the split archive, or one of its part files",
+        enabled: focused_has_backups,
+        run: |s, params: &Params| backup_command(s, params, BackupAction::Discard),
     }
 }
 
@@ -280,6 +370,8 @@ pub fn specs() -> Vec<CommandSpec> {
         changes(),
         password_set(),
         password_remove(),
+        backup_restore(),
+        backup_discard(),
     ]
 }
 
@@ -297,6 +389,8 @@ mod tests {
             "archive.changes",
             "archive.password.set",
             "archive.password.remove",
+            "archive.backup.restore",
+            "archive.backup.discard",
         ] {
             assert!(s.dispatch(id, &json!({})).is_err(), "{id}");
             assert!(s.dispatch(id, &json!({"uri": "/tmp"})).is_err(), "{id}");

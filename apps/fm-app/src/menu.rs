@@ -105,6 +105,8 @@ pub const ARCHIVE_SAVE: &str = "archive.save";
 pub const ARCHIVE_SAVE_AS: &str = "archive.save_as";
 pub const ARCHIVE_DISCARD: &str = "archive.discard";
 pub const ARCHIVE_CHANGES: &str = "archive.changes";
+pub const ARCHIVE_BACKUP_RESTORE: &str = "archive.backup.restore";
+pub const ARCHIVE_BACKUP_DISCARD: &str = "archive.backup.discard";
 pub const ARCHIVE_CLOSE: &str = "archive.unmount";
 pub const ARCHIVE_PASSWORD_SET: &str = "archive.password.set";
 pub const ARCHIVE_PASSWORD_REMOVE: &str = "archive.password.remove";
@@ -591,7 +593,7 @@ pub(crate) fn dispatch_folder(
         "file.clip_paste" => serde_json::json!({ "dest": folder }),
         "nav.refresh" | "bookmark.add" | "preview.open" | "image.copy" | "media.play_folder"
         | "archive.enter" | "archive.open_app" | "archive.extract" | "archive.extract_to"
-        | "archive.unmount" => {
+        | "archive.join" | "archive.unmount" => {
             serde_json::json!({ "uri": folder })
         }
         _ => serde_json::json!({ "sources": [folder] }),
@@ -825,6 +827,9 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
                 item(ui, session, dialogs, ARCHIVE_SAVE_AS);
                 item(ui, session, dialogs, ARCHIVE_DISCARD);
                 item(ui, session, dialogs, ARCHIVE_CHANGES);
+                ui.separator();
+                item(ui, session, dialogs, ARCHIVE_BACKUP_RESTORE);
+                item(ui, session, dialogs, ARCHIVE_BACKUP_DISCARD);
                 ui.separator();
                 item(ui, session, dialogs, ARCHIVE_PASSWORD_SET);
                 item(ui, session, dialogs, ARCHIVE_PASSWORD_REMOVE);

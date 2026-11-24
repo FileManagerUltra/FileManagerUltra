@@ -737,6 +737,21 @@ archive files to `archive.enter` unless `prefs.archives_browse` is off, and `nav
 an archive root returns to the archive's folder. Passwords are `Secret`s held by the
 mount (at most 8, zeroised, never persisted).
 
+Editing: `ArchiveFs` is writable for zip, tar and 7z. Changes live in an in-memory
+overlay (added, removed and renamed nodes over the read-only `Index`); nothing touches
+the archive file until `archive.save`, which streams the merged tree into a temp file next
+to the archive (`.name.fmtmp-<pid>`), checks it, refuses when the archive's size or
+modification time changed since it was opened, and swaps it in with a rename that keeps
+the old file as a backup until the swap succeeded. Split sets write new parts at the
+original size and swap them in the same way (`archive_parts`, with Restore / Delete
+Backup Parts after an interruption); `archive.join` writes a numbered set as one file
+through the same swap. Spanned zips, RAR, ISO and sets with backup parts are read-only
+(`LazyArchive::writable` says why; `file.move` and move-drops out of them are refused,
+copy works). `archive.add`/`archive.add_to`, Extract and Compress run on the `archive`
+lane as `fileops` jobs; a job that needs a password parks and the pane asks for it.
+Selecting an archive file in a Preview pane builds its card (`engine::archive_preview`)
+from a private, unregistered `LazyArchive`, so previewing mounts nothing.
+
 ## 13. Change history
 
 | Date | Change |

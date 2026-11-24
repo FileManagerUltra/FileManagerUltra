@@ -5878,3 +5878,130 @@ fn split_archive_parts_dark_light() {
         results.extend_harness(&mut harness);
     }
 }
+
+/// An encrypted zip selected in the Preview pane: the archive card (add-archive-vfs 7.5/7.7).
+#[test]
+fn archive_preview_card_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let (session, pane) =
+            preview_fixture("locked.zip", include_bytes!("fixtures/locked.zip"), false);
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut h = Harness::builder()
+            .renderer(renderer)
+            .with_accessibility_check(false)
+            .with_size(egui::vec2(520.0, 340.0))
+            .build_ui_state(
+                move |ui, session: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    fm_ui::preview::show(ui, session, pane, &tokens);
+                },
+                session,
+            );
+        h.run();
+        h.run_steps(3);
+        h.snapshot(format!("archive_preview_card_{theme}"));
+        results.extend_harness(&mut h);
+    }
+}
+
+/// Compress To… with a password, hidden names and parts of a given size
+/// (add-archive-vfs 7.7).
+#[test]
+fn compress_dialog_password_and_split_dark_light() {
+    use fm_ui::dialogs::{Dialog, Dialogs};
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let dir = VfsUri::parse("/home/alice").expect("uri");
+        let mut form = fm_ui::compress_dialog::CompressForm::new(vec![
+            dir.join("notes.txt").expect("uri"),
+            dir.join("docs").expect("uri"),
+        ])
+        .expect("form");
+        form.format = 1;
+        form.encrypt = true;
+        form.split = true;
+        form.part_mib = "650".into();
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut session = fixture_session();
+        let mut dialogs = Dialogs::default();
+        dialogs.request(Dialog::Compress(Box::new(form)));
+        let mut h = Harness::builder()
+            .with_accessibility_check(false)
+            .with_size(egui::vec2(520.0, 480.0))
+            .renderer(renderer)
+            .build_ui(move |ui| {
+                theme::apply_to(ui.ctx(), &tokens);
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                dialogs.show(ui.ctx(), &mut session, &tokens);
+            });
+        h.run();
+        h.run_steps(3);
+        h.snapshot(format!("dialog_compress_password_split_{theme}"));
+        results.extend_harness(&mut h);
+    }
+}
+
+/// The password card an Extract job parks on (add-archive-vfs 7.7).
+#[test]
+fn archive_password_dialog_dark_light() {
+    use fm_ui::dialogs::Dialogs;
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let dir = tempfile::tempdir().expect("tmp");
+        let zip = dir.path().join("locked.zip");
+        std::fs::write(&zip, include_bytes!("fixtures/locked.zip")).expect("fixture");
+        let mut s = Session::new().expect("session");
+        let uri = VfsUri::parse(&zip.to_string_lossy()).expect("uri");
+        s.dispatch(
+            "archive.extract",
+            &serde_json::json!({"uri": uri.to_string()}),
+        )
+        .expect("extract");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while s.archives.password_ask.is_none() {
+            s.poll();
+            assert!(Instant::now() < deadline, "no password ask");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut dialogs = Dialogs::default();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(480.0, 240.0))
+            .renderer(renderer)
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    ui.ctx().set_theme(if tokens.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    dialogs.show(ui.ctx(), s, &tokens);
+                },
+                s,
+            );
+        h.run();
+        h.run_steps(3);
+        h.snapshot(format!("dialog_archive_password_{theme}"));
+        results.extend_harness(&mut h);
+    }
+}

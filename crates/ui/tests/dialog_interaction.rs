@@ -2315,3 +2315,82 @@ fn the_archive_password_dialog_needs_the_password_twice() {
     assert!(dirty(&h), "staged");
     assert!(!fm_ui::archive_lock::is_open(&ctx));
 }
+
+/// The unsaved bar: Discard asks first (Keep leaves the changes), a second Discard drops
+/// them; Save starts the save (add-archive-vfs 7.2/7.7).
+#[test]
+fn the_unsaved_bar_saves_and_discards() {
+    let fs = fm_testkit::MemFs::new();
+    let zip = VfsUri::parse("/home/alice/locked.zip").expect("uri");
+    fs.put_file_at(
+        &zip,
+        include_bytes!("fixtures/locked.zip"),
+        std::time::SystemTime::UNIX_EPOCH,
+    )
+    .expect("put");
+    let mut s = Session::new().expect("session");
+    s.backends.register(std::sync::Arc::new(fs));
+    s.dispatch("archive.enter", &json!({"uri": zip.to_string()}))
+        .expect("enter");
+    let pane = s.layout.focused();
+    let root = s.layout.state(pane).expect("pane").location.clone();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !s.dirs.state(&root).is_ready() {
+        s.poll();
+        assert!(std::time::Instant::now() < deadline, "listing");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    s.backends
+        .require(&root)
+        .expect("backend")
+        .create_dir(&root.join("drafts").expect("uri"))
+        .expect("mkdir");
+    let tokens = Tokens::dark();
+    let mut h = Harness::builder()
+        .with_accessibility_check(false)
+        .with_size(egui::vec2(900.0, 500.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                let _ = fm_ui::pane::show(ui, s, pane, &tokens);
+            },
+            s,
+        );
+    let dirty = |h: &Harness<'_, Session>| {
+        h.state()
+            .archives
+            .opened_fs(&root)
+            .is_some_and(|fs| fs.is_dirty())
+    };
+    h.run();
+    assert!(h.query_by_label_contains("unsaved change").is_some());
+    h.get_by_label("Discard").click();
+    h.run();
+    assert!(h.query_by_label_contains("Discard 1 unsaved").is_some());
+    h.get_by_label("Keep").click();
+    h.run();
+    assert!(dirty(&h), "Keep leaves the changes staged");
+    h.get_by_label("Discard").click();
+    h.run();
+    h.get_by_label("Discard").click();
+    h.run();
+    assert!(!dirty(&h), "a confirmed Discard drops them");
+    assert!(h.query_by_label_contains("unsaved change").is_none());
+
+    h.state()
+        .backends
+        .require(&root)
+        .expect("backend")
+        .create_dir(&root.join("again").expect("uri"))
+        .expect("mkdir");
+    h.run();
+    h.get_by_label("Save").click();
+    h.run();
+    // The fixture is encrypted and no password was given: Save asks for one first.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while h.state().archives.password_ask.is_none() && h.state().fileops.jobs().is_empty() {
+        h.state_mut().poll();
+        assert!(std::time::Instant::now() < deadline, "Save did nothing");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}

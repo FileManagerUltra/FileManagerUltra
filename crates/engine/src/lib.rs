@@ -10,6 +10,8 @@ pub mod archive_cmds;
 pub mod archive_edit_cmds;
 pub mod archive_job_cmds;
 pub mod archive_ops;
+pub mod archive_parts;
+mod archive_preview;
 pub mod arrange_cmds;
 pub mod audio_owner;
 pub mod backends;
@@ -127,7 +129,9 @@ pub mod workspace_cmds;
 
 pub use backends::{VfsRegistry, lane_for};
 pub use dircache::{DirCache, DirState, ReadOutcome};
-pub use dnd_cmds::{DropAction, DropModifiers, DropOrigin, DropResolution, resolve_drop};
+pub use dnd_cmds::{
+    DropAction, DropModifiers, DropOrigin, DropResolution, resolve_archive_drop, resolve_drop,
+};
 pub use fileops::{FileOps, OpJob, OpRequest, OpState, OpSummary, SpeedMeter};
 pub use jobs::{JobCtx, JobEvent, JobId, JobLane, JobQueue};
 pub use prefs::{

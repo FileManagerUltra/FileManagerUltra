@@ -10,10 +10,12 @@ use std::io::{BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use fm_archive::split::PartSet;
 use fm_archive::write::{CompressOptions, Hooks, VfsFor, left_out_links, walk};
 use fm_ops::{OpCtx, OpReport, PlanLimits, Progress, TransferProgress};
 use fm_vfs::{EntryKind, FmError, Vfs, VfsUri, WriteOpts};
 
+use crate::archive_parts::{self, BackupAction};
 use crate::backends::VfsRegistry;
 
 /// Smallest part size for split output.
@@ -21,6 +23,16 @@ pub const MIN_PART: u64 = 64 * 1024;
 
 /// Most numbered names tried for a free name.
 const MAX_TRIES: u32 = 1000;
+
+/// `a (2)` → `a`; names without a trailing ` (N)` stay as they are.
+fn without_number(stem: &str) -> &str {
+    stem.strip_suffix(')')
+        .and_then(|s| s.rsplit_once(" ("))
+        .filter(|(base, n)| {
+            !base.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())
+        })
+        .map_or(stem, |(base, _)| base)
+}
 
 /// `dir/stem+suffix`, or `dir/stem (N)+suffix` from N = 2 when taken. With `parts`, the
 /// `.001` part must be free too.
@@ -36,11 +48,13 @@ fn free(
         Err(e) => Err(e),
         Ok(_) => Ok(false),
     };
+    // `a (2)` taken: the next is `a (3)`, not `a (2) (2)`.
+    let base = without_number(stem);
     for n in 1..MAX_TRIES {
         let name = if n == 1 {
             format!("{stem}{suffix}")
         } else {
-            format!("{stem} ({n}){suffix}")
+            format!("{base} ({n}){suffix}")
         };
         let candidate = dir.join(&name)?;
         let part = dir.join(&format!("{name}.001"))?;
@@ -75,7 +89,7 @@ pub fn bomb_question(name: &str, total: u64, packed: u64) -> Option<String> {
     ))
 }
 
-fn human(bytes: u64) -> String {
+pub(crate) fn human(bytes: u64) -> String {
     const UNITS: [&str; 6] = ["KB", "MB", "GB", "TB", "PB", "EB"];
     if bytes < 1000 {
         return format!("{bytes} bytes");
@@ -92,7 +106,7 @@ fn human(bytes: u64) -> String {
     format!("{value:.1} {unit}")
 }
 
-fn group(n: u64) -> String {
+pub(crate) fn group(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
@@ -346,6 +360,151 @@ fn upload(
     copied
 }
 
+/// Counts what passes through to report byte progress while a part is copied.
+struct Counting<'a> {
+    inner: &'a mut dyn Write,
+    done: &'a mut u64,
+    on: &'a mut dyn FnMut(u64),
+}
+
+impl Write for Counting<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        *self.done += n as u64;
+        (self.on)(*self.done);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Concatenate the numbered parts `first` belongs to into one file (`name.7z` for
+/// `name.7z.001`…), next to the parts unless `target` says otherwise. A missing part is
+/// named and nothing is written. The bytes go to a temporary file that replaces an
+/// existing target only after `ask` agreed and the sizes add up; the parts are kept.
+pub(crate) fn join(
+    backends: &VfsRegistry,
+    first: &VfsUri,
+    target: Option<&VfsUri>,
+    ask: &mut dyn FnMut(&str) -> bool,
+    cancelled: &(dyn Fn() -> bool + Sync),
+    progress: &mut dyn FnMut(&Progress),
+) -> Result<OpReport, FmError> {
+    if first.archive_handle().is_some() || target.is_some_and(|t| t.archive_handle().is_some()) {
+        return Err(FmError::Unsupported(
+            "join parts that are in a folder, not inside an archive",
+        ));
+    }
+    let dir = first
+        .parent()
+        .ok_or_else(|| FmError::InvalidParams("the part needs a folder".into()))?;
+    let name = first
+        .file_name()
+        .ok_or_else(|| FmError::InvalidParams("the part needs a name".into()))?;
+    let vfs = backends.require(&dir)?;
+    let entries = vfs.read_dir(&dir)?;
+    let set = PartSet::read(name, &entries)?;
+    if !set.backups.is_empty() {
+        return Err(FmError::backend(
+            "archive",
+            format!(
+                "An earlier save of {} was interrupted; restore or delete its backup parts first",
+                set.base
+            ),
+        ));
+    }
+    let target = match target {
+        Some(t) => t.clone(),
+        None => dir.join(&set.base)?,
+    };
+    let target_dir = target
+        .parent()
+        .ok_or_else(|| FmError::InvalidParams("the target needs a folder".into()))?;
+    let target_name = target
+        .file_name()
+        .ok_or_else(|| FmError::InvalidParams("the target needs a name".into()))?
+        .to_string();
+    if target_dir == dir && set.names.contains(&target_name) {
+        return Err(FmError::InvalidParams(
+            "the target is one of the parts".into(),
+        ));
+    }
+    let dest_vfs = backends.require(&target_dir)?;
+    match dest_vfs.stat(&target) {
+        Ok(_) => {
+            if !ask(&format!("{target_name} already exists. Replace it?")) {
+                return Ok(OpReport {
+                    cancelled: true,
+                    ..OpReport::default()
+                });
+            }
+        }
+        Err(FmError::NotFound(_)) => {}
+        Err(e) => return Err(e),
+    }
+
+    let sizes: Vec<u64> = set
+        .names
+        .iter()
+        .map(|n| {
+            entries
+                .iter()
+                .find(|e| &e.name == n)
+                .and_then(|e| e.size)
+                .unwrap_or(0)
+        })
+        .collect();
+    let total: u64 = sizes.iter().sum();
+    let tmp = target_dir.join(&format!(".{target_name}.fmtmp-{}", std::process::id()))?;
+    let written = (|| -> Result<(), FmError> {
+        let mut dst = dest_vfs.open_write(&tmp, WriteOpts::default())?;
+        let mut done = 0u64;
+        for (i, part) in set.names.iter().enumerate() {
+            let mut src = vfs.open_read(&dir.join(part)?)?;
+            let before = done;
+            let mut on = |now: u64| {
+                progress(&Progress {
+                    bytes: TransferProgress {
+                        done: now.min(total),
+                        total,
+                    },
+                    items: TransferProgress {
+                        done: i as u64,
+                        total: set.names.len() as u64,
+                    },
+                    current: part.clone(),
+                });
+            };
+            let mut counted = Counting {
+                inner: &mut dst,
+                done: &mut done,
+                on: &mut on,
+            };
+            copy_cancellable(&mut src, &mut counted, u64::MAX, cancelled)?;
+            if done < before.saturating_add(sizes.get(i).copied().unwrap_or(0)) {
+                return Err(FmError::backend(
+                    "archive",
+                    format!("{part} is shorter than it was listed; try again"),
+                ));
+            }
+        }
+        dst.flush()?;
+        Ok(())
+    })();
+    let placed = written.and_then(|()| swap_in(dest_vfs.as_ref(), &tmp, &target, &target_dir));
+    if let Err(e) = placed {
+        let _ = dest_vfs.remove(&tmp);
+        return Err(e);
+    }
+    Ok(OpReport {
+        done: set.names.len() as u64,
+        created: vec![target],
+        ..OpReport::default()
+    })
+}
+
 fn write_parts(
     vfs: &dyn Vfs,
     dir: &VfsUri,
@@ -383,7 +542,7 @@ fn write_parts(
     Ok(parts)
 }
 
-fn copy_cancellable(
+pub(crate) fn copy_cancellable(
     src: &mut dyn Read,
     dst: &mut dyn Write,
     limit: u64,
@@ -430,6 +589,8 @@ pub struct SaveTarget {
     /// `None`: replace the archive file; `Some(dir/name)`: Save as copy (numbered when
     /// taken).
     pub copy_to: Option<VfsUri>,
+    /// Not a save: restore or delete the backup parts an interrupted save left.
+    pub backup: Option<BackupAction>,
 }
 
 impl SaveTarget {
@@ -451,13 +612,16 @@ impl std::fmt::Debug for SaveTarget {
         f.debug_struct("SaveTarget")
             .field("archive", self.mount.container())
             .field("copy_to", &self.copy_to)
+            .field("backup", &self.backup)
             .finish()
     }
 }
 
 impl PartialEq for SaveTarget {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.mount, &other.mount) && self.copy_to == other.copy_to
+        Arc::ptr_eq(&self.mount, &other.mount)
+            && self.copy_to == other.copy_to
+            && self.backup == other.backup
     }
 }
 
@@ -485,6 +649,55 @@ fn swap_in(vfs: &dyn Vfs, tmp: &VfsUri, dst: &VfsUri, dir: &VfsUri) -> Result<()
     Ok(())
 }
 
+/// Cut the saved archive at `from` into parts of the original size next to the old ones
+/// and swap them in (add-archive-vfs D16).
+fn replace_parts(
+    vfs: &dyn Vfs,
+    dir: &VfsUri,
+    old: &PartSet,
+    from: &std::path::Path,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), FmError> {
+    let total = std::fs::metadata(from)?.len();
+    let names = old.part_names(archive_parts::part_count(total, old.part_size))?;
+    let temps = archive_parts::write_temp_parts(vfs, dir, &names, from, old.part_size, cancelled)?;
+    // Past this point nothing is cancelled: a half-done swap is the one bad state.
+    if cancelled() {
+        for t in &temps {
+            let _ = vfs.remove(t);
+        }
+        return Err(FmError::Cancelled);
+    }
+    archive_parts::swap_parts(vfs, dir, &old.names, &names, &temps).inspect_err(|_| {
+        for t in &temps {
+            let _ = vfs.remove(t);
+        }
+    })
+}
+
+/// Restore or delete the backup parts of an interrupted save (no archive is written).
+fn recover_backups(
+    mount: &fm_archive::mount::LazyArchive,
+    action: BackupAction,
+) -> Result<OpReport, FmError> {
+    if mount.is_dirty() {
+        return Err(FmError::InvalidParams(
+            "discard the staged changes first".into(),
+        ));
+    }
+    let container = mount.container();
+    let dir = container
+        .parent()
+        .ok_or_else(|| FmError::InvalidParams("the archive has no folder".into()))?;
+    let first = container.file_name().unwrap_or_default();
+    let done = archive_parts::recover(mount.container_vfs().as_ref(), &dir, first, action)?;
+    mount.reopen();
+    Ok(OpReport {
+        done,
+        ..OpReport::default()
+    })
+}
+
 /// Write an archive with its staged changes (add-archive-vfs D7): check the file did not
 /// change since it was opened, write the new archive to a temporary file, read it back,
 /// then put it in place. The original stays untouched, and the staged changes stay, until
@@ -496,6 +709,9 @@ pub(crate) fn save(
     progress: &mut dyn FnMut(&Progress),
 ) -> Result<OpReport, FmError> {
     let mount = &target.mount;
+    if let Some(action) = target.backup {
+        return recover_backups(mount, action);
+    }
     let fs = mount
         .opened()
         .ok_or_else(|| FmError::InvalidParams("the archive is not open".into()))?;
@@ -507,14 +723,34 @@ pub(crate) fn save(
     }
     let container = mount.container().clone();
     let cvfs = mount.container_vfs().clone();
-    if target.copy_to.is_none() {
-        let now = cvfs.stat(&container)?;
-        if fs.stamp() != Some((now.size.unwrap_or(0), now.modified)) {
+    // A numbered set is written back as numbered parts, replacing the originals.
+    let parts = fs.parts().filter(|_| target.copy_to.is_none()).cloned();
+    let changed = || {
+        FmError::backend(
+            "archive",
+            "The archive changed on disk since it was opened: save it as a copy, or \
+             discard the changes",
+        )
+    };
+    if let Some(set) = &parts {
+        let dir = container
+            .parent()
+            .ok_or_else(|| FmError::InvalidParams("the archive has no folder".into()))?;
+        let first = container.file_name().unwrap_or_default();
+        let now = PartSet::read(first, &cvfs.read_dir(&dir)?)?;
+        if !now.backups.is_empty() {
             return Err(FmError::backend(
                 "archive",
-                "The archive changed on disk since it was opened: save it as a copy, or \
-                 discard the changes",
+                "Backup parts of an earlier save are in the folder: restore or delete them first",
             ));
+        }
+        if now.names != set.names || now.stamp != set.stamp {
+            return Err(changed());
+        }
+    } else if target.copy_to.is_none() {
+        let now = cvfs.stat(&container)?;
+        if fs.stamp() != Some((now.size.unwrap_or(0), now.modified)) {
+            return Err(changed());
         }
     }
     let (dir, dvfs, final_uri) = match &target.copy_to {
@@ -544,7 +780,9 @@ pub(crate) fn save(
         ));
     }
     let result = (|| -> Result<OpReport, FmError> {
-        let local_dir = dir.local_path().filter(|_| dvfs.is_native_local());
+        let local_dir = dir
+            .local_path()
+            .filter(|_| dvfs.is_native_local() && parts.is_none());
         let temp = match &local_dir {
             Some(d) => Temp {
                 path: d.join(format!(".{final_name}.fmtmp-{}", std::process::id())),
@@ -591,9 +829,12 @@ pub(crate) fn save(
             temp.cleanup();
             return Err(FmError::Cancelled);
         }
-        let placed = match &local_dir {
-            Some(d) => std::fs::rename(&temp.path, d.join(&final_name)).map_err(FmError::Io),
-            None => {
+        let placed = match (&local_dir, &parts) {
+            (_, Some(set)) => replace_parts(dvfs.as_ref(), &dir, set, &temp.path, cancelled),
+            (Some(d), None) => {
+                std::fs::rename(&temp.path, d.join(&final_name)).map_err(FmError::Io)
+            }
+            (None, None) => {
                 let tmp_uri = dir.join(&format!(".{final_name}.fmtmp-{}", std::process::id()))?;
                 upload(dvfs.as_ref(), &temp.path, &tmp_uri, cancelled).and_then(|()| {
                     swap_in(dvfs.as_ref(), &tmp_uri, &final_uri, &dir).inspect_err(|_| {
@@ -628,6 +869,30 @@ pub(crate) fn save(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numbered_names_count_on_instead_of_nesting() {
+        assert_eq!(without_number("a (2)"), "a");
+        assert_eq!(without_number("a b (12)"), "a b");
+        for same in ["a", "a (x)", "a (2) b", "(2)", " (2)", "a ()"] {
+            assert_eq!(without_number(same), same);
+        }
+        let tmp = tempfile::tempdir().expect("tmp");
+        for name in ["a.zip", "a (2).zip"] {
+            std::fs::write(tmp.path().join(name), b"x").expect("w");
+        }
+        let vfs = fm_fs_local::LocalFs::new();
+        let dir = VfsUri::parse(&tmp.path().to_string_lossy()).expect("dir");
+        let next = |stem: &str| {
+            free(&vfs, &dir, stem, ".zip", false)
+                .expect("free")
+                .file_name()
+                .map(str::to_string)
+        };
+        assert_eq!(next("a").as_deref(), Some("a (3).zip"));
+        assert_eq!(next("a (2)").as_deref(), Some("a (3).zip"));
+        assert_eq!(next("b (2)").as_deref(), Some("b (2).zip"));
+    }
 
     #[test]
     fn only_large_extractions_at_a_bomb_ratio_ask() {
@@ -689,6 +954,7 @@ mod tests {
         let target = SaveTarget {
             mount: mount.clone(),
             copy_to: None,
+            backup: None,
         };
         let listing = |mem: &fm_testkit::MemFs| {
             let dir = VfsUri::parse("/srv").expect("dir");

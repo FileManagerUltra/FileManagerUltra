@@ -32,6 +32,8 @@ pub struct DropModifiers {
 pub enum DropAction {
     Copy,
     Move,
+    /// Dropped on an archive file: add to it and save (`archive.add`).
+    Add,
 }
 
 /// What releasing the payload here would do.
@@ -81,6 +83,27 @@ pub fn resolve_drop(
         Some(true) => DropResolution::Do(DropAction::Move),
         _ => DropResolution::Do(DropAction::Copy),
     }
+}
+
+/// The action for a drop on a writable archive file: always Add (no Move, no modifiers).
+pub fn resolve_archive_drop(
+    sources: &[VfsUri],
+    dest: &VfsUri,
+    mods: DropModifiers,
+) -> DropResolution {
+    if sources.is_empty() {
+        return DropResolution::NoDrop("nothing to drop");
+    }
+    if sources.len() > MAX_SOURCES {
+        return DropResolution::NoDrop("too many items");
+    }
+    if mods.ctrl && mods.shift {
+        return DropResolution::NoDrop("Ctrl+Shift is not a drop modifier");
+    }
+    if sources.iter().any(|s| s.is_same_or_descendant_of(dest)) {
+        return DropResolution::NoDrop("cannot add an archive to itself");
+    }
+    DropResolution::Do(DropAction::Add)
 }
 
 type DeviceKey = (VfsUri, VfsUri);
@@ -135,6 +158,28 @@ impl Session {
         None
     }
 
+    /// Whether a drop on `dest` adds to the archive file there (a file with the name of a
+    /// writable archive, outside other archives) instead of landing in a folder.
+    pub fn is_archive_drop_target(&self, dest: &VfsUri) -> bool {
+        if dest.archive_handle().is_some() {
+            return false;
+        }
+        let Some(name) = dest.file_name() else {
+            return false;
+        };
+        if !crate::archive_cmds::is_writable_archive_name(name) {
+            return false;
+        }
+        // A folder that happens to be named like an archive is still a folder.
+        match dest.parent().and_then(|p| self.dirs.entries(&p)) {
+            Some(entries) => entries
+                .iter()
+                .find(|e| e.uri == *dest)
+                .is_none_or(|e| e.is_file()),
+            None => true,
+        }
+    }
+
     /// What the badge shows while `sources` hover `dest`.
     pub fn preview_drop(
         &mut self,
@@ -143,12 +188,23 @@ impl Session {
         mods: DropModifiers,
         origin: DropOrigin,
     ) -> DropResolution {
+        if self.is_archive_drop_target(dest) {
+            return resolve_archive_drop(sources, dest, mods);
+        }
         let same = if origin == DropOrigin::Internal && !mods.ctrl && !mods.shift {
             self.same_device_hint(sources, dest)
         } else {
             None
         };
-        resolve_drop(sources, dest, mods, origin, same)
+        let resolved = resolve_drop(sources, dest, mods, origin, same);
+        if resolved == DropResolution::Do(DropAction::Move)
+            && sources
+                .iter()
+                .any(|u| self.archives.move_blocked(u).is_some())
+        {
+            return DropResolution::NoDrop("this archive is read-only: hold Ctrl to copy");
+        }
+        resolved
     }
 }
 
@@ -208,8 +264,13 @@ fn drop_run(s: &mut Session, params: &Params) -> Result<(), FmError> {
     };
 
     if !sources.is_empty() {
-        let same = s.same_device_hint(&sources, &dest);
-        match resolve_drop(&sources, &dest, mods, origin, same) {
+        let resolution = if s.is_archive_drop_target(&dest) {
+            resolve_archive_drop(&sources, &dest, mods)
+        } else {
+            let same = s.same_device_hint(&sources, &dest);
+            resolve_drop(&sources, &dest, mods, origin, same)
+        };
+        match resolution {
             DropResolution::Do(action) => {
                 let request = match action {
                     DropAction::Copy => OpRequest::Copy {
@@ -222,6 +283,14 @@ fn drop_run(s: &mut Session, params: &Params) -> Result<(), FmError> {
                         dest,
                         policy: ConflictPolicy::Ask,
                     },
+                    DropAction::Add => {
+                        let list: Vec<String> = sources.iter().map(ToString::to_string).collect();
+                        s.dispatch(
+                            "archive.add",
+                            &serde_json::json!({ "uri": dest.to_string(), "sources": list }),
+                        )?;
+                        return Ok(());
+                    }
                 };
                 s.submit_op(request)?;
             }

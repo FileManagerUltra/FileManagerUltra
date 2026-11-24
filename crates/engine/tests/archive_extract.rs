@@ -635,3 +635,42 @@ fn any_part_of_a_split_archive_opens_and_extracts_the_whole_set() {
         "{message}"
     );
 }
+
+#[test]
+fn adding_to_an_encrypted_zip_asks_for_the_password_then_saves_encrypted() {
+    let f = fixture();
+    let zip = f.work.join("secret.zip");
+    std::fs::write(&zip, aes_zip("right")).expect("zip");
+    std::fs::write(f.work.join("new.txt"), b"fresh").expect("new");
+    let before = std::fs::read(&zip).expect("bytes");
+    let mut s = Session::new().expect("session");
+    s.dispatch(
+        "archive.add",
+        &json!({"uri": uri(&zip), "sources": [uri(&f.work.join("new.txt"))]}),
+    )
+    .expect("add");
+    wait_idle(&mut s);
+    assert!(matches!(last_state(&s), OpState::Failed(m) if m.contains("needs a password")));
+    assert_eq!(std::fs::read(&zip).expect("bytes"), before, "unchanged");
+    let ask = s.archives.password_ask.clone().expect("asks");
+    s.dispatch(
+        "archive.password",
+        &json!({"uri": ask.uri.to_string(), "password": "right"}),
+    )
+    .expect("password");
+    wait_idle(&mut s);
+    assert_eq!(last_state(&s), OpState::Finished);
+    let file = std::fs::File::open(&zip).expect("open");
+    let mut z = zip::ZipArchive::new(file).expect("zip");
+    assert!(
+        z.by_name("new.txt").is_err(),
+        "an encrypted member needs the password"
+    );
+    let mut text = String::new();
+    std::io::Read::read_to_string(
+        &mut z.by_name_decrypt("new.txt", b"right").expect("decrypt"),
+        &mut text,
+    )
+    .expect("read");
+    assert_eq!(text, "fresh");
+}

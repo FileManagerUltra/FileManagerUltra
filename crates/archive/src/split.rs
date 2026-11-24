@@ -255,6 +255,136 @@ pub fn resolve_numbered<'a>(
     Ok(parts)
 }
 
+/// Ends the name a part keeps while Save swaps a set (`.backup.7z.001.fmbak`).
+const BACKUP_END: &str = ".fmbak";
+/// Ends the name of a new part before it is put in place (`.backup.7z.001.fmtmp`).
+const TEMP_END: &str = ".fmtmp";
+/// Most parts Save writes (matches Compress).
+pub const MAX_WRITTEN_PARTS: u64 = 9_999;
+
+/// Where a part waits while its set is being replaced.
+pub fn backup_name(part: &str) -> String {
+    format!(".{part}{BACKUP_END}")
+}
+
+/// Where a new part is written before the swap.
+pub fn temp_name(part: &str) -> String {
+    format!(".{part}{TEMP_END}")
+}
+
+/// The part a backup name stands for, with its parsed name.
+fn backup_of(name: &str) -> Option<(String, PartName)> {
+    let part = name.strip_prefix('.')?.strip_suffix(BACKUP_END)?;
+    let p = parse(part).filter(|p| p.kind == SplitKind::Numbered)?;
+    Some((part.to_string(), p))
+}
+
+/// The backups of an interrupted save that belong to the set of `first`, in name order.
+pub fn backups_of(first: &str, entries: &[fm_vfs::Entry]) -> Vec<String> {
+    let Some(p) = parse(first).filter(|p| p.kind == SplitKind::Numbered) else {
+        return Vec::new();
+    };
+    let mut backups: Vec<String> = entries
+        .iter()
+        .filter(|e| backup_of(&e.name).is_some_and(|(_, q)| q.base == p.base))
+        .map(|e| e.name.clone())
+        .collect();
+    backups.sort();
+    backups
+}
+
+/// The part names `backups` stand for, in order; fails unless they form a whole set
+/// starting at part 1.
+pub fn backed_up_parts(backups: &[String]) -> Result<Vec<String>, FmError> {
+    let parts: Vec<String> = backups
+        .iter()
+        .filter_map(|b| backup_of(b).map(|(part, _)| part))
+        .collect();
+    let first = parts
+        .iter()
+        .find(|p| parse(p).is_some_and(|q| q.number == 1))
+        .ok_or_else(|| FmError::backend("archive", "the backup has no first part"))?;
+    resolve_numbered(first, parts.iter().map(String::as_str))
+}
+
+/// A numbered set as found in its folder: what Save has to write back, what the
+/// changed-on-disk check compares, and any backups an interrupted save left behind.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartSet {
+    /// The archive's own name (`backup.7z`).
+    pub base: String,
+    /// The parts in order (`backup.7z.001`, …).
+    pub names: Vec<String>,
+    width: usize,
+    /// Size of a full part; `None` for a set of one part (no size to keep).
+    pub part_size: Option<u64>,
+    /// Total size and newest modification time over every part.
+    pub stamp: (u64, Option<std::time::SystemTime>),
+    /// Parts of an earlier save that were kept aside, in name order.
+    pub backups: Vec<String>,
+}
+
+impl PartSet {
+    /// Read the set `first` belongs to from a folder listing. Fails naming the first
+    /// missing part, unless backups of an interrupted save are there: then the message
+    /// says so.
+    pub fn read(first: &str, entries: &[fm_vfs::Entry]) -> Result<Self, FmError> {
+        let p = parse(first)
+            .filter(|p| p.kind == SplitKind::Numbered)
+            .ok_or_else(|| FmError::InvalidParams(format!("{first} is not a numbered part")))?;
+        let backups = backups_of(first, entries);
+        let names =
+            resolve_numbered(first, entries.iter().map(|e| e.name.as_str())).map_err(|e| {
+                if backups.is_empty() {
+                    e
+                } else {
+                    FmError::backend(
+                        "archive",
+                        format!(
+                            "An earlier save of {} was interrupted and its previous parts are \
+                             kept as {}. Use File › Archive › Restore Previous Version to put \
+                             them back. ({e})",
+                            p.base,
+                            backups.join(", ")
+                        ),
+                    )
+                }
+            })?;
+        let mut total = 0u64;
+        let mut newest = None;
+        let mut biggest = 0u64;
+        for name in &names {
+            if let Some(e) = entries.iter().find(|e| &e.name == name) {
+                let size = e.size.unwrap_or(0);
+                total = total.saturating_add(size);
+                biggest = biggest.max(size);
+                newest = newest.max(e.modified);
+            }
+        }
+        Ok(Self {
+            base: p.base,
+            part_size: (names.len() > 1 && biggest > 0).then_some(biggest),
+            names,
+            width: p.width,
+            stamp: (total, newest),
+            backups,
+        })
+    }
+
+    /// Names of `count` parts of this set, numbered like the originals.
+    pub fn part_names(&self, count: u64) -> Result<Vec<String>, FmError> {
+        if count > MAX_WRITTEN_PARTS {
+            return Err(FmError::InvalidParams(format!(
+                "that would make more than {MAX_WRITTEN_PARTS} parts"
+            )));
+        }
+        Ok((1..=count.max(1))
+            .filter_map(|n| u32::try_from(n).ok())
+            .map(|n| numbered_name(&self.base, n, self.width))
+            .collect())
+    }
+}
+
 /// The parts of the spanned zip `zip_name` (`site.zip`): `site.z01` … then `site.zip`.
 pub fn resolve_spanned<'a>(
     zip_name: &str,
@@ -520,6 +650,79 @@ pub fn spanned_zip(parts: Vec<Arc<dyn Source>>) -> Result<Arc<dyn Source>, FmErr
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    fn listed(files: &[(&str, u64)]) -> Vec<fm_vfs::Entry> {
+        files
+            .iter()
+            .map(|(name, size)| {
+                let uri = fm_vfs::VfsUri::parse("/d")
+                    .and_then(|d| d.join(name))
+                    .expect("uri");
+                let mut e = fm_vfs::Entry::new(uri, fm_vfs::EntryKind::File);
+                e.name = name.to_string();
+                e.size = Some(*size);
+                e
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_part_set_remembers_names_size_and_stamp() {
+        let set = PartSet::read(
+            "a.7z.001",
+            &listed(&[
+                ("a.7z.001", 100),
+                ("a.7z.002", 100),
+                ("a.7z.003", 30),
+                ("b", 5),
+            ]),
+        )
+        .expect("set");
+        assert_eq!(set.names, ["a.7z.001", "a.7z.002", "a.7z.003"]);
+        assert_eq!((set.part_size, set.stamp.0), (Some(100), 230));
+        assert!(set.backups.is_empty());
+        assert_eq!(
+            set.part_names(4).expect("names").last().map(String::as_str),
+            Some("a.7z.004")
+        );
+        assert!(set.part_names(10_000).is_err());
+        let one = PartSet::read("a.7z.001", &listed(&[("a.7z.001", 100)])).expect("one");
+        assert_eq!(one.part_size, None);
+    }
+
+    #[test]
+    fn a_gap_next_to_backups_points_at_the_interrupted_save() {
+        let entries = listed(&[
+            ("a.7z.002", 1),
+            (".a.7z.001.fmbak", 1),
+            (".a.7z.002.fmbak", 1),
+        ]);
+        let text = PartSet::read("a.7z.001", &entries)
+            .expect_err("gap")
+            .to_string();
+        assert!(
+            text.contains("interrupted") && text.contains(".a.7z.001.fmbak"),
+            "{text}"
+        );
+        let plain = PartSet::read("a.7z.001", &listed(&[("a.7z.002", 1)]))
+            .expect_err("gap")
+            .to_string();
+        assert!(!plain.contains("interrupted"), "{plain}");
+    }
+
+    #[test]
+    fn backups_of_other_sets_are_not_mine() {
+        let entries = listed(&[
+            (".a.7z.001.fmbak", 1),
+            (".b.7z.001.fmbak", 1),
+            ("a.7z.001", 1),
+        ]);
+        assert_eq!(backups_of("a.7z.001", &entries), [".a.7z.001.fmbak"]);
+        assert!(
+            backed_up_parts(&[".a.7z.002.fmbak".to_string()]).is_err(),
+            "no part 1"
+        );
+    }
 
     #[test]
     fn part_names_are_recognised_only_for_archives() {

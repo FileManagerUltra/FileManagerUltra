@@ -1674,3 +1674,54 @@ fn a_picture_that_fits_is_not_decoded_again() {
     assert_eq!(before, after, "the same picture stays");
     assert_eq!(shown_picture(&r.s, preview), Some((800, 600, (800, 600))));
 }
+
+fn zip_with(files: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let o = zip::write::SimpleFileOptions::default();
+    for (name, data) in files {
+        w.start_file(*name, o).expect("start");
+        w.write_all(data).expect("write");
+    }
+    w.finish().expect("finish").into_inner()
+}
+
+fn row<'a>(doc: &'a fm_preview::MetaDoc, key: &str) -> Option<&'a str> {
+    doc.rows
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
+}
+
+#[test]
+fn an_archive_previews_as_a_card_without_mounting_it() {
+    let zip = zip_with(&[("a.txt", b"hello"), ("sub/b.txt", b"world!!")]);
+    let mut r = rig(&[("x.zip", &zip), ("broken.zip", b"not a zip at all")]);
+    r.cursor("x.zip");
+    let Preview::Meta(doc) = &*r.wait_static() else {
+        panic!("meta card")
+    };
+    assert_eq!(row(doc, "Format"), Some("zip"));
+    assert_eq!(row(doc, "Entries"), Some("2 files, 1 folder"));
+    assert!(row(doc, "Size").is_some_and(|s| s.contains("unpacked")));
+    assert_eq!(row(doc, "Top level"), Some("a.txt, sub/"));
+    assert!(row(doc, "Encrypted").is_none());
+    assert!(
+        doc.hint
+            .as_deref()
+            .is_some_and(|h| h.contains("Press Enter"))
+    );
+    assert!(r.s.archives.password_ask.is_none());
+
+    r.cursor("broken.zip");
+    assert!(pump(&mut r.s, |s| matches!(
+        s.preview_slot(r.preview)
+            .and_then(|x| x.subject.as_ref())
+            .map(|e| e.name.as_str()),
+        Some("broken.zip")
+    )));
+    let Preview::Meta(doc) = &*r.wait_static() else {
+        panic!("meta card")
+    };
+    assert!(doc.hint.is_some());
+}

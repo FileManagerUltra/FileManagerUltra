@@ -336,12 +336,18 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             origin: pane,
                         });
                     }
-                    // An archive's own row is no drop target until adding to archives lands.
-                    if row.is_dir && row.container.is_none() {
+                    // A folder takes the drop into it; a writable archive's row has the items
+                    // added to the archive file.
+                    let drop_dest = match &row.container {
+                        None if row.is_dir => Some(row.uri.clone()),
+                        Some(file) if s.is_archive_drop_target(file) => Some(file.clone()),
+                        _ => None,
+                    };
+                    if let Some(dest) = drop_dest {
                         crate::dnd::register_zone(
                             ui.ctx(),
                             response.rect,
-                            row.uri.clone(),
+                            dest,
                             crate::dnd::ZONE_ROW,
                         );
                     }

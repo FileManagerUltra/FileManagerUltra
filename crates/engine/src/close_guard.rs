@@ -249,6 +249,7 @@ impl Session {
                     let request = OpRequest::ArchiveSave(crate::archive_ops::SaveTarget {
                         mount,
                         copy_to: None,
+                        backup: None,
                     });
                     if let Err(e) = self.submit_op(request) {
                         self.pending_close = None;

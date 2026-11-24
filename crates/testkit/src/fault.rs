@@ -29,6 +29,10 @@ pub struct Faults {
     pub rename_unsupported: bool,
     /// Overrides `same_device`.
     pub same_device: Option<bool>,
+    /// `rename` calls with these numbers (counting from 1 since the wrapper was made) fail.
+    pub fail_renames: Option<std::ops::RangeInclusive<usize>>,
+    /// How many `rename` calls were made so far.
+    pub renames: usize,
 }
 
 /// Fault-injecting wrapper around another [`Vfs`].
@@ -171,8 +175,20 @@ impl<V: Vfs> Vfs for FaultFs<V> {
     }
 
     fn rename(&self, from: &VfsUri, to: &VfsUri) -> Result<(), FmError> {
-        if self.faults().rename_unsupported {
-            return Err(FmError::Unsupported("rename (injected)"));
+        {
+            let mut faults = self.faults();
+            faults.renames += 1;
+            if faults.rename_unsupported {
+                return Err(FmError::Unsupported("rename (injected)"));
+            }
+            let call = faults.renames;
+            if faults
+                .fail_renames
+                .as_ref()
+                .is_some_and(|r| r.contains(&call))
+            {
+                return Err(FmError::backend("fault", "injected rename failure"));
+            }
         }
         self.inner.rename(from, to)
     }

@@ -67,6 +67,17 @@ fn reports_marks_and_folder_aggregates() {
 }
 
 #[test]
+fn repo_root_shows_change_made_directly_in_it() {
+    let t = fixture();
+    let d = t.path();
+    assert_eq!(fm_git::status(d).unwrap().mark_abs(d), None);
+    std::fs::write(d.join("x.log"), "l\n").unwrap();
+    assert_eq!(fm_git::status(d).unwrap().mark_abs(d), None);
+    std::fs::write(d.join("a.txt"), "two\n").unwrap();
+    assert_eq!(fm_git::status(d).unwrap().mark_abs(d), Some(Mark::Modified));
+}
+
+#[test]
 fn blobs_from_head_and_index() {
     let t = fixture();
     let d = t.path();

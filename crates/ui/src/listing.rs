@@ -1113,7 +1113,8 @@ fn entry_row_ui(
         let payload = crate::dnd::payload_for(s, pane, &entry.name, &entry.uri);
         response.dnd_set_drag_payload(payload);
     }
-    if entry.is_dir() {
+    // A folder takes the drop into it; a writable archive file has the items added to it.
+    if entry.is_dir() || (entry.is_file() && s.is_archive_drop_target(&entry.uri)) {
         crate::dnd::register_zone(ui.ctx(), rect, entry.uri.clone(), crate::dnd::ZONE_ROW);
     }
 

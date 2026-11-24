@@ -123,6 +123,107 @@ pub fn extract_to() -> CommandSpec {
     }
 }
 
+/// `archive.add {uri, sources?, dir?}` — add the selection to the archive file `uri`
+/// (into its folder `dir`, default the top), asking about names it already has, and save
+/// it in the same job. When the archive already has unsaved changes the selection is only
+/// staged on top of them.
+pub fn add() -> CommandSpec {
+    CommandSpec {
+        id: "archive.add",
+        label: "Add to Archive",
+        menu: &["File", "Archive", "Add to Archive"],
+        shortcut: None,
+        params: "{uri: string, sources?: [string], dir?: string} — a writable archive file; sources default to the selection; dir is a folder inside the archive",
+        enabled: |_s| true,
+        run: |s, params: &Params| {
+            let map = obj(params)?;
+            let (uri, name) = archive_file(map)?;
+            let sources = sources_of(s, map)?;
+            if sources.len() > crate::fileops::MAX_SOURCES {
+                return Err(FmError::InvalidParams(format!(
+                    "too many items (limit {})",
+                    crate::fileops::MAX_SOURCES
+                )));
+            }
+            if sources.iter().any(|u| *u == uri || u.is_ancestor_of(&uri)) {
+                return Err(FmError::InvalidParams(
+                    "an archive cannot be added to itself".into(),
+                ));
+            }
+            ensure_registered(s, &uri)?;
+            let root = mount(s, &uri)?;
+            let lazy = s
+                .archives
+                .for_uri(&root)
+                .cloned()
+                .ok_or_else(|| FmError::NotFound("archive".into()))?;
+            match lazy.opened() {
+                Some(fs) => fs.writable()?,
+                None if !crate::archive_cmds::is_writable_archive_name(&name) => {
+                    return Err(FmError::Unsupported("this kind of archive is read-only"));
+                }
+                None => {}
+            }
+            let dest = match map.get("dir") {
+                None | Some(Params::Null) => root.clone(),
+                Some(_) => required_uri(map, "dir")?,
+            };
+            if dest.archive_handle() != root.archive_handle() {
+                return Err(FmError::InvalidParams(
+                    "dir must be a folder inside the archive".into(),
+                ));
+            }
+            let save = (!lazy.is_dirty()).then(|| crate::archive_ops::SaveTarget {
+                mount: lazy,
+                copy_to: None,
+                backup: None,
+            });
+            s.submit_op(OpRequest::Add {
+                sources,
+                dest,
+                policy: fm_ops::ConflictPolicy::Ask,
+                save,
+            })?;
+            Ok(())
+        },
+    }
+}
+
+/// `archive.add_to {sources?}` — choose an archive file with the path picker, then add the
+/// selection to it.
+pub fn add_to() -> CommandSpec {
+    CommandSpec {
+        id: "archive.add_to",
+        label: "Add to Archive…",
+        menu: &["File", "Archive", "Add to Archive…"],
+        shortcut: None,
+        params: "{sources?: [string]} — sources default to the selection",
+        enabled: |s| !crate::file_cmds::focused_selection(s).is_empty(),
+        run: |s, params: &Params| {
+            let sources = match params.as_object() {
+                Some(map) => sources_of(s, map)?,
+                None if params.is_null() => sources_of(s, &Map::new())?,
+                None => return Err(FmError::InvalidParams("expected an object".into())),
+            };
+            let start = sources
+                .first()
+                .and_then(VfsUri::parent)
+                .filter(|p| p.archive_handle().is_none())
+                .map(|p| p.to_string());
+            s.archives.add_pending = Some(sources);
+            s.dispatch(
+                "picker.open",
+                &json!({
+                    "purpose": "archive.add",
+                    "kind": "file",
+                    "title": "Add to which archive?",
+                    "start": start,
+                }),
+            )
+        },
+    }
+}
+
 fn options(map: &Map<String, Params>) -> Result<(CompressOptions, Option<u64>), FmError> {
     let format = map
         .get("format")
@@ -369,6 +470,56 @@ pub fn suffix_of(format: FormatId) -> &'static str {
     }
 }
 
+/// Whether `name` is a part of a numbered split archive (`backup.7z.002`): the only sets
+/// that can be joined by concatenation (not spanned zips or RAR volumes).
+pub fn is_joinable_part(name: &str) -> bool {
+    fm_archive::split::parse(name).is_some_and(|p| p.kind == fm_archive::split::SplitKind::Numbered)
+}
+
+/// `archive.join {uri, target?}` — concatenate the numbered parts `uri` belongs to into
+/// one file next to them (`backup.7z.001`… → `backup.7z`), or at `target`.
+pub fn join() -> CommandSpec {
+    CommandSpec {
+        id: "archive.join",
+        label: "Join Parts",
+        menu: &["File", "Archive", "Join Parts"],
+        shortcut: None,
+        params: "{uri?: string, target?: string} — a numbered part (name.7z.001…); uri defaults to the selected file, target to the archive named without the part number",
+        enabled: |s| {
+            matches!(
+                crate::file_cmds::focused_selection(s).as_slice(),
+                [one] if one.archive_handle().is_none()
+                    && one.file_name().is_some_and(is_joinable_part)
+            )
+        },
+        run: |s, params: &Params| {
+            let empty = Map::new();
+            let map = match params {
+                Params::Null => &empty,
+                other => obj(other)?,
+            };
+            let first = match map.get("uri") {
+                Some(_) => required_uri(map, "uri")?,
+                None => match crate::file_cmds::focused_selection(s).as_slice() {
+                    [one] => one.clone(),
+                    _ => return Err(FmError::InvalidParams("select one part".into())),
+                },
+            };
+            if !first.file_name().is_some_and(is_joinable_part) {
+                return Err(FmError::Unsupported(
+                    "only numbered parts (name.7z.001, …) can be joined",
+                ));
+            }
+            let target = match map.get("target") {
+                None | Some(Params::Null) => None,
+                Some(_) => Some(required_uri(map, "target")?),
+            };
+            s.submit_op(OpRequest::Join { first, target })?;
+            Ok(())
+        },
+    }
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         extract(),
@@ -377,6 +528,9 @@ pub fn specs() -> Vec<CommandSpec> {
         compress_quick(),
         add_zip(),
         add_7z(),
+        add(),
+        add_to(),
+        join(),
     ]
 }
 

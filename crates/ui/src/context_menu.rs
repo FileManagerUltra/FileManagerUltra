@@ -70,12 +70,20 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
             .file_name()
             .is_some_and(fm_engine::archive_cmds::is_archive_name)
         {
+            let joinable = uri.archive_handle().is_none()
+                && uri
+                    .file_name()
+                    .is_some_and(fm_engine::archive_job_cmds::is_joinable_part);
             for (id, label) in [
                 ("archive.enter", "Browse Inside"),
                 ("archive.extract", "Extract Here"),
                 ("archive.extract_to", "Extract To…"),
+                ("archive.join", "Join Parts"),
                 ("archive.open_app", "Open with Default App"),
             ] {
+                if id == "archive.join" && !joinable {
+                    continue;
+                }
                 if ui.button(label).clicked() {
                     ui.ctx().data_mut(|d| {
                         d.insert_temp(
@@ -166,6 +174,7 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
                     }
                 }
             }
+            command_item(ui, s, "archive.add_to");
             command_item(ui, s, "archive.compress");
         }
         for entry in ENTRIES {

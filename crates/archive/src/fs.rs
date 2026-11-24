@@ -21,6 +21,8 @@ pub struct ArchiveFs {
     stamp: Option<(u64, Option<std::time::SystemTime>)>,
     /// A save is writing the archive: changes wait until it is done.
     saving: std::sync::atomic::AtomicBool,
+    /// The numbered parts the archive is stored in.
+    parts: Option<crate::split::PartSet>,
 }
 
 impl ArchiveFs {
@@ -37,7 +39,21 @@ impl ArchiveFs {
             read_only,
             stamp: None,
             saving: std::sync::atomic::AtomicBool::new(false),
+            parts: None,
         }
+    }
+
+    /// The archive is stored as these numbered parts: Save writes parts again, and the
+    /// stamp covers all of them.
+    pub fn with_parts(mut self, parts: crate::split::PartSet) -> Self {
+        self.stamp = Some(parts.stamp);
+        self.parts = Some(parts);
+        self
+    }
+
+    /// The numbered parts of a split archive.
+    pub fn parts(&self) -> Option<&crate::split::PartSet> {
+        self.parts.as_ref()
     }
 
     /// Remember the archive file's size and modification time (checked before Save).

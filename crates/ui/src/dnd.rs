@@ -115,6 +115,7 @@ pub fn badge_text(action: DropAction, count: usize) -> String {
     let verb = match action {
         DropAction::Copy => "Copy",
         DropAction::Move => "Move",
+        DropAction::Add => "Add",
     };
     if count == 1 {
         format!("{verb} 1 item")

@@ -229,7 +229,12 @@ pub fn move_() -> CommandSpec {
         menu: &["File", "Move"],
         shortcut: Some("F6"),
         params: "sources?: [uri], dest?: uri, policy?: ask|overwrite|keep_both|skip",
-        enabled: has_selection,
+        enabled: |s| {
+            has_selection(s)
+                && !focused_selection(s)
+                    .iter()
+                    .any(|u| s.archives.move_blocked(u).is_some())
+        },
         run: |s, params| transfer(s, params, true),
     }
 }

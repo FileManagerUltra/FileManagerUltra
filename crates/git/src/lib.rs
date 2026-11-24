@@ -69,6 +69,8 @@ pub struct RepoStatus {
     pub branch: Option<String>,
     own: HashMap<Box<str>, Mark>,
     dirs: HashMap<Box<str>, Mark>,
+    /// Strongest non-ignored mark of anything in the repository (the root folder's own mark).
+    top: Option<Mark>,
     /// The entry cap was hit; the map is partial.
     pub truncated: bool,
 }
@@ -103,6 +105,7 @@ impl RepoStatus {
         if mark == Mark::Ignored {
             return;
         }
+        self.top = self.top.max(Some(mark));
         let mut cur = rel;
         while let Some((parent, _)) = cur.rsplit_once('/') {
             cur = parent;
@@ -143,7 +146,7 @@ impl RepoStatus {
     pub fn mark_abs(&self, path: &Path) -> Option<Mark> {
         let rel = rel_string(path.strip_prefix(&self.root).ok()?)?;
         if rel.is_empty() {
-            return self.dirs.values().max().copied();
+            return self.top;
         }
         self.mark(&rel)
     }

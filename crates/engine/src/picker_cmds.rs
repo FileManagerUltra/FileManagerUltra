@@ -340,6 +340,18 @@ fn accept() -> CommandSpec {
                         )?;
                     }
                 }
+                "archive.add" => {
+                    if let Some(sources) = s.archives.add_pending.clone() {
+                        s.dispatch(
+                            "archive.add",
+                            &json!({
+                                "uri": chosen.to_string(),
+                                "sources": sources.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                            }),
+                        )?;
+                        s.archives.add_pending = None;
+                    }
+                }
                 "archive.save_as" => {
                     if let Some(root) = s.archives.save_as_pending.take() {
                         s.dispatch(
