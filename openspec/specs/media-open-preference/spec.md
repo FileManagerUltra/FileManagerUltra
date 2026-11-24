@@ -4,7 +4,7 @@
 TBD - created by archiving change media-open-and-play-ux. Update Purpose after archive.
 ## Requirements
 ### Requirement: Opening media files follows a per-kind preference
-The app SHALL keep two preferences, one for audio and one for video files, each either *Open in default app* (the default) or *Play in Media pane*, editable in Preferences → Media and with `prefs.media_open {kind: "audio" | "video" | "both", target: "default" | "media"}`. Activating a supported media file (double-click or Enter in a Files pane or the tree) SHALL dispatch `file.open` as before when its kind is set to *Open in default app*, and `media.play {uris: [uri]}` when it is set to *Play in Media pane*. In the second case the file SHALL be inserted after the current item and start at once, with a Media pane opened as `media.play` already does. Remote files, playlists (`.m3u`, `.m3u8`, `.pls`), disc images and anything the Media pane cannot play SHALL keep the `file.open` path. Context-menu Play, Play next and Add to queue SHALL stay available whatever the preference.
+The app SHALL keep two preferences, one for audio and one for video files, each either *Open in default app* (the default) or *Play in Media pane*, editable in Preferences → Media and with `prefs.media_open {kind: "audio" | "video" | "both", target: "default" | "media"}`. Activating a supported media file (double-click or Enter in a Files pane or the tree) SHALL dispatch `file.open` as before when its kind is set to *Open in default app*, and `media.play {uris: [uri]}` when it is set to *Play in Media pane*. In the second case the file SHALL be inserted after the current item and start at once, with a Media pane opened as `media.play` already does. Files inside an archive SHALL follow the same preference (the Media pane plays them from a temporary copy), and dragging them onto the Media pane SHALL queue them. Remote files, playlists (`.m3u`, `.m3u8`, `.pls`), disc images and anything the Media pane cannot play SHALL keep the `file.open` path. Context-menu Play, Play next and Add to queue SHALL stay available whatever the preference.
 
 Whichever way a file is opened (`file.open` in the default app, or `media.play` with that file), a Preview pane showing it SHALL pause its video or audio and give up the audio output, so two players never run at once.
 
@@ -23,6 +23,10 @@ Whichever way a file is opened (`file.open` in the default app, or `media.play` 
 #### Scenario: Audio and video are separate
 - **WHEN** audio is set to *Play in Media pane*, video to *Open in default app*, and the user double-clicks `film.mkv`
 - **THEN** `film.mkv` opens in the default application and the Media pane is not touched
+
+#### Scenario: File inside an archive
+- **WHEN** audio is set to *Play in Media pane* and the user double-clicks an mp3 inside a zip
+- **THEN** `media.play` runs with that file and it plays once its temporary copy is ready
 
 #### Scenario: Remote file
 - **WHEN** audio is set to *Play in Media pane* and the user double-clicks an mp3 on an SFTP pane

@@ -1,7 +1,7 @@
 //! Where activating an audio or video file goes (default app or the Media pane), and the
 //! one-time hint that tells users the Media pane exists (capability `media-open-preference`).
 
-use fm_vfs::{FmError, VfsUri};
+use fm_vfs::{FmError, Scheme, VfsUri};
 use serde_json::{Value, json};
 
 use crate::file_cmds::object;
@@ -37,10 +37,13 @@ impl MediaKind {
     }
 }
 
-/// The kind of a local file the Media pane plays on activation. Remote files, disc images,
-/// playlists and anything unsupported are `None` and keep opening in the default app.
+/// The kind of a local file, or a file inside an archive, the Media pane plays on
+/// activation. Remote files, disc images, playlists and anything unsupported are `None`
+/// and keep opening in the default app.
 pub fn media_open_kind(uri: &VfsUri) -> Option<MediaKind> {
-    uri.local_path()?;
+    if uri.local_path().is_none() && uri.scheme() != Scheme::Archive {
+        return None;
+    }
     let name = uri.file_name()?;
     if fm_preview::video::is_disc_image(name) {
         return None;
@@ -229,6 +232,10 @@ mod tests {
         ] {
             assert_eq!(media_open_kind(&uri(other)), None, "{other}");
         }
+        let inside = VfsUri::archive_root("0123456789abcdef")
+            .and_then(|r| r.join("song.mp3"))
+            .expect("uri");
+        assert_eq!(media_open_kind(&inside), Some(MediaKind::Audio));
     }
 
     #[test]

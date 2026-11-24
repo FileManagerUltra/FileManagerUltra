@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quitting or closing asks one question at most: unsaved workspaces, filled-in PDFs, archives with unsaved changes and work still running are listed together in one prompt with Save, Don't save and Cancel, instead of one prompt after another.
 
 ### Fixed
+- Audio and video inside an archive now play in the Media pane when you double-click them (if Preferences › Media is set to the Media pane) and when you drag them onto it, like the "Play in Media" menu item already did.
 - A repository folder now shows the modified marker when a file directly in its root is edited, not only when a file in a subfolder is.
 
 - Git colours and markers in a file list no longer vanish for a moment when you come back to the window after it has been idle for a while.

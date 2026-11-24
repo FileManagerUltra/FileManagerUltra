@@ -427,6 +427,21 @@ fn load(
     let mut folders = Vec::new();
     let mut inspected = 0usize;
     for source in sources {
+        if source.local_path().is_none() {
+            // Checked by the command: a media file in an archive or on a server.
+            if !folder_only && validate_media_source(source).is_ok() {
+                if items.len() == MAX_QUEUE_ITEMS {
+                    return Err(bad("Too many media files; the queue limit is 10,000."));
+                }
+                items.push(source.clone());
+            } else {
+                notices.push(fm_vfs::redact::redact(&format!(
+                    "Skipped unsupported media item {}.",
+                    source.file_name().unwrap_or("item")
+                )));
+            }
+            continue;
+        }
         let entry = match backend.stat(source) {
             Ok(entry) => entry,
             Err(error) => {
@@ -554,7 +569,9 @@ pub fn specs() -> Vec<CommandSpec> {
                         .ok_or_else(|| bad("uris must contain strings"))?;
                     match VfsUri::parse(raw) {
                         Ok(uri) if uri.local_path().is_some() => sources.push(uri),
-                        _ => notices.push("Skipped an invalid or remote media path; copy remote files locally first.".into()),
+                        // A file in an archive or on a server plays from a spool copy.
+                        Ok(uri) if validate_media_source(&uri).is_ok() => sources.push(uri),
+                        _ => notices.push("Skipped an invalid media path; copy folders from archives and servers locally first.".into()),
                     }
                 }
                 s.submit_media_sources(sources, notices, false, play, group, slot)
@@ -701,6 +718,17 @@ mod tests {
         );
         assert!(loaded.notices.is_empty());
         assert!(load(&[uri("/music/first.mp3")], &fs, Vec::new(), true).is_err());
+    }
+
+    #[test]
+    fn media_files_in_an_archive_are_queued_without_a_local_stat() {
+        let (_, fs) = fixture();
+        let root = VfsUri::archive_root("0123456789abcdef").expect("root");
+        let song = root.join("song.mp3").expect("song");
+        let text = root.join("readme.txt").expect("text");
+        let loaded = load(&[song.clone(), text], &fs, Vec::new(), false).expect("load");
+        assert_eq!(loaded.items, [song]);
+        assert_eq!(loaded.notices.len(), 1);
     }
 
     #[test]
