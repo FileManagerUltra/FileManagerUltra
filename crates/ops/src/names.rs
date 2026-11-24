@@ -7,6 +7,17 @@ pub const KEEP_BOTH_PROBE_CAP: u32 = 999;
 
 /// A single path segment the user (or a drop payload) may hand us.
 pub fn validate_name(name: &str) -> Result<(), FmError> {
+    validate_portable(name)?;
+    if cfg!(windows) && !is_windows_safe(name) {
+        return Err(FmError::InvalidParams(format!("invalid name: {name:?}")));
+    }
+    Ok(())
+}
+
+/// The checks every platform shares: no separators, no `.`/`..`, no control characters,
+/// bounded length. Names from a listing or an archive that pass this but not
+/// [`is_windows_safe`] are renamed with [`windows_safe_name`] when written to Windows.
+pub fn validate_portable(name: &str) -> Result<(), FmError> {
     if name.is_empty()
         || name == "."
         || name == ".."
@@ -15,9 +26,6 @@ pub fn validate_name(name: &str) -> Result<(), FmError> {
         || name.chars().any(|c| c.is_control())
         || name.len() > MAX_COMPONENT_BYTES
     {
-        return Err(FmError::InvalidParams(format!("invalid name: {name:?}")));
-    }
-    if cfg!(windows) && !is_windows_safe(name) {
         return Err(FmError::InvalidParams(format!("invalid name: {name:?}")));
     }
     Ok(())
@@ -34,6 +42,32 @@ pub fn is_windows_safe(name: &str) -> bool {
     }
     let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
     !RESERVED.contains(&stem.as_str())
+}
+
+/// A name Windows can store, for writing `name` into a local Windows folder: the
+/// reserved characters `<>:"|?*` become `_`, a trailing run of dots and spaces becomes
+/// `_`, and a device name (`CON`, `nul.txt`) gets `_` after its stem (`CON_`,
+/// `nul_.txt`). A safe name is returned unchanged. `a:b` would otherwise write an NTFS
+/// alternate data stream and `CON` would open the console device.
+pub fn windows_safe_name(name: &str) -> String {
+    if is_windows_safe(name) {
+        return name.to_string();
+    }
+    let mut out: String = name
+        .chars()
+        .map(|c| if "<>:\"|?*".contains(c) { '_' } else { c })
+        .collect();
+    let trimmed = out.trim_end_matches(['.', ' ']).len();
+    if trimmed < out.len() {
+        out.truncate(trimmed);
+        out.push('_');
+    }
+    if !is_windows_safe(&out) {
+        // Only a device name is left: mark its stem.
+        let stem_len = out.split('.').next().map_or(out.len(), str::len);
+        out.insert(stem_len, '_');
+    }
+    out
 }
 
 /// `a.txt` → `a (2).txt`; dotfiles and extension-less names get the suffix appended.
@@ -85,6 +119,28 @@ mod tests {
         }
         assert!(is_windows_safe("console.txt"));
         assert!(is_windows_safe("ok name.txt"));
+    }
+
+    #[test]
+    fn unsafe_names_get_a_windows_safe_spelling() {
+        for (raw, safe) in [
+            ("a:b", "a_b"),
+            ("file.txt:stream", "file.txt_stream"),
+            ("what?.txt", "what_.txt"),
+            ("CON", "CON_"),
+            ("nul.txt", "nul_.txt"),
+            ("Com1.tar.gz", "Com1_.tar.gz"),
+            ("x.", "x_"),
+            ("x. . ", "x_"),
+            ("...", "_"),
+            ("ok name.txt", "ok name.txt"),
+            ("<|>", "___"),
+        ] {
+            let got = windows_safe_name(raw);
+            assert_eq!(got, safe, "{raw:?}");
+            assert!(is_windows_safe(&got), "{got:?}");
+            assert!(validate_portable(&got).is_ok(), "{got:?}");
+        }
     }
 
     #[test]

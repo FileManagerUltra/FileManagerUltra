@@ -26,7 +26,7 @@
 - [x] 3.8 `ArchiveFs: Vfs` over index + source (+ overlay, section 5); every decoder call inside `catch_unwind`; tests on the in-memory `Vfs` for every format (writes still refused until section 5; decoders guarded by `catch_unwind`, also inside the streaming thread)
 - [ ] 3.9 Split archives: name-based set resolution (numbered parts, zip spanned, RAR volumes; gaps, 10 000-part cap, folder-only), `ConcatSource` with random access across parts, spanned-zip offset mapping (per 1.6), `ArchiveRef` volume kind; tests on local and the in-memory `Vfs`, missing-part errors, hostile next-volume names
 - [ ] 3.10 Encryption on read: AES and ZipCrypto zip members, 7z AES with encrypted headers, lock badges in the index, wrong-password detection (verifier, CRC), up to 8 passwords per mount tried in order; `Secret` zeroised on drop; redaction tests
-- [ ] 3.11 Fuzz corpus (truncated, bit-flipped, oversized headers) for zip, tar, 7z, ISO: no panics, bounded memory
+- [x] 3.11 Fuzz corpus (truncated, bit-flipped, oversized headers) for zip, tar, 7z, ISO: no panics, bounded memory — `fm-archive` `fuzz_tests.rs`: ~3 900 truncated/bit-flipped/0xFF-run variants of zip (plain and AES), 7z (plain and encrypted headers), tar, tar.gz/bz2/xz and single .gz, every member read through `ArchiveFs` capped at 64 MiB; plus a tar size field at its octal maximum; zero decoder panics (asserted); ISO joins with 3.6
 
 ## 4. Engine: mounting and browsing
 
@@ -53,8 +53,8 @@
 ## 6. Extract and compress
 
 - [x] 6.1 `archive.extract` (Extract here with `name (2)` when taken; Extract to… with the path picker) on the copy pipeline; context menu and File menu
-- [ ] 6.2 Extraction containment: links, hard links, devices/FIFOs, setuid/setgid, OS-invalid names; skipped entries in the job summary; tests with hostile fixtures
-- [ ] 6.3 Bomb handling: declared-size overrun stops; >1 GiB at >1000:1 asks; out-of-space error; tests
+- [x] 6.2 Extraction containment: links, hard links, devices/FIFOs, setuid/setgid, OS-invalid names; skipped entries in the job summary; tests with hostile fixtures — containment by index normalisation + the copy pipeline (lstat, no write through links, skipped subtree under a failed folder, no modes carried); devices/FIFOs/sockets/unresolved hard links left out and listed (`OpReport::left_out`, also for nested ones); one unusable name no longer aborts the plan; Windows-unsafe names renamed for local Windows destinations (`names::windows_safe_name`); hostile-tar engine test (traversal, absolute, drive letter, device, FIFO, hard links in/out, setuid, link-then-folder escape, relative link)
+- [x] 6.3 Bomb handling: declared-size overrun stops; >1 GiB at >1000:1 asks; out-of-space error; tests — declared-size overrun stops (`Declared` / zip crate) with no partial file (test); > 1 GiB at > 1000:1 parks the job on a question (`job.answer`, Continue/Cancel dialog, declining removes the new folder); a full destination stops any copy job with `FmError::NoSpace` (ops test via `MemFs::with_capacity`)
 - [x] 6.4 `archive.compress` writers (zip with AES-256 or chosen ZipCrypto, tar.gz, tar.xz, 7z with AES-256 and optional encrypted names, tar.zst if 1.4 passed); levels; password refused for tar formats; conflict prompt; password redaction tests
 - [ ] 6.5 Split output: `split { size }` writes `name.ext.001…` for every format (≥ 64 KiB, presets); output re-opens as one archive — writing parts done (`.001…`, ≥ 64 KiB, ≤ 9999 parts, Compress dialog split field); re-opening the parts as one archive waits for 3.9
 - [ ] 6.6 `archive.join` for numbered parts (missing-part refusal, conflict prompt, progress, cancel); not offered for spanned zip or RAR

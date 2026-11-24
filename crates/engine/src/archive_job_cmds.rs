@@ -85,6 +85,7 @@ pub fn extract() -> CommandSpec {
             let root = mount(s, &uri)?;
             s.submit_op(OpRequest::Extract {
                 root,
+                container: uri,
                 dest_dir: dest,
                 name: crate::archive_ops::extract_name(&name),
             })?;

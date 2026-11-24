@@ -3,10 +3,13 @@
 
 use std::collections::BTreeSet;
 
-use fm_vfs::{EntryKind, FmError, VfsUri};
+use fm_vfs::{EntryKind, FmError, Scheme, VfsUri};
 
 use crate::ctx::Backends;
-use crate::names::{keep_both_name, validate_name};
+use crate::names::{keep_both_name, validate_portable, windows_safe_name};
+
+/// Most left-out items listed by name; beyond that they are only counted.
+pub const MAX_LEFT_OUT: usize = 1000;
 
 /// Hard caps so a hostile or accidental selection cannot allocate without bound.
 #[derive(Debug, Clone, Copy)]
@@ -58,6 +61,11 @@ pub struct Plan {
     pub total_bytes: u64,
     /// Sources dropped on their own location — silently ignored.
     pub noops: usize,
+    /// Items inside the selected folders that are deliberately not written, with the
+    /// reason (special files, names no folder can hold); at most [`MAX_LEFT_OUT`].
+    pub left_out: Vec<(VfsUri, String)>,
+    /// How many items were left out, including those beyond the list.
+    pub left_out_count: u64,
 }
 
 impl Plan {
@@ -67,6 +75,27 @@ impl Plan {
 
     pub fn is_empty(&self) -> bool {
         self.tops.is_empty()
+    }
+
+    fn leave_out(&mut self, uri: &VfsUri, reason: impl Into<String>) {
+        self.left_out_count += 1;
+        if self.left_out.len() < MAX_LEFT_OUT {
+            self.left_out.push((uri.clone(), reason.into()));
+        }
+    }
+}
+
+/// The name `name` gets in `dest_dir`: unchanged, except that a local folder on Windows
+/// gets [`windows_safe_name`] (no streams, no device names).
+fn dest_name(name: &str, dest_dir: &VfsUri) -> String {
+    dest_name_for(name, dest_dir, cfg!(windows))
+}
+
+fn dest_name_for(name: &str, dest_dir: &VfsUri, windows: bool) -> String {
+    if windows && dest_dir.scheme() == Scheme::File {
+        windows_safe_name(name)
+    } else {
+        name.to_string()
     }
 }
 
@@ -128,8 +157,8 @@ fn plan_inner(
         let name = src
             .file_name()
             .ok_or_else(|| FmError::InvalidParams("cannot transfer a filesystem root".into()))?;
-        validate_name(name)?;
-        let mut dst = dest_dir.join(name)?;
+        validate_portable(name)?;
+        let mut dst = dest_dir.join(&dest_name(name, dest_dir))?;
         if *src == dst {
             if !duplicate_in_place {
                 plan.noops += 1;
@@ -200,6 +229,9 @@ fn push(
     Ok(())
 }
 
+/// Why a device, FIFO or socket is not copied.
+pub const SPECIAL: &str = "special file (device, FIFO, socket or unresolved hard link), not copied";
+
 fn walk_dir(
     backends: &dyn Backends,
     src: &VfsUri,
@@ -218,8 +250,16 @@ fn walk_dir(
     let mut children = backends.vfs(src)?.read_dir(src)?;
     children.sort_by(|a, b| a.name.cmp(&b.name));
     for child in children {
-        validate_name(&child.name)?;
-        let child_dst = dst.join(&child.name)?;
+        if let Err(e) = validate_portable(&child.name) {
+            // One unusable name (from a remote listing or an archive) leaves only that
+            // item out, not the whole selection.
+            plan.leave_out(&child.uri, e.to_string());
+            continue;
+        }
+        let Ok(child_dst) = dst.join(&dest_name(&child.name, dst)) else {
+            plan.leave_out(&child.uri, "name too long for the destination");
+            continue;
+        };
         match &child.kind {
             EntryKind::Dir => walk_dir(backends, &child.uri, &child_dst, depth + 1, limits, plan)?,
             EntryKind::File => push(
@@ -239,7 +279,7 @@ fn walk_dir(
                 limits,
             )?,
             // Special files inside a tree are left behind, never opened.
-            EntryKind::Other => {}
+            EntryKind::Other => plan.leave_out(&child.uri, SPECIAL),
         }
     }
     Ok(())
@@ -267,6 +307,16 @@ mod tests {
         fs.put_str("/src/top.txt", b"123456").expect("put");
         fs.mkdirs_str("/dst").expect("dst");
         fs
+    }
+
+    #[test]
+    fn local_windows_destinations_get_safe_names_others_keep_theirs() {
+        let local = uri("/out");
+        assert_eq!(dest_name_for("a:b", &local, true), "a_b");
+        assert_eq!(dest_name_for("CON", &local, true), "CON_");
+        assert_eq!(dest_name_for("a:b", &local, false), "a:b");
+        let remote = uri("sftp://u@h/out");
+        assert_eq!(dest_name_for("a:b", &remote, true), "a:b");
     }
 
     #[test]

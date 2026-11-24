@@ -97,6 +97,8 @@ pub enum OpRequest {
     /// `name (N)`) in `dest_dir` (add-archive-vfs).
     Extract {
         root: VfsUri,
+        /// The archive file itself (its size is the bomb check's yardstick).
+        container: VfsUri,
         dest_dir: VfsUri,
         name: String,
     },
@@ -308,6 +310,9 @@ pub struct OpSummary {
     pub failed_count: usize,
     /// `(item, error)`, capped at [`MAX_FAILURES`].
     pub failed: Vec<(String, String)>,
+    /// `(item, reason)` for items deliberately not written (special files, unusable
+    /// names), capped at [`MAX_FAILURES`].
+    pub left_out: Vec<(String, String)>,
 }
 
 impl From<&OpReport> for OpSummary {
@@ -322,6 +327,12 @@ impl From<&OpReport> for OpSummary {
                 .take(MAX_FAILURES)
                 .map(|(uri, err)| (uri.to_string(), err.to_string()))
                 .collect(),
+            left_out: report
+                .left_out
+                .iter()
+                .take(MAX_FAILURES)
+                .map(|(uri, why)| (crate::item_cmds::display_path(uri), why.clone()))
+                .collect(),
         }
     }
 }
@@ -330,6 +341,7 @@ impl From<&OpReport> for OpSummary {
 struct Shared {
     progress: Progress,
     conflict: Option<Conflict>,
+    question: Option<String>,
     report: Option<OpReport>,
 }
 
@@ -387,6 +399,9 @@ pub struct OpJob {
     pub speed: SpeedMeter,
     /// Set while the worker is parked waiting for `job.resolve_conflict`.
     pub conflict: Option<Conflict>,
+    /// A yes/no question the worker is parked on (`job.answer`), such as extracting an
+    /// archive with a bomb-like ratio.
+    pub question: Option<String>,
     pub summary: Option<OpSummary>,
     kind: Option<OpKind>,
     touched: Vec<VfsUri>,
@@ -436,6 +451,13 @@ impl FileOps {
         self.jobs
             .iter()
             .find(|j| j.state.is_running() && j.conflict.is_some())
+    }
+
+    /// The first job waiting on a yes/no question, if any.
+    pub fn pending_question(&self) -> Option<&OpJob> {
+        self.jobs
+            .iter()
+            .find(|j| j.state.is_running() && j.question.is_some())
     }
 
     /// Remove a finished job (dismissing its report). Running jobs stay.
@@ -528,30 +550,38 @@ fn run(
         }
     };
     let park_cancel = cancel.clone();
-    let mut on_conflict = |conflict: &Conflict| {
-        lock(shared).conflict = Some(conflict.clone());
-        ctx.notify_conflict();
-        let decision = loop {
-            if park_cancel.is_cancelled() {
+    // Wait for the UI's answer; a cancel or a dropped job table answers Cancel.
+    let park = || loop {
+        if park_cancel.is_cancelled() {
+            break Decision {
+                choice: Choice::Cancel,
+                apply_to_all: false,
+            };
+        }
+        match decisions.recv_timeout(PARK_TICK) {
+            Ok(decision) => break decision,
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
                 break Decision {
                     choice: Choice::Cancel,
                     apply_to_all: false,
                 };
             }
-            match decisions.recv_timeout(PARK_TICK) {
-                Ok(decision) => break decision,
-                Err(RecvTimeoutError::Timeout) => {}
-                // The job table dropped us: nobody can answer, so cancel.
-                Err(RecvTimeoutError::Disconnected) => {
-                    break Decision {
-                        choice: Choice::Cancel,
-                        apply_to_all: false,
-                    };
-                }
-            }
-        };
+        }
+    };
+    let mut on_conflict = |conflict: &Conflict| {
+        lock(shared).conflict = Some(conflict.clone());
+        ctx.notify_conflict();
+        let decision = park();
         lock(shared).conflict = None;
         decision
+    };
+    let mut ask = |question: &str| {
+        lock(shared).question = Some(question.to_string());
+        ctx.notify_conflict();
+        let decision = park();
+        lock(shared).question = None;
+        decision.choice == Choice::Overwrite
     };
     let policy = match request {
         OpRequest::Copy { policy, .. }
@@ -627,15 +657,26 @@ fn run(
         }
         OpRequest::Extract {
             root,
+            container,
             dest_dir,
             name,
-        } => crate::archive_ops::extract(backends, root, dest_dir, name, &mut octx)?,
+        } => crate::archive_ops::extract(
+            backends, root, container, dest_dir, name, &mut octx, &mut ask,
+        )?,
         OpRequest::OpenRemote { .. } | OpRequest::Compress { .. } => return Ok(()),
     };
     let cancelled = report.cancelled;
+    // A full destination stopped the job: say so as the job's own failure.
+    let full = report.failed.iter().find_map(|(item, e)| match e {
+        FmError::NoSpace(place) => Some(place.clone()),
+        e if e.is_no_space() => Some(item.to_string()),
+        _ => None,
+    });
     lock(shared).report = Some(report);
     if cancelled {
         Err(FmError::Cancelled)
+    } else if let Some(place) = full {
+        Err(FmError::NoSpace(place))
     } else {
         Ok(())
     }
@@ -695,6 +736,7 @@ impl Session {
             progress: Progress::default(),
             speed: SpeedMeter::default(),
             conflict: None,
+            question: None,
             summary: None,
             kind,
             touched,
@@ -734,6 +776,32 @@ impl Session {
         Ok(())
     }
 
+    /// Answer the yes/no question a parked job is waiting on (`go` continues).
+    pub fn answer_question(&mut self, id: JobId, go: bool) -> Result<(), FmError> {
+        let job = self
+            .fileops
+            .get_mut(id)
+            .ok_or_else(|| FmError::NotFound(format!("job {id}")))?;
+        if !job.state.is_running() || job.question.is_none() {
+            return Err(FmError::InvalidParams(format!(
+                "job {id} is not waiting for an answer"
+            )));
+        }
+        let choice = if go {
+            Choice::Overwrite
+        } else {
+            Choice::Cancel
+        };
+        job.resolver
+            .send(Decision {
+                choice,
+                apply_to_all: false,
+            })
+            .map_err(|_| FmError::Cancelled)?;
+        job.question = None;
+        Ok(())
+    }
+
     /// Copy the latest worker-side progress and conflicts into the job table.
     /// Returns `true` when anything observable changed.
     pub(crate) fn sync_ops(&mut self) -> bool {
@@ -752,6 +820,10 @@ impl Session {
             }
             if guard.conflict != job.conflict {
                 job.conflict = guard.conflict.clone();
+                changed = true;
+            }
+            if guard.question != job.question {
+                job.question = guard.question.clone();
                 changed = true;
             }
         }
@@ -821,6 +893,7 @@ impl Session {
         job.progress = progress;
         job.state = state;
         job.conflict = None;
+        job.question = None;
         job.summary = report.as_ref().map(OpSummary::from);
         let pdf_outcome = (
             job.state.clone(),

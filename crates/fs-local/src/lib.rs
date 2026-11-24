@@ -131,6 +131,7 @@ fn map_platform_io(e: std::io::Error, path: &str, windows: bool) -> FmError {
         K::NotADirectory => FmError::NotADirectory(path.to_string()),
         K::IsADirectory => FmError::NotADirectory(path.to_string()),
         K::DirectoryNotEmpty => FmError::NotEmpty(path.to_string()),
+        K::StorageFull | K::QuotaExceeded => FmError::NoSpace(path.to_string()),
         K::CrossesDevices => FmError::backend(
             "file",
             "cross-device rename — a copy+delete pass is required (change 3)",

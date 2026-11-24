@@ -396,7 +396,12 @@ change is visible: the changelog explains it and the preference restores the old
   new folder (`archive_ops::extract`), so conflicts, progress, cancel and undo (the whole
   new folder) are the copy pipeline's; devices/FIFOs are skipped and counted, no modes are
   carried (so no setuid/setgid), links stay links. Hostile-fixture tests (6.2) and the
-  bomb prompt (6.3) are still open. Compression writes to a temp file (next to a local
+  bomb prompt (6.3) landed 2026-11-24: extraction plans the copy first and compares the
+  declared total with the archive file's size; above 1 GiB at > 1000:1 the job parks on a
+  yes/no question (`job.answer`, same parking as conflicts). Left-out entries are listed
+  per item (`OpReport::left_out`), nested ones too. Windows-unsafe names are renamed for
+  local Windows destinations in the shared copy planner, and a full destination stops any
+  copy job (`FmError::NoSpace`). Compression writes to a temp file (next to a local
   target, else in a private 0700 temp folder), then renames, uploads or cuts it into
   `.001…` parts; names are numbered `name (2).zip` when taken. ZipCrypto writing is
   refused (the zip crate keeps it crate-private) and tar.zst is read-only (ruzstd has

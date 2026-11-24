@@ -42,6 +42,9 @@ pub fn handle_for(container: &fm_vfs::VfsUri, offset: u64, format: Option<Format
 }
 
 #[cfg(test)]
+mod fuzz_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

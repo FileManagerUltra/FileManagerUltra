@@ -45,6 +45,8 @@ pub enum FmError {
     PasswordRequired(String),
     /// The password given for an encrypted archive is wrong (carries the archive's name).
     WrongPassword(String),
+    /// The destination has no free space left (carries the path being written).
+    NoSpace(String),
 }
 
 impl FmError {
@@ -64,6 +66,24 @@ impl FmError {
     /// `true` when reading needs a (different) archive password: ask the user.
     pub fn wants_password(&self) -> bool {
         matches!(self, Self::PasswordRequired(_) | Self::WrongPassword(_))
+    }
+
+    /// An I/O error while writing `path`; a full disk or quota becomes [`Self::NoSpace`].
+    pub fn writing(err: std::io::Error, path: &str) -> Self {
+        if is_out_of_space(&err) {
+            Self::NoSpace(path.to_string())
+        } else {
+            Self::Io(err)
+        }
+    }
+
+    /// `true` when the destination ran out of space: the rest of a job cannot succeed.
+    pub fn is_no_space(&self) -> bool {
+        match self {
+            Self::NoSpace(_) => true,
+            Self::Io(err) => is_out_of_space(err),
+            _ => false,
+        }
     }
 
     /// `true` when the error is a cancellation (used to end jobs quietly).
@@ -90,7 +110,26 @@ impl fmt::Display for FmError {
             Self::DuplicateCommand(id) => write!(f, "duplicate command id: {}", redact(id)),
             Self::PasswordRequired(name) => write!(f, "{} needs a password", redact(name)),
             Self::WrongPassword(name) => write!(f, "wrong password for {}", redact(name)),
+            Self::NoSpace(path) => write!(
+                f,
+                "not enough free space for {}: free some space or choose another folder",
+                redact(path)
+            ),
         }
+    }
+}
+
+/// Disk full or quota exceeded (`ENOSPC`/`EDQUOT` on Unix, `ERROR_DISK_FULL` /
+/// `ERROR_HANDLE_DISK_FULL` on Windows).
+fn is_out_of_space(err: &std::io::Error) -> bool {
+    use std::io::ErrorKind as K;
+    if matches!(err.kind(), K::StorageFull | K::QuotaExceeded) {
+        return true;
+    }
+    match err.raw_os_error() {
+        Some(code) if cfg!(windows) => code == 112 || code == 39,
+        Some(code) => code == 28 || code == 122,
+        None => false,
     }
 }
 
@@ -134,6 +173,19 @@ mod tests {
         let err = FmError::from(std::io::Error::from(std::io::ErrorKind::NotFound));
         assert!(err.to_string().contains("i/o error"));
         assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn a_full_disk_is_an_actionable_no_space_error() {
+        let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
+        let err = FmError::writing(full, "/data/out/big.iso");
+        assert!(matches!(err, FmError::NoSpace(_)));
+        assert!(err.is_no_space());
+        assert!(err.to_string().contains("free some space"), "{err}");
+        let other = FmError::writing(std::io::Error::other("boom"), "/x");
+        assert!(matches!(other, FmError::Io(_)) && !other.is_no_space());
+        let raw = FmError::Io(std::io::Error::from(std::io::ErrorKind::QuotaExceeded));
+        assert!(raw.is_no_space());
     }
 
     #[test]

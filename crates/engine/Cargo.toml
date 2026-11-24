@@ -49,6 +49,7 @@ image = { workspace = true, features = ["png"] }
 plist.workspace = true
 
 [dev-dependencies]
+tar.workspace = true
 fm-pdf = { workspace = true, features = ["fixtures"] }
 plist.workspace = true
 flate2 = { workspace = true, features = ["rust_backend"] }

@@ -33,6 +33,20 @@ struct Inner {
     attrs: BTreeMap<String, Attrs>,
     /// Groups this filesystem accepts; the rest are reported as unsupported.
     caps: Option<AttrSet>,
+    /// Most bytes all files may hold together; writes beyond fail as a full disk.
+    capacity: Option<u64>,
+}
+
+impl Inner {
+    fn used(&self) -> u64 {
+        self.nodes
+            .values()
+            .map(|n| match n {
+                Node::File { data, .. } => data.len() as u64,
+                _ => 0,
+            })
+            .sum()
+    }
 }
 
 /// In-memory filesystem. The root directory always exists.
@@ -64,6 +78,13 @@ impl MemFs {
     /// backend with fewer capabilities (default: all).
     pub fn with_attr_caps(self, caps: AttrSet) -> Self {
         self.lock().caps = Some(caps);
+        self
+    }
+
+    /// Hold at most `bytes` of file data in total, to stand in for a destination that
+    /// runs out of space (writes beyond fail with `StorageFull`).
+    pub fn with_capacity(self, bytes: u64) -> Self {
+        self.lock().capacity = Some(bytes);
         self
     }
 
@@ -278,6 +299,14 @@ impl MemWriter {
 
 impl Write for MemWriter {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        let g = self.fs.lock();
+        if let Some(cap) = g.capacity {
+            let pending = (self.buf.len() + data.len()) as u64;
+            if g.used().saturating_add(pending) > cap {
+                return Err(std::io::Error::from(std::io::ErrorKind::StorageFull));
+            }
+        }
+        drop(g);
         self.buf.extend_from_slice(data);
         Ok(data.len())
     }
@@ -657,6 +686,16 @@ mod tests {
         w.write_all(b"+more").expect("write");
         w.flush().expect("flush");
         assert_eq!(fs.get_file(&uri).expect("get"), b"new+more");
+    }
+
+    #[test]
+    fn capacity_turns_overflowing_writes_into_a_full_disk() {
+        let fs = MemFs::new().with_capacity(4);
+        let uri = VfsUri::parse("/a.bin").expect("uri");
+        let mut w = fs.open_write(&uri, WriteOpts::default()).expect("open");
+        w.write_all(b"1234").expect("fits");
+        let err = w.write_all(b"5").expect_err("full");
+        assert_eq!(err.kind(), std::io::ErrorKind::StorageFull);
     }
 
     #[test]

@@ -223,6 +223,7 @@ impl Dialogs {
     /// Render the open dialog and the conflict prompt. Call once per frame.
     pub fn show(&mut self, ctx: &Context, s: &mut Session, tokens: &Tokens) {
         conflict_dialog(ctx, s, tokens);
+        question_dialog(ctx, s, tokens);
         kind_switch_dialog(ctx, s, tokens);
         busy_quit_dialog(ctx, s, tokens);
         unsaved_dialog(ctx, s, tokens);
@@ -906,6 +907,44 @@ fn kind_switch_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             &json!({"kind": kind.as_str(), "pane": pane, "confirm": true}),
         );
         s.pending_kind = None;
+    }
+}
+
+/// A yes/no question a running job is parked on (e.g. an archive with a bomb-like
+/// ratio). Escape or closing the window answers no, which cancels the job.
+fn question_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
+    if s.fileops.pending_conflict().is_some() {
+        return;
+    }
+    let Some(job) = s.fileops.pending_question() else {
+        return;
+    };
+    let Some(question) = job.question.clone() else {
+        return;
+    };
+    let id = job.id;
+    let mut answer: Option<bool> = None;
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Continue?", &mut open)
+        .id(Id::NULL.with("fm-job-question"))
+        .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
+            ui.label(RichText::new(&job.label).color(tokens.text).strong());
+            ui.label(RichText::new(question).color(tokens.text));
+            ui.horizontal(|ui| {
+                if ui.button("Continue").clicked() {
+                    answer = Some(true);
+                }
+                if ui.button("Cancel").clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+    if !open || ctx.input(|i| i.key_pressed(Key::Escape)) {
+        answer = Some(false);
+    }
+    if let Some(go) = answer {
+        s.dispatch_or_notice("job.answer", &json!({"job": id, "go": go}));
     }
 }
 

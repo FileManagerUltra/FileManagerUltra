@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fm_archive::write::{CompressOptions, Hooks, VfsFor, left_out_links, walk};
-use fm_ops::{OpCtx, OpReport, Progress, TransferProgress};
+use fm_ops::{OpCtx, OpReport, PlanLimits, Progress, TransferProgress};
 use fm_vfs::{EntryKind, FmError, Vfs, VfsUri, WriteOpts};
 
 use crate::backends::VfsRegistry;
@@ -51,31 +51,121 @@ fn free(
     Err(FmError::AlreadyExists(format!("{stem}{suffix}")))
 }
 
-/// Extract the archive mounted at `root` into a new folder `name` (or `name (N)`) in
-/// `dest_dir`.
+/// Extraction of more than this many bytes...
+pub const BOMB_BYTES: u64 = 1 << 30;
+/// ...at more than this ratio to the archive's own size asks first (decompression bomb).
+pub const BOMB_RATIO: u64 = 1000;
+
+/// Why a device, FIFO or socket in an archive is not extracted.
+const SPECIAL: &str = "special file (device, FIFO, socket or unresolved hard link), not extracted";
+
+/// The question to ask before extracting `total` declared bytes from an archive of
+/// `packed` bytes, or `None` when it is unremarkable (more than [`BOMB_BYTES`] at a ratio
+/// above [`BOMB_RATIO`]: a decompression bomb, or a header that lies).
+pub fn bomb_question(name: &str, total: u64, packed: u64) -> Option<String> {
+    if total <= BOMB_BYTES || total / packed.max(1) <= BOMB_RATIO {
+        return None;
+    }
+    Some(format!(
+        "\"{name}\" says it unpacks to {} from only {} ({}:1). \
+         This can be a decompression bomb meant to fill the disk. Extract anyway?",
+        human(total),
+        human(packed),
+        group(total / packed.max(1)),
+    ))
+}
+
+fn human(bytes: u64) -> String {
+    const UNITS: [&str; 6] = ["KB", "MB", "GB", "TB", "PB", "EB"];
+    if bytes < 1000 {
+        return format!("{bytes} bytes");
+    }
+    let mut value = bytes as f64;
+    let mut unit = "B";
+    for u in UNITS {
+        if value < 1000.0 {
+            break;
+        }
+        value /= 1000.0;
+        unit = u;
+    }
+    format!("{value:.1} {unit}")
+}
+
+fn group(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Extract the archive mounted at `root` (the file `container`) into a new folder `name`
+/// (or `name (N)`) in `dest_dir`.
+///
+/// Containment (security): names were normalised when the archive was indexed, so no
+/// entry can name a path outside the archive root; the copy pipeline never writes
+/// through a link and skips everything below a folder it could not create; devices,
+/// FIFOs, sockets and hard links that leave the archive are left out and listed; no
+/// modes are carried, so setuid/setgid bits never survive. A large extraction at a
+/// bomb-like ratio calls `ask` first; `false` removes the new folder and cancels.
 pub(crate) fn extract(
     backends: &VfsRegistry,
     root: &VfsUri,
+    container: &VfsUri,
     dest_dir: &VfsUri,
     name: &str,
     octx: &mut OpCtx<'_>,
+    ask: &mut dyn FnMut(&str) -> bool,
 ) -> Result<OpReport, FmError> {
     let archive = backends.require(root)?;
     let entries = archive.read_dir(root)?;
     let dest_vfs = backends.require(dest_dir)?;
     let target = free(dest_vfs.as_ref(), dest_dir, name, "", false)?;
     dest_vfs.create_dir(&target)?;
-    // Devices, FIFOs and sockets in an archive are never extracted.
     let (specials, items): (Vec<_>, Vec<_>) = entries
         .into_iter()
         .partition(|e| matches!(e.kind, EntryKind::Other));
     let sources: Vec<VfsUri> = items.into_iter().map(|e| e.uri).collect();
-    let mut report = if sources.is_empty() {
+    let plan = match fm_ops::plan_transfer(backends, &sources, &target, PlanLimits::default()) {
+        Ok(plan) => plan,
+        Err(e) => {
+            let _ = dest_vfs.remove(&target);
+            return Err(e);
+        }
+    };
+    let packed = backends
+        .require(container)
+        .and_then(|v| v.stat(container))
+        .ok()
+        .and_then(|e| e.size)
+        .unwrap_or(0);
+    if let Some(question) = bomb_question(name, plan.total_bytes, packed)
+        && !ask(&question)
+    {
+        let _ = dest_vfs.remove(&target);
+        return Ok(OpReport {
+            cancelled: true,
+            ..OpReport::default()
+        });
+    }
+    let mut report = if plan.is_empty() {
         OpReport::default()
     } else {
-        fm_ops::copy(backends, &sources, &target, octx)?
+        fm_ops::transfer::run_copy(backends, &plan, octx)
     };
     report.skipped += specials.len() as u64;
+    let room = fm_ops::plan::MAX_LEFT_OUT.saturating_sub(report.left_out.len());
+    report.left_out.extend(
+        specials
+            .into_iter()
+            .take(room)
+            .map(|e| (e.uri, SPECIAL.to_string())),
+    );
     // Undo removes the whole new folder.
     report.created = vec![target];
     Ok(report)
@@ -293,5 +383,36 @@ pub fn extract_name(archive_name: &str) -> String {
         "extracted".to_string()
     } else {
         stem
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_large_extractions_at_a_bomb_ratio_ask() {
+        const MB: u64 = 1_000_000;
+        assert_eq!(bomb_question("a.zip", BOMB_BYTES, 1), None, "1 GiB is fine");
+        assert_eq!(
+            bomb_question("a.zip", 2 * BOMB_BYTES, 4 * MB),
+            None,
+            "537:1"
+        );
+        let q = bomb_question("site.zip", 2 * BOMB_BYTES, MB).expect("2147:1 asks");
+        assert!(
+            q.contains("site.zip") && q.contains("2.1 GB") && q.contains("1.0 MB"),
+            "{q}"
+        );
+        assert!(q.contains("2,147:1"), "{q}");
+        assert!(
+            bomb_question("empty.zip", 2 * BOMB_BYTES, 0).is_some(),
+            "no size: ask"
+        );
+        let peta = bomb_question("42.zip", 4_500_000_000_000_000, 42_000).expect("asks");
+        assert!(
+            peta.contains("4.5 PB") && peta.contains("42.0 KB"),
+            "{peta}"
+        );
     }
 }

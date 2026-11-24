@@ -251,12 +251,18 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         rate: String,
         status: String,
         failures: Vec<(String, String)>,
+        left_out: Vec<(String, String)>,
     }
     let rows: Vec<Row> = s
         .fileops
         .jobs()
         .iter()
         .map(|j| {
+            let left_out = j
+                .summary
+                .as_ref()
+                .map(|sum| sum.left_out.clone())
+                .unwrap_or_default();
             let (status, failures) = match (&j.state, &j.summary) {
                 (OpState::Failed(msg), _) => (format!("Failed: {msg}"), Vec::new()),
                 (OpState::Cancelled, _) => ("Cancelled".to_string(), Vec::new()),
@@ -286,6 +292,7 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                 },
                 status,
                 failures,
+                left_out,
             }
         })
         .collect();
@@ -583,6 +590,14 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                         card::detail(ui, tokens, &row.status, None);
                         for (item, err) in &row.failures {
                             card::detail(ui, tokens, &format!("{item}: {err}"), Some(tokens.error));
+                        }
+                        for (item, why) in &row.left_out {
+                            card::detail(
+                                ui,
+                                tokens,
+                                &format!("Left out {item}: {why}"),
+                                Some(tokens.text_muted),
+                            );
                         }
                         card::buttons(ui, |ui| {
                             card::end(ui, |ui| {

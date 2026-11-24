@@ -691,3 +691,32 @@ fn backends_without_rename_still_copy_in_place() {
             .all(|n| !n.starts_with(".fm"))
     );
 }
+
+#[test]
+fn a_full_destination_stops_the_job_with_an_actionable_error() {
+    let fs = MemFs::new();
+    for name in ["a", "b", "c"] {
+        fs.put_str(&format!("/src/{name}.bin"), &[7u8; 10])
+            .expect("put");
+    }
+    fs.mkdirs_str("/dst").expect("dst");
+    let fs = fs.with_capacity(30 + 15);
+    let report = run(
+        Arc::new(fs.clone()),
+        ConflictPolicy::Ask,
+        false,
+        &["/src/a.bin", "/src/b.bin", "/src/c.bin"],
+        "/dst",
+    )
+    .expect("copy");
+    assert_eq!(report.done, 1, "only the first file fits");
+    assert_eq!(
+        report.failed.len(),
+        1,
+        "the job stops at the first full write"
+    );
+    let (_, err) = &report.failed[0];
+    assert!(err.is_no_space(), "{err}");
+    assert!(err.to_string().contains("free some space"), "{err}");
+    assert_eq!(names(&fs, "/dst"), vec!["a.bin"], "no partial or temp file");
+}

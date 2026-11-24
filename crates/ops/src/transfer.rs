@@ -46,6 +46,8 @@ struct Runner<'a, 'b> {
     direct_write: bool,
     /// `(source root, destination root)` of the top-level item being transferred.
     roots: Option<(String, String)>,
+    /// The destination is full: nothing after this can be written.
+    out_of_space: bool,
 }
 
 impl<'a, 'b> Runner<'a, 'b> {
@@ -53,15 +55,21 @@ impl<'a, 'b> Runner<'a, 'b> {
         let mut progress = Progress::default();
         progress.items.total = plan.total_items();
         progress.bytes.total = plan.total_bytes;
+        let report = OpReport {
+            skipped: plan.left_out_count,
+            left_out: plan.left_out.clone(),
+            ..OpReport::default()
+        };
         Self {
             backends,
             plan,
             ctx,
-            report: OpReport::default(),
+            report,
             progress,
             sticky: None,
             direct_write: false,
             roots: None,
+            out_of_space: false,
         }
     }
 
@@ -116,7 +124,7 @@ impl<'a, 'b> Runner<'a, 'b> {
             } else if let Some(items) = self.plan.items.get(top.start..top.end) {
                 self.transfer_top(top, items, moving);
             }
-            if self.report.cancelled {
+            if self.report.cancelled || self.out_of_space {
                 break;
             }
         }
@@ -204,8 +212,16 @@ impl<'a, 'b> Runner<'a, 'b> {
                     if item.kind == PlanKind::Dir {
                         failed_dirs.push(&item.dst);
                     }
+                    let full = err.is_no_space();
                     self.report.failed.push((item.src.clone(), err));
                     clean = false;
+                    if full {
+                        // Every later write would fail the same way: stop here.
+                        self.out_of_space = true;
+                        self.progress.items.done += 1;
+                        self.emit();
+                        return;
+                    }
                 }
                 Outcome::Cancelled => {
                     self.report.cancelled = true;
@@ -464,6 +480,11 @@ impl<'a, 'b> Runner<'a, 'b> {
         let mut reader = src_vfs.open_read(src)?;
         let mut writer = dst_vfs.open_write(to, WriteOpts::default())?;
         let mut buf = vec![0u8; BUF_BYTES];
+        // A full disk names the folder, not the temporary file.
+        let place = || {
+            to.parent()
+                .map_or_else(|| to.to_string(), |p| p.to_string())
+        };
         loop {
             if self.ctx.cancel.is_cancelled() {
                 return Err(FmError::Cancelled);
@@ -473,11 +494,13 @@ impl<'a, 'b> Runner<'a, 'b> {
                 break;
             }
             let chunk = buf.get(..n).ok_or(FmError::Unsupported("short buffer"))?;
-            writer.write_all(chunk)?;
+            writer
+                .write_all(chunk)
+                .map_err(|e| FmError::writing(e, &place()))?;
             self.progress.bytes.done += n as u64;
             self.emit();
         }
-        writer.flush()?;
+        writer.flush().map_err(|e| FmError::writing(e, &place()))?;
         Ok(())
     }
 

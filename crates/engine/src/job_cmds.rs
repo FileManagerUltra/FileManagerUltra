@@ -1,4 +1,5 @@
-//! Job commands: cancel, resolve a parked conflict, dismiss a finished job.
+//! Job commands: cancel, resolve a parked conflict, answer a parked question, dismiss a
+//! finished job.
 
 use fm_ops::{Choice, Decision};
 use fm_vfs::FmError;
@@ -72,6 +73,26 @@ pub fn resolve_conflict() -> CommandSpec {
     }
 }
 
+/// `job.answer` — answer the yes/no question a parked job waits on.
+pub fn answer() -> CommandSpec {
+    CommandSpec {
+        id: "job.answer",
+        label: "Answer Job Question",
+        menu: &["Activity", "Answer"],
+        shortcut: None,
+        params: "job: integer, go: bool — true continues, false cancels the job",
+        enabled: |s| s.fileops.pending_question().is_some(),
+        run: |s, params| {
+            let id = job_id(params)?;
+            let go = object(params)?
+                .and_then(|m| m.get("go"))
+                .and_then(Params::as_bool)
+                .ok_or_else(|| FmError::InvalidParams("go: boolean is required".to_string()))?;
+            s.answer_question(id, go)
+        },
+    }
+}
+
 /// `job.dismiss` — remove a finished job (and its report) from the panel.
 pub fn dismiss() -> CommandSpec {
     CommandSpec {
@@ -93,5 +114,5 @@ pub fn dismiss() -> CommandSpec {
 }
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![cancel(), resolve_conflict(), dismiss()]
+    vec![cancel(), resolve_conflict(), answer(), dismiss()]
 }

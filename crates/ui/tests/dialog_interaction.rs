@@ -2076,3 +2076,61 @@ fn the_advanced_summary_says_keep_in_sync_on_while_waiting_for_start() {
     h.get_by_label_contains("keep in sync on");
     assert!(h.query_by_label_contains("keep in sync off").is_none());
 }
+
+/// An archive that claims 3.75 GiB from 230 bytes parks its Extract job on a question;
+/// Cancel in the dialog cancels the job and leaves no folder behind (add-archive-vfs 6.3).
+#[test]
+fn bomb_question_cancel_stops_the_extraction() {
+    for tokens in [Tokens::dark(), Tokens::light()] {
+        let dir = tempfile::tempdir().expect("tmp");
+        let zip = dir.path().join("bomb.zip");
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bomb.zip"),
+            &zip,
+        )
+        .expect("fixture");
+        let mut s = Session::new().expect("session");
+        let uri = VfsUri::parse(&zip.to_string_lossy()).expect("uri");
+        s.dispatch("archive.extract", &json!({"uri": uri.to_string()}))
+            .expect("extract");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while s.fileops.pending_question().is_none() {
+            s.poll();
+            assert!(std::time::Instant::now() < deadline, "no question");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let mut dialogs = Dialogs::default();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                    dialogs.show(ui.ctx(), s, &tokens);
+                },
+                s,
+            );
+        h.run_steps(3);
+        assert!(
+            h.query_by_label_contains("decompression bomb").is_some(),
+            "the question is shown"
+        );
+        h.get_by_label("Cancel").click();
+        h.run();
+        while h
+            .state()
+            .fileops
+            .jobs()
+            .iter()
+            .any(|j| j.state.is_running())
+        {
+            h.state_mut().poll();
+            assert!(std::time::Instant::now() < deadline, "job still running");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(matches!(
+            h.state().fileops.jobs()[0].state,
+            fm_engine::OpState::Cancelled
+        ));
+        assert!(!dir.path().join("bomb").exists(), "no folder left behind");
+    }
+}

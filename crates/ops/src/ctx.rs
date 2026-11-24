@@ -73,7 +73,8 @@ pub struct Decision {
     pub apply_to_all: bool,
 }
 
-/// What a job did. Item errors never abort the job; only cancel does.
+/// What a job did. Item errors never abort the job; only cancel and a full destination
+/// do.
 #[derive(Debug, Default)]
 pub struct OpReport {
     /// Items written (files and directories created or merged).
@@ -90,6 +91,10 @@ pub struct OpReport {
     /// Destinations where a requested attribute could not be applied. The content is
     /// intact; only the groups listed in each report are missing.
     pub attr_incomplete: Vec<(VfsUri, AttrReport)>,
+    /// Items deliberately not written, with the reason (special files, unusable names,
+    /// hard links out of an archive); counted in `skipped`, listed up to
+    /// [`crate::plan::MAX_LEFT_OUT`].
+    pub left_out: Vec<(VfsUri, String)>,
 }
 
 impl OpReport {
