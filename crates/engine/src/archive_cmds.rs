@@ -607,9 +607,10 @@ pub fn is_password_message(message: &str) -> bool {
 
 /// Whether a file with this name opens as a folder when activated.
 pub fn is_archive_name(name: &str) -> bool {
-    // ISO keeps opening with its application until its reader lands; RAR goes through an
-    // installed 7-Zip or unrar (the pane says what to install when none is found).
-    let readable = |f: FormatId| f != FormatId::Iso;
+    // Every format reads (RAR through an installed 7-Zip or unrar; the pane says what to
+    // install when none is found). "Open with Default App" still lets the system mount an
+    // ISO.
+    let readable = |_: FormatId| true;
     if fm_archive::by_name(name).is_some_and(readable) {
         return true;
     }
@@ -935,6 +936,26 @@ mod tests {
             }
             assert!(std::time::Instant::now() < deadline, "listing timed out");
             std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn every_archive_format_and_part_is_browsable_by_name() {
+        for name in [
+            "a.zip",
+            "a.tar.gz",
+            "a.7z",
+            "disc.iso",
+            "data.rar",
+            "data.part2.rar",
+            "data.r00",
+            "b.7z.002",
+            "site.z01",
+        ] {
+            assert!(is_archive_name(name), "{name}");
+        }
+        for name in ["notes.txt", "movie.mkv.001", "x.part2.txt"] {
+            assert!(!is_archive_name(name), "{name}");
         }
     }
 

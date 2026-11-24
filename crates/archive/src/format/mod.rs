@@ -11,6 +11,7 @@ use crate::secret::Secret;
 use crate::source::Source;
 
 pub mod compress;
+pub mod iso;
 pub mod rar;
 pub mod sevenz;
 pub mod single;
@@ -373,7 +374,7 @@ pub fn open(
             single::open(src, format, name, progress)
         }
         FormatId::SevenZ => Ok(Box::new(sevenz::SevenZReader::open(src, name, passwords)?)),
-        FormatId::Iso => Err(FmError::Unsupported("ISO images are not supported yet")),
+        FormatId::Iso => Ok(Box::new(iso::IsoReader::open(src, progress)?)),
         FormatId::Rar => Err(FmError::Unsupported("RAR archives need 7-Zip or unrar")),
     }
 }

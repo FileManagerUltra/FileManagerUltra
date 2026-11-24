@@ -445,3 +445,8 @@ change is visible: the changelog explains it and the preference restores the old
   it shows "Wrong password" but does not count toward the three-in-a-row limit; listings
   (hidden names) count. Not yet checked against a real 7-Zip/unrar (none on the dev
   machine): listing parsers follow the documented `-slt` / `lt` formats.
+- ISO (2026-11-24): our own read-only ISO 9660 reader (`format/iso.rs`) rather than
+  `hadris-iso`, whose 3.x line is still a release candidate: no new dependency or licence,
+  same limits and fuzzing as the other formats. Rock Ridge wins over Joliet over plain
+  names. Enter on an ISO now browses inside (with the "Enter browses inside archives"
+  preference); "Open with Default App" still lets the system mount it.

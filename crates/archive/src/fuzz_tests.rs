@@ -173,6 +173,11 @@ fn damaged_archives_of_every_format_never_crash() {
         let tally = run_corpus(format, &base, password);
         eprintln!("{format:?} pw={}: {tally:?}", password.is_some());
     }
+    for rock_ridge in [true, false] {
+        let iso = crate::format::iso::tests::sample_iso(rock_ridge);
+        let tally = run_corpus(FormatId::Iso, &iso, None);
+        eprintln!("Iso rr={rock_ridge}: {tally:?}");
+    }
     let single = gz(&b"log line\n".repeat(500));
     let tally = run_corpus(FormatId::Gz, &single, None);
     eprintln!("Gz: {tally:?}");

@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - RAR archives open like folders when 7-Zip or unrar is installed (or chosen in Preferences › Files › RAR program), including RAR sets split into volumes (`data.part1.rar`, … or `data.rar`, `data.r00`, …) and encrypted RAR files. Without one of those programs, entering a RAR says what to install. RAR files on network shares and SFTP servers are copied to a private temporary folder first (up to 4 GB).
 
+- ISO disc images open like folders too, with their long names (Rock Ridge or Joliet), also from network shares and SFTP servers and without mounting anything. To have the system mount an ISO instead, use "Open with Default App" in the right-click menu (or turn off Preferences › Files › "Enter browses inside archives").
+
 ### Fixed
 
 - Extracting a hostile archive cannot write outside the new folder: names with `..`, absolute paths and drive letters stay inside it, nothing is written through a link, device files and FIFOs are left out, and setuid/setgid bits are never kept. A file in an archive that turns out larger than its header says stops with an error and leaves no partial file.

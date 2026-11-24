@@ -456,6 +456,25 @@ mod tests {
     }
 
     #[test]
+    fn an_iso_image_mounts_like_any_archive() {
+        let (vfs, uri) = fs_with("disc.iso", &format::iso::tests::sample_iso(true));
+        let root = VfsUri::archive_root(&crate::handle_for(&uri, 0, None)).expect("root");
+        let lazy = LazyArchive::new(root.clone(), uri, vfs, None, 0);
+        assert_eq!(names(&lazy, &root), vec!["ReadMe.txt", "docs", "latest"]);
+        let a = root.join("docs").and_then(|d| d.join("a.txt")).expect("a");
+        let mut text = String::new();
+        lazy.open_read(&a)
+            .expect("open")
+            .read_to_string(&mut text)
+            .expect("read");
+        assert_eq!(text, "alpha");
+        assert!(
+            lazy.create_dir(&root.join("new").expect("new")).is_err(),
+            "read-only"
+        );
+    }
+
+    #[test]
     fn nested_archives_mount_through_each_other() {
         use std::io::Write as _;
         // A zip inside a tar.gz.
