@@ -19,7 +19,10 @@ use crate::session::Session;
 pub const MAX_REPOS: usize = 8;
 const DEBOUNCE: Duration = Duration::from_millis(300);
 const STAMP_POLL: Duration = Duration::from_secs(2);
-const ROOT_CACHE_CAP: usize = 256;
+/// Folders whose repository root is remembered. The tree asks about every expanded row each
+/// frame, so this must comfortably exceed the rows on screen; overflow drops the least
+/// recently asked entries, never the whole cache (that blanked every mark at once).
+const ROOT_CACHE_CAP: usize = 4096;
 const MAX_LOOKUPS: usize = 16;
 /// A repository nobody shows is dropped after this long.
 const GRACE: Duration = Duration::from_secs(30);
@@ -32,6 +35,11 @@ type Done = Vec<(PathBuf, Stamp, Result<RepoStatus, String>)>;
 struct Checked {
     roots: Vec<(PathBuf, Option<PathBuf>)>,
     changed: Vec<PathBuf>,
+}
+
+struct RootEntry {
+    root: Option<PathBuf>,
+    used: Instant,
 }
 
 struct Repo {
@@ -48,7 +56,7 @@ struct Repo {
 #[derive(Default)]
 pub struct GitState {
     repos: Vec<Repo>,
-    roots: HashMap<PathBuf, Option<PathBuf>>,
+    roots: HashMap<PathBuf, RootEntry>,
     done: Arc<Mutex<Done>>,
     checked: Arc<Mutex<Vec<Checked>>>,
     /// Folders whose repository root is being looked up (a sleeping disk can take seconds).
@@ -70,13 +78,54 @@ impl GitState {
     /// The repository root of `dir` once known. The lookup touches the disk, so it runs on
     /// a thread; until it lands the folder simply shows no git marks.
     fn root_of(&mut self, dir: &Path) -> Option<PathBuf> {
-        if let Some(hit) = self.roots.get(dir) {
-            return hit.clone();
+        if let Some(hit) = self.roots.get_mut(dir) {
+            hit.used = Instant::now();
+            return hit.root.clone();
         }
         if self.looking.len() < MAX_LOOKUPS && self.looking.insert(dir.to_path_buf()) {
             self.spawn_check(vec![dir.to_path_buf()], Vec::new());
         }
         None
+    }
+
+    /// Folders asked about recently enough to be worth re-checking on disk.
+    fn live_dirs(&self) -> Vec<PathBuf> {
+        self.roots
+            .iter()
+            .filter(|(_, e)| e.used.elapsed() < GRACE)
+            .map(|(d, _)| d.clone())
+            .collect()
+    }
+
+    /// Record a discovery result; returns whether the visible answer changed. A result for
+    /// a folder that was neither asked about nor cached (evicted meanwhile) is dropped.
+    fn store_root(&mut self, dir: PathBuf, root: Option<PathBuf>) -> bool {
+        let wanted = self.looking.remove(&dir);
+        if let Some(entry) = self.roots.get_mut(&dir) {
+            return std::mem::replace(&mut entry.root, root.clone()) != root;
+        }
+        if !wanted {
+            return false;
+        }
+        if self.roots.len() >= ROOT_CACHE_CAP {
+            let mut by_age: Vec<(Instant, PathBuf)> = self
+                .roots
+                .iter()
+                .map(|(d, e)| (e.used, d.clone()))
+                .collect();
+            by_age.sort_unstable();
+            for (_, d) in by_age.into_iter().take(ROOT_CACHE_CAP / 4) {
+                self.roots.remove(&d);
+            }
+        }
+        self.roots.insert(
+            dir,
+            RootEntry {
+                root,
+                used: Instant::now(),
+            },
+        );
+        true
     }
 
     /// Look at the disk off the UI thread: discover the roots of `dirs` and compare the
@@ -150,7 +199,7 @@ impl GitState {
             return;
         }
         self.checking = true;
-        let dirs = self.roots.keys().cloned().collect();
+        let dirs = self.live_dirs();
         self.spawn_check(dirs, Vec::new());
     }
 
@@ -222,7 +271,7 @@ impl Session {
             self.git.last_stamp_check = Some(now);
             if !self.git.checking {
                 self.git.checking = true;
-                let dirs = self.git.roots.keys().cloned().collect();
+                let dirs = self.git.live_dirs();
                 let repos = self
                     .git
                     .repos
@@ -319,11 +368,7 @@ impl Session {
         let mut changed = false;
         for batch in batches {
             for (dir, root) in batch.roots {
-                self.git.looking.remove(&dir);
-                if self.git.roots.len() >= ROOT_CACHE_CAP && !self.git.roots.contains_key(&dir) {
-                    self.git.roots.clear();
-                }
-                changed |= self.git.roots.insert(dir, root.clone()) != Some(root);
+                changed |= self.git.store_root(dir, root);
             }
             for root in batch.changed {
                 if let Some(r) = self.git.repos.iter_mut().find(|r| r.root == root)
@@ -345,5 +390,37 @@ impl Session {
             .any(|r| r.inflight || r.dirty_at.is_some())
             || !self.git.looking.is_empty()
             || self.git.checking
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overflowing_root_cache_keeps_recently_used_folders() {
+        let mut git = GitState::default();
+        let hot = PathBuf::from("/hot");
+        git.looking.insert(hot.clone());
+        assert!(git.store_root(hot.clone(), Some(PathBuf::from("/repo"))));
+        for i in 0..ROOT_CACHE_CAP + 10 {
+            let dir = PathBuf::from(format!("/cold/{i}"));
+            git.looking.insert(dir.clone());
+            git.store_root(dir, None);
+            // The tree asks about the same folders every frame.
+            assert_eq!(git.root_of(&hot), Some(PathBuf::from("/repo")));
+        }
+        assert!(git.roots.len() <= ROOT_CACHE_CAP);
+        assert!(
+            git.roots.len() > ROOT_CACHE_CAP / 2,
+            "must not wipe the cache"
+        );
+    }
+
+    #[test]
+    fn stale_discovery_result_is_not_cached() {
+        let mut git = GitState::default();
+        assert!(!git.store_root(PathBuf::from("/gone"), Some(PathBuf::from("/r"))));
+        assert!(git.roots.is_empty());
     }
 }
