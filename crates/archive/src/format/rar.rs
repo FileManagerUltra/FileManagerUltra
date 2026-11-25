@@ -224,6 +224,13 @@ fn command(tool: &Tool, args: &[OsString]) -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        // 7z.exe and unrar.exe are console programs: without this the GUI flashes a
+        // console window for every listing and member read.
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     cmd
 }
 

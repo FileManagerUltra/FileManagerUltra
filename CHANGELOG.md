@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quitting or closing asks one question at most: unsaved workspaces, filled-in PDFs, archives with unsaved changes and work still running are listed together in one prompt with Save, Don't save and Cancel, instead of one prompt after another.
 
 ### Fixed
+- On Windows, opening or reading a RAR archive no longer flashes a command window.
 - Opening a large RAR archive made up of many volumes no longer freezes the window: the pane shows how long it has been opening, and leaving the folder stops it. Big sets are also given more time to be read (up to an hour) instead of failing after two minutes.
 - Dropping files on an archive that is open in the folder tree now adds them as unsaved changes (with the Save / Discard bar, and a warning when you close) instead of saving the archive straight away.
 - Audio and video inside an archive now play in the Media pane when you double-click them (if Preferences › Media is set to the Media pane) and when you drag them onto it, like the "Play in Media" menu item already did.
