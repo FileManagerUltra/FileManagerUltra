@@ -136,6 +136,23 @@ fn metrics(ui: &Ui, tokens: &Tokens) -> Metrics {
     }
 }
 
+/// The pointer position for selecting. While a drag is held but the pointer has left the
+/// window (egui then reports no position), the last known one stands in, so the selection
+/// keeps extending, auto-scrolls and resumes as the pointer comes back.
+fn drag_pos(ctx: &egui::Context, response: &egui::Response) -> Option<Pos2> {
+    let id = response.id.with("drag-pos");
+    if !response.dragged() {
+        ctx.data_mut(|d| d.remove_temp::<Pos2>(id));
+        return response.interact_pointer_pos();
+    }
+    let pos = response
+        .interact_pointer_pos()
+        .or_else(|| ctx.input(|i| i.pointer.latest_pos()))
+        .or_else(|| ctx.data(|d| d.get_temp::<Pos2>(id)))?;
+    ctx.data_mut(|d| d.insert_temp(id, pos));
+    Some(pos)
+}
+
 fn cell_at(rect: Rect, m: &Metrics, snap: &Snapshot, pos: Pos2) -> (u16, u16) {
     let col = ((pos.x - rect.left() - PAD) / m.cw).floor().max(0.0) as u16;
     let row = ((pos.y - rect.top() - PAD) / m.ch).floor().max(0.0) as u16;
@@ -507,7 +524,7 @@ fn handle_pointer(
             s.terminal_scroll(pane, lines);
         }
     }
-    let Some(pos) = response.interact_pointer_pos() else {
+    let Some(pos) = drag_pos(ui.ctx(), response) else {
         if response.clicked() {
             s.terminal_select(None);
         }
@@ -990,6 +1007,56 @@ mod tests {
                 )
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn selection_keeps_its_position_when_the_pointer_leaves_the_window() {
+        let ctx = egui::Context::default();
+        let rect = Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(200.0, 100.0));
+        let frame = |events: Vec<Event>| {
+            let mut got = None;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    screen_rect: Some(rect),
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = ui.interact(rect, Id::NULL.with("t"), Sense::click_and_drag());
+                    got = Some((response.dragged(), drag_pos(ui.ctx(), &response)));
+                },
+            );
+            out.textures_delta.clear();
+            got.unwrap_or((false, None))
+        };
+        let at = egui::pos2(50.0, 40.0);
+        let press = |pressed| Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        frame(vec![Event::PointerMoved(at)]);
+        frame(vec![press(true)]);
+        let moved = egui::pos2(80.0, 90.0);
+        let (dragging, pos) = frame(vec![Event::PointerMoved(moved)]);
+        assert!(dragging);
+        assert_eq!(pos, Some(moved));
+        let (dragging, pos) = frame(vec![Event::PointerGone]);
+        assert!(dragging, "the drag survives the pointer leaving");
+        assert_eq!(pos, Some(moved), "the last position stands in");
+        let back = egui::pos2(10.0, 20.0);
+        let (dragging, pos) = frame(vec![Event::PointerMoved(back)]);
+        assert!(dragging);
+        assert_eq!(pos, Some(back), "selection resumes on re-entering");
+        frame(vec![Event::PointerButton {
+            pos: back,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        }]);
+        let (dragging, _) = frame(vec![]);
+        assert!(!dragging);
     }
 
     #[test]
