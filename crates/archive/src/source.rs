@@ -51,6 +51,42 @@ impl Source for MemSource {
     }
 }
 
+/// A private local file (an unpacked copy in the temporary folder), read positionally.
+pub struct FileSource {
+    file: Mutex<std::fs::File>,
+    len: u64,
+}
+
+impl FileSource {
+    pub fn open(path: &std::path::Path) -> Result<Self, FmError> {
+        let file = std::fs::File::open(path).map_err(FmError::Io)?;
+        let len = file.metadata().map_err(FmError::Io)?.len();
+        Ok(Self {
+            file: Mutex::new(file),
+            len,
+        })
+    }
+}
+
+impl Source for FileSource {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, FmError> {
+        use std::io::{Read as _, Seek as _, SeekFrom};
+        if offset >= self.len {
+            return Ok(0);
+        }
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| FmError::backend("archive", "temporary copy poisoned"))?;
+        file.seek(SeekFrom::Start(offset)).map_err(FmError::Io)?;
+        file.read(buf).map_err(FmError::Io)
+    }
+}
+
 /// The archive file on any backend, read in [`BLOCK`]-sized pieces with a small LRU, so
 /// listing a zip on SFTP reads its central directory, not the whole file.
 pub struct VfsSource {

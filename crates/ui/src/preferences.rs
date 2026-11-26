@@ -1348,7 +1348,7 @@ fn patterns_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
 fn spool_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
     let mut gib = s.prefs.archives_spool_gib;
     ui.horizontal(|ui| {
-        let caption = ui.label("Temporary copies up to");
+        let caption = ui.label("Temporary copies, all archives together, up to");
         let response = ui
             .add_sized(
                 [110.0, ui.spacing().interact_size.y],
@@ -1361,11 +1361,18 @@ fn spool_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
             set(s, "archives_spool_gib", json!(gib));
         }
     });
+    let in_use = fm_engine::archive_cmds::temporary_copies_bytes() as f64 / f64::from(1u32 << 30);
     hint(
         ui,
         tokens,
-        "A RAR archive on a server is copied to a private temporary folder before 7-Zip or \
-         unrar reads it; bigger archives must be copied to this computer first.",
+        format!(
+            "Open archives may keep a private temporary copy: a RAR on a server before 7-Zip \
+             or unrar reads it, and a large .tar.gz, .tar.xz, .tar.bz2 or .tar.zst once \
+             several files are read from it, so later reads are fast. A copy is skipped (and \
+             reading stays slower) when it would pass this limit or leave less than a fifth \
+             of the free disk space. Copies are deleted when their archive closes. In use \
+             now: {in_use:.1} GiB."
+        ),
     );
 }
 

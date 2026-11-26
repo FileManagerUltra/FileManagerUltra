@@ -4,7 +4,7 @@
 //! single arguments after `--`, stdin closed, a timeout on listings and caps on what is
 //! read back. Member names are matched literally (`-spd` for 7-Zip; unrar has no such
 //! switch, so names with wildcard characters are refused). Remote RAR files are copied to
-//! a private temporary folder first (at most [`crate::limits::spool_cap`] bytes, all volumes).
+//! a private temporary folder first (counted against [`crate::limits::spool_cap`] for all open archives together).
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
@@ -531,18 +531,8 @@ pub fn spool(
         .iter()
         .map(|(_, s)| s.len())
         .fold(0, u64::saturating_add);
-    let cap = crate::limits::spool_cap();
-    if total > cap {
-        return Err(FmError::backend(
-            "archive",
-            format!(
-                "remote RAR archives over {} GiB cannot be opened here; copy it to this \
-                 computer first, or raise the limit in Preferences › Files",
-                cap >> 30
-            ),
-        ));
-    }
-    let dir = SpoolDir::create("fm-rar")?;
+    // Counted against the limit for all open archives' temporary copies together.
+    let dir = SpoolDir::create_reserved("fm-rar", total)?;
     let mut first = None;
     let mut copied = 0u64;
     for (name, src) in volumes {

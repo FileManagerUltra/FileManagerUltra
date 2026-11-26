@@ -2341,6 +2341,7 @@ version = "0.3.2"
 dependencies = [
  "bzip2",
  "flate2",
+ "fm-fs-local",
  "fm-testkit",
  "fm-vfs",
  "lzma-rust2",

@@ -2,12 +2,15 @@
 //!
 //! A plain tar is read in place: each member is a slice of the container. A compressed
 //! tar has no index, so mounting reads it once from the start and records each member's
-//! offset in the decompressed stream; reading a member decompresses up to it.
+//! offset in the decompressed stream; reading a member decompresses up to it. From the
+//! second member read on (design D5), the unpacked tar is written once to a private
+//! temporary file and read from there like a plain tar, when it fits in the budget for
+//! all open archives' temporary copies ([`crate::spool`]); otherwise reads stay slow.
 
 use std::collections::HashMap;
 use std::io::{self, Read};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use fm_vfs::FmError;
 
@@ -15,13 +18,83 @@ use super::compress::{Codec, decoder};
 use super::{Declared, FormatId, Info, Passwords, Progress, Reader, pipe, read_small};
 use crate::index::{Index, LiveIndex, Meta, NodeId, NodeKind, normalize};
 use crate::limits::INLINE_MEMBER;
-use crate::source::{SliceSource, Source, SourceReader};
+use crate::source::{FileSource, SliceSource, Source, SourceReader};
+use crate::spool::SpoolDir;
+
+/// The member read that makes a compressed tar unpack to a temporary file.
+const UNPACK_AT_READ: u32 = 2;
+/// A refused or failed copy is tried again after this many more reads (the budget may
+/// have room by then).
+const RETRY_AFTER_READS: u32 = 16;
+/// Smaller tars are quick to decompress: never copied.
+const MIN_UNPACK: u64 = INLINE_MEMBER;
 
 pub struct TarReader {
     src: Arc<dyn Source>,
     format: FormatId,
     codec: Option<Codec>,
     index: Index,
+    /// Bytes of the decompressed stream up to the end of the last member's data.
+    unpacked_len: u64,
+    copy: Mutex<CopyState>,
+    /// Held while the copy is written; other reads meanwhile take the slow way.
+    writing: Mutex<()>,
+}
+
+#[derive(Default)]
+struct CopyState {
+    reads: u32,
+    /// Read count from which a copy may be tried (again).
+    next_try: u32,
+    copy: Option<Arc<dyn Source>>,
+}
+
+/// The unpacked tar in its private folder; the folder (and its share of the budget)
+/// goes when the last reader of the copy is done.
+struct Unpacked {
+    file: FileSource,
+    _dir: SpoolDir,
+}
+
+impl Source for Unpacked {
+    fn len(&self) -> u64 {
+        self.file.len()
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, FmError> {
+        self.file.read_at(offset, buf)
+    }
+}
+
+/// Decompress the first `len` bytes of the tar in `src` into a new private file.
+fn unpack(src: &Arc<dyn Source>, codec: Codec, len: u64) -> Result<Unpacked, FmError> {
+    let dir = SpoolDir::create_reserved("fm-tar", len)?;
+    let path = dir.path().join("archive.tar");
+    let mut out = std::fs::File::create(&path).map_err(FmError::Io)?;
+    let mut dec = decoder(codec, SourceReader::new(src.clone()))?.take(len);
+    let copied = io::copy(&mut dec, &mut out).map_err(FmError::Io)?;
+    if copied < len {
+        return Err(FmError::backend("archive", "archive ends early"));
+    }
+    drop(out);
+    Ok(Unpacked {
+        file: FileSource::open(&path)?,
+        _dir: dir,
+    })
+}
+
+/// A member read straight from an uncompressed tar.
+fn plain_member(
+    src: Arc<dyn Source>,
+    offset: u64,
+    size: u64,
+) -> Result<Box<dyn Read + Send>, FmError> {
+    let slice: Arc<dyn Source> = Arc::new(SliceSource::new(src, offset, size));
+    let reader = SourceReader::new(slice);
+    if size <= INLINE_MEMBER {
+        return Ok(Box::new(io::Cursor::new(read_small(reader, size)?)));
+    }
+    Ok(Box::new(reader))
 }
 
 impl TarReader {
@@ -31,7 +104,7 @@ impl TarReader {
         progress: &Progress<'_>,
     ) -> Result<Self, FmError> {
         let codec = format.compression();
-        let index = match codec {
+        let (index, unpacked_len) = match codec {
             None => {
                 let mut archive = tar::Archive::new(SourceReader::new(src.clone()));
                 let entries = archive.entries_with_seek().map_err(tar_err)?;
@@ -58,22 +131,68 @@ impl TarReader {
             format,
             codec,
             index,
+            unpacked_len,
+            copy: Mutex::new(CopyState {
+                next_try: UNPACK_AT_READ,
+                ..CopyState::default()
+            }),
+            writing: Mutex::new(()),
         })
+    }
+
+    /// The unpacked copy to read from: made on the read that reaches [`UNPACK_AT_READ`]
+    /// (when it fits the budget), `None` while reads should decompress from the start.
+    fn unpacked(&self, codec: Codec) -> Option<Arc<dyn Source>> {
+        {
+            let mut state = self.copy.lock().ok()?;
+            if let Some(copy) = &state.copy {
+                return Some(copy.clone());
+            }
+            state.reads = state.reads.saturating_add(1);
+            if self.unpacked_len < MIN_UNPACK || state.reads < state.next_try {
+                return None;
+            }
+        }
+        // Another read is writing the copy: this one does not wait for it.
+        let _writing = self.writing.try_lock().ok()?;
+        if let Some(copy) = self.copy.lock().ok()?.copy.clone() {
+            return Some(copy);
+        }
+        let made = unpack(&self.src, codec, self.unpacked_len);
+        let mut state = self.copy.lock().ok()?;
+        match made {
+            Ok(copy) => {
+                let copy: Arc<dyn Source> = Arc::new(copy);
+                state.copy = Some(copy.clone());
+                Some(copy)
+            }
+            Err(_) => {
+                state.next_try = state.reads.saturating_add(RETRY_AFTER_READS);
+                None
+            }
+        }
+    }
+
+    /// Whether reads now come from an unpacked temporary copy.
+    pub fn is_unpacked(&self) -> bool {
+        self.copy.lock().is_ok_and(|s| s.copy.is_some())
     }
 }
 
+/// The index of a tar, and where the last member's data ends in the (decompressed) stream.
 fn build<R: Read>(
     entries: tar::Entries<'_, R>,
     total: u64,
     done: &dyn Fn() -> u64,
     progress: &Progress<'_>,
-) -> Result<Index, FmError> {
+) -> Result<(Index, u64), FmError> {
     // Entries go to the caller's live index when there is one, so they can be listed while
     // the rest is still being read.
     let private = LiveIndex::new();
     let index = progress.live.unwrap_or(&private);
     // Data location of every regular file, for hard links that point at it.
     let mut data: HashMap<Vec<String>, (u64, u64, Meta)> = HashMap::new();
+    let mut data_end = 0u64;
     for (n, entry) in entries.enumerate() {
         if n.is_multiple_of(256) {
             if (progress.cancelled)() {
@@ -86,6 +205,7 @@ fn build<R: Read>(
         let raw = String::from_utf8_lossy(&entry.path_bytes()).into_owned();
         let size = entry.size();
         let offset = entry.raw_file_position();
+        data_end = data_end.max(offset.saturating_add(size));
         let meta = Meta {
             size: Some(size),
             packed: None,
@@ -136,7 +256,7 @@ fn build<R: Read>(
         index.add(&raw, kind, meta)?;
     }
     (progress.report)(done(), total);
-    Ok(index.take())
+    Ok((index.take(), data_end))
 }
 
 impl Reader for TarReader {
@@ -167,16 +287,11 @@ impl Reader for TarReader {
             .ok_or_else(|| FmError::NotFound("archive member".into()))?;
         let (offset, size) = (node.meta.locator, node.meta.size.unwrap_or(0));
         match self.codec {
-            None => {
-                let slice: Arc<dyn Source> =
-                    Arc::new(SliceSource::new(self.src.clone(), offset, size));
-                let reader = SourceReader::new(slice);
-                if size <= INLINE_MEMBER {
-                    return Ok(Box::new(io::Cursor::new(read_small(reader, size)?)));
-                }
-                Ok(Box::new(reader))
-            }
+            None => plain_member(self.src.clone(), offset, size),
             Some(codec) => {
+                if let Some(copy) = self.unpacked(codec) {
+                    return plain_member(copy, offset, size);
+                }
                 let src = self.src.clone();
                 Ok(pipe(move |w| {
                     let mut dec = decoder(codec, SourceReader::new(src))?;
@@ -314,6 +429,50 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_compressed_tar_is_unpacked_once_from_the_second_read_on() {
+        use std::io::Write as _;
+        let tar = sample_tar();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(&tar).expect("gz");
+        let gz = gz.finish().expect("gz");
+        let read = |r: &TarReader, path: &str| {
+            let id = r.index().lookup(path).expect(path);
+            let mut out = Vec::new();
+            r.open(id, &Passwords::default())
+                .expect("open")
+                .read_to_end(&mut out)
+                .expect("read");
+            out
+        };
+
+        let r = TarReader::open(
+            Arc::new(MemSource::new(gz)),
+            FormatId::TarGz,
+            &Progress::none(),
+        )
+        .expect("open");
+        assert!(r.unpacked_len >= 2 << 20 && r.unpacked_len <= tar.len() as u64);
+        assert_eq!(read(&r, "www/index.html"), b"<h1>tar</h1>");
+        assert!(!r.is_unpacked(), "one read decompresses from the start");
+        assert_eq!(read(&r, "big.bin"), vec![9u8; 2 << 20]);
+        assert!(r.is_unpacked(), "the second read made the copy");
+        assert_eq!(read(&r, "bin/sh"), b"ELF", "reads from the copy");
+        assert_eq!(read(&r, "www/index.html"), b"<h1>tar</h1>");
+
+        // A plain tar is read in place, never copied.
+        let plain = TarReader::open(
+            Arc::new(MemSource::new(tar)),
+            FormatId::Tar,
+            &Progress::none(),
+        )
+        .expect("open");
+        for _ in 0..3 {
+            assert_eq!(read(&plain, "bin/busybox"), b"ELF");
+        }
+        assert!(!plain.is_unpacked());
+    }
+
+    #[test]
     fn progress_and_cancel() {
         use std::io::Write as _;
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
@@ -329,7 +488,7 @@ pub(crate) mod tests {
             TarReader::open(src.clone(), FormatId::TarGz, &cancelled),
             Err(FmError::Cancelled)
         ));
-        let seen = std::sync::Mutex::new(Vec::new());
+        let seen = Mutex::new(Vec::new());
         let report = |d: u64, t: u64| seen.lock().expect("lock").push((d, t));
         let p = Progress {
             report: &report,
@@ -361,7 +520,7 @@ pub(crate) mod tests {
         let src: Arc<dyn Source> = Arc::new(MemSource::new(gz.finish().expect("gz")));
         let live = LiveIndex::new();
         // The report after 256 entries sees what the build has added by then.
-        let seen = std::sync::Mutex::new(Vec::new());
+        let seen = Mutex::new(Vec::new());
         let report = |_: u64, _: u64| seen.lock().expect("lock").push(live.len());
         let p = Progress {
             report: &report,

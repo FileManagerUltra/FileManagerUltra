@@ -116,7 +116,8 @@ actionable error rather than garbage.
   skips to its offset. After the second member read from the same mount, or when a
   whole-tree operation starts (copy out, Find in contents, Save), the decompressed tar
   is spooled once to an owner-only temp file (same private folder as opened remote
-  files) when it fits under the spool cap (default 4 GiB and 80 % of free space), and
+  files) when it fits under the spool cap (default 4 GiB for all open archives' copies together,
+  and at most 80 % of free space), and
   from then on it is a plain tar.
 - **7z solid blocks** are decoded per block; one decoded block (≤ 256 MiB) is cached
   per mount so siblings in the same block do not decode again.
@@ -184,7 +185,7 @@ the pane shows "RAR archives need 7-Zip or unrar" with the install hint per OS.
   timeout and a size cap on stdout. Passwords are passed with `-p` because neither
   tool reads them from a pipe; this is noted in the security spec (visible to the same
   user's process list for the life of the child).
-- Remote RAR files are first copied to the private temp folder (≤ 4 GiB).
+- Remote RAR files are first copied to the private temp folder (counted against the shared spool cap).
 
 ### D10. Encrypted archives: reading
 
@@ -294,7 +295,7 @@ Three kinds of volume sets are recognised from the name of any part:
   state.
 - **RAR volumes**: the tool is given the first volume and finds the rest itself; we
   still resolve the set first so a missing part is reported before the tool runs.
-  Remote RAR sets are copied to the private temp folder as a whole set (≤ 4 GiB total).
+  Remote RAR sets are copied to the private temp folder as a whole set (counted against the shared spool cap).
 - **Listing.** Every part is tinted as an archive in the folder listing; parts after
   the first also carry a "part n of N" hint. Entering any part shows the same mount.
 - **Changed-on-disk check** covers every part (size and mtime).

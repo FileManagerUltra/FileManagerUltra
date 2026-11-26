@@ -116,7 +116,7 @@ An archive split into parts SHALL open as one archive from any of its parts, on 
 - **THEN** the pane lists the whole archive
 
 ### Requirement: RAR through an installed tool
-RAR archives SHALL be listed and read through an installed 7-Zip (`7zz`, `7z`, `7za`, or `7z.exe` in the standard Windows location) or `unrar`, found on `PATH` or set in Preferences › Files. When no tool is found, entering a RAR SHALL show which tool to install for the current OS. Remote RAR files SHALL be copied to the private temporary folder (at most 4 GiB by default, adjustable in Preferences › Files) before the tool reads them. RAR archives SHALL be read-only.
+RAR archives SHALL be listed and read through an installed 7-Zip (`7zz`, `7z`, `7za`, or `7z.exe` in the standard Windows location) or `unrar`, found on `PATH` or set in Preferences › Files. When no tool is found, entering a RAR SHALL show which tool to install for the current OS. Remote RAR files SHALL be copied to the private temporary folder before the tool reads them. RAR archives SHALL be read-only.
 
 #### Scenario: No tool installed
 - **WHEN** neither 7-Zip nor unrar is installed and the user enters `data.rar`
@@ -139,3 +139,14 @@ The Preview pane SHALL show, for an archive file, its format, compression method
 #### Scenario: Malformed params
 - **WHEN** `archive.enter` receives a directory uri, a 10 000-byte string or no uri
 - **THEN** it returns `Err` and the pane is unchanged
+
+### Requirement: Temporary copies of archives share one limit
+Temporary copies of archives (remote RAR sets before the tool reads them, unpacked compressed tars) SHALL be counted against one limit for all open archives together, set under Preferences › Files › Archives (default 4 GiB). A copy SHALL be made only when it fits in what is left of that limit and takes at most 80 % of the free space on the disk holding the temporary folder. A compressed tar SHALL be unpacked to a temporary copy from the second file read from it on, and read from the copy after that; when the copy does not fit, files SHALL still be read, decompressing from the start. Copies SHALL be deleted when their archive is closed or released.
+
+#### Scenario: Two large archives
+- **WHEN** the limit is 4 GiB, `a.tar.xz` already holds a 3 GiB copy and the user reads several files from `b.tar.gz`, which unpacks to 2 GiB
+- **THEN** no copy is made for `b.tar.gz` and its files are still read correctly; after `a.tar.xz` is closed, the next reads from `b.tar.gz` make its copy
+
+#### Scenario: Little free space
+- **WHEN** the temporary folder's disk has 2 GiB free and a compressed tar unpacks to 1.8 GiB
+- **THEN** no copy is made and reading stays slower

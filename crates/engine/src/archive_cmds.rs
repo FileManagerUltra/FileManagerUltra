@@ -755,6 +755,12 @@ pub fn check_patterns(text: &str) -> Result<(), String> {
 /// Archives inside archives open up to this many levels deep.
 pub const MAX_NESTING: usize = fm_archive::limits::MAX_NESTING;
 
+/// Bytes the temporary copies of all open archives hold now (their shared limit is the
+/// spool cap).
+pub fn temporary_copies_bytes() -> u64 {
+    fm_archive::spool::reserved_bytes()
+}
+
 /// The spool cap range Preferences accepts, in GiB.
 pub const SPOOL_CAP_GIB: std::ops::RangeInclusive<u64> = fm_archive::limits::SPOOL_CAP_GIB;
 

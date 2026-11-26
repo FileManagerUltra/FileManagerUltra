@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Folders inside archives are remembered across restarts: workspaces, tabs, history and bookmarks that point into an archive open there again. Archives you have not looked at for ten minutes free their memory (a password you gave is kept until you close the archive).
 
-- RAR archives open like folders when 7-Zip or unrar is installed (or chosen in Preferences › Files › RAR program), including RAR sets split into volumes (`data.part1.rar`, … or `data.rar`, `data.r00`, …) and encrypted RAR files. Without one of those programs, entering a RAR says what to install. RAR files on network shares and SFTP servers are copied to a private temporary folder first (up to 4 GB).
+- RAR archives open like folders when 7-Zip or unrar is installed (or chosen in Preferences › Files › RAR program), including RAR sets split into volumes (`data.part1.rar`, … or `data.rar`, `data.r00`, …) and encrypted RAR files. Without one of those programs, entering a RAR says what to install. RAR files on network shares and SFTP servers are copied to a private temporary folder first.
 
 - ISO disc images open like folders too, with their long names (Rock Ridge or Joliet), also from network shares and SFTP servers and without mounting anything. To have the system mount an ISO instead, use "Open with Default App" in the right-click menu (or turn off Preferences › Files › "Enter browses inside archives").
 
@@ -36,10 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Zip and 7z archives can get a password, a new password or have theirs removed (File › Archive › Set Password…). The new password is typed twice and applied when the archive is saved; zip uses AES-256, and 7z can hide the file names too.
 
-- Other file types that are really archives, such as comic books (`.cbz`) or e-books (`.epub`), can open like folders too: add them under Preferences › Files › "Also open as archives", for example `cbz=zip, epub=zip`. The same section sets how large a RAR file from a network share or SFTP server may be for its temporary copy (4 GB unless you change it).
+- Other file types that are really archives, such as comic books (`.cbz`) or e-books (`.epub`), can open like folders too: add them under Preferences › Files › "Also open as archives", for example `cbz=zip, epub=zip`.
 - Inside a disc image, a RAR archive or another archive that cannot be changed, New Folder, Rename, Delete, Cut and Paste are greyed out, and hovering them says why ("ISO images are read-only"). They used to stay clickable and fail.
 - When a RAR archive cannot be opened because 7-Zip or unrar is missing, the pane now says what to install and offers Try again, Choose program… and Open with Default App. A file whose contents do not match its archive name offers Back and Open with Default App, and an archive nested more than eight archives deep says so in the pane and points you to the archive file to copy out.
 - File › Archive › Forget Password drops the passwords you typed for the open archive.
+- Reading many files from a large `.tar.gz`, `.tar.xz`, `.tar.bz2` or `.tar.zst` is much faster: from the second file on, the archive is unpacked once to a private temporary copy and read from there. Temporary copies of all open archives together (this one, and RAR files from servers) stay under one limit, set in Preferences › Files (4 GB unless you change it), and never take more than 80 % of the free disk space; when a copy does not fit, files are still read, just more slowly. Copies are deleted when the archive is closed.
 - Type or paste a path that goes through an archive into the address bar, such as `/home/me/site.zip/www` or `C:\Users\me\backup.7z\docs`, and the pane opens that folder inside the archive, also for archives inside archives. While typing, archive files are suggested like folders and completion continues inside them.
 - A workspace tab showing an archive with unsaved changes is marked with a dot, like a tab with unsaved workspace changes.
 
