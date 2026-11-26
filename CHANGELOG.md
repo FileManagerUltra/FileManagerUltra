@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Inside a disc image, a RAR archive or another archive that cannot be changed, New Folder, Rename, Delete, Cut and Paste are greyed out, and hovering them says why ("ISO images are read-only"). They used to stay clickable and fail.
 - When a RAR archive cannot be opened because 7-Zip or unrar is missing, the pane now says what to install and offers Try again, Choose program… and Open with Default App. A file whose contents do not match its archive name offers Back and Open with Default App, and an archive nested more than eight archives deep says so in the pane and points you to the archive file to copy out.
 - File › Archive › Forget Password drops the passwords you typed for the open archive.
+- Type or paste a path that goes through an archive into the address bar, such as `/home/me/site.zip/www` or `C:\Users\me\backup.7z\docs`, and the pane opens that folder inside the archive, also for archives inside archives. While typing, archive files are suggested like folders and completion continues inside them.
 - A workspace tab showing an archive with unsaved changes is marked with a dot, like a tab with unsaved workspace changes.
 
 ### Changed

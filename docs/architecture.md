@@ -732,7 +732,9 @@ is 16 hex digits of SHA-256 over the archive file's uri, so nested archives are 
 archives whose file is itself an `archive://` uri. `engine::archive_cmds` keeps the mount
 table, a process-wide handle → archive-file table (for `display_path`, which shows
 `…/site.zip/www`, and for re-registering restored locations), `archive.enter`,
-`archive.open_app`, `archive.unmount`, `archive.password[.forget]`; `file.open` routes
+`archive.open_app`, `archive.unmount`, `archive.password[.forget]`, and
+`enter_typed`, which turns a typed path back into an archive location by reading it
+from the left (address bar commit and completion); `file.open` routes
 archive files to `archive.enter` unless `prefs.archives_browse` is off, and `nav.up` from
 an archive root returns to the archive's folder. Passwords are `Secret`s held by the
 mount (at most 8, zeroised, never persisted).

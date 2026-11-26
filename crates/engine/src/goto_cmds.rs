@@ -61,6 +61,12 @@ impl PathEdit {
         }
     }
 
+    /// Whether the suggestions for the current text are final (every folder they need
+    /// has been read).
+    pub fn is_complete(&self) -> bool {
+        self.complete && self.computed_for.as_deref() == Some(self.text.as_str())
+    }
+
     /// Replace the text from code (accepting a suggestion).
     pub fn set_text(&mut self, text: String) {
         self.text = text;
@@ -258,7 +264,7 @@ impl Session {
 
     /// Like [`Self::resolve_typed`], but text that is exactly a recent location as shown
     /// returns that location, whatever is connected now.
-    fn resolve_committed(&self, base: &VfsUri, text: &str) -> Result<VfsUri, FmError> {
+    fn resolve_committed(&mut self, base: &VfsUri, text: &str) -> Result<VfsUri, FmError> {
         let trimmed = text.trim().trim_end_matches(is_sep);
         let recent = self.path_history.iter().find(|uri| {
             let shown = display_path(uri);
@@ -266,7 +272,10 @@ impl Session {
         });
         match recent {
             Some(uri) => Ok(uri.clone()),
-            None => self.resolve_typed(base, text),
+            None => {
+                let uri = self.resolve_typed(base, text)?;
+                Ok(crate::archive_cmds::enter_typed(self, uri))
+            }
         }
     }
 
@@ -306,7 +315,9 @@ impl Session {
             let dir = if dir_text.is_empty() {
                 Ok(base.clone())
             } else {
+                // Completion continues inside archives typed on the way (`site.zip/`).
                 self.resolve_typed(base, dir_text)
+                    .map(|dir| crate::archive_cmds::enter_typed(self, dir))
             };
             if let Ok(dir) = dir {
                 match self.dirs.state(&dir).entries() {
@@ -315,7 +326,11 @@ impl Session {
                         let want_hidden = self.show_hidden || prefix.starts_with('.');
                         let mut names: Vec<&str> = entries
                             .iter()
-                            .filter(|e| e.is_dir_like())
+                            // Archive files are completed like folders: typing on
+                            // continues inside them.
+                            .filter(|e| {
+                                e.is_dir_like() || crate::archive_cmds::is_archive_name(&e.name)
+                            })
                             .filter(|e| want_hidden || !crate::session::is_hidden(e))
                             .map(|e| e.name.as_str())
                             .filter(|n| n.to_lowercase().starts_with(&lower))

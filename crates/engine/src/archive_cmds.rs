@@ -464,6 +464,69 @@ pub(crate) fn mount_as(
     Ok(root)
 }
 
+/// Typed-path resolution through archives (`path-display`): read `uri` from the left
+/// and continue inside every component that is an archive file, so the display form
+/// `/home/me/site.zip/www` (or `C:\Users\me\site.zip\www`) comes back to `www` inside
+/// `site.zip`, also for archives inside archives up to the nesting limit. Only registers
+/// the archives (no I/O); the listing opens them on the job lanes as usual. A component
+/// the parent's cached listing shows as a folder stays a folder. When an archive cannot
+/// be registered (no connection yet), the location is returned as far as it got.
+pub fn enter_typed(s: &mut Session, uri: VfsUri) -> VfsUri {
+    let mut at = uri;
+    for _ in 0..=fm_archive::limits::MAX_NESTING {
+        let Some((container, rest)) = first_archive_in(s, &at) else {
+            return at;
+        };
+        let inside = ensure_registered(s, &container)
+            .and_then(|()| mount(s, &container))
+            .and_then(|root| rest.iter().try_fold(root, |u, seg| u.join(seg)));
+        match inside {
+            Ok(inner) => at = inner,
+            Err(_) => return at,
+        }
+    }
+    at
+}
+
+/// The first component of `uri` named like an archive (and not a folder by the cached
+/// listing of its parent): that archive file and the path segments after it.
+fn first_archive_in(s: &Session, uri: &VfsUri) -> Option<(VfsUri, Vec<String>)> {
+    let segments: Vec<&str> = uri
+        .path_str()
+        .split('/')
+        .filter(|x| !x.is_empty())
+        .collect();
+    for (ix, segment) in segments.iter().enumerate() {
+        if !is_archive_name(segment) {
+            continue;
+        }
+        let prefix = uri
+            .with_path(&format!("/{}", segments.get(..=ix)?.join("/")))
+            .ok()?;
+        let is_folder = prefix
+            .parent()
+            .and_then(|dir| s.dirs.entries(&dir))
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|e| e.name == *segment)
+                    .map(|e| e.is_dir_like())
+            })
+            .unwrap_or(false);
+        if is_folder {
+            continue;
+        }
+        let rest = segments
+            .get(ix + 1..)
+            .unwrap_or_default()
+            .iter()
+            .map(|x| (*x).to_string())
+            .collect();
+        return Some((prefix, rest));
+    }
+    None
+}
+
 /// Make sure the archive behind `uri` is registered (after a restart, a restored pane or
 /// history entry points at a handle this session has not mounted yet).
 pub fn ensure_registered(s: &mut Session, uri: &VfsUri) -> Result<(), FmError> {
