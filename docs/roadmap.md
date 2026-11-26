@@ -157,6 +157,25 @@ view (0.3.2, `add-table-preview`).
   id so it stays dispatchable (`selection.*`). This is a planned feature idea, not
   approved implementation scope.
 
+### Near-future: better Git handling
+
+`git-status-and-diff` gives read-only status marks and a Diff view. A follow-up change
+would make version control a first-class workflow:
+
+- **Changed-files overview**: one view per repository listing modified, added, deleted,
+  renamed and untracked files (staged and unstaged), with the diff of the selected file
+  beside it and jumps to the file in a Files pane.
+- **Branch switching**: show the current branch in the pane header or status bar, list
+  local and remote branches, and switch (refusing or asking when the working tree has
+  changes that would be overwritten).
+- **Maybe: a simple editor** for small edits to text files (fix a typo, change a config
+  line) without leaving the app, with save, undo and the same unsaved-changes prompt as
+  archives and PDFs.
+- Open questions for the proposal: `fm-git` is read-only `gix` today, so writing
+  (checkout, stage, commit?) needs a scope decision and its own safety rules; how far
+  to go beyond switching (stage/commit/stash); the editor's scope (plain text only,
+  size cap, encodings) and whether it belongs in the Preview pane.
+
 ### File synchronization
 
 Implemented as OpenSpec change `add-file-sync`, archived 2026-11-24 together with
