@@ -382,6 +382,54 @@ change is visible: the changelog explains it and the preference restores the old
 - Do we want "Open with 7-Zip" as a fallback for other formats 7-Zip reads (CAB, WIM,
   DMG, ARJ, LZH)? Not in this change; easy to add once the RAR path exists.
 
+## Spike results (tasks 1.3–1.7, written up 2026-11-26)
+
+- **1.3 7z and ISO.** `sevenz-rust2` reads any member of a solid block on demand
+  (`format/sevenz.rs` `plain_7z_reads_each_member_of_a_solid_block`; the decoded block
+  is cached per mount, D5). Rewriting a 7z with an added file works through Save
+  (`save.rs` `every_writable_format_saves_its_staged_changes`), re-encoding with LZMA2
+  at the Normal level rather than the original methods. `sevenz-rust2` stores no
+  symlinks: Compress and Add leave them out and count them (D11a). `hadris-iso` was
+  dropped: its 3.x line is still a release candidate, so ISO 9660 is read by our own
+  `format/iso.rs` (Rock Ridge over Joliet over plain names; tests
+  `rock_ridge_names_modes_and_links_win`, `joliet_names_are_used_without_rock_ridge`,
+  `a_directory_loop_and_out_of_range_extents_are_safe`).
+- **1.4 Zstandard encoder (D11).** Measured with the ignored probe
+  `compress::tests::ruzstd_encoder_probe` (`--release`, this machine): 100 MB of
+  log-like text → 26.8 %, encode 111 MB/s, decode 343 MB/s. The reference decoder
+  accepts the output (`zstd -t`, same byte count). For comparison the reference
+  encoder gives 21.9 % at `-1` (about 1.1 GB/s) and 22.4 % at `-3`. `ruzstd` has only
+  its Fastest level, so **tar.zst stays read-only in this change** and Compress does
+  not offer it; writing can be enabled later without format work, since the output is
+  valid.
+- **1.5 Spanned zips.** See D16 and the implementation notes.
+- **1.6 Encryption.** Read: zip AES-128, -192 and -256, with a different password per
+  member in one archive (`zip.rs` `aes_strengths_and_a_password_per_member`); ZipCrypto
+  from a real Info-ZIP archive (`fixtures/zipcrypto.zip`, made with
+  `zip -P zip-crypto -r`, test `zipcrypto_from_info_zip_reads_with_its_password`); 7z
+  AES-256 with and without encrypted names (`sevenz.rs`
+  `encrypted_names_need_the_password_to_mount`, `encrypted_data_asks_when_read`).
+  Write: zip AES-256 and 7z AES-256 (± encrypted names) round-trip through our reader
+  (`write.rs` `encrypted_zip_and_7z_need_the_password`, `save.rs`
+  `encrypted_archives_stay_encrypted_with_their_password`). ZipCrypto is not written:
+  the `zip` crate keeps its ZipCrypto writer crate-private, so the Compress dialog
+  offers AES-256 only. Not checked here: that our encrypted output opens in 7-Zip
+  (not installed on the dev machine; Info-ZIP cannot read AES at all). That check is
+  part of the manual smoke (8.4).
+- **1.7 Fixtures.** Fixtures are generated in the tests that use them (small, in
+  memory, no binary files except the Info-ZIP ZipCrypto archive), not by one shared
+  generator. Coverage of the listed kinds: nested and empty folders, symlinks, hard
+  links, device files and hostile `../` names in `tar.rs` `sample_tar`; unicode names
+  in `zip.rs` (Info-ZIP fixture, `日本語/メモ.txt`); duplicates in `index.rs`
+  (shadowed entries); damaged and hostile input for every format in `fuzz_tests.rs`;
+  encrypted variants as listed under 1.6; split sets in `split.rs` and the engine
+  tests (numbered zip/7z/tar.gz parts, spanned zip, RAR `.partN.rar` and `.rNN`
+  spellings, a missing part named in the error); a zip inside a tar.gz in `mount.rs`.
+  RAR archives cannot be made here (the `rar` program is not free software and not
+  installed): the RAR tests drive a fake 7-Zip script that prints real `-slt` listings,
+  including encrypted names (`-hp`). Reading real RAR files through 7-Zip and unrar is
+  part of the manual smoke (8.4).
+
 ## Implementation notes
 
 - 2026-11-23: zip is built without its `zstd-rs` feature (it still compiles `zstd-sys`

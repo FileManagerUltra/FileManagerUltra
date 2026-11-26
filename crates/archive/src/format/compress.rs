@@ -111,6 +111,54 @@ impl<R: Read> Read for Peek<R> {
 mod tests {
     use super::*;
 
+    /// Spike 1.4 (manual, `--release`): compress 100 MB of tar-like data with `ruzstd`,
+    /// time it, decode it again with `ruzstd`, and leave the output at `$FM_ZSTD_PROBE`
+    /// for the reference decoder (`zstd -t`). Results are in design.md (D11).
+    #[test]
+    #[ignore = "manual speed probe; run with --release and FM_ZSTD_PROBE=<file>"]
+    fn ruzstd_encoder_probe() {
+        use std::time::Instant;
+        let mut data = Vec::with_capacity(100 << 20);
+        let mut seed = 0x9e37_79b9_u32;
+        let mut line = 0u32;
+        while data.len() < 100 << 20 {
+            // Log-like lines with some noise: compressible, not trivially so.
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            line += 1;
+            data.extend_from_slice(
+                format!(
+                    "{line:08} GET /api/items/{} 200 {}ms\n",
+                    seed % 100_000,
+                    seed % 997
+                )
+                .as_bytes(),
+            );
+        }
+        let started = Instant::now();
+        let packed = ruzstd::encoding::compress_to_vec(
+            &data[..],
+            ruzstd::encoding::CompressionLevel::Fastest,
+        );
+        let secs = started.elapsed().as_secs_f64();
+        let started = Instant::now();
+        let back = decode(Codec::Zstd, packed.clone());
+        let back_secs = started.elapsed().as_secs_f64();
+        assert_eq!(back, data, "round trip");
+        println!(
+            "ruzstd Fastest: {} MB -> {} MB ({:.1} %), encode {:.0} MB/s, decode {:.0} MB/s",
+            data.len() >> 20,
+            packed.len() >> 20,
+            packed.len() as f64 * 100.0 / data.len() as f64,
+            (data.len() >> 20) as f64 / secs,
+            (data.len() >> 20) as f64 / back_secs,
+        );
+        if let Some(path) = std::env::var_os("FM_ZSTD_PROBE") {
+            std::fs::write(path, &packed).expect("write probe output");
+        }
+    }
+
     fn decode(codec: Codec, data: Vec<u8>) -> Vec<u8> {
         let mut out = Vec::new();
         decoder(codec, io::Cursor::new(data))

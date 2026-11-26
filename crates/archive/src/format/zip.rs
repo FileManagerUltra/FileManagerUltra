@@ -328,6 +328,74 @@ pub(crate) mod tests {
         assert_eq!(s, "top secret");
     }
 
+    fn read_all(r: &ZipReader, path: &str, pw: &Passwords) -> Result<String, FmError> {
+        let id = r.index().lookup(path).expect(path);
+        let mut s = String::new();
+        r.open(id, pw)?.read_to_string(&mut s).expect("read");
+        Ok(s)
+    }
+
+    /// A ZipCrypto archive made by Info-ZIP (`zip -P zip-crypto -r`, spike 1.6): read with
+    /// its password, refused with a wrong one; its UTF-8 name is kept.
+    #[test]
+    fn zipcrypto_from_info_zip_reads_with_its_password() {
+        let r = open(include_bytes!("fixtures/zipcrypto.zip").to_vec());
+        assert!(r.info().encrypted);
+        assert!(r.index().lookup("café.txt").is_some(), "UTF-8 name");
+        let pw = Passwords::default();
+        assert!(matches!(
+            read_all(&r, "docs/legacy.txt", &pw),
+            Err(FmError::PasswordRequired(_))
+        ));
+        pw.add(crate::Secret::new("nope"));
+        assert!(
+            read_all(&r, "docs/legacy.txt", &pw).is_err(),
+            "wrong password"
+        );
+        pw.add(crate::Secret::new("zip-crypto"));
+        assert_eq!(
+            read_all(&r, "docs/legacy.txt", &pw).expect("read"),
+            "old tools only\n"
+        );
+        assert_eq!(read_all(&r, "café.txt", &pw).expect("read"), "café\n");
+    }
+
+    /// AES-128, -192 and -256 members, each with its own password, in one archive: each
+    /// reads once its password is known (spike 1.6, mixed passwords per member).
+    #[test]
+    fn aes_strengths_and_a_password_per_member() {
+        let mut out = Cursor::new(Vec::new());
+        {
+            let mut w = zip::ZipWriter::new(&mut out);
+            for (name, mode, pw) in [
+                ("a128.txt", zip::AesMode::Aes128, "one"),
+                ("a192.txt", zip::AesMode::Aes192, "two"),
+                ("a256.txt", zip::AesMode::Aes256, "three"),
+            ] {
+                let opts = zip::write::SimpleFileOptions::default().with_aes_encryption(mode, pw);
+                w.start_file(name, opts).expect("file");
+                w.write_all(name.as_bytes()).expect("w");
+            }
+            let plain = zip::write::SimpleFileOptions::default();
+            w.start_file("日本語/メモ.txt", plain).expect("file");
+            w.write_all(b"plain").expect("w");
+            w.finish().expect("finish");
+        }
+        let r = open(out.into_inner());
+        let pw = Passwords::default();
+        assert_eq!(
+            read_all(&r, "日本語/メモ.txt", &pw).expect("plain"),
+            "plain"
+        );
+        pw.add(crate::Secret::new("two"));
+        assert_eq!(read_all(&r, "a192.txt", &pw).expect("192"), "a192.txt");
+        assert!(read_all(&r, "a128.txt", &pw).is_err(), "not its password");
+        pw.add(crate::Secret::new("one"));
+        pw.add(crate::Secret::new("three"));
+        assert_eq!(read_all(&r, "a128.txt", &pw).expect("128"), "a128.txt");
+        assert_eq!(read_all(&r, "a256.txt", &pw).expect("256"), "a256.txt");
+    }
+
     #[test]
     fn garbage_is_an_error() {
         let src = Arc::new(MemSource::new(b"PK\x03\x04 not really".to_vec()));
