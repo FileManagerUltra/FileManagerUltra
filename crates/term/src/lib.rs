@@ -15,7 +15,7 @@ mod session;
 mod shell;
 
 pub use emulator::{Cell, Color, Emulator, MAX_COLS, MAX_ROWS, MIN_SIZE, SCROLLBACK, Snapshot};
-pub use links::{Link, link_at};
+pub use links::{Link, LinkSpan, link_at};
 pub use mouse::{
     MouseAction, MouseButton, MouseEvent, MouseProtocol, MouseProtocolEncoding, MouseProtocolMode,
 };

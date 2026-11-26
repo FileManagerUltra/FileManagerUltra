@@ -63,6 +63,8 @@ pub struct Snapshot {
     pub bracketed_paste: bool,
     pub alternate_screen: bool,
     pub mouse: MouseProtocol,
+    /// Per visible row: its text continues on the next row (a soft wrap, not a newline).
+    pub wrapped: Vec<bool>,
 }
 
 impl Snapshot {
@@ -71,6 +73,11 @@ impl Snapshot {
             self.scrollback_len.saturating_sub(self.scrollback_offset) + usize::from(cell.0),
             cell.1,
         )
+    }
+
+    /// Whether row `row` wraps onto the next row (false past the screen).
+    pub fn row_wraps(&self, row: u16) -> bool {
+        self.wrapped.get(usize::from(row)).copied().unwrap_or(false)
     }
 
     pub fn cell(&self, row: u16, col: u16) -> Option<&Cell> {
@@ -325,6 +332,7 @@ impl Emulator {
             bracketed_paste: screen.bracketed_paste(),
             alternate_screen: screen.alternate_screen(),
             mouse: self.mouse_protocol(),
+            wrapped: (0..rows).map(|r| screen.row_wrapped(r)).collect(),
         }
     }
 }

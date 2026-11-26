@@ -598,13 +598,17 @@ fn link_under_pointer(
         return;
     };
     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    let y = rect.top() + PAD + f32::from(row + 1) * m.ch - 1.0;
-    let x0 = rect.left() + PAD + f32::from(link.start) * m.cw;
-    let x1 = rect.left() + PAD + f32::from(link.end + 1) * m.cw;
-    ui.painter().with_clip_rect(rect).line_segment(
-        [Pos2::new(x0, y), Pos2::new(x1, y)],
-        Stroke::new(1.5, tokens.accent),
-    );
+    // A link the terminal wrapped is underlined on every row it covers.
+    let painter = ui.painter().with_clip_rect(rect);
+    for span in &link.spans {
+        let y = rect.top() + PAD + f32::from(span.row + 1) * m.ch - 1.0;
+        let x0 = rect.left() + PAD + f32::from(span.start) * m.cw;
+        let x1 = rect.left() + PAD + f32::from(span.end + 1) * m.cw;
+        painter.line_segment(
+            [Pos2::new(x0, y), Pos2::new(x1, y)],
+            Stroke::new(1.5, tokens.accent),
+        );
+    }
     if response.clicked() {
         let _ = s.layout.focus_pane(pane);
         s.dispatch_or_notice(

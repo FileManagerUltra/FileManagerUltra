@@ -58,28 +58,33 @@ pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, f
         }
         None => append(&path, base_color),
     }
-    let text = egui::WidgetText::from(job);
-    // The whole remaining header width is the click target, not just the text.
+    // The whole remaining header width is one selectable text area: a drag starting on
+    // the text or in the empty space beside it selects (Ctrl+C copies the text, see
+    // `has_text_selection`), while a plain click anywhere opens the editor.
     let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    // The path text is always selectable: dragging over it selects (Ctrl+C copies the
-    // text, see `has_text_selection`), while a plain click, on the text or beside it,
-    // opens the editor.
-    let label = ui
-        .scope_builder(
-            egui::UiBuilder::new()
-                .max_rect(rect)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-            |ui| ui.add(egui::Label::new(text).truncate().selectable(true)),
-        )
-        .inner;
-    let hint = format!("{path}\nClick or Ctrl+L to type a path; drag over it to select");
-    let response = response.on_hover_text(hint.clone());
-    let label = label.on_hover_text(hint);
-    if response.hovered() || label.hovered() {
+    let sense = egui::Sense::click_and_drag() - egui::Sense::FOCUSABLE;
+    let (rect, response) = ui.allocate_exact_size(size, sense);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width());
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    let galley_pos = egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
+    let response = response.on_hover_text(format!(
+        "{path}\nClick or Ctrl+L to type a path; drag over it to select"
+    ));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &path));
+    if ui.is_rect_visible(rect) {
+        egui::text_selection::LabelSelectionState::label_text_selection(
+            ui,
+            &response,
+            galley_pos,
+            galley,
+            base_color,
+            egui::Stroke::NONE,
+        );
+    }
+    if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
     }
-    if response.clicked() || label.clicked() {
+    if response.clicked() {
         let _ = s.layout.focus_pane(pane);
         s.dispatch_or_notice("nav.goto", &serde_json::Value::Null);
     }
@@ -421,6 +426,52 @@ mod tests {
         let start = egui::pos2(rect.left() + 1.0, rect.center().y);
         let end = egui::pos2(rect.right() - 1.0, rect.center().y);
         assert!(!has_text_selection(&h.ctx), "nothing selected yet");
+        h.hover_at(start);
+        h.run();
+        h.drag_at(start);
+        h.run();
+        for step in 1..=4 {
+            h.hover_at(start + (end - start) * (step as f32 / 4.0));
+            h.run();
+        }
+        h.drop_at(end);
+        h.run();
+        assert!(
+            !is_editing(h.state(), pane),
+            "a drag selects, it does not edit"
+        );
+        assert!(has_text_selection(&h.ctx), "the path text is selected");
+    }
+
+    /// A drag that starts in the empty space after the path, leftwards over the text,
+    /// selects the end of the path.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn dragging_from_the_empty_space_selects_too() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        let s = Session::new().expect("session");
+        let pane = s.layout.focused();
+        let path = s
+            .layout
+            .state(pane)
+            .map(|p| fm_engine::item_cmds::display_path(&p.location))
+            .expect("pane path");
+        let tokens = Tokens::dark();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(900.0, 60.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    crate::theme::apply_to(ui.ctx(), &tokens);
+                    if !is_editing(s, pane) {
+                        ui.horizontal(|ui| show_label(ui, s, pane, &tokens, true));
+                    }
+                },
+                s,
+            );
+        let rect = h.get_by_label(&path).rect();
+        let start = egui::pos2(rect.right() - 2.0, rect.center().y);
+        let end = egui::pos2(rect.left() + 2.0, rect.center().y);
         h.hover_at(start);
         h.run();
         h.drag_at(start);
