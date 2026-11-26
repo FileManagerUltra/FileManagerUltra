@@ -57,6 +57,8 @@ pub struct Mounts {
     /// Opened archives nothing shows or uses, since when (idle release).
     idle_since: HashMap<String, std::time::Instant>,
     last_idle_check: Option<std::time::Instant>,
+    /// Archives being opened that a pane has been inside meanwhile (`cancel_tick`).
+    entered_while_opening: std::collections::HashSet<String>,
     /// Paces the copies of what an archive being read has found (`archive_fill`).
     pub(crate) fill: crate::archive_fill::Pacer,
 }
@@ -152,6 +154,38 @@ pub(crate) fn idle_tick(s: &mut Session, now: std::time::Instant) {
         }
         s.archives.idle_since.remove(&h);
         still_open -= 1;
+    }
+}
+
+/// Stop opening an archive the user has left: a pane was inside it while it was being
+/// opened and now none is ("leave the folder to stop", `archive-browsing`). An archive
+/// opened only for the folder tree (expanded there, never entered) keeps opening.
+/// Nothing is stopped while a file job runs or the address bar is open (they may read
+/// an archive no pane shows). A stopped archive opens again when it is entered again.
+/// Called from `poll`; costs nothing while no archive is being opened.
+pub(crate) fn cancel_tick(s: &mut Session) {
+    let opening = s.archives.being_read();
+    if opening.is_empty() {
+        s.archives.entered_while_opening.clear();
+        return;
+    }
+    let handles: Vec<String> = opening
+        .iter()
+        .filter_map(|m| m.root().archive_handle().map(str::to_string))
+        .collect();
+    s.archives
+        .entered_while_opening
+        .retain(|h| handles.contains(h));
+    if s.path_edit.is_some() || s.fileops.jobs().iter().any(|j| j.state.is_running()) {
+        return;
+    }
+    let used = handles_in_use(s);
+    for (mount, h) in opening.iter().zip(&handles) {
+        if used.contains(h) {
+            s.archives.entered_while_opening.insert(h.clone());
+        } else if s.archives.entered_while_opening.remove(h) {
+            mount.cancel();
+        }
     }
 }
 

@@ -764,6 +764,10 @@ and which the job's own result replaces (Ok or Failed). The RAR tool's stdout is
 into per-entry blocks (`format/blocks.rs`) as it arrives (`rar::run_stream`); 7-Zip
 prints nothing until it has read every volume, so only unrar fills live. The pane's
 "Still reading…" note comes from `archive_fill::reading`.
+`archive_cmds::cancel_tick` (every poll, only while an archive is opening) calls
+`LazyArchive::cancel` when a pane was inside the archive during the open and none is
+now; opens for the tree only, running file jobs and an open address bar are left
+alone.
 
 Pane states: a failed listing inside an archive is classified by
 `archive_cmds::problem` (no RAR tool, nesting limit, signature mismatch) and drawn by

@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quitting or closing asks one question at most: unsaved workspaces, filled-in PDFs, archives with unsaved changes and work still running are listed together in one prompt with Save, Don't save and Cancel, instead of one prompt after another.
 
 ### Fixed
+- Leaving a large archive while it is still being opened (a big `.tar.gz` or RAR set) now really stops reading it, as the pane says; entering it again starts over. An archive opened only by expanding it in the folder tree keeps being read.
 - The path above a file list can be selected straight away by dragging over it, also when the drag starts in the empty space after it, and Ctrl+C copies the selected text (not the selected files). A plain click still opens the path for typing.
 - In the terminal, Ctrl+click on a web link that wraps onto the next lines now opens the whole link (and underlines every line of it), not just the part on the first line.
 - Git colours and marks in the folder tree no longer start blinking after you have browsed or expanded many folders for a while, and the diff in the Preview pane stops flipping on and off with them.
