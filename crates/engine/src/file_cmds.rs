@@ -247,7 +247,7 @@ pub fn mkdir() -> CommandSpec {
         menu: &["File", "New Folder"],
         shortcut: Some("F7"),
         params: "name: string, parent?: uri",
-        enabled: can_create_here,
+        enabled: |s| can_create_here(s) && crate::archive_cmds::focused_read_only(s).is_none(),
         run: |s, params| {
             let map = object(params)?;
             let name = required_name(map)?;
@@ -270,7 +270,7 @@ pub fn new_file() -> CommandSpec {
         menu: &["File", "New File"],
         shortcut: Some("Shift+F7"),
         params: "name: string, parent?: uri",
-        enabled: can_create_here,
+        enabled: |s| can_create_here(s) && crate::archive_cmds::focused_read_only(s).is_none(),
         run: |s, params| {
             let map = object(params)?;
             let name = required_name(map)?;
@@ -293,7 +293,9 @@ pub fn rename() -> CommandSpec {
         menu: &["File", "Rename"],
         shortcut: Some("F2"),
         params: "name: string, uri?: uri",
-        enabled: |s| focused_selection(s).len() == 1,
+        enabled: |s| {
+            focused_selection(s).len() == 1 && crate::archive_cmds::focused_read_only(s).is_none()
+        },
         run: |s, params| {
             let map = object(params)?;
             let name = required_name(map)?;
@@ -325,7 +327,7 @@ pub fn delete() -> CommandSpec {
         menu: &["File", "Move to Trash"],
         shortcut: Some("F8"),
         params: "sources?: [uri]",
-        enabled: has_selection,
+        enabled: |s| has_selection(s) && crate::archive_cmds::focused_read_only(s).is_none(),
         run: |s, params| {
             let map = object(params)?;
             let sources = sources_or_selection(s, map)?;
@@ -359,7 +361,7 @@ pub fn delete_permanent() -> CommandSpec {
         menu: &["File", "Delete Permanently"],
         shortcut: Some("Shift+Delete"),
         params: "confirm: true, sources?: [uri]",
-        enabled: has_selection,
+        enabled: |s| has_selection(s) && crate::archive_cmds::focused_read_only(s).is_none(),
         run: |s, params| {
             let map = object(params)?;
             let confirmed = map

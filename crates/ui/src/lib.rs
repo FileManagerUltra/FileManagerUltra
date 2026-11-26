@@ -7,6 +7,7 @@ pub mod activity_card;
 pub mod archive_bar;
 pub mod archive_lock;
 pub mod archive_password;
+pub mod archive_state;
 pub mod arrange;
 pub mod compare_with;
 pub mod compress_dialog;

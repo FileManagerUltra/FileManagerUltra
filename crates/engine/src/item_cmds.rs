@@ -97,7 +97,11 @@ pub fn duplicate() -> CommandSpec {
         menu: &["File", "Duplicate"],
         shortcut: Some("Ctrl+Shift+D"),
         params: "sources?: [uri] (default: selection)",
-        enabled: |s| s.focused_remote_ready() && !focused_selection(s).is_empty(),
+        enabled: |s| {
+            s.focused_remote_ready()
+                && !focused_selection(s).is_empty()
+                && crate::archive_cmds::focused_read_only(s).is_none()
+        },
         run: |s, params| {
             let map = object(params)?;
             let sources = match map.and_then(|m| m.get("sources")) {

@@ -747,7 +747,8 @@ original size and swap them in the same way (`archive_parts`, with Restore / Del
 Backup Parts after an interruption); `archive.join` writes a numbered set as one file
 through the same swap. Spanned zips, RAR, ISO and sets with backup parts are read-only
 (`LazyArchive::writable` says why; `file.move` and move-drops out of them are refused,
-copy works). `archive.add`/`archive.add_to`, Extract and Compress run on the `archive`
+copy works; `archive_cmds::focused_read_only` disables `WRITE_COMMANDS` there and the
+menus show the reason as tooltip). `archive.add`/`archive.add_to`, Extract and Compress run on the `archive`
 lane as `fileops` jobs; a job that needs a password parks and the pane asks for it.
 Selecting an archive file in a Preview pane builds its card (`engine::archive_preview`)
 from a private, unregistered `LazyArchive`, so previewing mounts nothing.
@@ -761,6 +762,15 @@ and which the job's own result replaces (Ok or Failed). The RAR tool's stdout is
 into per-entry blocks (`format/blocks.rs`) as it arrives (`rar::run_stream`); 7-Zip
 prints nothing until it has read every volume, so only unrar fills live. The pane's
 "Still reading…" note comes from `archive_fill::reading`.
+
+Pane states: a failed listing inside an archive is classified by
+`archive_cmds::problem` (no RAR tool, nesting limit, signature mismatch) and drawn by
+`fm-ui` `archive_state` with its way out instead of a red line. An archive nested deeper
+than `MAX_NESTING` is still registered, as a `LazyArchive::refusing` whose every open
+fails with the reason, so the pane, history and Up behave as for any archive. Added name
+patterns and the spool cap are process-wide settings in `fm-archive`
+(`format::set_extra_patterns`, `limits::set_spool_cap_gib`) pushed from `Prefs` by
+`display_prefs_cmds::apply_runtime`, like the RAR tool path.
 
 ## 13. Change history
 

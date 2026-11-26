@@ -71,6 +71,13 @@ pub fn open_media(ctx: &Context, s: &mut Session) {
     }
 }
 
+/// Open Preferences on the Files page (e.g. from the "RAR archives need 7-Zip" pane).
+pub fn open_files(ctx: &Context, s: &mut Session) {
+    if s.dispatch_or_notice("app.preferences", &serde_json::Value::Null) {
+        ctx.data_mut(|data| data.insert_temp(Id::NULL.with("fm-preferences-topic"), Topic::Files));
+    }
+}
+
 fn topic_widget(topic: Topic) -> Id {
     Id::NULL.with(("fm-preferences-topic-row", topic.label()))
 }
@@ -454,6 +461,8 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                     s.dispatch_or_notice("prefs.archives.tree", &json!({"value": in_tree}));
                 }
                 rar_tool_row(ui, s, tokens);
+                patterns_row(ui, s, tokens);
+                spool_row(ui, s, tokens);
             });
             section(ui, tokens, "Display", None, |ui| {
                 let units = [
@@ -1288,6 +1297,75 @@ fn rar_tool_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
             Some(tool) => format!("RAR archives open through {tool}."),
             None => "No 7-Zip or unrar found: RAR archives cannot be opened until one is installed or chosen here.".to_string(),
         },
+    );
+}
+
+/// Name patterns added to the built-in archive names (`cbz=zip, epub=zip`).
+fn patterns_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
+    let id = Id::NULL.with("fm-archive-patterns");
+    let mut text = ui
+        .data_mut(|d| d.get_temp::<String>(id))
+        .unwrap_or_else(|| s.prefs.archives_patterns.clone());
+    ui.horizontal(|ui| {
+        let caption = ui.label("Also open as archives");
+        let response = ui
+            .add(
+                egui::TextEdit::singleline(&mut text)
+                    .hint_text("cbz=zip, epub=zip")
+                    .desired_width(260.0),
+            )
+            .labelled_by(caption.id)
+            .on_hover_text(
+                "File name endings to open like the built-in archive names, each with the \
+                 format to read it as: zip, tar, tar.gz, tar.bz2, tar.xz, tar.zst, 7z, iso, \
+                 rar, gz, bz2, xz or zst. Separate them with commas.",
+            );
+        let enter = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+        if ui.button("Apply").clicked() || enter {
+            set(s, "archives_patterns", json!(text.trim()));
+            // Show the stored, tidied form; refused text stays for correcting.
+            if fm_engine::archive_cmds::check_patterns(&text).is_ok() {
+                text = s.prefs.archives_patterns.clone();
+            }
+        }
+    });
+    let check = fm_engine::archive_cmds::check_patterns(&text);
+    ui.data_mut(|d| d.insert_temp(id, text));
+    match check {
+        Err(why) => {
+            ui.colored_label(tokens.error, why);
+        }
+        Ok(()) => hint(
+            ui,
+            tokens,
+            "Built in: zip, jar, tar, tar.gz, tgz, tar.bz2, tbz2, tar.xz, txz, tar.zst, tzst, 7z, \
+             iso, rar, gz, bz2, xz, zst and numbered parts (.001, .z01, .r00).",
+        ),
+    }
+}
+
+/// The cap on temporary copies of archives (remote RAR sets).
+fn spool_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
+    let mut gib = s.prefs.archives_spool_gib;
+    ui.horizontal(|ui| {
+        let caption = ui.label("Temporary copies up to");
+        let response = ui
+            .add_sized(
+                [110.0, ui.spacing().interact_size.y],
+                egui::DragValue::new(&mut gib)
+                    .range(fm_engine::archive_cmds::SPOOL_CAP_GIB)
+                    .suffix(" GiB"),
+            )
+            .labelled_by(caption.id);
+        if response.changed() {
+            set(s, "archives_spool_gib", json!(gib));
+        }
+    });
+    hint(
+        ui,
+        tokens,
+        "A RAR archive on a server is copied to a private temporary folder before 7-Zip or \
+         unrar reads it; bigger archives must be copied to this computer first.",
     );
 }
 

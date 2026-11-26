@@ -62,22 +62,34 @@ pub fn show_label(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, f
     // The whole remaining header width is the click target, not just the text.
     let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .max_rect(rect)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        // Not selectable: a selectable label takes clicks and drags for text selection,
-        // so a click on the path itself would never start editing.
-        |ui| ui.add(egui::Label::new(text).truncate().selectable(false)),
-    );
-    let response = response.on_hover_text(format!("{path}\nClick or Ctrl+L to type a path"));
-    if response.hovered() {
+    // The path text is always selectable: dragging over it selects (Ctrl+C copies the
+    // text, see `has_text_selection`), while a plain click, on the text or beside it,
+    // opens the editor.
+    let label = ui
+        .scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| ui.add(egui::Label::new(text).truncate().selectable(true)),
+        )
+        .inner;
+    let hint = format!("{path}\nClick or Ctrl+L to type a path; drag over it to select");
+    let response = response.on_hover_text(hint.clone());
+    let label = label.on_hover_text(hint);
+    if response.hovered() || label.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
     }
-    if response.clicked() {
+    if response.clicked() || label.clicked() {
         let _ = s.layout.focus_pane(pane);
         s.dispatch_or_notice("nav.goto", &serde_json::Value::Null);
     }
+}
+
+/// Whether text is selected in a label (such as the path bar): Ctrl+C then copies that
+/// text instead of the selected files.
+pub fn has_text_selection(ctx: &egui::Context) -> bool {
+    ctx.with_plugin::<egui::text_selection::LabelSelectionState, _>(|state| state.has_selection())
+        .unwrap_or(false)
 }
 
 /// Where the outermost archive file's name starts in `shown` (the display path of
@@ -377,5 +389,52 @@ mod tests {
         h.drop_at(on_text);
         h.run();
         assert!(is_editing(h.state(), pane), "a click on the text edits");
+    }
+
+    /// Dragging over the path text selects it without a click first, and does not start
+    /// editing.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn dragging_over_the_path_text_selects_it() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        let s = Session::new().expect("session");
+        let pane = s.layout.focused();
+        let path = s
+            .layout
+            .state(pane)
+            .map(|p| fm_engine::item_cmds::display_path(&p.location))
+            .expect("pane path");
+        let tokens = Tokens::dark();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(600.0, 60.0))
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    crate::theme::apply_to(ui.ctx(), &tokens);
+                    if !is_editing(s, pane) {
+                        ui.horizontal(|ui| show_label(ui, s, pane, &tokens, true));
+                    }
+                },
+                s,
+            );
+        let rect = h.get_by_label(&path).rect();
+        let start = egui::pos2(rect.left() + 1.0, rect.center().y);
+        let end = egui::pos2(rect.right() - 1.0, rect.center().y);
+        assert!(!has_text_selection(&h.ctx), "nothing selected yet");
+        h.hover_at(start);
+        h.run();
+        h.drag_at(start);
+        h.run();
+        for step in 1..=4 {
+            h.hover_at(start + (end - start) * (step as f32 / 4.0));
+            h.run();
+        }
+        h.drop_at(end);
+        h.run();
+        assert!(
+            !is_editing(h.state(), pane),
+            "a drag selects, it does not edit"
+        );
+        assert!(has_text_selection(&h.ctx), "the path text is selected");
     }
 }

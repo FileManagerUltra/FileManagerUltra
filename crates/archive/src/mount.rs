@@ -36,6 +36,9 @@ pub struct LazyArchive {
     done: AtomicU64,
     total: AtomicU64,
     cancel: AtomicBool,
+    /// Set when the archive must not be opened at all (nested too deep): every open
+    /// fails with this message, so the pane shows it instead of a listing.
+    refusal: Option<&'static str>,
 }
 
 /// An open in progress; see [`LazyArchive::open_guard`].
@@ -79,7 +82,14 @@ impl LazyArchive {
             done: AtomicU64::new(0),
             total: AtomicU64::new(0),
             cancel: AtomicBool::new(false),
+            refusal: None,
         }
+    }
+
+    /// Never open this archive; every read fails with `why`.
+    pub fn refusing(mut self, why: &'static str) -> Self {
+        self.refusal = Some(why);
+        self
     }
 
     pub fn container(&self) -> &VfsUri {
@@ -334,6 +344,9 @@ impl LazyArchive {
     }
 
     fn build(&self) -> Result<Arc<ArchiveFs>, FmError> {
+        if let Some(why) = self.refusal {
+            return Err(FmError::backend("archive", why));
+        }
         let name = self.name();
         let opened = VfsSource::open(self.container_vfs.clone(), self.container.clone())?;
         let stamp = (opened.len(), opened.modified());
@@ -415,7 +428,7 @@ impl LazyArchive {
                 fs
             }
         } else if split {
-            fs.with_read_only("spanned zips are read-only")
+            fs.with_read_only("spanned zip sets are read-only")
         } else if self.offset > 0 {
             fs.with_read_only("archives inside another file are read-only")
         } else {

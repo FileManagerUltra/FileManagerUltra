@@ -168,10 +168,75 @@ pub fn split_suffix(name: &str) -> (String, String) {
 /// The format a file name suggests, by its suffix.
 pub fn by_name(name: &str) -> Option<FormatId> {
     let lower = name.to_ascii_lowercase();
+    let fits = |suffix: &str| lower.len() > suffix.len() && lower.ends_with(suffix);
     SUFFIXES
         .iter()
-        .find(|(suffix, _)| lower.len() > suffix.len() && lower.ends_with(suffix))
+        .find(|(suffix, _)| fits(suffix))
         .map(|(_, f)| *f)
+        .or_else(|| {
+            EXTRA
+                .read()
+                .ok()?
+                .iter()
+                .find(|(suffix, _)| fits(suffix))
+                .map(|(_, f)| *f)
+        })
+}
+
+/// Name patterns the user added (Preferences › Files › Archives), as `(".cbz", Zip)`.
+static EXTRA: std::sync::RwLock<Vec<(String, FormatId)>> = std::sync::RwLock::new(Vec::new());
+
+/// At most this many added patterns.
+pub const MAX_EXTRA_PATTERNS: usize = 64;
+
+/// Use `patterns` (from [`parse_patterns`]) besides the defaults from now on.
+pub fn set_extra_patterns(patterns: Vec<(String, FormatId)>) {
+    if let Ok(mut extra) = EXTRA.write() {
+        *extra = patterns;
+    }
+}
+
+/// Parse added name patterns: `cbz=zip, *.epub=zip, .apk=zip` (separated by commas,
+/// semicolons or new lines; the name part is a file-name ending, the format an id such
+/// as `zip`, `7z`, `tar.gz`). `Err` names the first entry that does not parse.
+pub fn parse_patterns(text: &str) -> Result<Vec<(String, FormatId)>, String> {
+    let mut out: Vec<(String, FormatId)> = Vec::new();
+    for item in text.split([',', ';', '\n']).map(str::trim) {
+        if item.is_empty() {
+            continue;
+        }
+        if out.len() >= MAX_EXTRA_PATTERNS {
+            return Err(format!("at most {MAX_EXTRA_PATTERNS} patterns"));
+        }
+        let shown: String = item.chars().take(40).collect();
+        let Some((name, format)) = item.split_once('=') else {
+            return Err(format!("“{shown}” needs a format, like cbz=zip"));
+        };
+        let ending = name.trim().trim_start_matches('*').trim_start_matches('.');
+        let ending_ok = !ending.is_empty()
+            && ending.len() <= 32
+            && ending
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        if !ending_ok {
+            return Err(format!(
+                "“{shown}”: the name ending may use letters, digits, . _ -"
+            ));
+        }
+        let format_id = format.trim().to_ascii_lowercase();
+        let Some(format) = FormatId::from_id(&format_id) else {
+            let known: Vec<&str> = ALL.iter().map(|f| f.id()).collect();
+            return Err(format!(
+                "“{shown}”: unknown format; use one of {}",
+                known.join(", ")
+            ));
+        };
+        let suffix = format!(".{}", ending.to_ascii_lowercase());
+        if !out.iter().any(|(s, _)| *s == suffix) {
+            out.push((suffix, format));
+        }
+    }
+    Ok(out)
 }
 
 /// The format the first bytes of a file show (`head` should hold at least 512 bytes,
@@ -564,6 +629,46 @@ pub fn read_small(mut r: impl Read, declared: u64) -> Result<Vec<u8>, FmError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn added_patterns_parse_and_are_recognised() {
+        let parsed = parse_patterns("cbz=zip, *.EPUB = zip;\n.cb7=7z,,cbz=zip").expect("parse");
+        assert_eq!(
+            parsed,
+            vec![
+                (".cbz".to_string(), FormatId::Zip),
+                (".epub".to_string(), FormatId::Zip),
+                (".cb7".to_string(), FormatId::SevenZ),
+            ]
+        );
+        assert_eq!(parse_patterns("  ").expect("empty"), Vec::new());
+        for bad in ["cbz", "cbz=rarr", "=zip", "a/b=zip", "*=zip", "x y=zip"] {
+            assert!(parse_patterns(bad).is_err(), "{bad} should be refused");
+        }
+        let many: Vec<String> = (0..=MAX_EXTRA_PATTERNS)
+            .map(|i| format!("e{i}=zip"))
+            .collect();
+        assert!(
+            parse_patterns(&many.join(",")).is_err(),
+            "too many patterns"
+        );
+        // A name nothing else uses, so tests running at the same time are not affected.
+        assert_eq!(by_name("book.fmtestcbz"), None);
+        set_extra_patterns(vec![(".fmtestcbz".to_string(), FormatId::Zip)]);
+        assert_eq!(by_name("Book.FMTESTCBZ"), Some(FormatId::Zip));
+        assert_eq!(
+            by_name(".fmtestcbz"),
+            None,
+            "a bare suffix is a hidden file"
+        );
+        assert_eq!(
+            by_name("x.tar.gz"),
+            Some(FormatId::TarGz),
+            "defaults still win"
+        );
+        set_extra_patterns(Vec::new());
+        assert_eq!(by_name("book.fmtestcbz"), None);
+    }
 
     #[test]
     fn names_and_signatures() {

@@ -36,11 +36,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Zip and 7z archives can get a password, a new password or have theirs removed (File › Archive › Set Password…). The new password is typed twice and applied when the archive is saved; zip uses AES-256, and 7z can hide the file names too.
 
+- Other file types that are really archives, such as comic books (`.cbz`) or e-books (`.epub`), can open like folders too: add them under Preferences › Files › "Also open as archives", for example `cbz=zip, epub=zip`. The same section sets how large a RAR file from a network share or SFTP server may be for its temporary copy (4 GB unless you change it).
+- Inside a disc image, a RAR archive or another archive that cannot be changed, New Folder, Rename, Delete, Cut and Paste are greyed out, and hovering them says why ("ISO images are read-only"). They used to stay clickable and fail.
+- When a RAR archive cannot be opened because 7-Zip or unrar is missing, the pane now says what to install and offers Try again, Choose program… and Open with Default App. A file whose contents do not match its archive name offers Back and Open with Default App, and an archive nested more than eight archives deep says so in the pane and points you to the archive file to copy out.
+- File › Archive › Forget Password drops the passwords you typed for the open archive.
+- A workspace tab showing an archive with unsaved changes is marked with a dot, like a tab with unsaved workspace changes.
+
 ### Changed
 
 - Quitting or closing asks one question at most: unsaved workspaces, filled-in PDFs, archives with unsaved changes and work still running are listed together in one prompt with Save, Don't save and Cancel, instead of one prompt after another.
 
 ### Fixed
+- The path above a file list can be selected straight away by dragging over it, and Ctrl+C copies the selected text (not the selected files). A plain click still opens the path for typing.
 - Git colours and marks in the folder tree no longer start blinking after you have browsed or expanded many folders for a while, and the diff in the Preview pane stops flipping on and off with them.
 - Selecting text with the mouse (for example in the terminal) no longer stops when the pointer leaves the window; it carries on and resumes when the pointer comes back.
 - On Windows, opening or reading a RAR archive no longer flashes a command window.

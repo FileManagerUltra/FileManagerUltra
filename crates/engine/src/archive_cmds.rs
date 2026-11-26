@@ -425,12 +425,9 @@ pub(crate) fn mount_as(
     offset: u64,
     format: Option<FormatId>,
 ) -> Result<VfsUri, FmError> {
-    if nesting(container) >= fm_archive::limits::MAX_NESTING {
-        return Err(FmError::backend(
-            "archive",
-            "Archives nested more than 8 deep cannot be opened; copy this one out first",
-        ));
-    }
+    // Too deep: registered anyway, but every read fails with the reason, so the pane
+    // shows it in place of a listing (`archive-browsing` "Nesting limit").
+    let too_deep = nesting(container) >= fm_archive::limits::MAX_NESTING;
     let canonical = canonical_container(container);
     let container = if offset == 0 && format.is_none() {
         &canonical
@@ -451,13 +448,17 @@ pub(crate) fn mount_as(
         return Ok(root);
     }
     let container_vfs = s.backends.require(container)?;
-    let lazy = Arc::new(LazyArchive::new(
+    let mut lazy = LazyArchive::new(
         root.clone(),
         container.clone(),
         container_vfs,
         format,
         offset,
-    ));
+    );
+    if too_deep {
+        lazy = lazy.refusing(TOO_DEEP);
+    }
+    let lazy = Arc::new(lazy);
     s.backends.register_at(root.authority(), lazy.clone());
     s.archives.lazies.insert(handle, lazy);
     Ok(root)
@@ -650,6 +651,78 @@ pub(crate) fn close(s: &mut Session, container: &VfsUri) {
 pub fn is_password_message(message: &str) -> bool {
     message.ends_with(" needs a password") || message.starts_with("wrong password for ")
 }
+
+/// Why archives nested deeper than [`fm_archive::limits::MAX_NESTING`] show no listing.
+pub const TOO_DEEP: &str =
+    "Archives nested more than 8 deep cannot be opened; copy this one out first";
+
+/// A failed archive listing that gets its own pane state instead of a red line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArchiveProblem {
+    /// No 7-Zip or unrar found for a RAR archive.
+    NeedsTool,
+    /// Nested deeper than the nesting limit.
+    TooDeep,
+    /// The file's bytes do not match its name ("x.zip is not a zip archive").
+    NotArchive,
+}
+
+/// Classify a failed listing's message at `location` (`None`: show the message as is).
+pub fn problem(location: &VfsUri, message: &str) -> Option<ArchiveProblem> {
+    if location.scheme() != Scheme::Archive {
+        return None;
+    }
+    if message.contains("RAR archives need 7-Zip or unrar") {
+        Some(ArchiveProblem::NeedsTool)
+    } else if message.contains(TOO_DEEP) {
+        Some(ArchiveProblem::TooDeep)
+    } else if message.contains(" is not a") && message.contains("archive") {
+        Some(ArchiveProblem::NotArchive)
+    } else {
+        None
+    }
+}
+
+/// `Err` with the reason when added archive name patterns (`cbz=zip, epub=zip`) do not
+/// parse (Preferences › Files › Archives).
+pub fn check_patterns(text: &str) -> Result<(), String> {
+    fm_archive::format::parse_patterns(text).map(|_| ())
+}
+
+/// Archives inside archives open up to this many levels deep.
+pub const MAX_NESTING: usize = fm_archive::limits::MAX_NESTING;
+
+/// The spool cap range Preferences accepts, in GiB.
+pub const SPOOL_CAP_GIB: std::ops::RangeInclusive<u64> = fm_archive::limits::SPOOL_CAP_GIB;
+
+/// What to install for RAR archives on this system ("install 7-Zip from 7-zip.org").
+pub fn rar_install_hint() -> &'static str {
+    fm_archive::format::rar::install_hint()
+}
+
+/// Why the focused pane's folder takes no changes, when it is inside a read-only archive
+/// (ISO, RAR, spanned zip, a save in progress …). Write commands are disabled there and
+/// show this as their tooltip.
+pub fn focused_read_only(s: &Session) -> Option<&'static str> {
+    let location = &s.layout.state(s.layout.focused())?.location;
+    if location.scheme() != Scheme::Archive {
+        return None;
+    }
+    s.archives.move_blocked(location)
+}
+
+/// Command ids that change the folder they act in; disabled in read-only archives.
+pub const WRITE_COMMANDS: &[&str] = &[
+    "file.mkdir",
+    "file.newfile",
+    "file.rename",
+    "file.delete",
+    "file.delete_permanent",
+    "file.duplicate",
+    "file.clip_cut",
+    "file.clip_paste",
+    "file.move",
+];
 
 /// Whether a file with this name opens as a folder when activated.
 pub fn is_archive_name(name: &str) -> bool {
@@ -1023,6 +1096,27 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::io::Write as _;
+
+    #[test]
+    fn failed_archive_listings_are_classified_for_their_pane_state() {
+        let root = VfsUri::archive_root(&fm_archive::handle_for(
+            &VfsUri::parse("/tmp/x.rar").expect("uri"),
+            0,
+            None,
+        ))
+        .expect("root");
+        let tool = fm_archive::format::rar::needs_tool_error().to_string();
+        assert_eq!(problem(&root, &tool), Some(ArchiveProblem::NeedsTool));
+        let deep = FmError::backend("archive", TOO_DEEP).to_string();
+        assert_eq!(problem(&root, &deep), Some(ArchiveProblem::TooDeep));
+        assert_eq!(
+            problem(&root, "backend archive: notes.zip is not a zip archive"),
+            Some(ArchiveProblem::NotArchive)
+        );
+        assert_eq!(problem(&root, "i/o error: gone"), None);
+        let folder = VfsUri::parse("/tmp").expect("uri");
+        assert_eq!(problem(&folder, &tool), None, "only inside archives");
+    }
 
     pub(crate) fn zip_bytes(password: Option<&str>) -> Vec<u8> {
         let mut out = std::io::Cursor::new(Vec::new());

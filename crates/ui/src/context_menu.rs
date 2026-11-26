@@ -287,7 +287,11 @@ pub fn attach_folder(response: &Response, s: &mut Session, pane: PaneId, folder:
                         && (*id != "media.play_folder" || folder.local_path().is_some())
                         && !(virtual_folder
                             && matches!(*id, "file.mkdir" | "file.newfile" | "file.clip_paste"));
-                    if ui.add_enabled(enabled, button).clicked() {
+                    let mut resp = ui.add_enabled(enabled, button);
+                    if !enabled && let Some(why) = read_only_hint(s, id) {
+                        resp = resp.on_disabled_hover_text(why);
+                    }
+                    if resp.clicked() {
                         ui.ctx().data_mut(|d| {
                             d.insert_temp(
                                 Id::NULL.with("folder-context-command"),
@@ -341,11 +345,28 @@ fn command_item(ui: &mut Ui, s: &Session, id: &str) {
     if let Some(shortcut) = spec.shortcut {
         button = button.shortcut_text(shortcut);
     }
-    if ui.add_enabled((spec.enabled)(s), button).clicked() {
+    let enabled = (spec.enabled)(s);
+    let mut resp = ui.add_enabled(enabled, button);
+    if !enabled && let Some(why) = read_only_hint(s, id) {
+        resp = resp.on_disabled_hover_text(why);
+    }
+    if resp.clicked() {
         ui.ctx()
             .data_mut(|d| d.insert_temp::<&'static str>(queue_id(), spec.id));
         ui.close();
     }
+}
+
+/// The tooltip of a write command disabled because the focused pane is inside a
+/// read-only archive ("ISO images are read-only").
+pub fn read_only_hint(s: &Session, id: &str) -> Option<String> {
+    if !fm_engine::archive_cmds::WRITE_COMMANDS.contains(&id) {
+        return None;
+    }
+    let why = fm_engine::archive_cmds::focused_read_only(s)?;
+    let mut chars = why.chars();
+    let first = chars.next()?;
+    Some(first.to_uppercase().chain(chars).collect())
 }
 
 /// The command chosen in a context menu this frame, if any.

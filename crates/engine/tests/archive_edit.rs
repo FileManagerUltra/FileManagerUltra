@@ -1208,3 +1208,129 @@ fn join_refuses_a_missing_part_and_bad_input() {
         assert!(s.dispatch("archive.join", &bad).is_err(), "{bad}");
     }
 }
+
+/// The workspace tab showing an archive with staged changes carries the unsaved marker,
+/// also while another tab is active, until the changes are saved or discarded
+/// (`archive-editing` "Unsaved archive changes are visible").
+#[test]
+fn the_tab_showing_a_changed_archive_is_marked_unsaved() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let zip = dir.path().join("site.zip");
+    std::fs::write(&zip, zip_bytes()).expect("zip");
+    let mut s = Session::new().expect("session");
+    let root = open_zip(&mut s, &zip);
+    assert!(!s.tab_shows_unsaved_archive(0), "nothing staged yet");
+    let vfs = s.backends.require(&root).expect("backend");
+    vfs.create_dir(&root.join("new").expect("n"))
+        .expect("mkdir");
+    assert!(s.tab_shows_unsaved_archive(0));
+
+    s.dispatch("workspace.new", &json!({})).expect("new tab");
+    assert_eq!(s.workspaces.active, 1);
+    assert!(
+        !s.tab_shows_unsaved_archive(1),
+        "the new tab shows no archive"
+    );
+    assert!(
+        s.tab_shows_unsaved_archive(0),
+        "the parked tab keeps its marker"
+    );
+    assert!(!s.tab_shows_unsaved_archive(7), "a tab that does not exist");
+
+    s.dispatch(
+        "archive.discard",
+        &json!({"uri": root.to_string(), "confirm": true}),
+    )
+    .expect("discard");
+    assert!(!s.tab_shows_unsaved_archive(0), "cleared by Discard");
+}
+
+/// Write commands are disabled inside a read-only archive, with the reason for the
+/// tooltip; inside a zip they stay enabled (`archive-browsing` "Supported formats").
+#[test]
+fn write_commands_are_disabled_with_a_reason_inside_read_only_archives() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let p = dir.path();
+    let gz = p.join("access.log.gz");
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    enc.write_all(b"line\n").expect("gz");
+    std::fs::write(&gz, enc.finish().expect("finish")).expect("write");
+    std::fs::write(p.join("site.zip"), zip_bytes()).expect("zip");
+
+    let mut s = Session::new().expect("session");
+    let enabled = |s: &Session, id: &str| (s.registry.get(id).expect(id).enabled)(s);
+    open_zip(&mut s, &p.join("site.zip"));
+    assert_eq!(fm_engine::archive_cmds::focused_read_only(&s), None);
+    assert!(enabled(&s, "file.mkdir"), "a zip takes new folders");
+
+    open_zip(&mut s, &gz);
+    assert_eq!(
+        fm_engine::archive_cmds::focused_read_only(&s),
+        Some("single compressed files are read-only")
+    );
+    s.dispatch("edit.select_all", &json!(null)).expect("select");
+    for id in fm_engine::archive_cmds::WRITE_COMMANDS {
+        assert!(!enabled(&s, id), "{id} is disabled in a .gz");
+    }
+    assert!(enabled(&s, "file.clip_copy"), "copying out still works");
+}
+
+/// The ninth archive inside archives is not opened: its pane shows the nesting-limit
+/// state instead of a listing (`archive-browsing` "Nesting limit").
+#[test]
+fn an_archive_nested_too_deep_shows_the_limit_in_its_pane() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let levels = fm_engine::archive_cmds::MAX_NESTING + 1;
+    let mut bytes = zip_with(&[("bottom.txt", b"deep")]);
+    for _ in 1..levels {
+        bytes = zip_with(&[("n.zip", &bytes)]);
+    }
+    let outer = dir.path().join("n.zip");
+    std::fs::write(&outer, &bytes).expect("zip");
+    let mut s = Session::new().expect("session");
+    let mut root = open_zip(&mut s, &outer);
+    for _ in 2..levels {
+        let inner = root.join("n.zip").expect("inner");
+        s.dispatch("archive.enter", &json!({"uri": inner.to_string()}))
+            .expect("enter");
+        root = s
+            .layout
+            .state(s.layout.focused())
+            .expect("pane")
+            .location
+            .clone();
+        poll_until(&mut s, "listing", |s| s.dirs.state(&root).is_ready());
+    }
+    let inner = root.join("n.zip").expect("inner");
+    s.dispatch("archive.enter", &json!({"uri": inner.to_string()}))
+        .expect("the ninth level opens a pane state, not an error");
+    let deepest = s
+        .layout
+        .state(s.layout.focused())
+        .expect("pane")
+        .location
+        .clone();
+    assert_eq!(fm_engine::archive_cmds::nesting(&deepest), levels);
+    poll_until(&mut s, "failure", |s| {
+        matches!(s.dirs.state(&deepest), fm_engine::DirState::Failed { .. })
+    });
+    let fm_engine::DirState::Failed { message, .. } = s.dirs.state(&deepest) else {
+        panic!("expected a failed listing");
+    };
+    assert_eq!(
+        fm_engine::archive_cmds::problem(&deepest, &message),
+        Some(fm_engine::archive_cmds::ArchiveProblem::TooDeep),
+        "{message}"
+    );
+    s.dispatch("nav.up", &json!(null)).expect("up");
+    let back = s
+        .layout
+        .state(s.layout.focused())
+        .expect("pane")
+        .location
+        .clone();
+    assert_eq!(
+        back, root,
+        "Show the archive file goes to the folder holding it"
+    );
+}

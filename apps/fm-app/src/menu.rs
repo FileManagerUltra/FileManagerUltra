@@ -110,6 +110,7 @@ pub const ARCHIVE_BACKUP_DISCARD: &str = "archive.backup.discard";
 pub const ARCHIVE_CLOSE: &str = "archive.unmount";
 pub const ARCHIVE_PASSWORD_SET: &str = "archive.password.set";
 pub const ARCHIVE_PASSWORD_REMOVE: &str = "archive.password.remove";
+pub const ARCHIVE_PASSWORD_FORGET: &str = "archive.password.forget";
 pub const EDIT_UNDO: &str = "edit.undo";
 pub const FILE_CLIP_COPY: &str = "file.clip_copy";
 pub const FILE_CLIP_CUT: &str = "file.clip_cut";
@@ -532,10 +533,15 @@ fn take_digit_chords(ctx: &egui::Context) -> Vec<(usize, egui::Key)> {
 
 /// Ctrl/Cmd+C, X and V reach egui as clipboard events, never as key presses. Take them out of
 /// the frame's input and map them to the file-clipboard commands (paste carries the OS text).
-fn clipboard_events(ctx: &egui::Context) -> Vec<(&'static str, Option<String>)> {
+/// With `text_selected`, Copy and Cut stay for egui to copy the selected text.
+fn clipboard_events(
+    ctx: &egui::Context,
+    text_selected: bool,
+) -> Vec<(&'static str, Option<String>)> {
     ctx.input_mut(|input| {
         let mut found = Vec::new();
         input.events.retain(|event| match event {
+            egui::Event::Copy | egui::Event::Cut if text_selected => true,
             egui::Event::Copy => {
                 found.push((FILE_CLIP_COPY, None));
                 false
@@ -691,7 +697,11 @@ fn item(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs, id: &st
         // Right-aligned, weak-styled after the label (egui menu convention).
         button = button.shortcut_text(shortcut);
     }
-    if ui.add_enabled(enabled, button).clicked() {
+    let mut resp = ui.add_enabled(enabled, button);
+    if !enabled && let Some(why) = fm_ui::context_menu::read_only_hint(session, id) {
+        resp = resp.on_disabled_hover_text(why);
+    }
+    if resp.clicked() {
         if id == TERM_PASTE {
             fm_ui::terminal::request_paste(ui.ctx());
         } else if id == ARCHIVE_PASSWORD_SET {
@@ -833,6 +843,7 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
                 ui.separator();
                 item(ui, session, dialogs, ARCHIVE_PASSWORD_SET);
                 item(ui, session, dialogs, ARCHIVE_PASSWORD_REMOVE);
+                item(ui, session, dialogs, ARCHIVE_PASSWORD_FORGET);
                 ui.separator();
                 item(ui, session, dialogs, ARCHIVE_CLOSE);
             });
@@ -1181,8 +1192,11 @@ fn consume_shortcuts_inner(
         }
     }
     // Preview, trash and other non-file panes leave Ctrl+C to egui so selected text is copied.
+    // In a Files pane, selected text (the path bar) keeps Ctrl+C and Ctrl+X; Ctrl+V still
+    // pastes files.
     if !terminal && !typing && files_focused {
-        for (id, os_text) in clipboard_events(ctx) {
+        let text_selected = fm_ui::locationbar::has_text_selection(ctx);
+        for (id, os_text) in clipboard_events(ctx, text_selected) {
             match os_text {
                 Some(text) => {
                     session.dispatch_or_notice(id, &serde_json::json!({ "os_text": text }))
@@ -1384,7 +1398,7 @@ mod tests {
         };
         let mut out = ctx.run_ui(raw, |ui| {
             let ctx = ui.ctx();
-            let found = clipboard_events(ctx);
+            let found = clipboard_events(ctx, false);
             assert_eq!(
                 found,
                 vec![
@@ -1393,7 +1407,35 @@ mod tests {
                     (FILE_CLIP_PASTE, Some("/a".to_string())),
                 ]
             );
-            assert!(clipboard_events(ctx).is_empty(), "events are taken once");
+            assert!(
+                clipboard_events(ctx, false).is_empty(),
+                "events are taken once"
+            );
+        });
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn selected_text_keeps_copy_and_cut_but_paste_still_pastes_files() {
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            events: vec![
+                egui::Event::Copy,
+                egui::Event::Cut,
+                egui::Event::Paste("/a".into()),
+            ],
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            let ctx = ui.ctx();
+            let found = clipboard_events(ctx, true);
+            assert_eq!(found, vec![(FILE_CLIP_PASTE, Some("/a".to_string()))]);
+            let left = ctx.input(|i| i.events.clone());
+            assert_eq!(
+                left,
+                vec![egui::Event::Copy, egui::Event::Cut],
+                "left for egui"
+            );
         });
         out.textures_delta.clear();
     }

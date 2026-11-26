@@ -16,11 +16,15 @@ Activating (Enter or double-click) a file recognised as an archive SHALL browse 
 - **THEN** the zip opens in its default application and the pane does not change
 
 ### Requirement: Archive recognition
-An archive SHALL be recognised by case-insensitive file-name patterns (defaults: `*.zip`, `*.jar`, `*.tar`, `*.tar.gz`, `*.tgz`, `*.tar.bz2`, `*.tbz2`, `*.tar.xz`, `*.txz`, `*.tar.zst`, `*.tzst`, `*.7z`, `*.iso`, `*.rar`, `*.gz`, `*.bz2`, `*.xz`, `*.zst`, and for split archives `*.001`–`*.999` after an archive name, `*.z01`–`*.z99` and `*.r00`–`*.r99`) editable under Preferences › Archives, and SHALL be confirmed by its signature bytes when mounted. A file whose signature does not match its pattern SHALL show an actionable error naming the expected format instead of a listing.
+An archive SHALL be recognised by case-insensitive file-name patterns (defaults: `*.zip`, `*.jar`, `*.tar`, `*.tar.gz`, `*.tgz`, `*.tar.bz2`, `*.tbz2`, `*.tar.xz`, `*.txz`, `*.tar.zst`, `*.tzst`, `*.7z`, `*.iso`, `*.rar`, `*.gz`, `*.bz2`, `*.xz`, `*.zst`, and for split archives `*.001`–`*.999` after an archive name, `*.z01`–`*.z99` and `*.r00`–`*.r99`) extendable under Preferences › Files › Archives with further name endings, each with the format to read it as (for example `cbz=zip`), and SHALL be confirmed by its signature bytes when mounted. A file whose signature does not match its pattern SHALL show an actionable error naming the expected format instead of a listing.
 
 #### Scenario: Wrong extension
 - **WHEN** the user enters `notes.zip` whose content is plain text
-- **THEN** the pane shows "notes.zip is not a zip archive" and stays usable
+- **THEN** the pane shows "notes.zip is not a zip archive" and stays usable, offering Back and Open with Default App
+
+#### Scenario: Added name ending
+- **WHEN** the user adds `cbz=zip` under Preferences › Files › Archives and presses Enter on `comic.cbz`
+- **THEN** the pane lists the pages inside it like any zip
 
 ### Requirement: Supported formats
 The app SHALL read zip (including zip64, Deflate, Deflate64, Bzip2, LZMA, XZ and PPMd members; Zstandard members SHALL show "compression method not supported"), tar (ustar, GNU and PAX) plain or compressed with gzip, bzip2, xz or Zstandard, 7z (LZMA, LZMA2, BZip2, Deflate, PPMd), ISO 9660 with Joliet and Rock Ridge names, single-file gzip/bzip2/xz/Zstandard files (shown as a folder holding one file named without the compression suffix) and RAR 4 and 5 through an installed tool. Zip, the tar family and 7z SHALL be writable; ISO, RAR and single-file compressed files SHALL be read-only, and write commands SHALL be disabled inside them. All decoders SHALL be pure Rust except the RAR tool.
@@ -112,7 +116,7 @@ An archive split into parts SHALL open as one archive from any of its parts, on 
 - **THEN** the pane lists the whole archive
 
 ### Requirement: RAR through an installed tool
-RAR archives SHALL be listed and read through an installed 7-Zip (`7zz`, `7z`, `7za`, or `7z.exe` in the standard Windows location) or `unrar`, found on `PATH` or set in Preferences › Archives. When no tool is found, entering a RAR SHALL show which tool to install for the current OS. Remote RAR files SHALL be copied to the private temporary folder (at most 4 GiB) before the tool reads them. RAR archives SHALL be read-only.
+RAR archives SHALL be listed and read through an installed 7-Zip (`7zz`, `7z`, `7za`, or `7z.exe` in the standard Windows location) or `unrar`, found on `PATH` or set in Preferences › Files. When no tool is found, entering a RAR SHALL show which tool to install for the current OS. Remote RAR files SHALL be copied to the private temporary folder (at most 4 GiB by default, adjustable in Preferences › Files) before the tool reads them. RAR archives SHALL be read-only.
 
 #### Scenario: No tool installed
 - **WHEN** neither 7-Zip nor unrar is installed and the user enters `data.rar`

@@ -25,12 +25,27 @@ pub struct ArchiveFs {
     parts: Option<crate::split::PartSet>,
 }
 
+/// Why archives of `format` take no changes (`None` for the writable formats). Shown as
+/// the tooltip of disabled write commands (`archive-browsing` "Supported formats").
+pub fn read_only_reason(format: FormatId) -> Option<&'static str> {
+    use crate::FormatId as F;
+    if crate::write::WRITABLE.contains(&format) {
+        return None;
+    }
+    Some(match format {
+        F::Iso => "ISO images are read-only",
+        F::Rar => "RAR archives are read-only",
+        F::Gz | F::Bz2 | F::Xz | F::Zst => "single compressed files are read-only",
+        F::TarZst => "tar.zst archives are read-only",
+        _ => "this kind of archive is read-only",
+    })
+}
+
 impl ArchiveFs {
     /// Serve `reader` under `root` (`archive://<handle>/`). Formats the app can write
     /// accept staged changes; the others are read-only.
     pub fn new(root: VfsUri, reader: Box<dyn Reader>, passwords: Arc<Passwords>) -> Self {
-        let read_only = (!crate::write::WRITABLE.contains(&reader.format()))
-            .then_some("this kind of archive is read-only");
+        let read_only = read_only_reason(reader.format());
         Self {
             root: root.root(),
             reader: Arc::from(reader),

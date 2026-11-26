@@ -80,7 +80,9 @@ pub fn cut() -> CommandSpec {
         menu: &["Edit", "Cut"],
         shortcut: Some("Ctrl+X"),
         params: "none",
-        enabled: |s| !focused_selection(s).is_empty(),
+        enabled: |s| {
+            !focused_selection(s).is_empty() && crate::archive_cmds::focused_read_only(s).is_none()
+        },
         run: |s, _p: &Params| {
             store(s, true);
             Ok(())
@@ -97,7 +99,7 @@ pub fn paste() -> CommandSpec {
         menu: &["Edit", "Paste"],
         shortcut: Some("Ctrl+V"),
         params: "{os_text?: string, dest?: uri}",
-        enabled: can_paste,
+        enabled: |s| can_paste(s) && crate::archive_cmds::focused_read_only(s).is_none(),
         run: |s, params: &Params| {
             let explicit_dest = object(params)?
                 .and_then(|m| m.get("dest"))

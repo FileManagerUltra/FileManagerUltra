@@ -234,6 +234,12 @@ pub struct Prefs {
     /// The program that reads RAR archives (7-Zip or unrar); empty searches `PATH`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub archives_rar_tool: String,
+    /// Name patterns added to the built-in archive names: `cbz=zip, epub=zip`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub archives_patterns: String,
+    /// Largest temporary copy of an archive (remote RAR sets), in GiB.
+    #[serde(default = "default_spool_gib")]
+    pub archives_spool_gib: u64,
     #[serde(default)]
     pub theme: ThemePreference,
     #[serde(default)]
@@ -637,6 +643,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_spool_gib() -> u64 {
+    fm_archive::limits::DEFAULT_SPOOL_CAP >> 30
+}
+
 impl Default for Prefs {
     fn default() -> Self {
         Self {
@@ -644,6 +654,8 @@ impl Default for Prefs {
             archives_browse: true,
             archives_in_tree: false,
             archives_rar_tool: String::new(),
+            archives_patterns: String::new(),
+            archives_spool_gib: default_spool_gib(),
             theme: ThemePreference::default(),
             window_maximized: false,
             window_geometry: None,
@@ -1154,6 +1166,7 @@ mod tests {
             [
                 "archives_browse",
                 "archives_in_tree",
+                "archives_spool_gib",
                 "bookmarks",
                 "check_updates",
                 "confirm_delete",

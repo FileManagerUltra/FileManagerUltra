@@ -92,6 +92,10 @@ pub fn show(
             crate::archive_password::prompt(ui, s, &location, &message, tokens);
         }
         DirState::Failed { message, .. } => {
+            if let Some(problem) = fm_engine::archive_cmds::problem(&location, &message) {
+                crate::archive_state::show(ui, s, pane, &location, problem, &message, tokens);
+                return open;
+            }
             ui.colored_label(tokens.error, message);
             ui.label(tokens.muted("Ctrl+R to retry"));
         }

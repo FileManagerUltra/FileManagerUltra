@@ -15,7 +15,7 @@ use crate::session::Session;
 const KEYS: &str = "accent (\"default\"|\"#rrggbb\"), density (compact|normal|comfortable), \
     font_size 9-24, terminal_font_size 9-24, terminal_scrollback_rows 5000-1000000, size_units (binary|decimal|bytes), \
     date_format (iso|isoseconds|us|eu), show_hidden, single_click_open, confirm_delete, \
-    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), media_hardware_decoding (bool), media_autoplay_on_add (bool), diagnostics_log (bool), windows_renderer (direct3d|opengl), workspace_tab_order (recent|cycle), unsaved_workspaces (ask|save|discard), media_skip_back_secs 5-300, media_skip_forward_secs 5-300, thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120, archives_rar_tool (\"\"|absolute path of 7-Zip or unrar)";
+    confirm_run (bool), git_enabled, git_gutter, git_tint, preview_audio_autoplay, preview_video_autoplay, media_background_audio, media_gapless (bool), media_hardware_decoding (bool), media_autoplay_on_add (bool), diagnostics_log (bool), windows_renderer (direct3d|opengl), workspace_tab_order (recent|cycle), unsaved_workspaces (ask|save|discard), media_skip_back_secs 5-300, media_skip_forward_secs 5-300, thumb_memory_mib 32-2048, thumb_disk_mib 32-8192, thumb_cache_dir (\"default\"|absolute path), preview_time_secs 2-120, archives_rar_tool (\"\"|absolute path of 7-Zip or unrar), archives_patterns (\"cbz=zip, epub=zip\"), archives_spool_gib 1-1024";
 
 fn bad(key: &str, expect: &str) -> FmError {
     FmError::InvalidParams(format!("{key} must be {expect}"))
@@ -184,6 +184,23 @@ pub fn set(s: &mut Session, key: &str, value: &Value) -> Result<(), FmError> {
             }
             s.prefs.archives_rar_tool = text.to_string();
         }
+        "archives_patterns" => {
+            let text = value.as_str().ok_or_else(|| bad(key, "a string"))?;
+            if text.len() > 4096 {
+                return Err(bad(key, "at most 4096 characters"));
+            }
+            let parsed =
+                fm_archive::format::parse_patterns(text).map_err(FmError::InvalidParams)?;
+            // Stored in a tidy form: `cbz=zip, epub=zip`.
+            s.prefs.archives_patterns = parsed
+                .iter()
+                .map(|(suffix, f)| format!("{}={}", suffix.trim_start_matches('.'), f.id()))
+                .collect::<Vec<_>>()
+                .join(", ");
+        }
+        "archives_spool_gib" => {
+            s.prefs.archives_spool_gib = ranged(key, value, &fm_archive::limits::SPOOL_CAP_GIB)?;
+        }
         "preview_time_secs" => {
             s.prefs.preview_time_secs = ranged(key, value, &PREVIEW_TIME_RANGE)?;
         }
@@ -207,6 +224,12 @@ pub fn apply_runtime(prefs: &Prefs, s: &Session) {
         .filter(|t| !t.is_empty())
         .map(std::path::PathBuf::from);
     fm_archive::format::rar::set_tool_override(tool);
+    // Stored patterns were checked when set; a hand-edited file that no longer parses
+    // falls back to the built-in names only.
+    fm_archive::format::set_extra_patterns(
+        fm_archive::format::parse_patterns(&prefs.archives_patterns).unwrap_or_default(),
+    );
+    fm_archive::limits::set_spool_cap_gib(prefs.archives_spool_gib);
 }
 
 /// The RAR tool that would be used now (Preferences choice or the search), for display.
@@ -346,6 +369,38 @@ mod tests {
         }
         set_via(&mut s, "archives_rar_tool", json!("")).expect("clear");
         assert!(s.prefs.archives_rar_tool.is_empty());
+    }
+
+    #[test]
+    fn archive_patterns_and_spool_cap_are_checked() {
+        let mut s = Session::new().expect("session");
+        set_via(&mut s, "archives_patterns", json!("*.CBZ = zip; .cb7=7z")).expect("set");
+        assert_eq!(
+            s.prefs.archives_patterns, "cbz=zip, cb7=7z",
+            "stored tidied"
+        );
+        for bad in [
+            json!("cbz"),
+            json!("cbz=nope"),
+            json!(3),
+            json!("a".repeat(5000)),
+        ] {
+            assert!(set_via(&mut s, "archives_patterns", bad).is_err());
+        }
+        assert_eq!(
+            s.prefs.archives_patterns, "cbz=zip, cb7=7z",
+            "kept after a refusal"
+        );
+        set_via(&mut s, "archives_patterns", json!("")).expect("clear");
+        assert!(s.prefs.archives_patterns.is_empty());
+
+        assert_eq!(s.prefs.archives_spool_gib, 4);
+        set_via(&mut s, "archives_spool_gib", json!(16)).expect("16 GiB");
+        assert_eq!(s.prefs.archives_spool_gib, 16);
+        for bad in [json!(0), json!(1025), json!("8"), json!(-1)] {
+            assert!(set_via(&mut s, "archives_spool_gib", bad).is_err());
+        }
+        set_via(&mut s, "archives_spool_gib", json!(4)).expect("back");
     }
 
     #[test]
