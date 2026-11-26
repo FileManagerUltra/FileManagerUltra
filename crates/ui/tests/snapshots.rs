@@ -833,15 +833,21 @@ fn about_dialog_dark_light() {
                 );
             harness.run_steps(3);
             if case == "licence" {
+                // The ELK row by its place in the notices, not the last row (bzip2 came
+                // after it).
+                let elk = fm_preview::notices::NOTICES
+                    .iter()
+                    .position(|n| n.licence == "EPL-2.0")
+                    .expect("ELK notice");
                 harness
                     .get_all_by_label("View licence")
-                    .last()
+                    .nth(elk)
                     .expect("ELK row")
                     .scroll_to_me();
                 harness.run();
                 harness
                     .get_all_by_label("View licence")
-                    .last()
+                    .nth(elk)
                     .expect("ELK row")
                     .click();
                 harness.run();
