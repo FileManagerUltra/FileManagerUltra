@@ -6,7 +6,9 @@ use fm_vfs::{Entry, FmError, Vfs};
 
 use crate::{Limits, Preview, TextDoc, highlight};
 
-/// Decode bytes as text: UTF-8 (BOM stripped), UTF-16 by BOM, otherwise lossy UTF-8.
+/// Decode bytes as text: UTF-8 (BOM stripped), UTF-16 by BOM, otherwise Windows-1252
+/// (legacy 8-bit text: old HTML pages, PHP scripts, spreadsheet exports). A UTF-8 file
+/// cut short in the middle of a character stays UTF-8.
 pub fn decode(bytes: &[u8]) -> String {
     if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
         return utf16(rest, u16::from_le_bytes);
@@ -15,7 +17,28 @@ pub fn decode(bytes: &[u8]) -> String {
         return utf16(rest, u16::from_be_bytes);
     }
     let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
-    String::from_utf8_lossy(bytes).into_owned()
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_owned(),
+        Err(e) if e.error_len().is_none() => String::from_utf8_lossy(bytes).into_owned(),
+        Err(_) => bytes.iter().map(|&b| cp1252(b)).collect(),
+    }
+}
+
+/// One Windows-1252 byte. 0x80–0x9F hold typographic characters; the five unassigned
+/// ones keep their C1 code point, like browsers do.
+fn cp1252(b: u8) -> char {
+    const HIGH: [char; 32] = [
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8D}', 'Ž',
+        '\u{8F}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9D}',
+        'ž', 'Ÿ',
+    ];
+    match b {
+        0x80..=0x9F => HIGH
+            .get(usize::from(b - 0x80))
+            .copied()
+            .unwrap_or('\u{FFFD}'),
+        _ => char::from(b),
+    }
 }
 
 fn utf16(bytes: &[u8], f: fn([u8; 2]) -> u16) -> String {
@@ -73,9 +96,23 @@ mod tests {
     }
 
     #[test]
+    fn legacy_bytes_decode_as_windows_1252() {
+        assert_eq!(decode(b"caf\xe9 \xae \x80 \x93q\x94"), "café ® € “q”");
+        // A multi-byte UTF-8 character cut at the end is not mistaken for legacy text.
+        assert_eq!(
+            decode("é".as_bytes().get(..1).unwrap_or_default()),
+            "\u{FFFD}"
+        );
+    }
+
+    #[test]
     fn bom_and_lossy() {
         assert_eq!(decode(b"\xEF\xBB\xBFhi"), "hi");
-        assert!(decode(&[b'a', 0xFF, b'b']).contains('\u{FFFD}'));
+        assert_eq!(
+            decode(&[b'a', 0xFF, b'b']),
+            "aÿb",
+            "not UTF-8: Windows-1252"
+        );
         assert_eq!(decode(&[0xFF, 0xFE, 0x41]), "");
     }
 }

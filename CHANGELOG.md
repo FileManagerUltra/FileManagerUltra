@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quitting or closing asks one question at most: unsaved workspaces, filled-in PDFs, archives with unsaved changes and work still running are listed together in one prompt with Save, Don't save and Cancel, instead of one prompt after another.
 
 ### Fixed
+- Older web pages, PHP scripts and other text saved in a Western code page (Windows-1252 or ISO-8859-1) now preview as text with syntax colouring and correct accented letters, instead of as a hex dump.
 - The Edit button in the Preview pane now works for tables (CSV, TSV), logs and changed files shown with their Git diff, like F4 already did; it was greyed out there.
 - A wrong password for an encrypted 7z archive is now always reported as a wrong password, instead of now and then as a damaged archive.
 - Leaving a large archive while it is still being opened (a big `.tar.gz` or RAR set) now really stops reading it, as the pane says; entering it again starts over. An archive opened only by expanding it in the folder tree keeps being read.

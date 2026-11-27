@@ -130,6 +130,25 @@ fn is_system_log_name(name: &str) -> bool {
     })
 }
 
+/// Text in a legacy 8-bit code page (Windows-1252, ISO-8859-x): not valid UTF-8, but no
+/// NUL bytes and hardly any control characters, which binary formats always have near the
+/// start. Old HTML pages and PHP scripts are often saved like this.
+fn is_legacy_text(head: &[u8]) -> bool {
+    if head.is_empty() || head.contains(&0) {
+        return false;
+    }
+    let controls = head
+        .iter()
+        .filter(|&&b| (b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r' | 0x0C | 0x1A)) || b == 0x7F)
+        .count();
+    controls * 100 <= head.len()
+}
+
+/// UTF-8/UTF-16 text or legacy 8-bit text.
+fn is_text_like(head: &[u8]) -> bool {
+    is_text(head) || is_legacy_text(head)
+}
+
 fn is_text(head: &[u8]) -> bool {
     if head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF]) {
         return true;
@@ -218,7 +237,7 @@ pub fn sniff(path: &str, head: &[u8]) -> Kind {
     if matches!(ext.as_str(), "csv" | "tsv" | "tab") && (is_text(head) || !head.contains(&0)) {
         return Kind::Table;
     }
-    if !is_text(head) {
+    if !is_text_like(head) {
         return Kind::Binary;
     }
     if is_system_log_name(name) {
@@ -261,7 +280,7 @@ pub fn content(path: &str, head: &[u8]) -> Kind {
     if head.starts_with(b"BM") {
         return Kind::Image("bmp");
     }
-    if head.starts_with(&[0x1f, 0x8b]) || !is_text(head) {
+    if head.starts_with(&[0x1f, 0x8b]) || !is_text_like(head) {
         return Kind::Binary;
     }
     if is_svg_document(head) {
@@ -296,7 +315,7 @@ pub fn configured(path: &str, head: &[u8], association: Option<Kind>) -> Kind {
             | Kind::Table
             | Kind::Text(_)),
         ) => {
-            if is_text(head) {
+            if is_text_like(head) {
                 kind
             } else {
                 content(path, head)
@@ -418,6 +437,34 @@ mod tests {
         ] {
             assert_eq!(sniff(name, &[0, 0, 1, 2, 0, 0]), Kind::Binary, "{name}");
         }
+    }
+
+    #[test]
+    fn legacy_code_page_text_is_text_not_binary() {
+        // An old HTML page and a PHP script in Windows-1252 / ISO-8859-1 (CRLF, é and ®).
+        let html = b"<!--\r\nhttp://example.test/\r\n-->\r\n<HTML><BODY>Ode aan Tonsje, caf\xe9</BODY></HTML>\r\n";
+        assert_eq!(
+            sniff("/d/odeaantonsje.html", html),
+            Kind::Text("html".into())
+        );
+        let php = b"<?php\r\n/* Yapter 2.14b2 \xae */\r\necho 'x';\r\n";
+        assert_eq!(sniff("/d/yapter.php", php), Kind::Text("php".into()));
+        assert_eq!(
+            configured("/d/yapter.php", php, Some(Kind::Text("php".into()))),
+            Kind::Text("php".into()),
+            "a filename association keeps legacy text"
+        );
+        // Binary stays binary: NUL bytes, or many control characters.
+        assert_eq!(sniff("/d/x.html", b"<html>\x00\x01\x02"), Kind::Binary);
+        // Not UTF-8 (high bytes) and one control byte in ten: binary, not legacy text.
+        let noisy: Vec<u8> = (0..200u8)
+            .map(|i| match i % 10 {
+                0 => 0x01,
+                5 => 0xE9,
+                _ => b'a',
+            })
+            .collect();
+        assert_eq!(sniff("/d/x.txt", &noisy), Kind::Binary);
     }
 
     #[test]

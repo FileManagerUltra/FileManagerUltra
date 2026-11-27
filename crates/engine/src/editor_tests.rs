@@ -520,3 +520,26 @@ fn files_of_unknown_type_open_as_plain_text_and_only_double_clicked_binaries_lea
         &Blocked::NotAFile
     ));
 }
+
+#[test]
+fn legacy_code_page_html_and_php_open_with_their_language() {
+    let mem = Arc::new(MemFs::new());
+    mem.put_file(
+        &uri("/w/odeaantonsje.html"),
+        b"<!--\r\nx\r\n-->\r\n<HTML><BODY>caf\xe9</BODY></HTML>\r\n",
+    )
+    .expect("put");
+    mem.put_file(&uri("/w/yapter.php"), b"<?php\r\n/* \xae */\r\necho 1;\r\n")
+        .expect("put");
+    let (mut s, _, _) = session(mem, &uri("/w"));
+    for (name, lang) in [
+        ("/w/odeaantonsje.html", fm_editor::Lang::Html),
+        ("/w/yapter.php", fm_editor::Lang::Php),
+    ] {
+        let pane = open(&mut s, &uri(name));
+        let doc = s.editor(pane).expect("doc");
+        assert_eq!(doc.blocked, None, "{name}");
+        assert_eq!(doc.lang, Some(lang), "{name}");
+        assert_eq!(doc.encoding, fm_editor::Encoding::Latin1, "{name}");
+    }
+}
