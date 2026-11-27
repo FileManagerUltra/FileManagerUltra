@@ -439,7 +439,7 @@ change is visible: the changelog explains it and the preference restores the old
   the first directory read (on the archive lane) opens the archive. Handles and their
   archive files live in a process-wide table (`archive_cmds::REFS`) that `display_path`
   and re-registration use; persisting it across restarts is still open (task 4.1).
-- The archive lanes have one thread each, like every other lane (D15 said two).
+- The archive lane has three worker threads (D15 said two; first built with one, which made a large archive that was still opening hold up every other archive); `BulkArchive` keeps one.
 - The container cache is 32 MiB per mount rather than one shared 64 MiB (D5).
 - Extract/compress (part 2): extraction is `fm_ops::copy` from the archive root into a
   new folder (`archive_ops::extract`), so conflicts, progress, cancel and undo (the whole

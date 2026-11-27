@@ -132,6 +132,35 @@ struct Job {
 
 type CancelMap = Arc<Mutex<HashMap<JobId, Arc<AtomicBool>>>>;
 
+/// Worker threads on the archive lane (listings and member reads inside archives).
+const ARCHIVE_WORKERS: usize = 3;
+
+/// One lane worker: run jobs from `rx` until the queue is dropped.
+fn run_worker(rx: &Receiver<Job>, events: &Sender<JobEvent>, cancel_flags: &CancelMap) {
+    while let Ok(job) = rx.recv() {
+        let ctx = JobCtx {
+            id: job.id,
+            cancel: job.cancel.clone(),
+            events: events.clone(),
+        };
+        let _ = events.send(JobEvent::Started(job.id));
+        let outcome = (job.work)(&ctx);
+        let terminal = match outcome {
+            Ok(()) => JobEvent::Done(job.id),
+            Err(FmError::Cancelled) => JobEvent::Cancelled(job.id),
+            Err(err) => JobEvent::Failed {
+                id: job.id,
+                message: err.to_string(),
+            },
+        };
+        cancel_flags
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&job.id);
+        let _ = events.send(terminal);
+    }
+}
+
 /// The queue: three lane threads, one events channel, cancellation by id.
 pub struct JobQueue {
     lanes: Vec<(Sender<Job>, JoinHandle<()>)>,
@@ -191,32 +220,24 @@ impl JobQueue {
                 JobLane::BulkArchive => "bulk-archive",
             }
         );
+        // Archive opening can take minutes for a large solid 7z; more workers let another
+        // archive open (and list) meanwhile. Other lanes keep one thread each.
+        let workers = if lane == JobLane::Archive {
+            ARCHIVE_WORKERS
+        } else {
+            1
+        };
+        for n in 1..workers {
+            let (rx, events, cancel_flags) = (rx.clone(), events.clone(), cancel_flags.clone());
+            // A refused extra thread only costs parallelism: the first worker still runs.
+            let _ = std::thread::Builder::new()
+                .name(format!("{name}-{n}"))
+                .spawn(move || run_worker(&rx, &events, &cancel_flags));
+        }
         let events_for_thread = events.clone();
-        let built = std::thread::Builder::new().name(name).spawn(move || {
-            let events = events_for_thread;
-            while let Ok(job) = rx.recv() {
-                let ctx = JobCtx {
-                    id: job.id,
-                    cancel: job.cancel.clone(),
-                    events: events.clone(),
-                };
-                let _ = events.send(JobEvent::Started(job.id));
-                let outcome = (job.work)(&ctx);
-                let terminal = match outcome {
-                    Ok(()) => JobEvent::Done(job.id),
-                    Err(FmError::Cancelled) => JobEvent::Cancelled(job.id),
-                    Err(err) => JobEvent::Failed {
-                        id: job.id,
-                        message: err.to_string(),
-                    },
-                };
-                cancel_flags
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .remove(&job.id);
-                let _ = events.send(terminal);
-            }
-        });
+        let built = std::thread::Builder::new()
+            .name(name)
+            .spawn(move || run_worker(&rx, &events_for_thread, &cancel_flags));
         match built {
             Ok(handle) => (tx, handle),
             Err(_) => {
@@ -303,6 +324,33 @@ impl JobQueue {
 mod tests {
     use super::*;
     use std::sync::mpsc::channel;
+
+    #[test]
+    fn a_long_archive_job_does_not_hold_up_the_next_archive() {
+        let q = JobQueue::new();
+        let release = Arc::new(AtomicBool::new(false));
+        let hold = release.clone();
+        // A large archive still opening: it runs until released.
+        let slow = q.submit(JobLane::Archive, move |_ctx| {
+            while !hold.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ok(())
+        });
+        let quick = q.submit(JobLane::Archive, |_ctx| Ok(()));
+        assert!(
+            matches!(
+                q.wait_for_terminal(quick, Duration::from_secs(5)),
+                Some(JobEvent::Done(_))
+            ),
+            "the second archive opened while the first was still reading"
+        );
+        release.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            q.wait_for_terminal(slow, Duration::from_secs(5)),
+            Some(JobEvent::Done(_))
+        ));
+    }
 
     #[test]
     fn job_runs_and_reports_done() {
