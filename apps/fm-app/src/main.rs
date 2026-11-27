@@ -127,10 +127,13 @@ fn open_uri(session: &mut Session, dialogs: &mut fm_ui::dialogs::Dialogs, uri: &
                 &serde_json::json!({ "uri": uri.to_string() }),
             );
         }
-        OpenPlan::ConfirmRun { name } => dialogs.request(fm_ui::dialogs::Dialog::ConfirmRun {
-            uri: uri.clone(),
-            name,
-        }),
+        OpenPlan::ConfirmRun { name, editable } => {
+            dialogs.request(fm_ui::dialogs::Dialog::ConfirmRun {
+                uri: uri.clone(),
+                name,
+                editable,
+            })
+        }
     }
 }
 

@@ -113,8 +113,11 @@ pub enum OpenPlan {
     PlayMedia,
     /// A text file whose kind opens in the built-in editor: dispatch `editor.open {uri}`.
     Edit,
+    /// A program: ask before running it. `editable` when the built-in editor can open it
+    /// (a script, not a binary), so the question can offer Edit too.
     ConfirmRun {
         name: String,
+        editable: bool,
     },
 }
 
@@ -136,7 +139,10 @@ pub fn plan(s: &mut Session, uri: &VfsUri) -> OpenPlan {
             }
             _ => OpenPlan::Launch,
         },
-        OpenKind::Executable => OpenPlan::ConfirmRun { name: entry.name },
+        OpenKind::Executable => OpenPlan::ConfirmRun {
+            editable: crate::editor_hub::check_editable(&entry).is_ok(),
+            name: entry.name,
+        },
     }
 }
 
@@ -669,6 +675,46 @@ mod tests {
             plan(&mut s, &code),
             OpenPlan::Edit,
             "code keeps its own setting"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scripts_offer_edit_when_asking_to_run_but_oversized_programs_do_not() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tmp");
+        let script = dir.path().join("go.sh");
+        std::fs::write(&script, "#!/bin/sh\n").expect("write");
+        // Sparse: over the editor's 1 GiB limit without writing it.
+        let huge = dir.path().join("huge.sh");
+        std::fs::File::create(&huge)
+            .and_then(|f| f.set_len(crate::editor_doc::MAX_EDIT_BYTES + 1))
+            .expect("huge");
+        for p in [&script, &huge] {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        let mut s = Session::new().expect("session");
+        let folder = VfsUri::parse(&dir.path().to_string_lossy()).expect("uri");
+        s.ensure_read(folder.clone()).expect("read");
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        while s.dirs.entries(&folder).is_none() && std::time::Instant::now() < end {
+            s.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let plan_of = |s: &mut Session, name: &str| plan(s, &folder.join(name).expect("join"));
+        assert_eq!(
+            plan_of(&mut s, "go.sh"),
+            OpenPlan::ConfirmRun {
+                name: "go.sh".into(),
+                editable: true
+            }
+        );
+        assert_eq!(
+            plan_of(&mut s, "huge.sh"),
+            OpenPlan::ConfirmRun {
+                name: "huge.sh".into(),
+                editable: false
+            }
         );
     }
 

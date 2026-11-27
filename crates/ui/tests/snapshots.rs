@@ -764,6 +764,7 @@ fn dialogs_dark_light() {
             Dialog::ConfirmRun {
                 uri: dir.join("install.sh").expect("uri"),
                 name: "install.sh".to_string(),
+                editable: true,
             },
         ),
     ];

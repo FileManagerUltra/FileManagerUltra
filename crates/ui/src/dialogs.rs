@@ -37,10 +37,12 @@ pub enum Dialog {
         tab: usize,
         name: String,
     },
-    /// Double-clicked program: run it, open it as a document, or do nothing.
+    /// Double-clicked program: run it, open it with its default application, edit it in
+    /// the built-in editor (`editable`: a script, not a binary), or do nothing.
     ConfirmRun {
         uri: VfsUri,
         name: String,
+        editable: bool,
     },
     /// Rename a bookmark in Places.
     RenameBookmark {
@@ -413,22 +415,31 @@ impl Dialogs {
                     !(cancel || esc)
                 }
             }
-            Dialog::ConfirmRun { uri, name } => {
+            Dialog::ConfirmRun {
+                uri,
+                name,
+                editable,
+            } => {
                 let (choice, cancel) = if s.prefs.confirm_run {
-                    confirm_run(ctx, tokens, name)
+                    confirm_run(ctx, tokens, name, *editable)
                 } else {
-                    (Some(true), false)
+                    (Some(RunChoice::Run), false)
                 };
                 let uri_s = uri.to_string();
                 match choice {
-                    Some(run) => {
+                    Some(RunChoice::Edit) => {
+                        s.dispatch_or_notice("editor.open", &json!({ "uri": uri_s }));
+                        false
+                    }
+                    Some(choice) => {
+                        let mode = if choice == RunChoice::Run {
+                            "run"
+                        } else {
+                            "default"
+                        };
                         s.dispatch_or_notice(
                             "file.open",
-                            &json!({
-                                "uri": uri_s,
-                                "mode": if run { "run" } else { "default" },
-                                "confirm": true,
-                            }),
+                            &json!({ "uri": uri_s, "mode": mode, "confirm": true }),
                         );
                         false
                     }
@@ -846,8 +857,22 @@ fn confirm_delete(
     (go && open, cancel || !open)
 }
 
-/// `Some(true)` = run, `Some(false)` = open with the default application.
-fn confirm_run(ctx: &Context, tokens: &Tokens, name: &str) -> (Option<bool>, bool) {
+/// What the user chose in the Run program? dialog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunChoice {
+    Run,
+    /// Open with the default application.
+    Open,
+    /// Open in the built-in editor.
+    Edit,
+}
+
+fn confirm_run(
+    ctx: &Context,
+    tokens: &Tokens,
+    name: &str,
+    editable: bool,
+) -> (Option<RunChoice>, bool) {
     let (mut choice, mut cancel) = (None, false);
     let mut open = true;
     crate::dialog_style::window(ctx, tokens, "Run program?", &mut open)
@@ -857,11 +882,27 @@ fn confirm_run(ctx: &Context, tokens: &Tokens, name: &str) -> (Option<bool>, boo
             ui.label(RichText::new(format!("\"{name}\" is a program.")).color(tokens.text));
             ui.label(RichText::new("Only run programs you trust.").color(tokens.warning));
             ui.horizontal(|ui| {
-                if ui.button("Run").clicked() {
-                    choice = Some(true);
+                if ui
+                    .button("Run")
+                    .on_hover_text("Start the program")
+                    .clicked()
+                {
+                    choice = Some(RunChoice::Run);
                 }
-                if ui.button("Open as document").clicked() {
-                    choice = Some(false);
+                if ui
+                    .button("Open")
+                    .on_hover_text("Open it with its default application")
+                    .clicked()
+                {
+                    choice = Some(RunChoice::Open);
+                }
+                if editable
+                    && ui
+                        .button("Edit")
+                        .on_hover_text("Edit it in the built-in editor")
+                        .clicked()
+                {
+                    choice = Some(RunChoice::Edit);
                 }
                 if ui.button("Cancel").clicked() {
                     cancel = true;

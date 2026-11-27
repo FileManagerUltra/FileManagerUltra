@@ -108,6 +108,7 @@ fn operation_dialogs_drag_and_title_close_cancels_without_dispatch() {
             Dialog::ConfirmRun {
                 uri: root.clone(),
                 name: "program".into(),
+                editable: true,
             },
         ] {
             let id = Id::NULL.with(match &dialog {
@@ -2401,4 +2402,48 @@ fn the_unsaved_bar_saves_and_discards() {
         assert!(std::time::Instant::now() < deadline, "Save did nothing");
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+}
+
+#[test]
+fn run_question_offers_edit_for_scripts_and_edit_opens_the_editor_without_running() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let script = dir.path().join("go.sh");
+    let marker = dir.path().join("ran");
+    std::fs::write(&script, "#!/bin/sh\ntouch ran\n").expect("write");
+    let uri = VfsUri::parse(&script.to_string_lossy()).expect("uri");
+    for editable in [false, true] {
+        let mut dialogs = Dialogs::default();
+        dialogs.request(Dialog::ConfirmRun {
+            uri: uri.clone(),
+            name: "go.sh".into(),
+            editable,
+        });
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1000.0, 800.0))
+            .build_ui_state(
+                move |ui, (dialogs, s): &mut (Dialogs, Session)| {
+                    s.poll();
+                    fm_ui::theme::apply_to(ui.ctx(), &Tokens::dark());
+                    dialogs.show(ui.ctx(), s, &Tokens::dark());
+                },
+                (dialogs, Session::new().expect("session")),
+            );
+        h.run();
+        h.get_by_label("Run");
+        h.get_by_label("Open");
+        h.get_by_label("Cancel");
+        if !editable {
+            assert!(h.query_by_label("Edit").is_none(), "no Edit for a binary");
+            continue;
+        }
+        h.get_by_label("Edit").click();
+        h.run_steps(3);
+        assert!(!h.state().0.is_open(), "the question closes");
+        let s = &h.state().1;
+        let pane = s.layout.focused();
+        assert!(s.editor(pane).is_some(), "the script is open in the editor");
+        assert!(s.notice.is_none(), "{:?}", s.notice);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(!marker.exists(), "Edit never runs the program");
 }

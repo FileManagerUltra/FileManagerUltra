@@ -55,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A workspace tab showing an archive with unsaved changes is marked with a dot, like a tab with unsaved workspace changes.
 
 ### Changed
+- Double-clicking a script asks Run, Open, Edit or Cancel: Edit opens it in the built-in editor without running it (offered only for files the editor can open, not for binaries). "Open as document" is now just "Open".
 
 - Quitting or closing asks one question at most: unsaved workspaces, filled-in PDFs, archives with unsaved changes and work still running are listed together in one prompt with Save, Don't save and Cancel, instead of one prompt after another.
 
