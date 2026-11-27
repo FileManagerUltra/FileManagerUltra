@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use fm_ops::{Choice, ConflictPolicy, Decision, OpCtx, OpReport, Progress, SingleBackend};
-use fm_testkit::MemFs;
+use fm_testkit::{FaultFs, MemFs};
 use fm_vfs::{EntryKind, Vfs, VfsUri};
 
 fn uri(s: &str) -> VfsUri {
@@ -106,4 +106,42 @@ fn existing_links_follow_the_conflict_policy() {
     let replaced = copy(&fs, "/src/proj", "/dst", true, ConflictPolicy::Overwrite);
     assert!(replaced.is_clean(), "{:?}", replaced.failed);
     assert_eq!(link_target(&fs, "/dst/proj/bin/rel"), "../lib/a.js");
+}
+
+#[test]
+fn links_the_destination_cannot_hold_are_left_out_and_a_move_keeps_them() {
+    let fs = FaultFs::new(tree());
+    {
+        // A move to another volume: copy, then delete what was copied.
+        let mut faults = fs.faults();
+        faults.symlinks_unsupported = true;
+        faults.rename_unsupported = true;
+    }
+    let b = SingleBackend(Arc::new(fs.clone()));
+    let mut progress = |_: &Progress| {};
+    let mut conflict = |_: &fm_ops::Conflict| Decision {
+        choice: Choice::Cancel,
+        apply_to_all: false,
+    };
+    let mut ctx = OpCtx::new(ConflictPolicy::Ask, &mut progress, &mut conflict);
+    let report = fm_ops::move_(&b, &[uri("/src/proj")], &uri("/dst"), &mut ctx).expect("move");
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(report.skipped, 4, "{report:?}");
+    let left: Vec<&str> = report
+        .left_out
+        .iter()
+        .filter_map(|(u, why)| {
+            assert!(why.contains("symbolic link not created"), "{why}");
+            u.file_name()
+        })
+        .collect();
+    for name in ["rel", "abs", "out", "dangling"] {
+        assert!(left.contains(&name), "{name} left out: {left:?}");
+    }
+    assert_eq!(
+        fs.inner().get_str("/dst/proj/lib/a.js").expect("file"),
+        b"code"
+    );
+    // Nothing is lost: the links that could not be recreated stay at the source.
+    assert_eq!(link_target(fs.inner(), "/src/proj/bin/rel"), "../lib/a.js");
 }

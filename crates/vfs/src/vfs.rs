@@ -79,7 +79,7 @@ pub trait Vfs: Send + Sync {
     fn create_symlink(&self, target: &str, link: &VfsUri) -> Result<(), FmError> {
         let _ = (target, link);
         Err(FmError::Unsupported(
-            "this backend cannot create symbolic links",
+            "this location cannot hold symbolic links",
         ))
     }
 

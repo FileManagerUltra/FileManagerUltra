@@ -27,6 +27,8 @@ pub struct Faults {
     pub unreadable_dirs: Vec<VfsUri>,
     /// `rename` returns `Unsupported`.
     pub rename_unsupported: bool,
+    /// `create_symlink` answers `Unsupported` (an SMB share, Windows without Developer Mode).
+    pub symlinks_unsupported: bool,
     /// Overrides `same_device`.
     pub same_device: Option<bool>,
     /// `rename` calls with these numbers (counting from 1 since the wrapper was made) fail.
@@ -163,6 +165,9 @@ impl<V: Vfs> Vfs for FaultFs<V> {
     }
 
     fn create_symlink(&self, target: &str, link: &VfsUri) -> Result<(), FmError> {
+        if self.faults().symlinks_unsupported {
+            return Err(FmError::Unsupported("no symbolic links here"));
+        }
         self.inner.create_symlink(target, link)
     }
 
