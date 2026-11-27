@@ -12,6 +12,12 @@ use crate::theme::Tokens;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Dialog {
+    /// Drop the staged changes of the archive at `root` (asked from its file's context
+    /// menu; inside the archive the unsaved bar asks instead).
+    ConfirmArchiveDiscard {
+        root: VfsUri,
+        name: String,
+    },
     /// Path of a subtitle file to show with the current Media video.
     Subtitle {
         path: String,
@@ -409,6 +415,18 @@ impl Dialogs {
                     s.dispatch_or_notice(
                         "edit.select_pattern",
                         &json!({"pattern": pattern.as_str(), "mode": *mode}),
+                    );
+                    false
+                } else {
+                    !(cancel || esc)
+                }
+            }
+            Dialog::ConfirmArchiveDiscard { root, name } => {
+                let (go, cancel) = confirm_archive_discard(ctx, tokens, name);
+                if !cancel && !esc && (go || enter) {
+                    s.dispatch_or_notice(
+                        "archive.discard",
+                        &json!({"uri": root.to_string(), "confirm": true}),
                     );
                     false
                 } else {
@@ -819,6 +837,32 @@ fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             s.unsaved_prompt = None;
         }
     }
+}
+
+fn confirm_archive_discard(ctx: &Context, tokens: &Tokens, name: &str) -> (bool, bool) {
+    let (mut go, mut cancel) = (false, false);
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Discard archive changes", &mut open)
+        .id(Id::NULL.with("fm-confirm-archive-discard"))
+        .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
+            ui.label(
+                RichText::new(format!("Discard the unsaved changes to {name}?")).color(tokens.text),
+            );
+            ui.label(
+                RichText::new("The archive goes back to how it is on disk.")
+                    .color(tokens.text_muted),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("Discard").clicked() {
+                    go = true;
+                }
+                if ui.button("Keep").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    (go && open, cancel || !open)
 }
 
 fn confirm_delete(

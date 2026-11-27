@@ -110,9 +110,14 @@ fn operation_dialogs_drag_and_title_close_cancels_without_dispatch() {
                 name: "program".into(),
                 editable: true,
             },
+            Dialog::ConfirmArchiveDiscard {
+                root: root.clone(),
+                name: "site.zip".into(),
+            },
         ] {
             let id = Id::NULL.with(match &dialog {
                 Dialog::ConfirmDelete { .. } => "fm-confirm-delete",
+                Dialog::ConfirmArchiveDiscard { .. } => "fm-confirm-archive-discard",
                 Dialog::ConfirmRun { .. } => "fm-confirm-run",
                 Dialog::SelectPattern { .. } => "fm-pattern-dialog",
                 _ => "fm-name-dialog",

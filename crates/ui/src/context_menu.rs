@@ -97,6 +97,7 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
                     ui.close();
                 }
             }
+            archive_flyout(ui, s, uri);
         }
         if let Some(spec) = s.registry.get("preview.open")
             && ui
@@ -183,6 +184,66 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
                     ui.separator();
                 }
                 Some(id) => command_item(ui, s, id),
+            }
+        }
+    });
+}
+
+/// The File › Archive commands for the archive file `file`, acting on its opened archive
+/// (one browsed this session, for example with unsaved changes after going back up).
+/// Without one they are disabled and say why.
+pub fn archive_flyout(ui: &mut Ui, s: &Session, file: &VfsUri) {
+    use fm_engine::archive_edit_cmds::{FLYOUT, enabled_on};
+    let mount = s.archives.of_file(file).cloned();
+    ui.menu_button("Archive", |ui| {
+        for entry in FLYOUT {
+            let Some(id) = *entry else {
+                ui.separator();
+                continue;
+            };
+            let Some(spec) = s.registry.get(id) else {
+                continue;
+            };
+            let encrypted = mount
+                .as_ref()
+                .is_some_and(|m| enabled_on("archive.password.remove", m));
+            let label = if id == "archive.password.set" && encrypted {
+                "Change Password…"
+            } else {
+                spec.label
+            };
+            let enabled = mount.as_ref().is_some_and(|m| enabled_on(id, m));
+            let mut resp = ui.add_enabled(enabled, egui::Button::new(label));
+            if mount.is_none() {
+                resp = resp.on_disabled_hover_text(
+                    "Browse inside the archive first: these act on an opened archive",
+                );
+            }
+            if resp.clicked()
+                && let Some(m) = &mount
+            {
+                let root = m.root().clone();
+                match id {
+                    "archive.password.set" => crate::archive_lock::ask_for(ui.ctx(), m),
+                    "archive.discard" => crate::dialogs::queue(
+                        ui.ctx(),
+                        crate::dialogs::Dialog::ConfirmArchiveDiscard {
+                            root,
+                            name: m
+                                .container()
+                                .file_name()
+                                .unwrap_or("the archive")
+                                .to_string(),
+                        },
+                    ),
+                    _ => ui.ctx().data_mut(|d| {
+                        d.insert_temp(
+                            Id::NULL.with("folder-context-command"),
+                            Some(FolderAction { id, folder: root }),
+                        );
+                    }),
+                }
+                ui.close();
             }
         }
     });

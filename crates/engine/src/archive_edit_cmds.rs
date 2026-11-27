@@ -3,6 +3,7 @@
 //! and `archive.backup.discard` for the backup parts an interrupted split save leaves.
 //! Saving runs as a file job (`archive_ops::save`).
 
+use fm_archive::mount::LazyArchive;
 use fm_vfs::{FmError, Scheme, VfsUri};
 use serde_json::json;
 
@@ -14,19 +15,71 @@ use crate::registry::{CommandSpec, Params};
 use crate::session::Session;
 
 /// The focused pane is inside an archive with unsaved staged changes.
-fn focused_dirty(s: &Session) -> bool {
+/// The archive commands of the File › Archive menu, in menu order (`None`: a separator).
+/// The archive file's context menu offers the same list for that file's archive.
+pub const FLYOUT: &[Option<&str>] = &[
+    Some("archive.save"),
+    Some("archive.save_as"),
+    Some("archive.discard"),
+    Some("archive.changes"),
+    None,
+    Some("archive.backup.restore"),
+    Some("archive.backup.discard"),
+    None,
+    Some("archive.password.set"),
+    Some("archive.password.remove"),
+    Some("archive.password.forget"),
+    None,
+    Some("archive.unmount"),
+];
+
+/// Whether the File › Archive command `id` applies to the opened archive `m`: the same
+/// rule as the menu uses for the focused pane's archive, for any archive.
+pub fn enabled_on(id: &str, m: &LazyArchive) -> bool {
+    let writable = || m.opened().is_some_and(|fs| fs.writable().is_ok());
+    let can_encrypt = || {
+        m.opened().is_some_and(|fs| {
+            fs.writable().is_ok()
+                && matches!(
+                    fs.format(),
+                    fm_archive::FormatId::Zip | fm_archive::FormatId::SevenZ
+                )
+        })
+    };
+    let encrypted = || {
+        m.opened().is_some_and(|fs| {
+            let info = fs.info();
+            info.encrypted || info.names_encrypted
+        })
+    };
+    match id {
+        "archive.save" | "archive.discard" | "archive.changes" => m.is_dirty(),
+        "archive.save_as" => writable(),
+        "archive.backup.restore" | "archive.backup.discard" => m
+            .opened()
+            .and_then(|fs| fs.parts().map(|p| !p.backups.is_empty()))
+            .unwrap_or(false),
+        "archive.password.set" => can_encrypt(),
+        "archive.password.remove" => can_encrypt() && encrypted(),
+        "archive.password.forget" => !m.passwords().is_empty(),
+        "archive.unmount" => true,
+        _ => false,
+    }
+}
+
+fn focused_mount(s: &Session) -> Option<&std::sync::Arc<LazyArchive>> {
     s.layout
         .state(s.layout.focused())
         .filter(|p| p.location.scheme() == Scheme::Archive)
         .and_then(|p| s.archives.for_uri(&p.location))
-        .is_some_and(|m| m.is_dirty())
+}
+
+fn focused_dirty(s: &Session) -> bool {
+    focused_mount(s).is_some_and(|m| enabled_on("archive.save", m))
 }
 
 fn focused_in_archive(s: &Session) -> bool {
-    s.layout
-        .state(s.layout.focused())
-        .and_then(|p| s.archives.for_uri(&p.location))
-        .is_some_and(|m| m.opened().is_some_and(|fs| fs.writable().is_ok()))
+    focused_mount(s).is_some_and(|m| enabled_on("archive.save_as", m))
 }
 
 fn field<'a>(params: &'a Params, key: &str) -> Option<&'a Params> {
@@ -192,20 +245,12 @@ pub fn changes() -> CommandSpec {
 
 /// The focused pane is inside a split archive that has backup parts of an interrupted save.
 fn focused_has_backups(s: &Session) -> bool {
-    s.layout
-        .state(s.layout.focused())
-        .and_then(|p| s.archives.for_uri(&p.location))
-        .and_then(|m| m.opened())
-        .and_then(|fs| fs.parts().map(|p| !p.backups.is_empty()))
-        .unwrap_or(false)
+    focused_mount(s).is_some_and(|m| enabled_on("archive.backup.restore", m))
 }
 
 /// The split archive a backup command acts on: its `uri` (a location inside the archive,
 /// or any part file of the set), else the focused pane's archive.
-fn backup_mount(
-    s: &mut Session,
-    params: &Params,
-) -> Result<std::sync::Arc<fm_archive::mount::LazyArchive>, FmError> {
+fn backup_mount(s: &mut Session, params: &Params) -> Result<std::sync::Arc<LazyArchive>, FmError> {
     match uri_of(params)? {
         Some(uri) if uri.archive_handle().is_none() => {
             let name = uri
@@ -274,17 +319,7 @@ pub fn backup_discard() -> CommandSpec {
 
 /// The focused pane is inside a writable zip or 7z (they can carry a password).
 fn focused_can_encrypt(s: &Session) -> bool {
-    s.layout
-        .state(s.layout.focused())
-        .and_then(|p| s.archives.for_uri(&p.location))
-        .and_then(|m| m.opened())
-        .is_some_and(|fs| {
-            fs.writable().is_ok()
-                && matches!(
-                    fs.format(),
-                    fm_archive::FormatId::Zip | fm_archive::FormatId::SevenZ
-                )
-        })
+    focused_mount(s).is_some_and(|m| enabled_on("archive.password.set", m))
 }
 
 fn stage_password(
@@ -345,17 +380,7 @@ pub fn password_remove() -> CommandSpec {
         menu: &["File", "Archive", "Remove Password"],
         shortcut: None,
         params: "{uri?: string}",
-        enabled: |s| {
-            focused_can_encrypt(s)
-                && s.layout
-                    .state(s.layout.focused())
-                    .and_then(|p| s.archives.for_uri(&p.location))
-                    .and_then(|m| m.opened())
-                    .is_some_and(|fs| {
-                        let info = fs.info();
-                        info.encrypted || info.names_encrypted
-                    })
-        },
+        enabled: |s| focused_mount(s).is_some_and(|m| enabled_on("archive.password.remove", m)),
         run: |s, params: &Params| {
             check_shape(params)?;
             stage_password(s, params, None)

@@ -28,13 +28,17 @@ fn form_id() -> Id {
 /// Open the dialog for the archive the focused pane shows (File › Archive › Set
 /// Password…).
 pub fn ask(ctx: &Context, s: &Session) {
-    let Some(mount) = s
+    if let Some(mount) = s
         .layout
         .state(s.layout.focused())
         .and_then(|p| s.archives.for_uri(&p.location))
-    else {
-        return;
-    };
+    {
+        ask_for(ctx, mount);
+    }
+}
+
+/// Ask for a new password for the opened archive `mount` (the archive file's context menu).
+pub fn ask_for(ctx: &Context, mount: &fm_engine::archive_cmds::LazyArchive) {
     let Some(fs) = mount.opened() else {
         return;
     };

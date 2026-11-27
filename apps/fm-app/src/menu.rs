@@ -107,16 +107,8 @@ pub const REMOTE_DISCONNECT: &str = "remote.disconnect";
 pub const FILE_DELETE: &str = "file.delete";
 pub const FILE_DELETE_PERMANENT: &str = "file.delete_permanent";
 pub const TRASH_OPEN: &str = "trash.open";
-pub const ARCHIVE_SAVE: &str = "archive.save";
-pub const ARCHIVE_SAVE_AS: &str = "archive.save_as";
 pub const ARCHIVE_DISCARD: &str = "archive.discard";
-pub const ARCHIVE_CHANGES: &str = "archive.changes";
-pub const ARCHIVE_BACKUP_RESTORE: &str = "archive.backup.restore";
-pub const ARCHIVE_BACKUP_DISCARD: &str = "archive.backup.discard";
-pub const ARCHIVE_CLOSE: &str = "archive.unmount";
 pub const ARCHIVE_PASSWORD_SET: &str = "archive.password.set";
-pub const ARCHIVE_PASSWORD_REMOVE: &str = "archive.password.remove";
-pub const ARCHIVE_PASSWORD_FORGET: &str = "archive.password.forget";
 pub const EDIT_UNDO: &str = "edit.undo";
 pub const FILE_CLIP_COPY: &str = "file.clip_copy";
 pub const FILE_CLIP_CUT: &str = "file.clip_cut";
@@ -621,9 +613,24 @@ pub(crate) fn dispatch_folder(
     let folder = folder.to_string();
     let params = match action.id {
         "file.clip_paste" => serde_json::json!({ "dest": folder }),
-        "nav.refresh" | "bookmark.add" | "preview.open" | "image.copy" | "media.play_folder"
-        | "archive.enter" | "archive.open_app" | "archive.extract" | "archive.extract_to"
-        | "archive.join" | "archive.unmount" => {
+        "nav.refresh"
+        | "bookmark.add"
+        | "preview.open"
+        | "image.copy"
+        | "media.play_folder"
+        | "archive.enter"
+        | "archive.open_app"
+        | "archive.extract"
+        | "archive.extract_to"
+        | "archive.join"
+        | "archive.unmount"
+        | "archive.save"
+        | "archive.save_as"
+        | "archive.changes"
+        | "archive.backup.restore"
+        | "archive.backup.discard"
+        | "archive.password.remove"
+        | "archive.password.forget" => {
             serde_json::json!({ "uri": folder })
         }
         _ => serde_json::json!({ "sources": [folder] }),
@@ -859,20 +866,16 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, FIND_FILES);
             item(ui, session, dialogs, FIND_EVERYWHERE);
             item(ui, session, dialogs, SYNC_OPEN);
+            // The same list as the archive file's context menu (archive_edit_cmds::FLYOUT).
             ui.menu_button("Archive", |ui| {
-                item(ui, session, dialogs, ARCHIVE_SAVE);
-                item(ui, session, dialogs, ARCHIVE_SAVE_AS);
-                item(ui, session, dialogs, ARCHIVE_DISCARD);
-                item(ui, session, dialogs, ARCHIVE_CHANGES);
-                ui.separator();
-                item(ui, session, dialogs, ARCHIVE_BACKUP_RESTORE);
-                item(ui, session, dialogs, ARCHIVE_BACKUP_DISCARD);
-                ui.separator();
-                item(ui, session, dialogs, ARCHIVE_PASSWORD_SET);
-                item(ui, session, dialogs, ARCHIVE_PASSWORD_REMOVE);
-                item(ui, session, dialogs, ARCHIVE_PASSWORD_FORGET);
-                ui.separator();
-                item(ui, session, dialogs, ARCHIVE_CLOSE);
+                for entry in fm_engine::archive_edit_cmds::FLYOUT {
+                    match entry {
+                        Some(id) => item(ui, session, dialogs, id),
+                        None => {
+                            ui.separator();
+                        }
+                    }
+                }
             });
             ui.separator();
             item(ui, session, dialogs, REMOTE_CONNECT);

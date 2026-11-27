@@ -1352,3 +1352,57 @@ fn an_archive_nested_too_deep_shows_the_limit_in_its_pane() {
         "Show the archive file goes to the folder holding it"
     );
 }
+
+/// The archive file's context menu offers File › Archive for that file's opened archive:
+/// any part of a split set finds it, the menu rules match, and its commands act on it from
+/// the folder the set is in.
+#[test]
+fn an_archive_file_finds_its_opened_archive_for_the_context_flyout() {
+    use fm_engine::archive_edit_cmds::{FLYOUT, enabled_on};
+    let dir = tempfile::tempdir().expect("tmp");
+    let p = dir.path();
+    let old = zip_with(&[("a.txt", &[7u8; 300])]);
+    write_parts(p, "set.zip", &old, old.len() / 2 + 1);
+    std::fs::write(p.join("other.zip"), zip_with(&[("b.txt", b"b")])).expect("other");
+    let mut s = Session::new().expect("session");
+    let part = |n: &str| VfsUri::parse(&uri(&p.join(n))).expect("uri");
+    assert!(
+        s.archives.of_file(&part("set.zip.002")).is_none(),
+        "not opened yet"
+    );
+    let root = open_zip(&mut s, &p.join("set.zip.001"));
+    let vfs = s.backends.require(&root).expect("backend");
+    vfs.create_dir(&root.join("mine").expect("m"))
+        .expect("mkdir");
+    // Back in the folder: the pane is no longer inside the archive.
+    s.dispatch("nav.open", &json!(uri(p))).expect("up");
+    let mount = s
+        .archives
+        .of_file(&part("set.zip.002"))
+        .cloned()
+        .expect("found from another part");
+    assert_eq!(mount.root(), &root);
+    assert!(s.archives.of_file(&part("other.zip")).is_none());
+    for id in [
+        "archive.save",
+        "archive.discard",
+        "archive.changes",
+        "archive.save_as",
+    ] {
+        assert!(enabled_on(id, &mount), "{id}");
+    }
+    assert!(
+        !enabled_on("archive.password.remove", &mount),
+        "not encrypted"
+    );
+    assert!(
+        FLYOUT
+            .iter()
+            .flatten()
+            .all(|id| s.registry.get(id).is_some())
+    );
+    s.dispatch("archive.save", &json!({"uri": root.to_string()}))
+        .expect("save from the folder");
+    assert_eq!(wait_done(&mut s).last(), Some(&OpState::Finished));
+    assert!(!mount.is_dirty());
+}

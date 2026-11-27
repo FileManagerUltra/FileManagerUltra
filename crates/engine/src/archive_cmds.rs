@@ -10,7 +10,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 
-use fm_archive::{FormatId, LazyArchive, Secret};
+pub use fm_archive::LazyArchive;
+use fm_archive::{FormatId, Secret};
 use fm_vfs::{FmError, Scheme, VfsUri};
 
 use crate::registry::{CommandSpec, Params};
@@ -221,6 +222,28 @@ impl std::fmt::Debug for Mounts {
 impl Mounts {
     pub fn get(&self, handle: &str) -> Option<&Arc<LazyArchive>> {
         self.lazies.get(handle)
+    }
+
+    /// The opened archive that the archive file `file` is: that file itself, or any part
+    /// of the same numbered split set (`x.7z.002` finds the set opened from `x.7z.001`).
+    /// An opened mount is preferred over one that was only registered.
+    pub fn of_file(&self, file: &VfsUri) -> Option<&Arc<LazyArchive>> {
+        let dir = file.parent();
+        let part_base = |name: &str| fm_archive::split::parse(name).map(|p| p.base);
+        let want = file.file_name().and_then(part_base);
+        let same = |m: &&Arc<LazyArchive>| {
+            let c = m.container();
+            c == file
+                || (want.is_some()
+                    && c.parent() == dir
+                    && c.file_name().and_then(part_base) == want)
+        };
+        let mut found = self.lazies.values().filter(same);
+        let first = found.next()?;
+        if first.opened().is_some() {
+            return Some(first);
+        }
+        found.find(|m| m.opened().is_some()).or(Some(first))
     }
 
     /// The archives being opened right now.
@@ -1161,7 +1184,7 @@ pub fn forget_password() -> CommandSpec {
             s.layout
                 .state(s.layout.focused())
                 .and_then(|p| s.archives.for_uri(&p.location))
-                .is_some_and(|m| !m.passwords().is_empty())
+                .is_some_and(|m| crate::archive_edit_cmds::enabled_on("archive.password.forget", m))
         },
         run: |s, params: &Params| {
             let mount = target_mount(s, params)?;
