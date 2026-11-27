@@ -167,14 +167,17 @@ impl Inner {
     }
 
     fn run(&self, job: Job) {
-        self.queued.fetch_sub(1, Ordering::AcqRel);
+        // The job leaves `queued` only once its outcome is stored or it is marked running,
+        // so `is_busy` never reads idle while a diagram is about to be drawn.
         if self.lock().epoch(job.pane) != job.epoch {
             self.finish(job.key, Err(DiagramError::Cancelled));
+            self.queued.fetch_sub(1, Ordering::AcqRel);
             return;
         }
         let cancel = Cancel::default();
         *self.running.lock().unwrap_or_else(|p| p.into_inner()) =
             Some((job.pane, job.epoch, cancel.clone()));
+        self.queued.fetch_sub(1, Ordering::AcqRel);
         // `mermaid::render` catches renderer panics; this guards the rest of the job.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             mermaid::render(&job.source, &job.palette, job.scale, &self.limits, &cancel)
