@@ -56,15 +56,13 @@ fn mono(tokens: &Tokens) -> FontId {
 }
 
 /// Preview content (thumbnails, pages) is much taller than a listing row, so egui's default
-/// wheel step feels slow there.
-const WHEEL_BOOST: f32 = 3.0;
-
-fn boost_wheel(ui: &Ui) {
+/// wheel step feels slow there; `speed` is the user's Scroll speed (1.0 = 100 %).
+fn boost_wheel(ui: &Ui, speed: f32) {
     let hovered = ui.rect_contains_pointer(ui.max_rect());
     if hovered {
         ui.input_mut(|i| {
             if !i.modifiers.command {
-                i.smooth_scroll_delta *= WHEEL_BOOST;
+                i.smooth_scroll_delta *= crate::theme::WHEEL_BOOST * speed;
             }
         });
     }
@@ -72,7 +70,12 @@ fn boost_wheel(ui: &Ui) {
 
 /// Render the preview pane body.
 pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Option<fm_vfs::VfsUri> {
-    boost_wheel(ui);
+    // Edit mode replaces the rendered body (capability `text-editor`).
+    if crate::editor::show(ui, s, pane, tokens) {
+        return None;
+    }
+    boost_wheel(ui, s.prefs.scroll_speed());
+    ui.style_mut().spacing.scroll = crate::theme::scroll_style();
     fm_engine::preview_find_cmds::prepare(s, pane);
     let find_keyboard = s.layout.focused() == pane
         && !crate::dialogs::window_owns_keyboard(s)
@@ -611,91 +614,104 @@ pub(super) fn remember_scroll<R>(ui: &Ui, output: &egui::scroll_area::ScrollArea
     ui.data_mut(|d| d.insert_temp(output.id.with("pv-bottom"), bottom));
 }
 
+/// The preview shows one text-like file that Edit mode can open (the toolbar's Edit button).
+fn editable_body(slot: &fm_engine::preview_cmds::PreviewSlot) -> bool {
+    let single = slot.subjects.len() <= 1
+        && slot
+            .subject
+            .as_ref()
+            .is_some_and(|e| fm_engine::editor_hub::check_editable(e).is_ok());
+    single
+        && match &slot.body {
+            Body::Static(p) => matches!(
+                &**p,
+                Preview::Text(_) | Preview::Structured(_) | Preview::Markdown(_) | Preview::Svg(_)
+            ),
+            // Logs and tables have crowded toolbars: F4 and the context menu edit them.
+            _ => false,
+        }
+}
+
 fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mut Vec<Action>) {
+    use crate::pane_bar::{self, Common, tool};
+    use crate::tool_icons::Icon;
     let Some(slot) = s.preview_slot(pane) else {
         return;
     };
-    // The view options go in a closure so they can be measured, then shown inline or, when the
-    // pane is too narrow, behind a menu button on the right.
     let diff = s.pane_diff(pane);
-    let options = |ui: &mut Ui, actions: &mut Vec<Action>| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        ui.spacing_mut().button_padding = vec2(10.0, 3.0);
-        // The diff's own controls live in its second bar.
-        if diff.is_some_and(|d| d.active) {
-            return;
-        }
-        if !matches!(slot.body, Body::Log(_) | Body::Table(_)) {
-            let can_find = matches!(&slot.body, Body::Static(p) if fm_engine::preview_find_cmds::searchable(p));
-            if ui
-                .add_enabled(can_find, egui::Button::new("Find"))
-                .on_hover_text("Find in loaded text (Ctrl+F)")
-                .on_disabled_hover_text(
-                    "Find is available for text, structured, Markdown and PDF previews.",
-                )
-                .clicked()
-            {
-                actions.push(("preview.find.open", json!({})));
-            }
-        }
-        // The preview's zoom (− 100% +) is in the pane header.
-        if slot.updates_available && ui.button("Reload")
-            .on_hover_text("Selected files changed. Reload their preview while keeping filters and source order.")
-            .clicked()
-        {
-            actions.push(("preview.reload", json!({})));
-        }
-        let wrap_pretty = |ui: &mut Ui, actions: &mut Vec<Action>| {
-            if ui
-                .add(egui::Button::selectable(slot.wrap, "Wrap"))
-                .clicked()
-            {
-                actions.push(("preview.toggle_wrap", json!({})));
-            }
+    let diff_active = diff.is_some_and(|d| d.active);
+    let static_preview = match &slot.body {
+        Body::Static(p) => Some(&**p),
+        _ => None,
+    };
+    let log = matches!(slot.body, Body::Log(_));
+    let table = matches!(slot.body, Body::Table(_));
+    let pdf = matches!(static_preview, Some(Preview::Pdf(_)));
+    // Log filters (and their search) open from Find too.
+    let log_id = Id::NULL.with(("pv-logui", pane));
+    let mut log_ui: LogUi = ui.data_mut(|d| d.get_temp(log_id)).unwrap_or_default();
+    let focus_id = Id::NULL.with(("pv-log-find-focus", pane));
+    if log && slot.find.open && ui.data(|d| d.get_temp::<u64>(focus_id)) != Some(slot.find.focus) {
+        log_ui.filters_open = true;
+        ui.data_mut(|d| {
+            d.insert_temp(focus_id, slot.find.focus);
+            d.insert_temp(Id::NULL.with(("pv-log-request-focus", pane)), true);
+        });
+    }
+    // The common three: Wrap, Find and Edit, always in the same spots.
+    let editable = editable_body(slot) && !diff_active;
+    let searchable = static_preview.is_some_and(fm_engine::preview_find_cmds::searchable);
+    let find_enabled = diff_active || log || table || searchable;
+    let wraps = !diff_active
+        && match static_preview {
+            Some(Preview::Text(_) | Preview::Structured(_) | Preview::Markdown(_)) => true,
+            Some(Preview::Svg(_)) => slot.source,
+            _ => table && slot.source,
         };
-        if let Body::Static(p) = &slot.body {
-            match &**p {
-                Preview::Structured(d) => {
-                    pretty_button(ui, d, slot.pretty, actions);
-                    wrap_pretty(ui, actions);
-                }
-                Preview::Text(_) => wrap_pretty(ui, actions),
-                Preview::Markdown(_) => {
-                    // The git Preview button already toggles the source when it is shown.
-                    if !diff.is_some_and(|d| !d.is_pair())
-                        && ui
-                            .add(egui::Button::selectable(!slot.source, "Preview"))
-                            .on_hover_text(markdown_toggle_hint(slot.source))
-                            .clicked()
-                    {
-                        actions.push(("preview.toggle_source", json!({})));
-                    }
-                    wrap_pretty(ui, actions);
-                }
-                Preview::Image(_) => {
+    let common = Common {
+        editing: false,
+        mode_enabled: editable,
+        mode_tip: if editable {
+            "Edit this file (F4)"
+        } else {
+            "Only a single text file can be edited"
+        },
+        find_enabled,
+        find_active: slot.find.open || (log && log_ui.filters_open),
+        find_tip: if log {
+            "Show or hide log search and filters (Ctrl+F). Applied filters stay active when hidden."
+        } else if table {
+            "Filter the rows (Ctrl+F)"
+        } else if find_enabled {
+            "Find in loaded text (Ctrl+F)"
+        } else {
+            "Find is available for text, structured, Markdown, PDF, table and log previews"
+        },
+        wrap_enabled: wraps,
+        wrap_active: slot.wrap,
+        wrap_tip: if wraps {
+            "Wrap long lines"
+        } else {
+            "Nothing to wrap in this view"
+        },
+    };
+    let mut tools = |ui: &mut Ui, menu: bool| {
+        if menu {
+            ui.spacing_mut().item_spacing.x = 8.0;
+        }
+        // The view's own controls; the diff has its own in its second bar.
+        if !diff_active {
+            match static_preview {
+                Some(Preview::Image(_)) => {
                     zoom_buttons(ui, actions);
                     rotate_buttons(ui, tokens, actions);
                 }
-                Preview::Svg(d) => {
-                    // The git Preview button already toggles the source when it is shown.
-                    if !diff.is_some_and(|d| !d.is_pair())
-                        && ui
-                            .add(egui::Button::selectable(!slot.source, "Preview"))
-                            .on_hover_text(svg_toggle_hint(slot.source))
-                            .clicked()
-                    {
-                        actions.push(("preview.toggle_source", json!({})));
-                    }
-                    if slot.source {
-                        pretty_button(ui, &d.source, slot.pretty, actions);
-                        wrap_pretty(ui, actions);
-                    } else if d.image.is_ok() {
-                        zoom_buttons(ui, actions);
-                        svg_background_picker(ui, pane, s.prefs.svg_background, actions);
-                    }
+                Some(Preview::Svg(d)) if !slot.source && d.image.is_ok() => {
+                    zoom_buttons(ui, actions);
+                    svg_background_picker(ui, pane, s.prefs.svg_background, actions);
                 }
-                Preview::Pdf(_) => pdf::toolbar_options(ui, s, pane, tokens, actions),
-                Preview::Dir(_) => thumb_toolbar(
+                Some(Preview::Pdf(_)) => pdf::toolbar_options(ui, s, pane, tokens, actions),
+                Some(Preview::Dir(_)) => thumb_toolbar(
                     ui,
                     pane,
                     slot.thumbs,
@@ -707,145 +723,110 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
                 ),
                 _ => {}
             }
+            if let Body::Table(v) = &slot.body {
+                table::toolbar_options(ui, v, slot.source, actions);
+            }
+            if slot.updates_available
+                && tool(
+                    ui,
+                    tokens,
+                    Icon::Reload,
+                    "Reload",
+                    "Selected files changed. Reload their preview while keeping filters and source order.",
+                    true,
+                    false,
+                    menu,
+                )
+                .clicked()
+            {
+                actions.push(("preview.reload", json!({})));
+            }
+            match static_preview {
+                Some(Preview::Structured(d)) => {
+                    pretty_button(ui, tokens, d, slot.pretty, menu, actions);
+                }
+                Some(Preview::Svg(d)) if slot.source => {
+                    pretty_button(ui, tokens, &d.source, slot.pretty, menu, actions);
+                }
+                _ => {}
+            }
+            let source_tip = match static_preview {
+                Some(Preview::Svg(_)) => Some(svg_toggle_hint(slot.source)),
+                Some(Preview::Markdown(_)) => Some(markdown_toggle_hint(slot.source)),
+                _ if table && slot.source => {
+                    Some("Showing the file's text. Click to show the table.")
+                }
+                _ if table => Some("Show the file's text"),
+                _ => None,
+            };
+            if let Some(tip) = source_tip
+                && tool(
+                    ui,
+                    tokens,
+                    Icon::Source,
+                    "Source",
+                    tip,
+                    true,
+                    slot.source,
+                    menu,
+                )
+                .clicked()
+            {
+                actions.push(("preview.toggle_source", json!({})));
+            }
         }
-        if let Body::Table(v) = &slot.body {
-            table::toolbar_options(ui, v, slot.source, actions);
-            if slot.source {
-                wrap_pretty(ui, actions);
+        // A text diff of a PDF says nothing, so PDFs hide Diff (unless it is already showing).
+        if let Some(d) = diff.filter(|d| !pdf || d.active) {
+            let tip = if d.active {
+                "Back to the file preview"
+            } else if d.is_pair() {
+                "Compare the two files"
+            } else {
+                "Show the changes against the last commit"
+            };
+            if tool(ui, tokens, Icon::Diff, "Diff", tip, true, d.active, menu).clicked() {
+                actions.push(("preview.diff.toggle", json!({ "show": !d.active })));
             }
         }
     };
-    ui.horizontal(|ui| {
-        source_picker(ui, s, pane, actions);
-        let plain_text = !matches!(&slot.body, Body::Static(p) if has_source_view(p));
-        let pdf = matches!(&slot.body, Body::Static(p) if matches!(&**p, Preview::Pdf(_)));
-        // A text diff of a PDF says nothing, so PDFs hide Diff (unless it is already showing).
-        let diff_button = diff.filter(|d| !pdf || d.active);
-        if let Some(d) = diff_button.filter(|d| d.is_pair() || plain_text) {
-            // Two files, or anything but Markdown (the only view with a source toggle): one compact toggle.
-            let resp = ui
-                .add(egui::Button::selectable(d.active, "Diff"))
-                .on_hover_text(if d.active {
-                    "Back to the file preview"
-                } else if d.is_pair() {
-                    "Compare the two files"
-                } else {
-                    "Show the changes against the last commit"
-                });
-            if resp.clicked() {
-                actions.push(("preview.diff.toggle", json!({ "show": !d.active })));
-            }
-        } else if let Some(d) = diff_button {
-            let markdown = matches!(&slot.body, Body::Static(p) if has_source_view(p));
-            let svg = matches!(&slot.body, Body::Static(p) if matches!(&**p, Preview::Svg(_)));
-            for (label, show) in [("Preview", false), ("Diff", true)] {
-                let rendered = markdown && !slot.source;
-                let selected = d.active == show && (show || !markdown || rendered);
-                let resp = ui
-                    .add(egui::Button::selectable(selected, label))
-                    .on_hover_text(if show {
-                        "Show the changes against the last commit"
-                    } else if svg {
-                        svg_toggle_hint(slot.source)
-                    } else if markdown {
-                        markdown_toggle_hint(slot.source)
-                    } else {
-                        "Show the file"
-                    });
-                if resp.clicked() {
-                    if d.active != show {
-                        actions.push(("preview.diff.toggle", json!({ "show": show })));
-                    } else if !show && markdown {
-                        actions.push(("preview.toggle_source", json!({})));
-                    }
-                }
-            }
+    // Fill & Sign never folds into the menu.
+    let fill_sign = pdf && pdf::bar_button_shown(s, pane);
+    let mut pinned_actions = Vec::new();
+    let mut picker_actions = Vec::new();
+    let mut pinned = |ui: &mut Ui| {
+        if fill_sign {
+            pdf::bar_button(ui, s, pane, tokens, &mut pinned_actions);
         }
-        if matches!(slot.body, Body::Log(_)) || slot.subjects.len() > 1 {
-            let id = Id::NULL.with(("pv-logui", pane));
-            let mut st: LogUi = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
-            let focus_id = Id::NULL.with(("pv-log-find-focus", pane));
-            if matches!(slot.body, Body::Log(_)) && slot.find.open
-                && ui.data(|d| d.get_temp::<u64>(focus_id)) != Some(slot.find.focus)
-            {
-                st.filters_open = true;
-                ui.data_mut(|d| {
-                    d.insert_temp(focus_id, slot.find.focus);
-                    d.insert_temp(Id::NULL.with(("pv-log-request-focus", pane)), true);
-                });
+    };
+    let clicks = pane_bar::show(
+        ui,
+        tokens,
+        &mut |ui| source_picker(ui, s, pane, &mut picker_actions),
+        &common,
+        &mut pinned,
+        &mut tools,
+    );
+    actions.extend(picker_actions);
+    actions.extend(pinned_actions);
+    if clicks.mode {
+        actions.push(("editor.toggle", json!({ "pane": pane })));
+    }
+    if clicks.wrap {
+        actions.push(("preview.toggle_wrap", json!({})));
+    }
+    if clicks.find {
+        if table {
+            table::focus_filter(ui, pane);
+        } else if log && !diff_active {
+            log_ui.filters_open = !log_ui.filters_open;
+            if log_ui.filters_open {
+                ui.data_mut(|d| d.insert_temp(Id::NULL.with(("pv-log-request-focus", pane)), true));
             }
-            if matches!(slot.body, Body::Log(_)) && ui
-                    .add(egui::Button::selectable(st.filters_open, RichText::new("Filter").strong()).frame_when_inactive(true))
-                    .on_hover_text(
-                        "Show or hide log filters, including search (Ctrl+F). Applied filters stay active when hidden.",
-                    )
-                    .clicked()
-                {
-                    st.filters_open = !st.filters_open;
-                }
-            ui.data_mut(|d| d.insert_temp(id, st));
+        } else {
+            actions.push(("preview.find.open", json!({})));
         }
-        let needed = {
-            let rect =
-                egui::Rect::from_min_size(ui.cursor().min, vec2(10_000.0, ui.available_height()));
-            let mut sizing = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(rect)
-                    .layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .sizing_pass()
-                    .invisible(),
-            );
-            options(&mut sizing, &mut Vec::new());
-            sizing.min_rect().width() + 24.0
-        };
-        // Fill & Sign sits at the right end and never folds into the view-options menu.
-        let fill_sign = (pdf && pdf::bar_button_shown(s, pane)).then(|| {
-            let rect =
-                egui::Rect::from_min_size(ui.cursor().min, vec2(10_000.0, ui.available_height()));
-            let mut sizing = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(rect)
-                    .layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .sizing_pass()
-                    .invisible(),
-            );
-            pdf::bar_button(&mut sizing, s, pane, tokens, &mut Vec::new());
-            sizing.min_rect().width() + 12.0
-        });
-        // The file name and folder are in the pane header (`header_title`), so the whole
-        // bar is for buttons.
-        let reserved = fill_sign.unwrap_or(0.0);
-        let inline = needed + reserved <= ui.available_width();
-        if inline {
-            options(ui, actions);
-            if fill_sign.is_some() {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    pdf::bar_button(ui, s, pane, tokens, actions);
-                });
-            }
-        } else if needed > 24.0 || fill_sign.is_some() {
-            // Right to left: the view-options menu is always the rightmost, Fill & Sign
-            // to its left.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if needed > 24.0 {
-                    let button = egui::Button::new("").min_size(vec2(28.0, 0.0));
-                    let (response, _) = egui::containers::menu::MenuButton::from_button(button)
-                        .ui(ui, |ui| options(ui, actions));
-                    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "View options"));
-                    // The bundled fonts have no hamburger glyph: draw it.
-                    let stroke = ui.style().interact(&response).fg_stroke;
-                    let c = response.rect.center();
-                    for dy in [-4.0, 0.0, 4.0] {
-                        ui.painter().hline(c.x - 7.0..=c.x + 7.0, c.y + dy, stroke);
-                    }
-                    response.on_hover_text("View options");
-                }
-                if fill_sign.is_some() {
-                    pdf::bar_button(ui, s, pane, tokens, actions);
-                }
-            });
-        }
-    });
+    }
+    ui.data_mut(|d| d.insert_temp(log_id, log_ui));
     if let Body::Table(v) = &slot.body
         && !slot.source
         && !diff.is_some_and(|d| d.active)
@@ -939,9 +920,26 @@ fn source_picker(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Actio
     // Pane ids mean nothing to users: number the file panes; while the list is open each pane
     // shows the same number as an overlay.
     let number = |id: PaneId| files.iter().position(|p| *p == id).map_or(0, |i| i + 1);
+    // Preview panes in Edit mode can be followed live (their unsaved text).
+    let editors: Vec<(PaneId, String)> = s
+        .layout
+        .panes()
+        .into_iter()
+        .filter(|p| {
+            *p != pane
+                && !matches!(
+                    s.layout.state(*p).map(|st| st.preview_source),
+                    Some(PreviewSource::Editor(_))
+                )
+        })
+        .filter_map(|p| s.editor(p).map(|d| (p, d.name.clone())))
+        .collect();
     let current = match state.preview_source {
         PreviewSource::Follow => "Active pane".to_string(),
         PreviewSource::Pane(id) => format!("Pane {}", number(id)),
+        PreviewSource::Editor(id) => s
+            .editor(id)
+            .map_or_else(|| "Editor".to_string(), |d| format!("Live: {}", d.name)),
     };
     let response = egui::ComboBox::from_id_salt(("pv-source", pane))
         .selected_text(current)
@@ -970,16 +968,23 @@ fn source_picker(ui: &mut Ui, s: &Session, pane: PaneId, actions: &mut Vec<Actio
                     actions.push(("pane.preview.source", json!({ "source": id })));
                 }
             }
+            if s.editor(pane).is_none() {
+                for (id, name) in &editors {
+                    let on = state.preview_source == PreviewSource::Editor(*id);
+                    if ui
+                        .selectable_label(on, format!("Live: {name}"))
+                        .on_hover_text("Show this editor's unsaved text, updated as you type")
+                        .clicked()
+                    {
+                        actions.push(("pane.preview.source", json!({ "source": id })));
+                    }
+                }
+            }
         })
         .response;
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::ComboBox, response.enabled(), "Preview source")
     });
-}
-
-/// Markdown and SVG previews switch between a rendered view and their source.
-fn has_source_view(p: &Preview) -> bool {
-    matches!(p, Preview::Markdown(_) | Preview::Svg(_))
 }
 
 fn svg_toggle_hint(source: bool) -> &'static str {
@@ -1057,12 +1062,28 @@ fn rotate_buttons(ui: &mut Ui, tokens: &Tokens, actions: &mut Vec<(&'static str,
     }
 }
 
-fn pretty_button(ui: &mut Ui, doc: &StructDoc, on: bool, actions: &mut Vec<(&'static str, Value)>) {
-    let r = ui.add_enabled(doc.pretty.is_ok(), egui::Button::selectable(on, "Pretty"));
-    let r = match &doc.pretty {
-        Err(e) => r.on_disabled_hover_text(e),
-        Ok(_) => r,
+fn pretty_button(
+    ui: &mut Ui,
+    tokens: &Tokens,
+    doc: &StructDoc,
+    on: bool,
+    menu: bool,
+    actions: &mut Vec<(&'static str, Value)>,
+) {
+    let tip = match &doc.pretty {
+        Err(e) => e.as_str(),
+        Ok(_) => "Show the data indented and sorted into a readable layout",
     };
+    let r = crate::pane_bar::tool(
+        ui,
+        tokens,
+        crate::tool_icons::Icon::Pretty,
+        "Pretty",
+        tip,
+        doc.pretty.is_ok(),
+        on,
+        menu,
+    );
     if r.clicked() {
         actions.push(("preview.toggle_pretty", json!({})));
     }
@@ -1270,6 +1291,12 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
     }
     let gutter = d.lines.len().to_string().len();
     let row_h = line_height(tokens);
+    // A chosen code scheme brings its own background (the same as the editor's); the app
+    // scheme keeps the pane's.
+    if tokens.code.bg != tokens.bg {
+        ui.painter()
+            .rect_filled(ui.available_rect_before_wrap(), 0.0, tokens.code.bg);
+    }
     // `show_rows` sizes the scrollable height from the spacing of the Ui it is called on, so the
     // tight spacing must be set here, not only inside the rows.
     tight_rows(ui);
@@ -1296,7 +1323,7 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
                             RichText::new(format!("{:>gutter$}", i + 1))
                                 .font(mono(tokens))
                                 .line_height(Some(row_h))
-                                .color(tokens.text_muted),
+                                .color(tokens.code.gutter),
                         )
                         .selectable(false),
                     );
@@ -1322,7 +1349,7 @@ fn text_view(ui: &mut Ui, pane: PaneId, tokens: &Tokens, d: &TextDoc, wrap: bool
                             RichText::new(format!("{:>gutter$}", i + 1))
                                 .font(mono(tokens))
                                 .line_height(Some(row_h))
-                                .color(tokens.text_muted),
+                                .color(tokens.code.gutter),
                         )
                         .selectable(false),
                     );

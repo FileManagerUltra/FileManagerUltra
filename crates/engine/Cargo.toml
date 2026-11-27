@@ -22,6 +22,7 @@ fm-layout.workspace = true
 fm-ops.workspace = true
 fm-sync.workspace = true
 fm-term.workspace = true
+fm-editor.workspace = true
 fm-preview.workspace = true
 fm-pdf.workspace = true
 fm-archive.workspace = true

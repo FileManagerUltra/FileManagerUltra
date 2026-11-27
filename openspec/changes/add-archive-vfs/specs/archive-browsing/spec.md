@@ -131,11 +131,15 @@ RAR archives SHALL be listed and read through an installed 7-Zip (`7zz`, `7z`, `
 - **THEN** the pane lists the RAR's entries with sizes and dates
 
 ### Requirement: Archive preview
-The Preview pane SHALL show, for an archive file, its format, compression method(s), entry count, packed and unpacked size, whether it is encrypted, the number of shadowed duplicate entries if any, and its top-level entries. Files inside an archive SHALL preview like files anywhere else.
+The Preview pane SHALL show, for an archive file, its format, compression method(s), entry count, packed and unpacked size, whether it is encrypted, the number of shadowed duplicate entries if any, and its top-level entries. Files inside an archive SHALL preview like files anywhere else. A gzipped log (a log name such as `app.log.2.gz` or `syslog.3.gz`, or a name the user's Preview file-type rules call a log) SHALL preview as a log, read compressed by the log viewer, instead of as an archive card; Enter still browses inside it.
 
 #### Scenario: Preview of a 7z
 - **WHEN** the Files pane cursor is on `tools.7z`
 - **THEN** the Preview shows "7z · LZMA2 · 1 204 files · 38 MB → 112 MB" and its top-level folders
+
+#### Scenario: Rotated log
+- **WHEN** the Files pane cursor is on `/var/log/alternatives.log.2.gz`
+- **THEN** the Preview shows the log's records, not an archive card
 
 ### Requirement: Archive browsing commands
 `archive.enter`, `archive.unmount`, `archive.password` and `archive.password.forget` SHALL be commands with ids, menu paths and bad-parameter tests (malformed params return `Err` without changing state). `archive.enter` SHALL accept a file uri and SHALL fail with an actionable error for non-archives.

@@ -111,6 +111,8 @@ pub enum OpenPlan {
     Launch,
     /// Audio or video set to play in the Media pane: dispatch `media.play {uris: [uri]}`.
     PlayMedia,
+    /// A text file whose kind opens in the built-in editor: dispatch `editor.open {uri}`.
+    Edit,
     ConfirmRun {
         name: String,
     },
@@ -126,6 +128,11 @@ pub fn plan(s: &mut Session, uri: &VfsUri) -> OpenPlan {
         OpenKind::Document => match crate::media_open_cmds::media_open_kind(uri) {
             Some(kind) if s.media_open_target(kind) == crate::prefs::MediaOpenTarget::MediaPane => {
                 OpenPlan::PlayMedia
+            }
+            _ if s.editor_target_for(uri) == Some(crate::editor_prefs::EditorTarget::Internal)
+                && crate::editor_hub::check_editable(&entry).is_ok() =>
+            {
+                OpenPlan::Edit
             }
             _ => OpenPlan::Launch,
         },
@@ -584,7 +591,11 @@ mod tests {
 
         let file = folder.join("a.txt").expect("join");
         assert!(s.dirs.entries(&folder).is_none(), "not listed by any pane");
-        assert_eq!(plan(&mut s, &file), OpenPlan::Launch);
+        assert_eq!(
+            plan(&mut s, &file),
+            OpenPlan::Edit,
+            "text opens in the editor"
+        );
         let sub = folder.join("sub").expect("join");
         assert_eq!(plan(&mut s, &sub), OpenPlan::Navigate);
     }
@@ -622,6 +633,42 @@ mod tests {
             plan(&mut s, &list),
             OpenPlan::Launch,
             "playlists keep the default app"
+        );
+    }
+
+    #[test]
+    fn text_files_follow_the_editor_preference_per_kind() {
+        let dir = tempfile::tempdir().expect("tmp");
+        for name in ["main.rs", "app.log", "photo.png"] {
+            std::fs::write(dir.path().join(name), "x").expect("write");
+        }
+        let mut s = Session::new().expect("session");
+        let folder = VfsUri::parse(&dir.path().to_string_lossy()).expect("uri");
+        s.ensure_read(folder.clone()).expect("read");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while s.dirs.entries(&folder).is_none() && std::time::Instant::now() < deadline {
+            s.poll();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let code = folder.join("main.rs").expect("join");
+        let log = folder.join("app.log").expect("join");
+        let photo = folder.join("photo.png").expect("join");
+        assert_eq!(
+            plan(&mut s, &code),
+            OpenPlan::Edit,
+            "built-in editor by default"
+        );
+        assert_eq!(
+            plan(&mut s, &photo),
+            OpenPlan::Launch,
+            "pictures are not text"
+        );
+        s.prefs.editor.open.log = crate::editor_prefs::EditorTarget::External;
+        assert_eq!(plan(&mut s, &log), OpenPlan::Launch);
+        assert_eq!(
+            plan(&mut s, &code),
+            OpenPlan::Edit,
+            "code keeps its own setting"
         );
     }
 

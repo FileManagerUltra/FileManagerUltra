@@ -293,6 +293,9 @@ pub struct Prefs {
     /// Seconds the audiobook skip-back and skip-forward buttons jump.
     #[serde(default = "default_skip_back")]
     pub media_skip_back_secs: u64,
+    /// Mouse-wheel speed in the Preview pane and its editor, in percent (50-300).
+    #[serde(default = "default_scroll_speed")]
+    pub scroll_speed_pct: u64,
     #[serde(default = "default_skip_forward")]
     pub media_skip_forward_secs: u64,
     /// What activating an audio file does.
@@ -301,6 +304,9 @@ pub struct Prefs {
     /// What activating a video file does.
     #[serde(default)]
     pub media_open_video: MediaOpenTarget,
+    /// Text editor settings (capabilities `text-editor`, `editor-open-preference`).
+    #[serde(default)]
+    pub editor: crate::editor_prefs::EditorPrefs,
     /// One-time hints already shown (see [`is_hint_id`]), so they never come back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hints_seen: Vec<String>,
@@ -480,6 +486,12 @@ fn default_log_poll_ms() -> u64 {
 }
 
 pub const SKIP_RANGE: std::ops::RangeInclusive<u64> = 5..=300;
+/// Allowed mouse-wheel speeds for the Preview pane and editor, in percent.
+pub const SCROLL_SPEED_RANGE: std::ops::RangeInclusive<u64> = 50..=300;
+
+fn default_scroll_speed() -> u64 {
+    100
+}
 
 fn default_skip_back() -> u64 {
     15
@@ -513,6 +525,14 @@ impl Prefs {
             self.log_poll_ms
                 .clamp(*LOG_POLL_RANGE.start(), *LOG_POLL_RANGE.end()),
         )
+    }
+
+    /// Wheel speed factor for the Preview pane and editor (1.0 = 100 %), clamped.
+    pub fn scroll_speed(&self) -> f32 {
+        let pct = self
+            .scroll_speed_pct
+            .clamp(*SCROLL_SPEED_RANGE.start(), *SCROLL_SPEED_RANGE.end());
+        pct as f32 / 100.0
     }
 
     pub fn log_limits(&self) -> fm_preview::log::LogLimits {
@@ -676,9 +696,11 @@ impl Default for Prefs {
             workspace_tab_order: WorkspaceTabOrder::default(),
             unsaved_workspaces: UnsavedWorkspaces::default(),
             media_skip_back_secs: default_skip_back(),
+            scroll_speed_pct: default_scroll_speed(),
             media_skip_forward_secs: default_skip_forward(),
             media_open_audio: MediaOpenTarget::default(),
             media_open_video: MediaOpenTarget::default(),
+            editor: Default::default(),
             hints_seen: Vec::new(),
             subtitle_style: Default::default(),
             log_poll_ms: default_log_poll_ms(),
@@ -1174,6 +1196,7 @@ mod tests {
                 "date_format",
                 "density",
                 "diagnostics_log",
+                "editor",
                 "font_size",
                 "git_enabled",
                 "git_gutter",
@@ -1203,6 +1226,7 @@ mod tests {
                 "remote_poll_secs",
                 "remote_timeout_secs",
                 "retarget_links",
+                "scroll_speed_pct",
                 "show_hidden",
                 "single_click_open",
                 "size_units",

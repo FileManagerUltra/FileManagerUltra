@@ -139,6 +139,9 @@ pub fn set(s: &mut Session, key: &str, value: &Value) -> Result<(), FmError> {
                 _ => UnsavedWorkspaces::Ask,
             };
         }
+        "scroll_speed_pct" => {
+            s.prefs.scroll_speed_pct = ranged(key, value, &crate::prefs::SCROLL_SPEED_RANGE)?;
+        }
         "media_skip_back_secs" => {
             s.prefs.media_skip_back_secs = ranged(key, value, &crate::prefs::SKIP_RANGE)?;
         }
@@ -401,6 +404,8 @@ mod tests {
             assert!(set_via(&mut s, "archives_spool_gib", bad).is_err());
         }
         set_via(&mut s, "archives_spool_gib", json!(4)).expect("back");
+        set_via(&mut s, "scroll_speed_pct", json!(200)).expect("scroll speed");
+        assert!((s.prefs.scroll_speed() - 2.0).abs() < 1e-6);
     }
 
     #[test]
@@ -462,6 +467,9 @@ mod tests {
             ("thumb_memory_mib", json!(1)),
             ("thumb_disk_mib", json!(-1)),
             ("preview_time_secs", json!(1000)),
+            ("scroll_speed_pct", json!(10)),
+            ("scroll_speed_pct", json!(1000)),
+            ("scroll_speed_pct", json!("fast")),
             ("nope", json!(true)),
         ] {
             assert!(

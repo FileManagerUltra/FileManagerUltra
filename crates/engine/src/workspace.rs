@@ -144,6 +144,8 @@ pub struct UnsavedPrompt {
     pub pdfs: Vec<(PaneId, String)>,
     /// Archives with staged changes: root and file name.
     pub archives: Vec<(VfsUri, String)>,
+    /// Editors with unsaved text (autosave off): pane and file name.
+    pub editors: Vec<(PaneId, String)>,
     /// On quit: work still running, one line each.
     pub busy: Vec<String>,
 }

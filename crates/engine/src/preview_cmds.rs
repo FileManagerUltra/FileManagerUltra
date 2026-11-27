@@ -172,7 +172,7 @@ pub struct PreviewSlot {
     pub stale: bool,
     /// Multi-file content changed; keep the loaded view until the user reloads.
     pub updates_available: bool,
-    token: u64,
+    pub(crate) token: u64,
     /// The render (token) a sharper decode of its downscaled picture was asked for; one
     /// request per picture.
     full_image: Option<u64>,
@@ -183,6 +183,8 @@ pub struct PreviewSlot {
     multi_window: u64,
     saved_log: Option<(LogFilter, bool, bool, bool)>,
     source_sort: Option<fm_layout::SortSpec>,
+    /// Live preview of an editor's unsaved text (capability `text-editor`).
+    pub(crate) live: Option<crate::editor_live::LiveState>,
 }
 
 impl PreviewSlot {
@@ -222,6 +224,7 @@ impl PreviewSlot {
             multi_window: LogLimits::default().initial_tail,
             saved_log: None,
             source_sort: None,
+            live: None,
         }
     }
 
@@ -283,6 +286,7 @@ impl PreviewSlot {
 
     fn busy(&self) -> bool {
         self.pending.is_some()
+            || self.live.as_ref().is_some_and(|l| l.due.is_some())
             || matches!(self.body, Body::Loading)
             || self.log().is_some_and(|l| l.busy || l.follow)
             || self.table().is_some_and(|t| t.is_busy())
@@ -290,7 +294,7 @@ impl PreviewSlot {
 }
 
 #[derive(Debug)]
-enum Msg {
+pub(crate) enum Msg {
     BatchRendered {
         pane: PaneId,
         token: u64,
@@ -318,7 +322,7 @@ enum Msg {
 #[derive(Debug, Default)]
 pub struct PreviewHub {
     pub slots: HashMap<PaneId, PreviewSlot>,
-    inbox: Arc<Mutex<Vec<Msg>>>,
+    pub(crate) inbox: Arc<Mutex<Vec<Msg>>>,
     next_token: u64,
 }
 
@@ -331,12 +335,12 @@ impl PreviewHub {
         self.slots.values().any(PreviewSlot::busy)
     }
 
-    fn token(&mut self) -> u64 {
+    pub(crate) fn token(&mut self) -> u64 {
         self.next_token += 1;
         self.next_token
     }
 
-    fn push(inbox: &Arc<Mutex<Vec<Msg>>>, msg: Msg) {
+    pub(crate) fn push(inbox: &Arc<Mutex<Vec<Msg>>>, msg: Msg) {
         if let Ok(mut g) = inbox.lock() {
             g.push(msg);
         }
@@ -425,6 +429,12 @@ impl Session {
         changed |= before != self.previews.slots.len();
         let now = Instant::now();
         for pane in previews {
+            if let Some(PreviewSource::Editor(src)) =
+                self.layout.state(pane).map(|st| st.preview_source)
+            {
+                changed |= self.live_preview_tick(pane, src, now);
+                continue;
+            }
             let target = self.layout.preview_target(pane);
             if target.is_some_and(|target| !self.pane_view_ready(target))
                 && self
@@ -455,6 +465,7 @@ impl Session {
     /// `dir` changed on disk: folder previews showing it (or a folder above it, when
     /// recursive) re-render in place without flashing a spinner.
     pub(crate) fn dir_changed(&mut self, dir: &VfsUri) {
+        self.editor_dir_changed(dir);
         for slot in self.previews.slots.values_mut() {
             let Some(subject) = slot.subject.as_ref().filter(|e| e.is_dir_like()) else {
                 continue;
@@ -470,7 +481,24 @@ impl Session {
         }
     }
 
-    fn advance_slot(&mut self, pane: PaneId, desired: Vec<Entry>, now: Instant) -> bool {
+    /// The editor saved `uri`: Preview panes showing it render it again in place.
+    pub(crate) fn invalidate_preview_of(&mut self, uri: &VfsUri) {
+        for slot in self.previews.slots.values_mut() {
+            if slot.subjects.iter().any(|e| e.uri == *uri) {
+                slot.stale = true;
+                slot.key = None;
+            }
+        }
+    }
+
+    pub(crate) fn advance_slot(&mut self, pane: PaneId, desired: Vec<Entry>, now: Instant) -> bool {
+        if self.editor_holds(pane, &desired) {
+            // Unsaved edits keep the pane on its file (capability `text-editor`).
+            if let Some(slot) = self.previews.slots.get_mut(&pane) {
+                slot.pending = None;
+            }
+            return false;
+        }
         let mut changed = false;
         let recursive = self.prefs.recursive_preview;
         let show_hidden = self.show_hidden;
@@ -970,9 +998,14 @@ impl Session {
                     // A table opens the whole file in the background: it needs the
                     // file's backend, looked up before the slot is borrowed.
                     let table_vfs = match (&*preview, self.previews.slots.get(&pane)) {
-                        (Preview::Table(_), Some(slot)) => slot.subject.as_ref().and_then(|e| {
-                            self.backends.require(&e.uri).ok().map(|v| (v, e.clone()))
-                        }),
+                        (Preview::Table(_), Some(slot)) => {
+                            let live = slot.live.as_ref().and_then(|l| l.snapshot());
+                            live.or_else(|| {
+                                slot.subject.as_ref().and_then(|e| {
+                                    self.backends.require(&e.uri).ok().map(|v| (v, e.clone()))
+                                })
+                            })
+                        }
                         _ => None,
                     };
                     let waker = self.tables.waker();
@@ -1230,7 +1263,7 @@ fn no_log() -> FmError {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_budgeted(
+pub(crate) fn render_budgeted(
     vfs: Arc<dyn Vfs>,
     entry: Entry,
     limits: Limits,
@@ -1245,7 +1278,12 @@ fn render_budgeted(
             Ok(rules) => rules,
             Err(error) => return Preview::Error(error.to_string()),
         };
-        if let Some(card) = crate::archive_preview::card(&vfs, &entry) {
+        // A gzipped log is a document: the log viewer reads it compressed. Enter still
+        // browses inside it like any single compressed file.
+        let kind = rules.kind(&entry.name);
+        let document = kind == Some(fm_preview::Kind::Log)
+            || fm_preview::sniff::is_compressed_log(&entry.name);
+        if !document && let Some(card) = crate::archive_preview::card(&vfs, &entry) {
             return card;
         }
         fm_preview::render_configured(
@@ -1257,7 +1295,7 @@ fn render_budgeted(
                 show_hidden,
             },
             &logs,
-            rules.kind(&entry.name),
+            kind,
         )
     })
     .unwrap_or_else(|| Preview::Error("the preview took too long and was abandoned".into()))
@@ -1369,12 +1407,27 @@ pub fn source() -> CommandSpec {
             let src = match (value.as_u64(), value.as_str()) {
                 (_, Some("focus")) => PreviewSource::Follow,
                 (Some(id), _) => {
-                    if s.layout.state(id).is_none_or(|st| !st.kind.is_files()) {
+                    let kind = s.layout.state(id).map(|st| st.kind);
+                    if kind == Some(PaneKind::Preview) && s.editors.docs.contains_key(&id) {
+                        // A Preview pane in Edit mode: show its unsaved text live.
+                        if id == preview
+                            || s.editors.docs.contains_key(&preview)
+                            || s.layout.state(id).is_some_and(|st| {
+                                matches!(st.preview_source, PreviewSource::Editor(_))
+                            })
+                        {
+                            return Err(FmError::InvalidParams(format!(
+                                "pane {id} cannot be followed live from here"
+                            )));
+                        }
+                        PreviewSource::Editor(id)
+                    } else if kind.is_none_or(|k| !k.is_files()) {
                         return Err(FmError::InvalidParams(format!(
-                            "pane {id} is not a Files pane"
+                            "pane {id} is not a Files pane or an editor"
                         )));
+                    } else {
+                        PreviewSource::Pane(id)
                     }
-                    PreviewSource::Pane(id)
                 }
                 _ => {
                     return Err(FmError::InvalidParams(
@@ -1387,6 +1440,7 @@ pub fn source() -> CommandSpec {
             }
             if let Some(slot) = s.previews.slots.get_mut(&preview) {
                 slot.key = None;
+                slot.live = None;
             }
             Ok(())
         },

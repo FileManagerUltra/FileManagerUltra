@@ -32,6 +32,7 @@ fm-preview = { path = "crates/preview" }
 fm-pdf = { path = "crates/pdf" }
 fm-archive = { path = "crates/archive" }
 fm-media = { path = "crates/media" }
+fm-editor = { path = "crates/editor" }
 fm-engine = { path = "crates/engine" }
 fm-ui = { path = "crates/ui" }
 
@@ -155,6 +156,29 @@ smb = { version = "=0.12.1", default-features = false, features = ["sign", "encr
 mdns-sd = { version = "0.21", default-features = false }
 if-addrs = "0.15"
 socket2 = "0.6"
+
+# Editor (fm-editor only; add-text-editor D2/D5). tree-sitter and its grammars are C,
+# compiled statically (user-approved exception 2026-11-26, AGENTS.md §7); all MIT.
+ropey = { version = "1.6", default-features = false, features = ["simd"] }
+tree-sitter = "0.27"
+streaming-iterator = "0.1"
+tree-sitter-rust = "0.24"
+tree-sitter-json = "0.24"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-go = "0.25"
+tree-sitter-java = "0.23"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.25"
+tree-sitter-xml = "0.7"
+tree-sitter-php = "0.25"
+tree-sitter-yaml = "0.7"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-md = "0.5"
+tree-sitter-bash = "0.25"
 
 # external — xtask tooling
 regex = "1"

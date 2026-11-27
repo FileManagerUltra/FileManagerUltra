@@ -37,6 +37,8 @@ struct App {
     /// Set once the native window title has been explicitly sent (see `ui`).
     title_sent: bool,
     was_focused: bool,
+    /// Window focus last frame, for the editor's autosave when switching applications.
+    window_focused: bool,
     /// Native fullscreen state last sent to the window (`window.fullscreen`).
     window_fullscreen_sent: bool,
     dialogs: fm_ui::dialogs::Dialogs,
@@ -117,6 +119,12 @@ fn open_uri(session: &mut Session, dialogs: &mut fm_ui::dialogs::Dialogs, uri: &
             session.dispatch_or_notice(
                 "media.play",
                 &serde_json::json!({ "uris": [uri.to_string()] }),
+            );
+        }
+        OpenPlan::Edit => {
+            session.dispatch_or_notice(
+                "editor.open",
+                &serde_json::json!({ "uri": uri.to_string() }),
             );
         }
         OpenPlan::ConfirmRun { name } => dialogs.request(fm_ui::dialogs::Dialog::ConfirmRun {
@@ -441,6 +449,12 @@ impl eframe::App for App {
             )
         });
         let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
+        // Switching to another application autosaves edited files (capability `text-editor`).
+        if self.window_focused && !focused {
+            self.session
+                .dispatch_or_notice(menu::EDITOR_BLUR, &serde_json::Value::Null);
+        }
+        self.window_focused = focused;
         self.session.devices_tick(focused);
         // A running scan wakes the UI when it is done (waker set in `App::new`); the second
         // keeps the slow-scan warning on time. Polling every 100 ms drew ~5 frames every
@@ -962,6 +976,7 @@ impl App {
             look,
             title_sent: false,
             was_focused: true,
+            window_focused: true,
             window_fullscreen_sent: false,
             dialogs: fm_ui::dialogs::Dialogs::default(),
             last_ws_tick: std::time::Instant::now(),

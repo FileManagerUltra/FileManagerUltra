@@ -941,6 +941,7 @@ fn preferences_dialog_dark_light() {
             "Files",
             "Copy and move",
             "Preview",
+            "Editor",
             "Media",
             "Terminal",
             "Connections",
@@ -985,6 +986,12 @@ fn preferences_dialog_dark_light() {
                 harness.run_steps(3);
             }
             if topic == "Media" {
+                // Only the top of the page: further down it names this machine's ffmpeg.
+                harness.set_size(egui::vec2(900.0, 420.0));
+                harness.run_steps(3);
+                harness.snapshot(format!("dialog_preferences_media_open_{theme}"));
+                harness.set_size(egui::vec2(900.0, 650.0));
+                harness.run_steps(3);
                 harness.get_by_label("Subtitle preview").scroll_to_me();
                 harness.run_steps(3);
                 harness.snapshot(format!("dialog_preferences_subtitles_{theme}"));
@@ -998,6 +1005,11 @@ fn preferences_dialog_dark_light() {
                 harness.snapshot(format!("dialog_preferences_subtitles_controls_{theme}"));
                 harness.get_by_label("Reset subtitle appearance").click();
                 harness.run_steps(3);
+            }
+            if topic == "Editor" {
+                harness.get_by_label("Opening files").scroll_to_me();
+                harness.run_steps(3);
+                harness.snapshot(format!("dialog_preferences_editor_open_{theme}"));
             }
             if topic == "Preview" {
                 harness
@@ -1643,7 +1655,7 @@ fn markdown_document_dark_light() {
             harness.run_steps(4);
             if case == "source" {
                 use egui_kittest::kittest::Queryable;
-                harness.get_by_label("Preview").click();
+                harness.get_by_label("Source").click();
                 harness.run_steps(4);
                 assert!(
                     harness
@@ -2845,7 +2857,7 @@ fn svg_preview_picture_source_and_error_dark_light() {
                 harness.get_by_label("Checkered").click();
                 harness.run();
                 harness.get_by_label("Fit");
-                harness.get_by_label("Preview").click();
+                harness.get_by_label("Source").click();
                 harness.run();
                 assert!(harness.state().preview_slot(pane).expect("slot").source);
                 assert!(harness.query_by_label("Fit").is_none(), "no zoom on source");
@@ -2853,7 +2865,7 @@ fn svg_preview_picture_source_and_error_dark_light() {
                 harness.run();
                 assert!(harness.state().preview_slot(pane).expect("slot").pretty);
                 harness.snapshot(format!("preview_svg_source_{theme}"));
-                harness.get_by_label("Preview").click();
+                harness.get_by_label("Source").click();
                 harness.run();
                 let slot = harness.state().preview_slot(pane).expect("slot");
                 assert!(!slot.source && !slot.pretty, "back to the drawing");
@@ -3566,7 +3578,7 @@ fn selected_previews_page_the_outer_document_or_grid() {
 }
 
 #[test]
-fn preview_toolbar_keeps_controls_on_one_row_and_logs_have_only_filter() {
+fn preview_toolbar_keeps_controls_on_one_row_and_logs_search_through_find() {
     use egui_kittest::kittest::Queryable;
     for tokens in [Tokens::dark(), Tokens::light()] {
         for width in [1000.0, 360.0, 220.0] {
@@ -3597,11 +3609,19 @@ fn preview_toolbar_keeps_controls_on_one_row_and_logs_have_only_filter() {
                     );
                 harness.run();
                 let source = harness.get_by_label("Preview source").rect();
-                if log {
-                    let filter = harness.get_by_label("Filter").rect();
-                    assert!((filter.center().y - source.center().y).abs() < 2.0);
-                    assert!(harness.query_by_label("Find").is_none());
+                // Wrap, Find and Edit are always on the bar, at the same spots.
+                for name in ["Wrap", "Find", "Edit"] {
+                    let r = harness.get_by_label(name).rect();
+                    assert!(
+                        (r.center().y - source.center().y).abs() < 2.0,
+                        "{name} on the row"
+                    );
+                    assert!(r.right() <= width, "{name} within the toolbar");
                 }
+                assert!(
+                    harness.query_by_label("Filter").is_none(),
+                    "logs search through Find"
+                );
                 // The zoom (− 100% +) moved to the pane header.
                 assert!(harness.query_by_label("Reset preview zoom").is_none());
                 if width == 1000.0 {
@@ -3625,9 +3645,7 @@ fn preview_toolbar_keeps_controls_on_one_row_and_logs_have_only_filter() {
                         harness.run();
                         assert!(harness.query_by_label("Reset preview zoom").is_none());
                     }
-                    if log {
-                        assert!(harness.query_by_label("Find").is_none());
-                    } else {
+                    if !log {
                         // Menu actions may leave the menu open.
                         if harness.query_by_label("Find").is_none() {
                             harness.get_by_label("View options").click();
@@ -3705,6 +3723,11 @@ fn preview_toolbar_collapses_into_a_menu_when_narrow() {
             .renderer(renderer)
             .with_accessibility_check(false)
             .build_ui(move |ui| {
+                ui.ctx().set_theme(if tokens.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
                 theme::apply_to(ui.ctx(), &tokens);
                 fm_ui::preview::show(ui, &mut session, pane, &tokens);
             });
@@ -3751,22 +3774,21 @@ fn preview_filter_row_toggles_and_preserves_settings_dark_light() {
                 1,
                 "initially shown"
             );
-            harness.get_by_label("Filter").click();
+            harness.get_by_label("Find").click();
             harness.run();
             assert_eq!(harness.query_all_by_label(".*").count(), 0);
             harness.snapshot(format!("preview_filters_closed_{width}_{theme}"));
-            harness.get_by_label("Filter").click();
+            harness.get_by_label("Find").click();
             harness.run();
-            let button = harness.get_by_label("Filter").rect();
+            let button = harness.get_by_label("Find").rect();
             let selector = harness
                 .get_all_by_role(egui::accesskit::Role::ComboBox)
                 .next()
                 .expect("panel selector")
                 .rect();
             assert!(
-                // The Preview/Diff toggle of a two-file selection sits between them.
-                button.left() >= selector.right() && button.left() - selector.right() < 160.0,
-                "Filter follows the panel selector"
+                button.left() >= selector.right() && button.right() <= width as f32,
+                "Find sits right of the panel selector, within the bar"
             );
             let clear = harness.get_by_label("Clear").rect();
             let mark = harness.get_by_label("Mark").rect();
@@ -3807,7 +3829,7 @@ fn preview_filter_row_toggles_and_preserves_settings_dark_light() {
                     .regex
             );
             harness.snapshot(format!("preview_filters_open_{width}_{theme}"));
-            harness.get_by_label("Filter").click();
+            harness.get_by_label("Find").click();
             harness.run();
             assert_eq!(harness.query_all_by_label(".*").count(), 0);
             assert!(
@@ -3820,7 +3842,7 @@ fn preview_filter_row_toggles_and_preserves_settings_dark_light() {
                     .filter
                     .regex
             );
-            harness.get_by_label("Filter").click();
+            harness.get_by_label("Find").click();
             harness.run();
             assert_eq!(
                 harness.get_by_label(".*").accesskit_node().toggled(),

@@ -99,6 +99,8 @@ pub struct Session {
     pub terminal_selection: Option<crate::term_cmds::TermSelection>,
     /// Preview pane contents and their background jobs (capability `preview-pane`).
     pub previews: crate::preview_cmds::PreviewHub,
+    /// Preview panes in Edit mode: their documents and jobs (capability `text-editor`).
+    pub editors: crate::editor_hub::EditorHub,
     pub preview_text_selection: Option<crate::preview_text_cmds::TextSelection>,
     /// Thumbnails for directory previews (own worker pool, memory + disk cache).
     pub thumbs: crate::thumbs::ThumbService,
@@ -232,6 +234,7 @@ impl Default for Session {
             terminals: HashMap::new(),
             terminal_selection: None,
             previews: Default::default(),
+            editors: Default::default(),
             preview_text_selection: None,
             thumbs: Default::default(),
             md_images: Default::default(),
@@ -445,6 +448,7 @@ impl Session {
             || self.diff_busy()
             || self.remote.is_busy()
             || self.previews.is_busy()
+            || self.editors.is_busy()
             || self.media.is_busy()
             || self.media_store_busy()
             || self.playlist_job.is_busy()
@@ -476,6 +480,7 @@ impl Session {
         self.normalize_sftp_panes();
         self.remote_tick();
         changed |= self.refresh_previews();
+        changed |= self.pump_editors();
         changed |= self.pump_pdf();
         self.note_files_dir();
         changed |= crate::archive_cmds::reveal_in_trees(self);

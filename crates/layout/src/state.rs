@@ -596,6 +596,9 @@ pub enum PreviewSource {
     Follow,
     /// A pinned Files pane (falls back to `Follow` when it closes).
     Pane(PaneId),
+    /// Live preview of a Preview pane in Edit mode: its unsaved text (falls back to
+    /// `Follow` when that pane closes).
+    Editor(PaneId),
 }
 
 /// Everything one pane remembers about its view.
@@ -637,6 +640,29 @@ pub struct PaneState {
     /// top of the interface zoom. (Terminal and Preview panes keep their own zoom.)
     #[serde(default = "default_term_scale")]
     pub view_scale: f32,
+    /// Preview panes in Edit mode: the edited file and where the caret was. Never the
+    /// text itself; a restored pane reloads the file (capability `text-editor`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<EditViewState>,
+}
+
+/// Where a Preview pane in Edit mode was: file, caret and view. Absent means preview.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EditViewState {
+    pub uri: VfsUri,
+    /// Caret line and column (0-based, columns in characters).
+    #[serde(default)]
+    pub line: usize,
+    #[serde(default)]
+    pub col: usize,
+    /// Topmost visible line.
+    #[serde(default)]
+    pub top: usize,
+    #[serde(default)]
+    pub wrap: bool,
+    /// First lines of folded blocks (checked against the file when it loads).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folds: Vec<usize>,
 }
 
 /// View state for a Media pane; queue contents are owned by the session, not the layout.
@@ -820,6 +846,7 @@ impl PaneState {
             term_scale: 1.0,
             term_dir: None,
             view_scale: 1.0,
+            edit: None,
         };
         if pane.location != pane.tree.root {
             pane.reveal_location();
@@ -1044,6 +1071,36 @@ mod tests {
             restored.location,
             uri("/b"),
             "back to where it was restored"
+        );
+    }
+
+    #[test]
+    fn edit_state_is_optional_and_not_part_of_the_set_up() {
+        let uri = |s: &str| VfsUri::parse(s).expect("uri");
+        let mut pane = PaneState::new(uri("/home/u"));
+        pane.kind = PaneKind::Preview;
+        // A state file from before Edit mode has no `edit` key: it loads as preview.
+        let mut old = serde_json::to_value(&pane).expect("json");
+        assert!(old.get("edit").is_none(), "absent field is not written");
+        old.as_object_mut().expect("object").remove("edit");
+        let back: PaneState = serde_json::from_value(old).expect("legacy loads");
+        assert_eq!(back.edit, None);
+        let mut edited = pane.clone();
+        edited.edit = Some(EditViewState {
+            uri: uri("/home/u/a.rs"),
+            line: 12,
+            col: 3,
+            top: 4,
+            wrap: false,
+            folds: vec![1],
+        });
+        let json = serde_json::to_value(&edited).expect("json");
+        let again: PaneState = serde_json::from_value(json).expect("round trip");
+        assert_eq!(again.edit, edited.edit);
+        assert_eq!(
+            pane.setup_only(),
+            edited.setup_only(),
+            "editing is using a pane"
         );
     }
 
