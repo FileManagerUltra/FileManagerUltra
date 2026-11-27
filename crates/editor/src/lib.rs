@@ -24,7 +24,7 @@ pub use encoding::{
 };
 pub use find::*;
 pub use fold::{FoldIndex, FoldRanges, indent_range, tree_ranges as fold_tree_ranges};
-pub use lang::{Lang, detect as detect_lang};
+pub use lang::{Lang, detect as detect_lang, strip_backup_suffix};
 pub use syntax::{
     DEFAULT_MAX_BYTES as SYNTAX_MAX_BYTES, FULL_PARSE_BUDGET, INCREMENTAL_BUDGET, Kind, ParseCtl,
     ParseJob, Syntax, SyntaxError, TokenSpan,

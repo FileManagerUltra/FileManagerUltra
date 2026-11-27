@@ -326,6 +326,7 @@ fn commands_refuse_bad_params_and_the_wrong_pane() {
         ("editor.set_encoding", json!({"encoding": "ebcdic"})),
         ("editor.resolve", json!({"choice": "maybe"})),
         ("editor.open", json!({"uri": 7})),
+        ("editor.open", json!({"uri": "/w/a.txt", "activate": "yes"})),
         ("editor.find", json!({"query": 1})),
         ("editor.save", json!({"bogus": true})),
     ] {
@@ -476,4 +477,46 @@ fn a_late_source_listing_does_not_count_as_leaving() {
     settle(&mut s, "autosave on a real move", |s| {
         saved(s, pane) || s.editor(pane).is_none_or(|d| d.uri != file)
     });
+}
+
+#[test]
+fn files_of_unknown_type_open_as_plain_text_and_only_double_clicked_binaries_leave() {
+    use crate::editor_io::Blocked;
+    let mem = Arc::new(MemFs::new());
+    mem.put_file(&uri("/w/notes.xyz"), b"plain words\n")
+        .expect("put");
+    mem.put_file(&uri("/w/panel.md.bak-20261123b"), b"# Title\n")
+        .expect("put");
+    let (mut s, _, _) = session(mem, &uri("/w"));
+    let pane = open(&mut s, &uri("/w/notes.xyz"));
+    let doc = s.editor(pane).expect("doc");
+    assert_eq!(
+        doc.blocked, None,
+        "unknown extension, text inside: editable"
+    );
+    assert_eq!(doc.lang, None, "plain-text mode");
+    assert!(
+        !doc.activated,
+        "F4 and the command default to not activated"
+    );
+    let pane = open(&mut s, &uri("/w/panel.md.bak-20261123b"));
+    assert_eq!(
+        s.editor(pane).and_then(|d| d.lang),
+        Some(fm_editor::Lang::Markdown),
+        "a backup is coloured like its original"
+    );
+    // Only a double-clicked binary is handed to its default application.
+    assert!(crate::editor_hub::hands_off_to_app(true, &Blocked::Binary));
+    assert!(!crate::editor_hub::hands_off_to_app(
+        false,
+        &Blocked::Binary
+    ));
+    assert!(!crate::editor_hub::hands_off_to_app(
+        true,
+        &Blocked::TooLarge(1)
+    ));
+    assert!(!crate::editor_hub::hands_off_to_app(
+        true,
+        &Blocked::NotAFile
+    ));
 }

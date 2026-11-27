@@ -1494,7 +1494,7 @@ fn editor_topic(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
                 .iter()
                 .map(|kind| {
                     let (title, detail) = match kind {
-                        EditorKind::Text => ("Text", ".txt, README, .csv"),
+                        EditorKind::Text => ("Text", ".txt, .csv and any other text"),
                         EditorKind::Code => ("Code", ".rs, .py, .js, .sh and more"),
                         EditorKind::Markup => ("Markup", ".md, .html, .xml, .css"),
                         EditorKind::Config => ("Settings", ".toml, .json, .yaml, .ini"),

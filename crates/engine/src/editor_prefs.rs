@@ -49,10 +49,12 @@ impl EditorKind {
         Self::ALL.into_iter().find(|k| k.key() == key)
     }
 
-    /// The kind of a file from its name, or `None` for names that are not known to be text
-    /// (those keep opening in the default app on Enter).
+    /// The kind of a file from its name: known text kinds, plain text for any other name,
+    /// and `None` only for known binary types (images, media, PDF, archives, …), which
+    /// keep opening in the default app on Enter.
     pub fn of_name(name: &str) -> Option<Self> {
-        let lower = name.to_ascii_lowercase();
+        // A backup copy (`notes.md.bak-20261123b`, `notes.md~`) is the kind of its original.
+        let lower = fm_editor::strip_backup_suffix(name).to_ascii_lowercase();
         if let Some(lang) = fm_editor::detect_lang(&lower, "") {
             use fm_editor::Lang::*;
             return Some(match lang {
@@ -81,7 +83,11 @@ impl EditorKind {
             }
             "" if matches!(stem, "makefile" | "dockerfile" | "cmakelists") => Self::Code,
             "" if stem.starts_with('.') => Self::Config,
-            _ => return None,
+            // Anything else that is not a known binary type is treated as plain text: the
+            // editor checks the bytes when it loads, and a double-clicked file that turns
+            // out binary still opens in its default application.
+            _ if crate::editor_hub::binary_name(&lower) => return None,
+            _ => Self::Text,
         })
     }
 
@@ -441,6 +447,22 @@ mod tests {
 
     #[test]
     fn kinds_come_from_names() {
+        assert_eq!(
+            EditorKind::of_name("betterstack-disk-panel.md.bak-20261123b"),
+            Some(EditorKind::Markup),
+            "a backup is the kind of its original"
+        );
+        assert_eq!(
+            EditorKind::of_name("notes.txt.orig"),
+            Some(EditorKind::Text)
+        );
+        assert_eq!(EditorKind::of_name("app.log.bak"), Some(EditorKind::Log));
+        assert_eq!(EditorKind::of_name("photo.jpg.bak"), None);
+        // Any other name that is not a known binary type is plain text.
+        assert_eq!(EditorKind::of_name("notes.xyz"), Some(EditorKind::Text));
+        assert_eq!(EditorKind::of_name("notes"), Some(EditorKind::Text));
+        assert_eq!(EditorKind::of_name("setup.exe"), None);
+        assert_eq!(EditorKind::of_name("song.mp3"), None);
         assert_eq!(EditorKind::of_name("main.rs"), Some(EditorKind::Code));
         assert_eq!(EditorKind::of_name("a.TOML"), Some(EditorKind::Config));
         assert_eq!(EditorKind::of_name("README"), Some(EditorKind::Text));

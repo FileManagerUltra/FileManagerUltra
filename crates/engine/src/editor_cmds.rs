@@ -204,6 +204,7 @@ impl Session {
         uri: VfsUri,
         line: Option<usize>,
         pane: Option<PaneId>,
+        activate: bool,
     ) -> Result<(), FmError> {
         let entry = self.editor_entry(&uri);
         check_editable(&entry)?;
@@ -239,14 +240,25 @@ impl Session {
             return Ok(());
         }
         if self.editors.docs.contains_key(&pane) {
-            self.editor_leave(pane, Some(Pending::Open { uri, line }));
+            self.editor_leave(
+                pane,
+                Some(Pending::Open {
+                    uri,
+                    line,
+                    activate,
+                }),
+            );
             return Ok(());
         }
         let caret = line.map(|l| Pos {
             line: l.saturating_sub(1),
             col: 0,
         });
-        self.editor_load(pane, uri, caret, 0)
+        self.editor_load(pane, uri, caret, 0)?;
+        if let Some(doc) = self.editor_mut(pane) {
+            doc.activated = activate;
+        }
+        Ok(())
     }
 
     /// Records that focus is on `pane` now, so moving it there is not a focus loss.
@@ -580,7 +592,7 @@ pub fn specs() -> Vec<CommandSpec> {
                             let params = serde_json::json!({ "uri": entry.uri.to_string() });
                             return s.dispatch("file.open", &params);
                         }
-                        s.editor_open_uri(entry.uri, None, None)
+                        s.editor_open_uri(entry.uri, None, None, false)
                     }
                     _ => Err(bad("F4 edits a file from a Files or Preview pane")),
                 }
@@ -591,10 +603,10 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Open in Editor",
             menu: &["File", "Editor", "Open in Editor"],
             shortcut: None,
-            params: "{uri: string, line?: number from 1, pane?: number}: open a file in Edit mode of a Preview pane",
+            params: "{uri: string, line?: number from 1, pane?: number, activate?: bool}: open a file in Edit mode of a Preview pane; activate (Enter/double-click) sends a file that turns out binary to its default application instead",
             enabled: |_| true,
             run: |s, p| {
-                let map = fields(p, &["uri", "line", "pane"])?;
+                let map = fields(p, &["uri", "line", "pane", "activate"])?;
                 let uri = map
                     .and_then(|m| m.get("uri"))
                     .ok_or_else(|| bad("uri: string required"))
@@ -607,7 +619,11 @@ pub fn specs() -> Vec<CommandSpec> {
                     None => None,
                     Some(_) => Some(target_pane(s, map)?),
                 };
-                s.editor_open_uri(uri, line, pane)
+                let activate = match map.and_then(|m| m.get("activate")) {
+                    None => false,
+                    Some(v) => v.as_bool().ok_or_else(|| bad("activate: true or false"))?,
+                };
+                s.editor_open_uri(uri, line, pane, activate)
             },
         },
         CommandSpec {

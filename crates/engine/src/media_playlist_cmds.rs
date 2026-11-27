@@ -124,6 +124,11 @@ pub fn validate_path(raw: &str, save: bool) -> Result<VfsUri, FmError> {
     Ok(uri)
 }
 
+/// Whether `uri` is named like a playlist (M3U, M3U8, PLS).
+pub(crate) fn is_playlist(uri: &VfsUri) -> bool {
+    format(uri).is_ok()
+}
+
 fn format(uri: &VfsUri) -> Result<PlaylistFormat, FmError> {
     match uri
         .file_name()

@@ -132,7 +132,12 @@ pub fn plan(s: &mut Session, uri: &VfsUri) -> OpenPlan {
             Some(kind) if s.media_open_target(kind) == crate::prefs::MediaOpenTarget::MediaPane => {
                 OpenPlan::PlayMedia
             }
-            _ if s.editor_target_for(uri) == Some(crate::editor_prefs::EditorTarget::Internal)
+            // Audio, video and playlists follow the media setting, never the editor
+            // (a playlist is text, but double-clicking it means play).
+            Some(_) => OpenPlan::Launch,
+            None if crate::media_playlist_cmds::is_playlist(uri) => OpenPlan::Launch,
+            None if s.editor_target_for(uri)
+                == Some(crate::editor_prefs::EditorTarget::Internal)
                 && crate::editor_hub::check_editable(&entry).is_ok() =>
             {
                 OpenPlan::Edit
@@ -645,7 +650,14 @@ mod tests {
     #[test]
     fn text_files_follow_the_editor_preference_per_kind() {
         let dir = tempfile::tempdir().expect("tmp");
-        for name in ["main.rs", "app.log", "photo.png"] {
+        for name in [
+            "main.rs",
+            "app.log",
+            "photo.png",
+            "notes.xyz",
+            "panel.md.bak-20261123b",
+            "list.m3u",
+        ] {
             std::fs::write(dir.path().join(name), "x").expect("write");
         }
         let mut s = Session::new().expect("session");
@@ -669,6 +681,15 @@ mod tests {
             OpenPlan::Launch,
             "pictures are not text"
         );
+        for (name, why) in [
+            ("notes.xyz", "an unknown extension opens as plain text"),
+            ("panel.md.bak-20261123b", "a backup opens like its original"),
+        ] {
+            let item = folder.join(name).expect("join");
+            assert_eq!(plan(&mut s, &item), OpenPlan::Edit, "{why}");
+        }
+        let list = folder.join("list.m3u").expect("join");
+        assert_eq!(plan(&mut s, &list), OpenPlan::Launch, "playlists play");
         s.prefs.editor.open.log = crate::editor_prefs::EditorTarget::External;
         assert_eq!(plan(&mut s, &log), OpenPlan::Launch);
         assert_eq!(

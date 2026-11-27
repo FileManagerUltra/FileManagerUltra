@@ -67,7 +67,14 @@ impl EditorHub {
 }
 
 /// File names that are never text: the editor does not offer Edit mode for them.
-fn binary_name(name: &str) -> bool {
+/// Whether a blocked load goes to the default application instead of the blocked card:
+/// only a double-clicked file (`activate`) that turned out binary. Too large or not a file
+/// keep the card, which explains why.
+pub(crate) fn hands_off_to_app(activated: bool, why: &editor_io::Blocked) -> bool {
+    activated && *why == editor_io::Blocked::Binary
+}
+
+pub(crate) fn binary_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     let ext = lower.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
     matches!(
@@ -412,13 +419,22 @@ impl Session {
         };
         match pending {
             Pending::Leave => self.editor_close(pane),
-            Pending::Open { uri, line } => {
+            Pending::Open {
+                uri,
+                line,
+                activate,
+            } => {
                 let caret = line.map(|l| Pos {
                     line: l.saturating_sub(1),
                     col: 0,
                 });
-                if let Err(e) = self.editor_load(pane, uri, caret, 0) {
-                    self.notice = Some(e.to_string());
+                match self.editor_load(pane, uri, caret, 0) {
+                    Ok(()) => {
+                        if let Some(doc) = self.editor_mut(pane) {
+                            doc.activated = activate;
+                        }
+                    }
+                    Err(e) => self.notice = Some(e.to_string()),
                 }
             }
             Pending::External => {
@@ -892,10 +908,23 @@ impl Session {
                 }
             }
             EdMsg::Blocked { pane, token, why } => {
+                let mut hand_off = None;
                 if let Some(doc) = self.live_doc(pane, token) {
+                    // A double-clicked file of unknown type that is not text after all
+                    // opens as before, in its default application.
+                    if hands_off_to_app(doc.activated, &why) {
+                        hand_off = Some(doc.uri.clone());
+                    }
                     doc.blocked = Some(why);
                     doc.phase = Phase::Ready;
                     doc.load_job = None;
+                }
+                if let Some(uri) = hand_off {
+                    self.editor_close(pane);
+                    let params = serde_json::json!({ "uri": uri.to_string() });
+                    if let Err(e) = self.dispatch("file.open", &params) {
+                        self.notice = Some(e.to_string());
+                    }
                 }
             }
             EdMsg::Restart {

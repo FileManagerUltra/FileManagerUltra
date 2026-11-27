@@ -169,6 +169,9 @@ pub struct EditorDoc {
     pub real: Option<VfsUri>,
     /// Why there is no editable text (binary, too large, not a file).
     pub blocked: Option<crate::editor_io::Blocked>,
+    /// Opened by Enter or double-click (`editor.open {activate: true}`): a file that
+    /// turns out to be binary goes to its default application instead of a blocked card.
+    pub activated: bool,
     /// What to do once the buffer is saved or its edits are discarded.
     pub pending: Option<Pending>,
     /// A file the user chose to stay away from (Cancel in the leave warning).
@@ -193,7 +196,11 @@ pub struct EditorDoc {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pending {
     /// Open another file in this pane.
-    Open { uri: VfsUri, line: Option<usize> },
+    Open {
+        uri: VfsUri,
+        line: Option<usize>,
+        activate: bool,
+    },
     /// Back to the rendered preview.
     Leave,
     /// Hand the file to the default application.
@@ -254,6 +261,7 @@ impl EditorDoc {
             truncated: false,
             real: None,
             blocked: None,
+            activated: false,
             pending: None,
             declined: None,
             autosave_failed: None,

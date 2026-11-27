@@ -184,10 +184,13 @@ pub fn sniff(path: &str, head: &[u8]) -> Kind {
     if is_log_name(name) {
         return Kind::Log;
     }
+    // A backup copy (`notes.md.bak-20261123b`, `notes.md~`) previews like its original;
+    // log names are matched as they are (`messages.backup` is not the system log).
+    let base = fm_editor::strip_backup_suffix(name);
     if head.starts_with(&[0x1F, 0x8B]) {
         return if is_system_log_name(name) {
             Kind::Log
-        } else if ext_of(name) == "svgz" {
+        } else if ext_of(base) == "svgz" {
             Kind::Svg
         } else {
             Kind::Binary
@@ -196,7 +199,7 @@ pub fn sniff(path: &str, head: &[u8]) -> Kind {
     if let Some(k) = magic(head) {
         return k;
     }
-    let ext = ext_of(name);
+    let ext = ext_of(base);
     // ASF holds both WMA (audio) and WMV (video); the extension tells them apart.
     if head.starts_with(&ASF_GUID) {
         return if ext == "wma" {
@@ -265,13 +268,14 @@ pub fn content(path: &str, head: &[u8]) -> Kind {
         return Kind::Svg;
     }
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let base = fm_editor::strip_backup_suffix(name);
     let text = String::from_utf8_lossy(head);
     if (!name.contains('.') && log::detect_text(&text).is_some())
         || (path.replace('\\', "/").contains("/var/report/") && head.first() == Some(&b'{'))
     {
         return Kind::Log;
     }
-    let ext = ext_of(name);
+    let ext = ext_of(base);
     Kind::Text(if ext.is_empty() {
         name.to_string()
     } else {
@@ -414,6 +418,23 @@ mod tests {
         ] {
             assert_eq!(sniff(name, &[0, 0, 1, 2, 0, 0]), Kind::Binary, "{name}");
         }
+    }
+
+    #[test]
+    fn backup_copies_preview_like_their_original() {
+        assert_eq!(
+            sniff("/d/betterstack-disk-panel.md.bak-20261123b", b"# Title\n"),
+            sniff("/d/betterstack-disk-panel.md", b"# Title\n")
+        );
+        assert_eq!(
+            sniff("/d/conf.yaml~", b"a: 1\n"),
+            sniff("/d/conf.yaml", b"a: 1\n")
+        );
+        // The bytes still decide first: a PNG named like a text backup is an image.
+        assert_eq!(
+            sniff("/d/notes.txt.bak", b"\x89PNG\r\n\x1a\n"),
+            sniff("/d/x.png", b"\x89PNG\r\n\x1a\n")
+        );
     }
 
     #[test]

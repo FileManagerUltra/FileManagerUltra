@@ -82,8 +82,45 @@ impl Lang {
 }
 
 /// Picks a language from the file name, falling back to a `#!` first line.
+/// `name` without backup suffixes, so a copy is treated like the file it was made from:
+/// `notes.md.bak-20261123b`, `notes.md.bak`, `notes.md.orig` and `notes.md~` all become
+/// `notes.md`. Repeated suffixes are stripped a few times at most, and a name that is
+/// nothing but a suffix (`.bak`) is kept.
+pub fn strip_backup_suffix(name: &str) -> &str {
+    let mut rest = name;
+    for _ in 0..4 {
+        let stripped = if let Some(s) = rest.strip_suffix('~') {
+            Some(s)
+        } else {
+            rest.rsplit_once('.')
+                .filter(|(stem, ext)| !stem.is_empty() && is_backup_ext(ext))
+                .map(|(stem, _)| stem)
+        };
+        match stripped {
+            Some(s) if !s.is_empty() && s != rest => rest = s,
+            _ => break,
+        }
+    }
+    rest
+}
+
+/// `bak` with an optional date or number (`bak2`, `bak-20261123b`, `bak_1`), and the other
+/// common copy suffixes.
+fn is_backup_ext(ext: &str) -> bool {
+    let ext = ext.to_ascii_lowercase();
+    if let Some(tail) = ext.strip_prefix("bak") {
+        return tail.is_empty()
+            || tail.starts_with(['-', '_'])
+            || tail.bytes().all(|b| b.is_ascii_digit());
+    }
+    matches!(
+        ext.as_str(),
+        "orig" | "old" | "backup" | "save" | "sav" | "prev"
+    )
+}
+
 pub fn detect(file_name: &str, first_line: &str) -> Option<Lang> {
-    let lower = file_name.to_ascii_lowercase();
+    let lower = strip_backup_suffix(file_name).to_ascii_lowercase();
     let by_name = match lower.as_str() {
         "cargo.lock" | "poetry.lock" | "pipfile" => Some(Lang::Toml),
         ".bashrc" | ".bash_profile" | ".profile" | ".zshrc" | "pkgbuild" => Some(Lang::Bash),
@@ -266,5 +303,35 @@ mod tests {
         assert_eq!(detect("noext", ""), None);
         assert_eq!(detect("query.sql", ""), Some(Lang::Sql));
         assert_eq!(detect("a.b.tsx", ""), Some(Lang::Tsx));
+        // Backup copies are coloured like the file they were made from.
+        assert_eq!(
+            detect("betterstack-disk-panel.md.bak-20261123b", ""),
+            Some(Lang::Markdown)
+        );
+        assert_eq!(detect("main.rs~", ""), Some(Lang::Rust));
+        assert_eq!(detect("config.yaml.orig", ""), Some(Lang::Yaml));
+    }
+
+    #[test]
+    fn backup_suffixes_are_stripped_but_names_are_never_emptied() {
+        for (name, want) in [
+            ("notes.md.bak", "notes.md"),
+            ("notes.md.BAK", "notes.md"),
+            ("notes.md.bak-20261123b", "notes.md"),
+            ("notes.md.bak2", "notes.md"),
+            ("notes.md.bak_1", "notes.md"),
+            ("notes.md.orig", "notes.md"),
+            ("notes.md.old.bak", "notes.md"),
+            ("notes.md~", "notes.md"),
+            ("notes.md", "notes.md"),
+            ("notes.bakery", "notes.bakery"),
+            ("notes.bak2x", "notes.bak2x"),
+            (".bak", ".bak"),
+            ("~", "~"),
+            ("bak", "bak"),
+            ("a.bak.bak.bak.bak.bak.bak", "a.bak.bak"),
+        ] {
+            assert_eq!(strip_backup_suffix(name), want, "{name}");
+        }
     }
 }

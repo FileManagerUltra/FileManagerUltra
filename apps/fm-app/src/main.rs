@@ -124,7 +124,7 @@ fn open_uri(session: &mut Session, dialogs: &mut fm_ui::dialogs::Dialogs, uri: &
         OpenPlan::Edit => {
             session.dispatch_or_notice(
                 "editor.open",
-                &serde_json::json!({ "uri": uri.to_string() }),
+                &serde_json::json!({ "uri": uri.to_string(), "activate": true }),
             );
         }
         OpenPlan::ConfirmRun { name, editable } => {
