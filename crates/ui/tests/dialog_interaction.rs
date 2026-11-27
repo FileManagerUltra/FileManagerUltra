@@ -2523,3 +2523,78 @@ fn two_password_prompts_do_not_steal_focus_and_paste_reaches_the_clicked_one() {
         "the paste reached the clicked (right) field"
     );
 }
+
+/// Delete opens "Delete permanently" over a file list; Enter then confirms the dialog and
+/// never reaches the list, where it would open the selected file (an archive was entered).
+#[test]
+fn enter_confirms_delete_permanently_and_does_not_open_the_selection() {
+    use std::sync::{Arc, Mutex};
+    let tokens = Tokens::dark();
+    let mem = fm_testkit::MemFs::new();
+    let folder = VfsUri::parse("/w").expect("uri");
+    let zip = folder.join("a.zip").expect("zip");
+    mem.mkdirs(&folder).expect("dir");
+    mem.put_file(&zip, b"PK\x05\x06\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0")
+        .expect("zip");
+    mem.put_file(&folder.join("b.txt").expect("b"), b"b")
+        .expect("b");
+    let mut s = Session::new().expect("session");
+    s.backends.register(Arc::new(mem.clone()));
+    let pane = s.layout.focused();
+    s.layout
+        .state_mut(pane)
+        .expect("pane")
+        .navigate(folder.clone());
+    s.ensure_read(folder.clone()).expect("read");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !s.dirs.state(&folder).is_ready() {
+        s.poll();
+        assert!(std::time::Instant::now() < deadline, "listing");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    s.layout
+        .state_mut(pane)
+        .expect("pane")
+        .listing
+        .select_only(Some("a.zip"), 0);
+    let opened: Arc<Mutex<Vec<VfsUri>>> = Arc::default();
+    let seen = opened.clone();
+    let mut dialogs = Dialogs::default();
+    dialogs.request(Dialog::ConfirmDelete {
+        sources: vec![zip.clone()],
+    });
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(900.0, 500.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                if let Some(uri) = fm_ui::listing::show(ui, s, pane, &tokens, true)
+                    && let Ok(mut v) = seen.lock()
+                {
+                    v.push(uri);
+                }
+                dialogs.show(ui.ctx(), s, &tokens);
+            },
+            s,
+        );
+    h.run_steps(3);
+    assert!(h.query_by_label("Delete").is_some(), "the dialog is up");
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert!(
+        opened.lock().expect("lock").is_empty(),
+        "Enter did not open the selected archive"
+    );
+    assert!(h.query_by_label("Delete").is_none(), "Enter confirmed");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while fm_vfs::Vfs::stat(&mem, &zip).is_ok() {
+        h.state_mut().poll();
+        assert!(std::time::Instant::now() < deadline, "not deleted");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(
+        h.state().layout.state(pane).expect("pane").location,
+        folder,
+        "the pane stayed in its folder"
+    );
+}

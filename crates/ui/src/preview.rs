@@ -78,7 +78,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     ui.style_mut().spacing.scroll = crate::theme::scroll_style();
     fm_engine::preview_find_cmds::prepare(s, pane);
     let find_keyboard = s.layout.focused() == pane
-        && !crate::dialogs::window_owns_keyboard(s)
+        && !crate::dialogs::keyboard_taken(ui.ctx(), s)
         && ui.is_enabled()
         && ui.ctx().memory(|m| m.is_above_modal_layer(ui.layer_id()))
         && !ui.any_popup_open();
@@ -127,7 +127,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         }
     }
     let keyboard = s.layout.focused() == pane
-        && !crate::dialogs::window_owns_keyboard(s)
+        && !crate::dialogs::keyboard_taken(ui.ctx(), s)
         && !ui.ctx().text_edit_focused()
         && ui.is_enabled()
         && ui.ctx().memory(|m| m.is_above_modal_layer(ui.layer_id()))
@@ -200,7 +200,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
     find::begin(ui, s, pane);
     ui.separator();
     let can_page = s.layout.focused() == pane
-        && !crate::dialogs::window_owns_keyboard(s)
+        && !crate::dialogs::keyboard_taken(ui.ctx(), s)
         && ui.is_enabled()
         && ui.ctx().memory(|m| m.is_above_modal_layer(ui.layer_id()))
         && !ui.ctx().text_edit_focused()
@@ -2448,7 +2448,7 @@ fn thumb_grid(
     // A preview following another pane's cursor (e.g. landing on a folder) must not steal the
     // keyboard from that pane, so the grid only claims focus when its own pane is focused.
     // A dialog such as Preferences owns the keyboard: the grid lets go until it closes.
-    let pane_focused = s.layout.focused() == pane && !crate::dialogs::window_owns_keyboard(s);
+    let pane_focused = s.layout.focused() == pane && !crate::dialogs::keyboard_taken(ui.ctx(), s);
     let want = ctx.data(|dt| dt.get_temp::<bool>(want_id)).unwrap_or(false);
     if pane_focused {
         if ctx.memory(|m| m.has_focus(grid_id)) {

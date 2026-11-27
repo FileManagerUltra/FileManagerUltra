@@ -139,6 +139,15 @@ view (0.3.2, `add-table-preview`).
   with Copy as image like Mermaid.
 - **Dia diagram view**: render `.dia` files in the Preview pane. Open question for the
   proposal: view only, or basic editing (the request called it an "editor view").
+- **Ebook view**: read EPUB (zipped XHTML), MOBI/AZW (PalmDoc and HUFF/CDIC compressed
+  text) and CHM (compiled HTML Help, LZX) books in the Preview pane: the table of contents
+  as a sidebar, chapters rendered through the same document view as Markdown and RTF
+  (headings, lists, tables, links between chapters, pictures through the bounded image
+  pool), Find across the book and the last read position remembered per file. Books also
+  browse as folders where the format is an archive (EPUB, CHM), like `add-archive-vfs`.
+  Scripts, external resources and DRM-protected books are never run or fetched; a
+  protected book says so. Open questions for the proposal: pure-Rust LZX and HUFF/CDIC
+  decoders (or a vetted crate), and whether KF8/AZW3 is in the first change.
 
 ### Near-future: quick feature walkthrough
 - **Guided tour**: a short walkthrough (Help menu and first run) that shows off several

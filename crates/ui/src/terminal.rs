@@ -196,7 +196,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused
     if focused
         && exited.is_none()
         && s.pending_kind.is_none()
-        && !crate::dialogs::window_owns_keyboard(s)
+        && !crate::dialogs::keyboard_taken(ui.ctx(), s)
         && (!ui.ctx().text_edit_focused() || response.clicked())
     {
         if response.clicked() || !ui.ctx().text_edit_focused() {
@@ -244,7 +244,7 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens, focused
 }
 
 fn forward_input(ui: &Ui, s: &mut Session, pane: PaneId, snap: &Snapshot) {
-    if crate::dialogs::window_owns_keyboard(s) || ui.ctx().text_edit_focused() {
+    if crate::dialogs::keyboard_taken(ui.ctx(), s) || ui.ctx().text_edit_focused() {
         return;
     }
     let (events, mods) = ui.input(|i| (i.events.clone(), i.modifiers));

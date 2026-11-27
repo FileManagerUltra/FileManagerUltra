@@ -708,7 +708,7 @@ fn ready_rows(
     // A dialog such as Preferences owns the keyboard even while this pane stays focused.
     if pane_focused
         && !tree_active
-        && !crate::dialogs::window_owns_keyboard(s)
+        && !crate::dialogs::keyboard_taken(ui.ctx(), s)
         && !ui.ctx().text_edit_focused()
         && !crate::preview::grid_has_keyboard(ui.ctx())
     {

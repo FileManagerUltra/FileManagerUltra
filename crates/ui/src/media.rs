@@ -604,7 +604,7 @@ fn playlist(
     }
     if s.layout.focused() == pane
         && renaming.is_none()
-        && !crate::dialogs::window_owns_keyboard(s)
+        && !crate::dialogs::keyboard_taken(ui.ctx(), s)
         && !ui.ctx().text_edit_focused()
     {
         let page = ((ui.available_height() / pitch).floor() as isize - 1).max(1);

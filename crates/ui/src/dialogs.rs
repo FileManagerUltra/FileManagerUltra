@@ -86,6 +86,21 @@ pub fn queue(ctx: &Context, dialog: Dialog) {
 }
 
 /// Session-owned windows take keyboard input before the pane underneath them.
+fn modal_id() -> Id {
+    Id::NULL.with("fm-dialog-modal-open")
+}
+
+/// A dialog of [`Dialogs`] was open at the end of the last frame: it owns the keyboard.
+pub fn dialog_owns_keyboard(ctx: &Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(modal_id()))
+        .unwrap_or(false)
+}
+
+/// Something on top of the panes has the keyboard: a dialog or a session window.
+pub fn keyboard_taken(ctx: &Context, s: &Session) -> bool {
+    window_owns_keyboard(s) || dialog_owns_keyboard(ctx)
+}
+
 pub fn window_owns_keyboard(s: &Session) -> bool {
     s.preferences_open
         || s.about_open
@@ -222,6 +237,14 @@ impl Dialogs {
 
     /// Render the open dialog and the conflict prompt. Call once per frame.
     pub fn show(&mut self, ctx: &Context, s: &mut Session, tokens: &Tokens) {
+        self.show_dialogs(ctx, s, tokens);
+        // Panes draw before the dialogs: tell them for the next frame that a dialog has
+        // the keyboard, so Enter confirms it instead of opening the selected file.
+        let open = self.open.is_some();
+        ctx.data_mut(|d| d.insert_temp(modal_id(), open));
+    }
+
+    fn show_dialogs(&mut self, ctx: &Context, s: &mut Session, tokens: &Tokens) {
         conflict_dialog(ctx, s, tokens);
         question_dialog(ctx, s, tokens);
         archive_password_dialog(ctx, s, tokens);
@@ -404,7 +427,8 @@ impl Dialogs {
                 } else {
                     (true, false)
                 };
-                if go {
+                // Enter confirms, as in the other dialogs (the Delete key opened it).
+                if !cancel && !esc && (go || enter) {
                     let list: Vec<String> = sources.iter().map(|u| u.to_string()).collect();
                     s.dispatch_or_notice(
                         "file.delete_permanent",
