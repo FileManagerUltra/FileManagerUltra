@@ -1224,8 +1224,24 @@ fn entry_row_ui(
     let archive_file = entry.is_file() && fm_engine::archive_cmds::is_archive_name(&entry.name);
     let in_archive = entry.uri.scheme() == fm_vfs::Scheme::Archive;
     let encrypted = in_archive && entry.is_file() && s.archives.is_encrypted(&entry.uri);
+    // An opened archive with staged changes: the editing colour (unsaved, as in the
+    // editor), a dot on its icon and a tooltip, so going back up never hides it.
+    let unsaved = archive_file
+        .then(|| s.archives.of_file(&entry.uri))
+        .flatten()
+        .and_then(|m| m.opened())
+        .filter(|fs| fs.is_dirty())
+        .map(|fs| fs.changes().len());
+    if let Some(n) = unsaved {
+        let noun = if n == 1 { "change" } else { "changes" };
+        let _ = response.clone().on_hover_text(format!(
+            "{n} unsaved {noun}: right-click › Archive to save, show or discard them"
+        ));
+    }
     let text_color = if selected {
         tokens.selection_text
+    } else if unsaved.is_some() {
+        tokens.editing
     } else if let Some(tint) = marks.tint_of(mark, tokens) {
         tint
     } else if archive_file || in_archive {
@@ -1254,7 +1270,13 @@ fn entry_row_ui(
         let mut cell = cols.name.shrink2(egui::vec2(tokens.padding, 0.0));
         // The icon gutter shows the git mark, else the link icon.
         let git = mark.filter(|m| marks.gutter && *m != fm_engine::git::Mark::Ignored);
-        if let Some(m) = git {
+        if unsaved.is_some() {
+            let origin = cols.name.left_center() + egui::vec2(tokens.padding, 0.0);
+            let icon = if selected { text_color } else { tokens.editing };
+            paint_archive_icon(ui.painter(), origin, icon);
+            ui.painter()
+                .circle_filled(origin + egui::vec2(10.0, -4.5), 2.5, tokens.editing);
+        } else if let Some(m) = git {
             crate::git_marks::paint_gutter(ui.painter(), cell, m, entry.is_dir_like(), tokens);
         } else if entry.is_symlink() {
             let origin = cols.name.left_center() + egui::vec2(tokens.padding, 0.0);

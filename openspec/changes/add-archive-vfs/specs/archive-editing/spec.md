@@ -16,7 +16,11 @@ Inside a writable archive (zip, tar family, 7z), copying or moving files in, cre
 - **THEN** the confirmation says it is removed from the archive when saved, and the file disappears from the listing
 
 ### Requirement: Unsaved archive changes are visible
-A Files pane whose location is inside an archive with staged changes SHALL show a bar above the listing naming the archive and the number of changes, with Save and Discard buttons; the pane's tab SHALL show an unsaved marker. The bar SHALL appear in every pane showing that archive.
+A Files pane whose location is inside an archive with staged changes SHALL show a bar above the listing naming the archive and the number of changes, with Save and Discard buttons; the pane's tab SHALL show an unsaved marker. The bar SHALL appear in every pane showing that archive. Outside the archive, its file SHALL stay marked while the changes are unsaved: the name and archive icon in the editing colour with a dot, and a tooltip with the number of changes. An archive file's context menu SHALL hold an "Archive" submenu with its own actions (Browse inside, Extract here, Extract to…, Join parts, Open with default app), the File › Archive commands acting on that file's opened archive (disabled, saying why, while it is not opened) and, outside archives, Add to archive and Compress to…; other items get the same submenu with only the adding and compressing actions. Show archive changes asked from outside the archive SHALL list the changes in a window with Save, Save as copy, Discard and Close.
+
+#### Scenario: Going back up keeps the archive marked
+- **WHEN** the user creates a folder inside `site.zip` and goes back to the folder holding it
+- **THEN** `site.zip` is shown in the editing colour with a dot and a tooltip "1 unsaved change", and its context menu's Archive › Show Archive Changes lists "New folder: …" in a window
 
 #### Scenario: Bar after an edit
 - **WHEN** the user creates a folder inside `site.zip`

@@ -6086,3 +6086,65 @@ fn edit_is_enabled_for_rendered_text_previews_and_off_for_pictures() {
         assert_eq!(!disabled, editable, "{name}: Edit enabled = {editable}");
     }
 }
+
+/// Back in the folder of an archive with staged changes: the archive file is marked in
+/// the editing colour with a dot, and Show Archive Changes (from its context menu) opens
+/// the list in a window, since no unsaved bar is on screen.
+#[test]
+fn archive_unsaved_file_and_changes_window_dark_light() {
+    let _gpu = lock_gpu();
+    let mut results = SnapshotResults::new();
+    for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
+        let mem = MemFs::new();
+        mem.put_file_at(
+            &VfsUri::parse("/home/alice/locked.zip").expect("uri"),
+            include_bytes!("fixtures/locked.zip"),
+            FIXED_MTIME,
+        )
+        .expect("put");
+        let mut s = with_fixed_places(Session::new().expect("session"));
+        s.backends.register(Arc::new(mem));
+        s.dispatch(
+            "archive.enter",
+            &serde_json::json!({"uri": "/home/alice/locked.zip"}),
+        )
+        .expect("enter");
+        let root = s.layout.state(1).expect("pane").location.clone();
+        wait_ready(&mut s, &root);
+        let vfs = s.backends.require(&root).expect("backend");
+        vfs.create_dir(&root.join("drafts").expect("d"))
+            .expect("mkdir");
+        let home = VfsUri::parse("/home/alice").expect("home");
+        s.dispatch("nav.open", &serde_json::json!(home.to_string()))
+            .expect("up");
+        wait_ready(&mut s, &home);
+        s.dispatch(
+            "archive.changes",
+            &serde_json::json!({"uri": root.to_string()}),
+        )
+        .expect("changes");
+        let mut session = s;
+        let mut dialogs = fm_ui::dialogs::Dialogs::default();
+        let Some(renderer) = renderer_or_skip() else {
+            return;
+        };
+        let mut harness = Harness::builder().renderer(renderer).build_ui(move |ui| {
+            theme::apply_to(ui.ctx(), &tokens);
+            ui.ctx().set_theme(if tokens.dark {
+                egui::Theme::Dark
+            } else {
+                egui::Theme::Light
+            });
+            let _ = pane::show(ui, &mut session, 1, &tokens);
+            dialogs.show(ui.ctx(), &mut session, &tokens);
+        });
+        harness.set_size(egui::vec2(900.0, 520.0));
+        harness.run();
+        // Let the window's fade-in finish.
+        for _ in 0..30 {
+            harness.step();
+        }
+        harness.snapshot(format!("archive_unsaved_file_{theme}"));
+        results.extend_harness(&mut harness);
+    }
+}

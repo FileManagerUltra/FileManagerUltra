@@ -251,6 +251,7 @@ impl Dialogs {
     }
 
     fn show_dialogs(&mut self, ctx: &Context, s: &mut Session, tokens: &Tokens) {
+        crate::archive_bar::changes_window(ctx, s, tokens);
         conflict_dialog(ctx, s, tokens);
         question_dialog(ctx, s, tokens);
         archive_password_dialog(ctx, s, tokens);

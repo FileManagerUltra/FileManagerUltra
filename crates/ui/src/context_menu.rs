@@ -65,40 +65,6 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
             *open = Some(uri.clone());
             ui.close();
         }
-        // Archives: browse inside, or hand the file to its application.
-        if uri
-            .file_name()
-            .is_some_and(fm_engine::archive_cmds::is_archive_name)
-        {
-            let joinable = uri.archive_handle().is_none()
-                && uri
-                    .file_name()
-                    .is_some_and(fm_engine::archive_job_cmds::is_joinable_part);
-            for (id, label) in [
-                ("archive.enter", "Browse Inside"),
-                ("archive.extract", "Extract Here"),
-                ("archive.extract_to", "Extract To…"),
-                ("archive.join", "Join Parts"),
-                ("archive.open_app", "Open with Default App"),
-            ] {
-                if id == "archive.join" && !joinable {
-                    continue;
-                }
-                if ui.button(label).clicked() {
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(
-                            Id::NULL.with("folder-context-command"),
-                            Some(FolderAction {
-                                id,
-                                folder: uri.clone(),
-                            }),
-                        )
-                    });
-                    ui.close();
-                }
-            }
-            archive_flyout(ui, s, uri);
-        }
         if let Some(spec) = s.registry.get("preview.open")
             && ui
                 .add_enabled((spec.enabled)(s), egui::Button::new(spec.label))
@@ -153,31 +119,7 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
             });
             ui.close();
         }
-        // Compress the selection (the right-clicked item is selected first).
-        if uri.archive_handle().is_none() {
-            ui.separator();
-            let stem = match fm_engine::file_cmds::focused_selection(s).as_slice() {
-                [one] => one.file_name().map(fm_engine::archive_ops::extract_name),
-                _ => fm_engine::archive_job_cmds::quick_target(
-                    &fm_engine::file_cmds::focused_selection(s),
-                    "",
-                )
-                .and_then(|t| t.file_name().map(str::to_string)),
-            };
-            if let Some(stem) = stem {
-                for (id, suffix) in [("archive.add_zip", ".zip"), ("archive.add_7z", ".7z")] {
-                    if s.command_enabled(id)
-                        && ui.button(format!("Add to {stem}{suffix}")).clicked()
-                    {
-                        ui.ctx()
-                            .data_mut(|d| d.insert_temp::<&'static str>(queue_id(), id));
-                        ui.close();
-                    }
-                }
-            }
-            command_item(ui, s, "archive.add_to");
-            command_item(ui, s, "archive.compress");
-        }
+        archive_menu(ui, s, uri);
         for entry in ENTRIES {
             match entry {
                 None => {
@@ -189,64 +131,142 @@ pub fn attach(response: &Response, s: &Session, uri: &VfsUri, open: &mut Option<
     });
 }
 
-/// The File › Archive commands for the archive file `file`, acting on its opened archive
-/// (one browsed this session, for example with unsaved changes after going back up).
-/// Without one they are disabled and say why.
-pub fn archive_flyout(ui: &mut Ui, s: &Session, file: &VfsUri) {
-    use fm_engine::archive_edit_cmds::{FLYOUT, enabled_on};
-    let mount = s.archives.of_file(file).cloned();
+/// The "Archive" submenu of an item's context menu. An archive file gets its own actions
+/// (browse, extract, join, open with its application) and the File › Archive commands
+/// for its opened archive; anything outside an archive can be added to one.
+fn archive_menu(ui: &mut Ui, s: &Session, uri: &VfsUri) {
+    let is_archive = uri
+        .file_name()
+        .is_some_and(fm_engine::archive_cmds::is_archive_name);
+    let outside = uri.archive_handle().is_none();
+    if !is_archive && !outside {
+        return;
+    }
+    ui.separator();
     ui.menu_button("Archive", |ui| {
-        for entry in FLYOUT {
-            let Some(id) = *entry else {
+        if is_archive {
+            archive_file_items(ui, uri);
+            ui.separator();
+            flyout_items(ui, s, uri);
+        }
+        if outside {
+            if is_archive {
                 ui.separator();
-                continue;
-            };
-            let Some(spec) = s.registry.get(id) else {
-                continue;
-            };
-            let encrypted = mount
-                .as_ref()
-                .is_some_and(|m| enabled_on("archive.password.remove", m));
-            let label = if id == "archive.password.set" && encrypted {
-                "Change Password…"
-            } else {
-                spec.label
-            };
-            let enabled = mount.as_ref().is_some_and(|m| enabled_on(id, m));
-            let mut resp = ui.add_enabled(enabled, egui::Button::new(label));
-            if mount.is_none() {
-                resp = resp.on_disabled_hover_text(
-                    "Browse inside the archive first: these act on an opened archive",
-                );
             }
-            if resp.clicked()
-                && let Some(m) = &mount
-            {
-                let root = m.root().clone();
-                match id {
-                    "archive.password.set" => crate::archive_lock::ask_for(ui.ctx(), m),
-                    "archive.discard" => crate::dialogs::queue(
-                        ui.ctx(),
-                        crate::dialogs::Dialog::ConfirmArchiveDiscard {
-                            root,
-                            name: m
-                                .container()
-                                .file_name()
-                                .unwrap_or("the archive")
-                                .to_string(),
-                        },
-                    ),
-                    _ => ui.ctx().data_mut(|d| {
-                        d.insert_temp(
-                            Id::NULL.with("folder-context-command"),
-                            Some(FolderAction { id, folder: root }),
-                        );
+            compress_items(ui, s);
+        }
+    });
+}
+
+/// Browse Inside, Extract Here, Extract To…, Join Parts and Open with Default App.
+fn archive_file_items(ui: &mut Ui, uri: &VfsUri) {
+    let joinable = uri.archive_handle().is_none()
+        && uri
+            .file_name()
+            .is_some_and(fm_engine::archive_job_cmds::is_joinable_part);
+    for (id, label) in [
+        ("archive.enter", "Browse Inside"),
+        ("archive.extract", "Extract Here"),
+        ("archive.extract_to", "Extract To…"),
+        ("archive.join", "Join Parts"),
+        ("archive.open_app", "Open with Default App"),
+    ] {
+        if id == "archive.join" && !joinable {
+            continue;
+        }
+        if ui.button(label).clicked() {
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(
+                    Id::NULL.with("folder-context-command"),
+                    Some(FolderAction {
+                        id,
+                        folder: uri.clone(),
                     }),
-                }
+                );
+            });
+            ui.close();
+        }
+    }
+}
+
+/// Add to x.zip / x.7z, Add to Archive… and Compress To… for the selection (the
+/// right-clicked item is selected first).
+fn compress_items(ui: &mut Ui, s: &Session) {
+    let selection = fm_engine::file_cmds::focused_selection(s);
+    let stem = match selection.as_slice() {
+        [one] => one.file_name().map(fm_engine::archive_ops::extract_name),
+        _ => fm_engine::archive_job_cmds::quick_target(&selection, "")
+            .and_then(|t| t.file_name().map(str::to_string)),
+    };
+    if let Some(stem) = stem {
+        for (id, suffix) in [("archive.add_zip", ".zip"), ("archive.add_7z", ".7z")] {
+            if s.command_enabled(id) && ui.button(format!("Add to {stem}{suffix}")).clicked() {
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp::<&'static str>(queue_id(), id));
                 ui.close();
             }
         }
-    });
+    }
+    command_item(ui, s, "archive.add_to");
+    command_item(ui, s, "archive.compress");
+}
+
+/// The File › Archive commands for the archive file `file`, acting on its opened archive
+/// (one browsed this session, for example with unsaved changes after going back up).
+/// Without one they are disabled and say why.
+fn flyout_items(ui: &mut Ui, s: &Session, file: &VfsUri) {
+    use fm_engine::archive_edit_cmds::{FLYOUT, enabled_on};
+    let mount = s.archives.of_file(file).cloned();
+    for entry in FLYOUT {
+        let Some(id) = *entry else {
+            ui.separator();
+            continue;
+        };
+        let Some(spec) = s.registry.get(id) else {
+            continue;
+        };
+        let encrypted = mount
+            .as_ref()
+            .is_some_and(|m| enabled_on("archive.password.remove", m));
+        let label = if id == "archive.password.set" && encrypted {
+            "Change Password…"
+        } else {
+            spec.label
+        };
+        let enabled = mount.as_ref().is_some_and(|m| enabled_on(id, m));
+        let mut resp = ui.add_enabled(enabled, egui::Button::new(label));
+        if mount.is_none() {
+            resp = resp.on_disabled_hover_text(
+                "Browse inside the archive first: these act on an opened archive",
+            );
+        }
+        if resp.clicked()
+            && let Some(m) = &mount
+        {
+            let root = m.root().clone();
+            match id {
+                "archive.password.set" => crate::archive_lock::ask_for(ui.ctx(), m),
+                "archive.discard" => crate::dialogs::queue(
+                    ui.ctx(),
+                    crate::dialogs::Dialog::ConfirmArchiveDiscard {
+                        root,
+                        name: m
+                            .container()
+                            .file_name()
+                            .unwrap_or("the archive")
+                            .to_string(),
+                    },
+                ),
+                _ => ui.ctx().data_mut(|d| {
+                    d.insert_temp(
+                        Id::NULL.with("folder-context-command"),
+                        Some(FolderAction { id, folder: root }),
+                    );
+                }),
+            }
+            ui.close();
+        }
+    }
 }
 
 /// "Copy Image" for an image file: the original pixels go to the system clipboard. The

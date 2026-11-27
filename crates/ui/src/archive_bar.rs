@@ -14,6 +14,112 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "change" } else { "changes" }
 }
 
+/// One staged change as a line of the list.
+fn change_line(kind: &str, path: &str) -> String {
+    match kind {
+        "password" => "The password changes when you save".to_string(),
+        "no password" => "The password is removed when you save".to_string(),
+        "added" => format!("Added: {path}"),
+        "replaced" => format!("Replaced: {path}"),
+        "folder" => format!("New folder: {path}"),
+        _ => format!("Removed: {path}"),
+    }
+}
+
+/// Show Archive Changes when no pane is inside that archive (asked from the archive
+/// file's context menu): the list in a window with Save, Save as Copy, Discard and Close.
+/// Inside the archive the unsaved bar shows the list instead.
+pub fn changes_window(ctx: &egui::Context, s: &mut Session, tokens: &Tokens) {
+    let Some(root) = s.archives.changes_shown.clone() else {
+        return;
+    };
+    let handle = root.archive_handle().map(str::to_string);
+    let bar_shows_it = s.layout.panes().into_iter().any(|p| {
+        s.layout
+            .state(p)
+            .is_some_and(|st| st.location.archive_handle().map(str::to_string) == handle)
+    });
+    if bar_shows_it {
+        return;
+    }
+    let Some(mount) = s.archives.for_uri(&root).cloned() else {
+        s.archives.changes_shown = None;
+        return;
+    };
+    let Some(fs) = mount.opened().filter(|fs| fs.is_dirty()) else {
+        // Saved or discarded meanwhile: nothing left to show.
+        s.archives.changes_shown = None;
+        return;
+    };
+    let name = mount
+        .container()
+        .file_name()
+        .unwrap_or("the archive")
+        .to_string();
+    let changes = fs.changes();
+    let saving = fs.is_saving();
+    let root_s = root.to_string();
+    let mut open = true;
+    let mut close = false;
+    let mut act: Option<(&str, serde_json::Value)> = None;
+    crate::dialog_style::window(ctx, tokens, &format!("Changes to {name}"), &mut open)
+        .id(Id::NULL.with("fm-archive-changes-window"))
+        .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
+            ui.label(
+                RichText::new(format!(
+                    "{name} has {} unsaved {}",
+                    changes.len(),
+                    plural(changes.len())
+                ))
+                .color(tokens.text),
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("fm-archive-changes-window-list")
+                .max_height(260.0)
+                .show(ui, |ui| {
+                    for c in &changes {
+                        ui.label(
+                            RichText::new(change_line(c.kind, &c.path)).color(tokens.text_muted),
+                        );
+                    }
+                });
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if saving {
+                    ui.label(RichText::new("Saving…").color(tokens.text_muted));
+                    return;
+                }
+                if ui.button("Save").clicked() {
+                    act = Some(("archive.save", json!({ "uri": root_s })));
+                }
+                if ui.button("Save as Copy…").clicked() {
+                    act = Some(("archive.save_as", json!({ "uri": root_s })));
+                    close = true;
+                }
+                if ui.button("Discard…").clicked() {
+                    crate::dialogs::queue(
+                        ui.ctx(),
+                        crate::dialogs::Dialog::ConfirmArchiveDiscard {
+                            root: root.clone(),
+                            name: name.clone(),
+                        },
+                    );
+                    close = true;
+                }
+                if ui.button("Close").clicked() {
+                    close = true;
+                }
+            });
+        });
+    if close || !open {
+        s.archives.changes_shown = None;
+    }
+    if let Some((id, params)) = act {
+        s.dispatch_or_notice(id, &params);
+    }
+}
+
 fn confirm_id(pane: PaneId) -> Id {
     Id::NULL.with(("fm-archive-discard", pane))
 }
@@ -134,17 +240,10 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) {
                     .max_height(140.0)
                     .show(ui, |ui| {
                         for c in &changes {
-                            let line = match c.kind {
-                                "password" => "The password changes when you save".to_string(),
-                                "no password" => {
-                                    "The password is removed when you save".to_string()
-                                }
-                                "added" => format!("Added: {}", c.path),
-                                "replaced" => format!("Replaced: {}", c.path),
-                                "folder" => format!("New folder: {}", c.path),
-                                _ => format!("Removed: {}", c.path),
-                            };
-                            ui.label(RichText::new(line).color(tokens.text_muted));
+                            ui.label(
+                                RichText::new(change_line(c.kind, &c.path))
+                                    .color(tokens.text_muted),
+                            );
                         }
                     });
             }
