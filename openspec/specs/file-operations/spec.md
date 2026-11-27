@@ -73,7 +73,7 @@ renames are retained if a later fallback plan fails.
 - **AND** a deferred move fallback failure does not roll back earlier completed renames
 
 ### Requirement: Containment guards
-`ops` SHALL refuse to copy or move a directory into itself or any descendant, SHALL treat copying an item onto its own uri as a silent no-op, and SHALL never follow symlinks: a source symlink is recreated as a link (`Vfs::create_symlink`) and its target is never read. A backend that cannot create links reports the item as failed (`Unsupported`).
+`ops` SHALL refuse to copy or move a directory into itself or any descendant, SHALL treat copying an item onto its own uri as a silent no-op, and SHALL never follow symlinks: a source symlink is recreated as a link (`Vfs::create_symlink`) and its target is never read. When the destination cannot create links (`Unsupported`: an SMB share, Windows without Developer Mode or administrator rights), the link SHALL be left out with the reason in the job summary (counted as skipped, not failed), and a move SHALL keep that link at the source.
 
 #### Scenario: Into itself
 - **WHEN** `/a` is dropped onto `/a/b`
@@ -82,6 +82,10 @@ renames are retained if a later fallback plan fails.
 #### Scenario: Symlink escape
 - **WHEN** a source tree contains a symlink pointing outside it
 - **THEN** the link is recreated as a link with the same target text and its target is not read or copied
+
+#### Scenario: Destination without links
+- **WHEN** a tree containing symlinks is moved to a destination whose `create_symlink` returns `Unsupported`
+- **THEN** every other item is written, each link is listed as left out with the reason, nothing is reported as failed, and the links remain at the source
 
 ### Requirement: Link re-targeting preference
 When the `retarget_links` preference is on (default), copying a tree SHALL point **absolute** symlinks whose target lies inside the copied tree at the same place under the copy. Relative links, links to other places, dangling links and targets that would escape through `..` SHALL be copied verbatim. The rewrite is a lexical path-prefix swap (never resolves or follows), only between local volumes, and never yields a target containing `..`. With the preference off every link is copied verbatim. Same-device moves are a rename and keep links untouched.

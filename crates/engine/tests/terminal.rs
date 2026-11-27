@@ -128,7 +128,12 @@ fn program_clipboard_writes_reach_the_host_from_the_focused_pane_only() {
         return;
     }
     let pane = s.layout.focused();
-    let send = "printf '\\033]52;c;aGVsbG8=\\007'; echo done-$((6*7))\r";
+    // The default shell is POSIX on Unix and PowerShell on Windows; `$((6*7))` is 42 in both.
+    let send = if cfg!(windows) {
+        "[Console]::Write([char]27 + ']52;c;aGVsbG8=' + [char]7); echo done-$((6*7))\r"
+    } else {
+        "printf '\\033]52;c;aGVsbG8=\\007'; echo done-$((6*7))\r"
+    };
     s.dispatch("term.input", &json!({"data": send}))
         .expect("input");
     assert!(wait_for(&mut s, pane, "done-42"));

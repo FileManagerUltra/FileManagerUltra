@@ -10,7 +10,7 @@ use fm_vfs::{AttrFailKind, AttrReport, Entry, EntryKind, FmError, Scheme, Vfs, V
 use crate::ConflictPolicy;
 use crate::ctx::{Backends, Choice, Conflict, ConflictSide, OpCtx, OpReport, Progress};
 use crate::names::keep_both_name;
-use crate::plan::{Plan, PlanItem, PlanKind, PlanLimits, Top, plan_transfer};
+use crate::plan::{MAX_LEFT_OUT, Plan, PlanItem, PlanKind, PlanLimits, Top, plan_transfer};
 use crate::symlink::retarget;
 
 const BUF_BYTES: usize = 1024 * 1024;
@@ -32,6 +32,9 @@ enum Outcome {
         created: Option<VfsUri>,
     },
     Skipped,
+    /// Deliberately not written, with the reason listed in the summary (a symbolic link
+    /// the destination cannot hold). Counts as skipped; a move keeps the source.
+    LeftOut(String),
     Failed(FmError),
     Cancelled,
 }
@@ -208,6 +211,13 @@ impl<'a, 'b> Runner<'a, 'b> {
                     self.report.skipped += 1;
                     clean = false;
                 }
+                Outcome::LeftOut(reason) => {
+                    self.report.skipped += 1;
+                    if self.report.left_out.len() < MAX_LEFT_OUT {
+                        self.report.left_out.push((item.src.clone(), reason));
+                    }
+                    clean = false;
+                }
                 Outcome::Failed(err) => {
                     if item.kind == PlanKind::Dir {
                         failed_dirs.push(&item.dst);
@@ -325,6 +335,11 @@ impl<'a, 'b> Runner<'a, 'b> {
             Ok(()) => Outcome::Done {
                 created: (!overwrite).then_some(dst),
             },
+            // The destination cannot hold links (an SMB share, Windows without Developer
+            // Mode): listed as left out with the reason, like special files.
+            Err(FmError::Unsupported(why)) => {
+                Outcome::LeftOut(format!("symbolic link not created: {why}"))
+            }
             Err(e) => Outcome::Failed(e),
         }
     }

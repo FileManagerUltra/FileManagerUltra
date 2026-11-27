@@ -70,8 +70,10 @@ fn archive_locations_open_again_after_a_restart() {
     poll_until(&mut s, "the restored listing", |s| {
         s.dirs.state(&www).is_ready()
     });
+    // Shown with the platform's separator (`site.zip\www` on Windows).
+    let sep = std::path::MAIN_SEPARATOR;
     assert!(
-        fm_engine::item_cmds::display_path(&www).ends_with("site.zip/www"),
+        fm_engine::item_cmds::display_path(&www).ends_with(&format!("site.zip{sep}www")),
         "{}",
         fm_engine::item_cmds::display_path(&www)
     );

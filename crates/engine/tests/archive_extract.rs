@@ -171,7 +171,10 @@ fn a_hostile_tar_extracts_only_inside_its_folder() {
         "win",
         "win/x.txt",
     ];
-    if cfg!(unix) {
+    // Windows creates the link only with Developer Mode or as administrator; otherwise
+    // it is listed as left out with the reason (checked below), not failed.
+    let rel_made = std::fs::symlink_metadata(out.join("rel")).is_ok();
+    if cfg!(unix) || rel_made {
         want.push("rel");
     }
     want.sort_unstable();
@@ -214,12 +217,21 @@ fn a_hostile_tar_extracts_only_inside_its_folder() {
     let left: Vec<&str> = summary
         .left_out
         .iter()
-        .map(|(item, _)| item.rsplit('/').next().unwrap_or(item))
+        // Display paths use `\` on Windows.
+        .map(|(item, _)| item.rsplit(['/', '\\']).next().unwrap_or(item))
         .collect();
     for name in ["sda", "fifo", "hard-out"] {
         assert!(left.contains(&name), "{name} listed as left out: {left:?}");
     }
     assert!(summary.skipped >= 3, "{summary:?}");
+    let rel_left = summary
+        .left_out
+        .iter()
+        .find(|(item, _)| item.ends_with("/rel") || item.ends_with("\\rel"));
+    assert_eq!(rel_left.is_some(), !rel_made, "{:?}", summary.left_out);
+    if let Some((_, why)) = rel_left {
+        assert!(why.contains("Developer Mode"), "{why}");
+    }
     assert!(summary.failed.is_empty(), "{:?}", summary.failed);
 }
 

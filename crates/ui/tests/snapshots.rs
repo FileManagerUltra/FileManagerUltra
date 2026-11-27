@@ -4514,7 +4514,9 @@ fn volume_preview_dark_light() {
             h.get_by_label("USB backup");
             assert!(h.query_by_label("Outer volume").is_none());
             // Once in the volume card; the folder of the title is in the pane header.
-            assert_eq!(h.query_all_by_label("/home/alice").count(), 1);
+            // Shown the platform's way (`\home\alice` on Windows).
+            let mount = fm_engine::item_cmds::display_path(&volume.mount);
+            assert_eq!(h.query_all_by_label(&mount).count(), 1, "{mount}");
             h.get_by_label("96.0 GiB");
             h.get_by_label("Folder summary");
             h.get_by_label("Subfolders");
@@ -5236,9 +5238,24 @@ fn git_markers_in_listing_dark_light() {
     std::fs::write(d.join("staged.txt"), "s\n").expect("write");
     git(&["add", "staged.txt"]);
     for entry in std::fs::read_dir(d).expect("dir").flatten() {
-        if let Ok(f) = std::fs::File::open(entry.path()) {
-            let _ = f.set_modified(FIXED_MTIME + Duration::from_secs(86_400 * 365));
+        let path = entry.path();
+        // Windows only changes times through a handle with write access, and opens a
+        // folder only with FILE_FLAG_BACKUP_SEMANTICS; a read-only handle failed silently.
+        let mut open = std::fs::OpenOptions::new();
+        if path.is_dir() {
+            open.read(true);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt as _;
+                open.write(true).custom_flags(0x0200_0000);
+            }
+        } else {
+            open.write(true);
         }
+        let set = open
+            .open(&path)
+            .and_then(|f| f.set_modified(FIXED_MTIME + Duration::from_secs(86_400 * 365)));
+        assert!(set.is_ok(), "fixed time for {}: {set:?}", path.display());
     }
     let uri = VfsUri::parse(&d.to_string_lossy()).expect("uri");
     for (tokens, theme) in [(Tokens::dark(), "dark"), (Tokens::light(), "light")] {
