@@ -199,11 +199,16 @@ impl Reader for SevenZReader {
             if candidates.is_empty() {
                 return Err(FmError::PasswordRequired(self.name.clone()));
             }
-            // Find the password that decodes this block: try a tiny read with each.
+            // Find the password that decodes this block. A small member is decoded whole,
+            // so its CRC proves the password; a wrong key yields random bytes, and the
+            // first one alone passes the decoder now and then (an "uncompressed" LZMA2
+            // chunk). Larger members get a short probe, and a wrong password that slips
+            // through still ends as WrongPassword when the read fails (see below).
+            let probe_len = if size <= PROBE_WHOLE { usize::MAX } else { 1 };
             let mut ok = None;
             for pw in candidates {
                 let probe = Password::new(pw.expose());
-                let mut sink = Limited { left: 1 };
+                let mut sink = Limited { left: probe_len };
                 match Self::extract(self.src.clone(), &self.archive, i, &probe, &mut sink) {
                     Ok(_) => {
                         ok = Some(pw);
@@ -229,11 +234,18 @@ impl Reader for SevenZReader {
         let src = self.src.clone();
         let archive = self.archive.clone();
         let name = self.name.clone();
+        let encrypted = node.meta.encrypted;
         let member = pipe(move |w| {
             let pw = password
                 .as_ref()
                 .map_or_else(Password::empty, |s| Password::new(s.expose()));
-            let found = Self::extract(src, &archive, i, &pw, w).map_err(|e| sz_err(e, &name))?;
+            let found = Self::extract(src, &archive, i, &pw, w).map_err(|e| {
+                if encrypted {
+                    encrypted_err(e, &name)
+                } else {
+                    sz_err(e, &name)
+                }
+            })?;
             if !found {
                 return Err(FmError::NotFound(name));
             }
@@ -266,6 +278,9 @@ impl io::Write for Limited {
 
 const PROBE_DONE: &str = "fm-archive probe done";
 
+/// Members up to this size are decoded whole when a password is tried (CRC-checked).
+const PROBE_WHOLE: u64 = 1 << 20;
+
 fn is_limited(err: &sevenz_rust2::Error) -> bool {
     err.to_string().contains(PROBE_DONE)
 }
@@ -287,6 +302,25 @@ fn method_label(id: &[u8]) -> String {
         [0x03, 0x03, 0x01, 0x1B] | [0x03, 0x03, 0x01, 0x03] => "BCJ".into(),
         [0x03] => "Delta".into(),
         _ => "other".into(),
+    }
+}
+
+/// A decode or checksum failure inside an encrypted member means the password was wrong
+/// (or the data is damaged); a closed pipe or an unsupported method keeps its own error.
+fn encrypted_err(err: sevenz_rust2::Error, name: &str) -> FmError {
+    let bad_key = match &err {
+        sevenz_rust2::Error::ChecksumVerificationFailed
+        | sevenz_rust2::Error::MaybeBadPassword(_) => true,
+        sevenz_rust2::Error::Io(e, _) => matches!(
+            e.kind(),
+            io::ErrorKind::InvalidData | io::ErrorKind::UnexpectedEof
+        ),
+        _ => false,
+    };
+    if bad_key {
+        FmError::WrongPassword(name.to_string())
+    } else {
+        sz_err(err, name)
     }
 }
 
@@ -397,5 +431,26 @@ mod tests {
         ));
         pw.add(Secret::new("pw"));
         assert_eq!(read(&r, "docs/a.txt", &pw).expect("a"), b"alpha");
+    }
+
+    /// Every archive gets a fresh salt, so each wrong key gives other random bytes; with a
+    /// one-byte probe about one in a hundred slipped through as "right" (flaky on CI).
+    #[test]
+    fn a_wrong_password_is_always_reported_as_wrong() {
+        for round in 0..200 {
+            let r = SevenZReader::open(
+                Arc::new(MemSource::new(make(Some("pw"), false))),
+                "d.7z",
+                &Passwords::default(),
+            )
+            .expect("open");
+            let pw = Passwords::default();
+            pw.add(Secret::new("bad"));
+            let got = read(&r, "docs/a.txt", &pw);
+            assert!(
+                matches!(got, Err(FmError::WrongPassword(_))),
+                "round {round}: {got:?}"
+            );
+        }
     }
 }
