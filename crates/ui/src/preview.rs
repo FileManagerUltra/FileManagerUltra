@@ -627,7 +627,8 @@ fn editable_body(slot: &fm_engine::preview_cmds::PreviewSlot) -> bool {
                 &**p,
                 Preview::Text(_) | Preview::Structured(_) | Preview::Markdown(_) | Preview::Svg(_)
             ),
-            // Logs and tables have crowded toolbars: F4 and the context menu edit them.
+            // Rendered first, but text underneath: Edit sits in the same spot as everywhere.
+            Body::Log(_) | Body::Table(_) => true,
             _ => false,
         }
 }
@@ -659,7 +660,9 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
         });
     }
     // The common three: Wrap, Find and Edit, always in the same spots.
-    let editable = editable_body(slot) && !diff_active;
+    // Also while the Diff view is on (a changed file in a repository opens with it): F4
+    // edits the file either way, and the button must agree.
+    let editable = editable_body(slot);
     let searchable = static_preview.is_some_and(fm_engine::preview_find_cmds::searchable);
     let find_enabled = diff_active || log || table || searchable;
     let wraps = !diff_active

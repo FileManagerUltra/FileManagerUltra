@@ -5201,6 +5201,13 @@ fn preview_diff_split_and_unified_dark_light() {
                 });
             harness.set_size(egui::vec2(900.0, 260.0));
             harness.run();
+            {
+                use egui_kittest::kittest::{NodeT, Queryable};
+                assert!(
+                    !harness.get_by_label("Edit").accesskit_node().is_disabled(),
+                    "a changed file can be edited from its diff"
+                );
+            }
             harness.snapshot(format!("preview_diff_{mode}_{theme}"));
             results.extend_harness(&mut harness);
         }
@@ -6049,5 +6056,33 @@ fn archive_password_dialog_dark_light() {
         h.run_steps(3);
         h.snapshot(format!("dialog_archive_password_{theme}"));
         results.extend_harness(&mut h);
+    }
+}
+
+#[test]
+fn edit_is_enabled_for_rendered_text_previews_and_off_for_pictures() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    for (name, bytes, editable) in [
+        ("notes.md", &b"# Title\n\nText"[..], true),
+        ("hwinfo.lo.CSV", &b"a,b\n1,2\n3,4\n"[..], true),
+        ("app.log", &b"2026-10-30T12:00:00Z INFO ready\n"[..], true),
+        ("plain.txt", &b"words"[..], true),
+        ("pixel.png", &b"\x89PNG\r\n\x1a\n"[..], false),
+    ] {
+        let (s, pane) = preview_fixture(name, bytes, false);
+        let tokens = Tokens::dark();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 420.0))
+            .with_accessibility_check(false)
+            .build_ui_state(
+                move |ui, s: &mut Session| {
+                    theme::apply_to(ui.ctx(), &tokens);
+                    fm_ui::preview::show(ui, s, pane, &tokens);
+                },
+                s,
+            );
+        harness.run();
+        let disabled = harness.get_by_label("Edit").accesskit_node().is_disabled();
+        assert_eq!(!disabled, editable, "{name}: Edit enabled = {editable}");
     }
 }
