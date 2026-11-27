@@ -15,7 +15,7 @@ Additional change, done and archived: `git-status-and-diff` (git status markers,
 
 **Latest release:** 0.3.2 (2026-11-23): CSV/TSV table view and drag-to-pan pictures in the Preview pane, Ctrl+wheel and pinch zoom per pane, and fixes to Synchronize Folders, terminal start folders and sharp photos at 100%. 0.3.1 (2026-11-20) added PDF fill-in and signing. 0.3.0 (2026-11-19) brought Synchronize Folders and the first signed and notarized macOS download. 0.2.3 (2026-11-15) brought per-pane and per-terminal zoom, Ctrl+Tab workspace switching, a diagnostic log and Direct3D 12 drawing on Windows. 0.2.0 (2026-11-12) brought the Media pane, Find Files redesign and Activity panel. Archives (`add-archive-vfs`) are unreleased: see `[Unreleased]` in `CHANGELOG.md`. The Mac App Store build (sandboxed) is planned as its own change. Free Windows code signing through SignPath Foundation is prepared but not yet applied for (`docs/development.md`, "Windows code signing"). Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
 
-**Current focus:** finish `add-archive-vfs` (see "Next: archives, disk images and Docker as folders"), then release it; `add-disk-images` and `add-docker` follow. `add-text-editor` (Edit mode of the Preview pane: large files, tree-sitter colouring, autosave, per-kind internal/external choice; `docs/architecture.md` §12d2) and its follow-up `add-editor-folding-live-preview` (code folding, rainbow brackets, a live preview pane) are done and archived (2026-11-27), to ship in 0.4.0 with archives once the archive smoke test (add-archive-vfs 8.4) passes; scroll sync between editor and live preview is left for later. Proposed for after 0.4.0: `add-rtf-preview` (RTF read into the Markdown document view, with code pages, tables and embedded metafile pictures; `openspec/changes/add-rtf-preview/`).
+**Current focus:** 0.4.0 shipped archives as folders (`add-archive-vfs`, archived 2026-11-27) and the text editor (`add-text-editor` and `add-editor-folding-live-preview`, archived 2026-11-27). Next: `add-rtf-preview` (RTF read into the Markdown document view, with code pages, tables and embedded metafile pictures; `openspec/changes/add-rtf-preview/`), then `add-disk-images` and `add-docker`. Scroll sync between the editor and its live preview is left for later.
 
 Session persistence is already delivered by `workspaces` (saved pane layouts and
 startup behavior). Release packaging is also configured in `.github/workflows/release.yml`:
@@ -30,6 +30,8 @@ tabs, file/content search and terminal panes. Plugins and CLI/MCP automation
 remain future work (the command registry is already in place).
 
 ## Recently shipped
+
+0.4.0 (2026-11-27): `add-archive-vfs` (zip, tar family, 7z, ISO and RAR as folders; editing, passwords, split sets, extract and compress) and the text editor (`add-text-editor`, `add-editor-folding-live-preview`), all archived 2026-11-27.
 
 0.3.x: `add-file-sync` and `add-path-picker` (Synchronize Folders, Browse… on every path
 field; archived 2026-11-24), `add-pdf-preview` (PDF view, form-fill and signing; 0.3.1),
