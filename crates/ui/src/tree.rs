@@ -293,17 +293,29 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                     };
                     let marks = crate::git_marks::Marks::peek(s, &row.uri);
                     let mark = marks.mark(&row.uri);
+                    let unsaved = unsaved_changes(s, row);
                     let mut text = egui::RichText::new(format!("   {label}"));
-                    if !selected && row.uri.scheme() == fm_vfs::Scheme::Archive {
+                    if !selected && unsaved.is_some() {
+                        // An opened archive with staged changes: the editing colour, as in
+                        // the file list and the editor.
+                        text = text.color(tokens.editing);
+                    } else if !selected && row.uri.scheme() == fm_vfs::Scheme::Archive {
                         // Archives and everything inside them in their own colour.
                         text = text.color(tokens.archive);
                     } else if !selected && let Some(tint) = marks.tint_of(mark, tokens) {
                         text = text.color(tint);
                     }
-                    let response = ui.add(
+                    let mut response = ui.add(
                         egui::Button::selectable(selected, text)
                             .sense(egui::Sense::click_and_drag()),
                     );
+                    if let Some(n) = unsaved {
+                        let noun = if n == 1 { "change" } else { "changes" };
+                        response = response.on_hover_text(format!(
+                            "{n} unsaved {noun}: right-click › Close Archive, or Save in the \
+                             bar inside the archive"
+                        ));
+                    }
                     if reveal && selected {
                         response.scroll_to_me(Some(egui::Align::Center));
                         revealed = true;
@@ -321,6 +333,13 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
                             ui.allocate_exact_size(egui::vec2(d, d), egui::Sense::hover());
                         ui.painter()
                             .circle_filled(dot.center(), d * 0.4, tokens.git(m));
+                    }
+                    if unsaved.is_some() {
+                        let d = tokens.font_size * 0.5;
+                        let (dot, _) =
+                            ui.allocate_exact_size(egui::vec2(d, d), egui::Sense::hover());
+                        ui.painter()
+                            .circle_filled(dot.center(), d * 0.45, tokens.editing);
                     }
                     if is_connected_host(s, &row.uri) {
                         // Beside the name, never over it.
@@ -513,6 +532,14 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> Opti
         }
     }
     open.or(open_key)
+}
+
+/// The number of staged changes when `row` is an opened archive's own row with unsaved
+/// changes (its folders are not marked), else `None`.
+fn unsaved_changes(s: &Session, row: &Row) -> Option<usize> {
+    row.container.as_ref()?;
+    let fs = s.archives.for_uri(&row.uri)?.opened()?;
+    fs.is_dirty().then(|| fs.changes().len())
 }
 
 /// Disclosure triangle (right when collapsed, down when expanded) painted at the row's left.
@@ -869,10 +896,27 @@ mod tests {
         s.layout.state_mut(1).expect("pane").location = work.clone();
         s.poll();
         assert_eq!(visible(&s), ["work", "folder", "site.zip", "docs", "zeta"]);
-        // …until it is closed (its tree row's "Close Archive").
+        // A change inside marks the archive's own row (not its folders) as unsaved.
+        let zip_row = |s: &Session| {
+            collect_rows(s, 1, &work)
+                .into_iter()
+                .find(|r| r.name == "site.zip")
+                .expect("zip row")
+        };
+        assert_eq!(unsaved_changes(&s, &zip_row(&s)), None);
+        let vfs = s.backends.require(&root).expect("backend");
+        vfs.create_dir(&root.join("drafts").expect("d"))
+            .expect("mkdir");
+        assert_eq!(unsaved_changes(&s, &zip_row(&s)), Some(1));
+        let docs_row = collect_rows(&s, 1, &work)
+            .into_iter()
+            .find(|r| r.name == "docs")
+            .expect("docs row");
+        assert_eq!(unsaved_changes(&s, &docs_row), None);
+        // …until it is closed (its tree row's "Close Archive", here discarding the change).
         s.dispatch(
             "archive.unmount",
-            &serde_json::json!({"uri": root.to_string()}),
+            &serde_json::json!({"uri": root.to_string(), "unsaved": "discard"}),
         )
         .expect("close");
         assert_eq!(visible(&s), ["work", "folder", "zeta"]);

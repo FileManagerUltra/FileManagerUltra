@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- An archive with unsaved changes is now also marked in the folder tree (orange name, a dot and a tooltip with the number of changes), not only in the file list.
+
 ## [0.4.0] - 2026-11-27
 
 ### Added

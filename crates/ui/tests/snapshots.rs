@@ -6119,6 +6119,12 @@ fn archive_unsaved_file_and_changes_window_dark_light() {
         s.dispatch("nav.open", &serde_json::json!(home.to_string()))
             .expect("up");
         wait_ready(&mut s, &home);
+        // The tree reaches the archive's row too (marked as unsaved there as well).
+        for dir in ["/", "/home"] {
+            let dir = VfsUri::parse(dir).expect("dir");
+            s.ensure_read(dir.clone()).expect("read");
+            wait_ready(&mut s, &dir);
+        }
         s.dispatch(
             "archive.changes",
             &serde_json::json!({"uri": root.to_string()}),
