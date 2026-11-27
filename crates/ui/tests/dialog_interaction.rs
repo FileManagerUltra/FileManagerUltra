@@ -2461,3 +2461,65 @@ fn run_question_offers_edit_for_scripts_and_edit_opens_the_editor_without_runnin
     std::thread::sleep(std::time::Duration::from_millis(100));
     assert!(!marker.exists(), "Edit never runs the program");
 }
+
+/// Two prompts for the same encrypted archive (two panes, or a Files and a Preview pane):
+/// the one the user clicks keeps the keyboard, and a paste lands in it.
+#[test]
+fn two_password_prompts_do_not_steal_focus_and_paste_reaches_the_clicked_one() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let tokens = Tokens::dark();
+    let location = VfsUri::archive_root("0123456789abcdef").expect("uri");
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 400.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                ui.columns(2, |cols| {
+                    if let [left, right] = cols {
+                        left.push_id("pane-1", |ui| {
+                            fm_ui::archive_password::prompt(ui, s, &location, "", &tokens);
+                        });
+                        right.push_id("pane-2", |ui| {
+                            fm_ui::archive_password::prompt(ui, s, &location, "", &tokens);
+                        });
+                    }
+                });
+            },
+            Session::new().expect("session"),
+        );
+    h.run_steps(3);
+    assert_eq!(h.query_all_by_label("Password").count(), 2);
+    // Click the right-hand field; it must keep the keyboard over many frames.
+    let right = h
+        .query_all_by_label("Password")
+        .max_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
+        .expect("right field")
+        .rect();
+    h.get_all_by_label("Password")
+        .find(|n| n.rect() == right)
+        .expect("right")
+        .click();
+    h.run_steps(10);
+    let focused = h
+        .query_all_by_label("Password")
+        .find(|n| n.accesskit_node().is_focused())
+        .map(|n| n.rect());
+    assert_eq!(
+        focused,
+        Some(right),
+        "the clicked prompt keeps the keyboard"
+    );
+    // A paste goes into that field: only its Open button becomes enabled.
+    h.event(egui::Event::Paste("s3cret".into()));
+    h.run_steps(2);
+    let enabled: Vec<egui::Rect> = h
+        .query_all_by_label("Open")
+        .filter(|n| !n.accesskit_node().is_disabled())
+        .map(|n| n.rect())
+        .collect();
+    assert_eq!(enabled.len(), 1, "one field received the paste");
+    assert!(
+        enabled.iter().all(|r| r.left() > right.left() - 1.0),
+        "the paste reached the clicked (right) field"
+    );
+}

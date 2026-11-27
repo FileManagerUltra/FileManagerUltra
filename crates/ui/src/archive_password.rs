@@ -41,7 +41,21 @@ pub fn prompt(ui: &mut Ui, s: &mut Session, location: &VfsUri, message: &str, to
         );
         field
             .widget_info(|| egui::WidgetInfo::labeled(egui::Role::PasswordInput, true, "Password"));
-        if !field.has_focus() && text.is_empty() {
+        // Take the keyboard once: when the prompt appears and after a wrong password, and
+        // only if no other text field has it. Taking it every frame made two prompts for the same
+        // archive (two panes, or a Files and a Preview pane) steal it from each other, so
+        // a click or a paste never reached the field the user chose.
+        let frame = ui.ctx().cumulative_frame_nr();
+        let seen_id = id.with("seen");
+        let shown_last_frame = ui
+            .data(|d| d.get_temp::<u64>(seen_id))
+            .is_some_and(|last| last.saturating_add(1) >= frame);
+        ui.data_mut(|d| d.insert_temp(seen_id, frame));
+        let again_id = id.with("refocus");
+        let again = ui
+            .data_mut(|d| d.remove_temp::<bool>(again_id))
+            .unwrap_or(false);
+        if (!shown_last_frame || again) && (field.has_focus() || !ui.ctx().text_edit_focused()) {
             field.request_focus();
         }
         submit |= field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -54,7 +68,11 @@ pub fn prompt(ui: &mut Ui, s: &mut Session, location: &VfsUri, message: &str, to
             "archive.password",
             &serde_json::json!({ "uri": location.to_string(), "password": text }),
         );
-        ui.data_mut(|d| d.remove::<String>(id));
+        ui.data_mut(|d| {
+            d.remove::<String>(id);
+            // Back in the field if the password turns out wrong.
+            d.insert_temp(id.with("refocus"), true);
+        });
         zeroize_string(&mut text);
     } else {
         ui.data_mut(|d| d.insert_temp(id, text));
