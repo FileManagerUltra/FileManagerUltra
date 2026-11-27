@@ -1,2 +1,9 @@
 [alias]
 xtask = "run -p xtask --"
+
+[env]
+# aws-lc-sys (TLS crypto) assembles with NASM on Windows x64; on a machine without NASM a
+# clean build stops with "NASM command not found". This allows the object files the crate
+# ships as a fallback: NASM is still used when installed, and builds without it work too
+# (local, CI, release). An environment variable of the same name still wins (force = false).
+AWS_LC_SYS_PREBUILT_NASM = { value = "1", force = false }
