@@ -41,6 +41,25 @@ const UNIX_RUNNABLE: &[&str] = &[
     "", "sh", "bash", "zsh", "fish", "py", "pl", "rb", "php", "js", "appimage", "run", "bin",
     "out", "command",
 ];
+/// Programs that are not text: double-clicking one on a local disk starts it, as the
+/// system file manager does. Scripts still ask Run / Open / Edit (Open and Edit differ
+/// for them); a program on a share always asks, since running it remotely is refused.
+const STARTS_DIRECTLY: &[&str] = &[
+    "exe", "com", "msi", "scr", "lnk", "msc", "jar", "appimage", "app",
+];
+
+/// A local, non-text program: activation starts it without asking.
+fn starts_directly(entry: &Entry) -> bool {
+    let ext = Path::new(&entry.name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    STARTS_DIRECTLY.contains(&ext.as_str())
+        && entry.uri.scheme() == Scheme::File
+        && entry.uri.local_path().is_some()
+}
+
 const WINDOWS_RUNNABLE: &[&str] = &[
     "exe",
     "bat",
@@ -109,6 +128,9 @@ pub fn classify(entry: &Entry, os: Os) -> OpenKind {
 pub enum OpenPlan {
     Navigate,
     Launch,
+    /// A local program that is not text (`.exe`, `.msi`, an AppImage…): start it at once,
+    /// `file.open {uri, mode: "run", confirm: true}`.
+    Run,
     /// Audio or video set to play in the Media pane: dispatch `media.play {uris: [uri]}`.
     PlayMedia,
     /// A text file whose kind opens in the built-in editor: dispatch `editor.open {uri}`.
@@ -146,6 +168,7 @@ pub fn plan(s: &mut Session, uri: &VfsUri) -> OpenPlan {
             }
             _ => OpenPlan::Launch,
         },
+        OpenKind::Executable if starts_directly(&entry) => OpenPlan::Run,
         OpenKind::Executable => OpenPlan::ConfirmRun {
             editable: crate::editor_hub::check_editable(&entry).is_ok(),
             name: entry.name,
@@ -535,6 +558,60 @@ mod tests {
             assert_eq!(mode(&path) & 0o111, 0, "copy is not executable");
         }
         let _ = std::fs::remove_dir_all(path.parent().expect("dir"));
+    }
+
+    #[test]
+    fn local_binary_programs_start_directly_scripts_and_remote_ones_ask() {
+        let file = |n| entry(n, EntryKind::File, Some(0o755));
+        for name in [
+            "Setup.EXE",
+            "installer.msi",
+            "x.com",
+            "saver.scr",
+            "App.lnk",
+            "x.msc",
+        ] {
+            assert!(starts_directly(&file(name)), "{name}");
+        }
+        assert!(starts_directly(&file("tool.AppImage")));
+        for name in [
+            "a.bat", "a.cmd", "a.ps1", "go.sh", "x.py", "x.reg", "x.hta", "tool",
+        ] {
+            assert!(
+                !starts_directly(&file(name)),
+                "{name} asks Run / Open / Edit"
+            );
+        }
+        let mut remote = Entry::new(
+            VfsUri::parse("sftp://bob@host/srv/Setup.exe").expect("uri"),
+            EntryKind::File,
+        );
+        remote.permissions = Some(0o755);
+        assert!(!starts_directly(&remote), "a program on a share asks");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_local_appimage_plans_run_and_a_script_asks() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tmp");
+        for name in ["Tool.AppImage", "go.sh"] {
+            let p = dir.path().join(name);
+            std::fs::write(&p, "#!/bin/sh\n").expect("write");
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        let mut s = Session::new().expect("session");
+        let folder = VfsUri::parse(&dir.path().to_string_lossy()).expect("uri");
+        s.ensure_read(folder.clone()).expect("read");
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        while s.dirs.entries(&folder).is_none() && std::time::Instant::now() < end {
+            s.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let app = folder.join("Tool.AppImage").expect("join");
+        assert_eq!(plan(&mut s, &app), OpenPlan::Run);
+        let script = folder.join("go.sh").expect("join");
+        assert!(matches!(plan(&mut s, &script), OpenPlan::ConfirmRun { .. }));
     }
 
     #[test]

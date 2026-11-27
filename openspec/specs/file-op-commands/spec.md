@@ -51,11 +51,15 @@ Double-clicking or pressing Enter on an entry SHALL resolve to an activation pla
 - **THEN** it returns `Err(InvalidParams)` and starts nothing
 
 ### Requirement: Programs need explicit confirmation
-An entry classified as a program SHALL NOT start unless the caller passes `mode: "run", confirm: true`; the UI SHALL first ask *Run* / *Open* (with the default application) / *Edit* / *Cancel*, where *Edit* opens the file in the built-in editor (`editor.open`) and is offered only when the editor can open it (a script, not a binary or an oversized file). `confirm: true` with `mode: "default"` hands the file to the OS handler as a document, which can itself start it — so it is refused unless `confirm: true` is also present. Classification uses the executable bit plus a runnable extension on Unix (removable/network drives mark everything executable, so the bit alone is not enough) and a runnable-extension list on Windows; a macOS `.app` bundle counts as a program.
+An entry classified as a program SHALL NOT start unless the caller passes `mode: "run", confirm: true`. Activating a program that is not text on a local disk (`.exe`, `.com`, `.msi`, `.scr`, `.lnk`, `.msc`, `.jar`, an AppImage, a macOS `.app`) SHALL start it at once, as the system file manager does. For a script, and for any program on a network or remote location, the UI SHALL first ask *Run* / *Open* (with the default application) / *Edit* / *Cancel* (unless "Ask before running a script" is off), where *Edit* opens the file in the built-in editor (`editor.open`) and is offered only when the editor can open it (a script, not a binary or an oversized file). `confirm: true` with `mode: "default"` hands the file to the OS handler as a document, which can itself start it — so it is refused unless `confirm: true` is also present. Classification uses the executable bit plus a runnable extension on Unix (removable/network drives mark everything executable, so the bit alone is not enough) and a runnable-extension list on Windows; a macOS `.app` bundle counts as a program.
 
 #### Scenario: A script
 - **WHEN** the user activates an executable shell script
 - **THEN** a dialog appears with *Run*, *Open*, *Edit* and *Cancel*; nothing starts until one is chosen, and *Edit* opens the script in the built-in editor without running it
+
+#### Scenario: A local installer
+- **WHEN** the user double-clicks `setup.msi` or `tool.exe` on a local disk
+- **THEN** it starts without a dialog
 
 #### Scenario: Unconfirmed run
 - **WHEN** `file.open` is dispatched with `mode: "run"` and no `confirm: true`

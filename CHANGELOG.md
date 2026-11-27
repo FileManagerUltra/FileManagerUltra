@@ -55,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A workspace tab showing an archive with unsaved changes is marked with a dot, like a tab with unsaved workspace changes.
 
 ### Changed
+- Double-clicking a program on this computer (`.exe`, `.msi`, an AppImage…) starts it at once, like Explorer does. Scripts (`.bat`, `.ps1`, `.sh`, `.py`…) and programs on a network share still ask Run, Open or Edit; the setting is now called "Ask before running a script".
 - Double-clicking any text file now opens it in the built-in editor (unless that kind is set to the external editor), also files with unusual or no extensions, in plain-text mode when there is no syntax colouring for it. A file that turns out not to be text still opens in its default application.
 - Backup copies such as `notes.md.bak-20261123b`, `notes.md.bak`, `notes.md.orig` or `notes.md~` are treated like the file they were made from: they open in the editor with the right colouring, and preview like the original.
 - Double-clicking a script asks Run, Open, Edit or Cancel: Edit opens it in the built-in editor without running it (offered only for files the editor can open, not for binaries). "Open as document" is now just "Open".

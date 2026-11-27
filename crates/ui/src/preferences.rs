@@ -599,7 +599,11 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                     }
                     let mut run = s.prefs.confirm_run;
                     if ui
-                        .checkbox(&mut run, "Ask before running a program")
+                        .checkbox(&mut run, "Ask before running a script")
+                        .on_hover_text(
+                            "Scripts (.bat, .ps1, .sh, .py…) ask Run, Open or Edit. Programs \
+                             such as .exe and .msi on this computer start at once.",
+                        )
                         .changed()
                     {
                         set(s, "confirm_run", json!(run));
