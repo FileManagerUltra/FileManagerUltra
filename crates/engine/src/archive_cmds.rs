@@ -1161,10 +1161,17 @@ pub fn unmount() -> CommandSpec {
                     }
                     return Ok(());
                 }
-                s.dispatch(
-                    "archive.discard",
-                    &serde_json::json!({ "uri": root.to_string(), "confirm": true }),
-                )?;
+                // Drop the changes and close straight away, without the re-read Discard
+                // does (a read still running after the close would open it again).
+                let fs = s
+                    .archives
+                    .for_uri(&root)
+                    .and_then(|m| m.opened())
+                    .ok_or_else(|| FmError::InvalidParams("the archive is not open".into()))?;
+                if fs.is_saving() {
+                    return Err(FmError::InvalidParams("the archive is being saved".into()));
+                }
+                fs.discard();
             }
             refuse_if_dirty(s, &fm_archive::handle_for(&container, 0, None))?;
             close(s, &container);
