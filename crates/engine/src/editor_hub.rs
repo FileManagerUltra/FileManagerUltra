@@ -145,6 +145,7 @@ pub(crate) fn binary_name(name: &str) -> bool {
             | "ppt"
             | "pptx"
             | "odt"
+            | "rtf"
             | "ods"
             | "odp"
             | "ttf"

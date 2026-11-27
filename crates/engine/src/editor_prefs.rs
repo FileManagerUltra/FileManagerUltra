@@ -463,6 +463,8 @@ mod tests {
         assert_eq!(EditorKind::of_name("notes"), Some(EditorKind::Text));
         assert_eq!(EditorKind::of_name("setup.exe"), None);
         assert_eq!(EditorKind::of_name("song.mp3"), None);
+        // Rich text is a document for its own app, not RTF codes to edit.
+        assert_eq!(EditorKind::of_name("letter.RTF"), None);
         assert_eq!(EditorKind::of_name("main.rs"), Some(EditorKind::Code));
         assert_eq!(EditorKind::of_name("a.TOML"), Some(EditorKind::Config));
         assert_eq!(EditorKind::of_name("README"), Some(EditorKind::Text));
