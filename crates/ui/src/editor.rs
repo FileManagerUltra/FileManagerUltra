@@ -130,6 +130,21 @@ pub fn show(ui: &mut Ui, s: &mut Session, pane: PaneId, tokens: &Tokens) -> bool
     let status_rect = Rect::from_min_max(pos2(avail.min.x, text_rect.max.y), avail.max);
     status_line(ui, s, pane, tokens, status_rect, &mut actions);
     ui.allocate_rect(avail, Sense::hover());
+    if is_editing(s, pane) {
+        // Edit mode is framed in the editing colour, header to status bar, on top of the
+        // content: it cannot be mistaken for the read-only preview.
+        let width = tokens.border_width.max(1.0) * 2.0;
+        ui.painter().rect_stroke(
+            pane_rect.intersect(ui.clip_rect()),
+            0.0,
+            Stroke::new(width, tokens.editing),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().line_segment(
+            [status_rect.left_top(), status_rect.right_top()],
+            Stroke::new(width, tokens.editing),
+        );
+    }
     run(s, actions);
     ui.data_mut(|d| d.insert_temp(view_id(pane), view));
     true
@@ -218,13 +233,16 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
         }
     };
     let mut context = |ui: &mut Ui| {
-        let mode = if doc.read_only.is_some() || blocked {
-            "Viewing"
-        } else {
-            "Editing"
-        };
         ui.add_space(4.0);
-        ui.label(egui::RichText::new(mode).color(tokens.accent_text).strong());
+        if doc.read_only.is_some() || blocked {
+            ui.label(
+                egui::RichText::new("Viewing")
+                    .color(tokens.accent_text)
+                    .strong(),
+            );
+        } else {
+            editing_badge(ui, tokens);
+        }
         if doc.dirty() {
             icons::dirty_dot(ui, tokens);
         }
@@ -248,6 +266,43 @@ fn toolbar(ui: &mut Ui, s: &Session, pane: PaneId, tokens: &Tokens, actions: &mu
         actions.push(("editor.toggle_wrap", p));
     }
     ui.separator();
+}
+
+/// Whether the pane's editor takes typing: loaded, not read-only, not blocked.
+fn is_editing(s: &Session, pane: PaneId) -> bool {
+    s.editor(pane)
+        .is_some_and(|d| d.read_only.is_none() && d.blocked.is_none() && d.load_error.is_none())
+}
+
+/// The filled "Editing" badge in the editor's header: a pencil and the word, on the
+/// editing colour, so Edit mode reads at a glance.
+fn editing_badge(ui: &mut Ui, tokens: &Tokens) {
+    let font = FontId::proportional(tokens.font_size);
+    let galley = ui
+        .painter()
+        .layout_no_wrap("Editing".to_string(), font, tokens.editing_text);
+    let icon = tokens.font_size;
+    let size = vec2(
+        8.0 + icon + 6.0 + galley.size().x + 10.0,
+        (galley.size().y + 6.0).max(icon + 6.0),
+    );
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, "Editing"));
+    let p = ui.painter();
+    p.rect_filled(rect, rect.height() / 2.0, tokens.editing);
+    let icon_c = pos2(rect.min.x + 8.0 + icon / 2.0, rect.center().y);
+    crate::tool_icons::paint(
+        p,
+        crate::tool_icons::Icon::Edit,
+        icon_c,
+        icon,
+        tokens.editing_text,
+    );
+    let text_pos = pos2(
+        rect.min.x + 8.0 + icon + 6.0,
+        rect.center().y - galley.size().y / 2.0,
+    );
+    p.galley(text_pos, galley, tokens.editing_text);
 }
 
 fn blocked_card(

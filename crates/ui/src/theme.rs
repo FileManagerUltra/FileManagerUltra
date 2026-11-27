@@ -40,6 +40,11 @@ pub struct Tokens {
     pub error: Color32,
     /// Warnings.
     pub warning: Color32,
+    /// Edit mode of the Preview pane: the frame around the editor and its badge, so
+    /// editing is never mistaken for viewing (orange, distinct from `warning`).
+    pub editing: Color32,
+    /// Text and icons on an `editing` fill.
+    pub editing_text: Color32,
     /// Success / completion.
     pub success: Color32,
     /// Git status colours (name tint and gutter letter).
@@ -395,6 +400,8 @@ impl Tokens {
             hover_bg: Color32::from_rgb(0x24, 0x29, 0x32),
             error: Color32::from_rgb(0xff, 0x6b, 0x6b),
             warning: Color32::from_rgb(0xff, 0xc8, 0x57),
+            editing: Color32::from_rgb(0xf5, 0xa0, 0x4a),
+            editing_text: Color32::from_rgb(0x1b, 0x1d, 0x23),
             success: Color32::from_rgb(0x63, 0xc1, 0x74),
             git_modified: Color32::from_rgb(0xe5, 0xc0, 0x7b),
             git_added: Color32::from_rgb(0x63, 0xc1, 0x74),
@@ -493,6 +500,8 @@ impl Tokens {
             hover_bg: Color32::from_rgb(0xe9, 0xec, 0xf0),
             error: Color32::from_rgb(0xc2, 0x2b, 0x2b),
             warning: Color32::from_rgb(0x9a, 0x67, 0x00),
+            editing: Color32::from_rgb(0xa0, 0x4e, 0x00),
+            editing_text: Color32::from_rgb(0xff, 0xff, 0xff),
             success: Color32::from_rgb(0x1f, 0x7a, 0x33),
             git_modified: Color32::from_rgb(0x8a, 0x5c, 0x00),
             git_added: Color32::from_rgb(0x1f, 0x7a, 0x33),
@@ -1398,6 +1407,8 @@ mod tests {
                 hover_bg,
                 error,
                 warning,
+                editing,
+                editing_text,
                 success,
                 git_modified,
                 git_added,
@@ -1465,6 +1476,8 @@ mod tests {
                 ("hover_bg", hover_bg),
                 ("error", error),
                 ("warning", warning),
+                ("editing", editing),
+                ("editing_text", editing_text),
                 ("success", success),
                 ("git_modified", git_modified),
                 ("git_added", git_added),

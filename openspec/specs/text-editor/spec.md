@@ -4,11 +4,11 @@
 TBD - created by archiving change add-text-editor. Update Purpose after archive.
 ## Requirements
 ### Requirement: Editing is a mode of the Preview pane
-A Preview pane SHALL have an Edit mode in which the previewed text file is shown in an editable view. The pane kind SHALL remain `Preview`; no pane type is added. `editor.toggle` (F4, View menu, and a pencil button in the Preview toolbar) SHALL switch the focused Preview pane between the rendered preview and Edit mode for the same file, keeping the scroll position as close as possible. Leaving Edit mode SHALL first save a dirty buffer (autosave on) or show the unsaved-changes warning (autosave off), then show the preview of the saved file. Toolbar and header SHALL show the mode and an unsaved-changes marker while the buffer is dirty. Files that cannot be edited (images, media, PDFs, archives, directories) SHALL NOT offer Edit mode.
+A Preview pane SHALL have an Edit mode in which the previewed text file is shown in an editable view. The pane kind SHALL remain `Preview`; no pane type is added. `editor.toggle` (F4, View menu, and a pencil button in the Preview toolbar) SHALL switch the focused Preview pane between the rendered preview and Edit mode for the same file, keeping the scroll position as close as possible. Leaving Edit mode SHALL first save a dirty buffer (autosave on) or show the unsaved-changes warning (autosave off), then show the preview of the saved file. Toolbar and header SHALL show the mode and an unsaved-changes marker while the buffer is dirty. Edit mode SHALL look unmistakably different from the read-only preview: while the editor takes typing, the pane SHALL be framed in a dedicated editing colour (distinct from the focus accent and from warnings, in dark, light and high-contrast schemes), the header SHALL show a filled *Editing* badge with a pencil in that colour, and the status bar SHALL carry an edge in it. A read-only or blocked editor SHALL show *Viewing* without the frame. Files that cannot be edited (images, media, PDFs, archives, directories) SHALL NOT offer Edit mode.
 
 #### Scenario: Toggle into edit
 - **WHEN** a Preview pane shows `notes.md` and the user presses F4
-- **THEN** the pane shows the editable Markdown text with the caret at the first visible line and the header shows "Editing"
+- **THEN** the pane shows the editable Markdown text with the caret at the first visible line, framed in the editing colour, and the header shows the "Editing" badge
 
 #### Scenario: Back to preview saves first
 - **WHEN** the user edits in Edit mode with autosave on and toggles back to the rendered view
