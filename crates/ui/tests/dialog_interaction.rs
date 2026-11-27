@@ -114,10 +114,16 @@ fn operation_dialogs_drag_and_title_close_cancels_without_dispatch() {
                 root: root.clone(),
                 name: "site.zip".into(),
             },
+            Dialog::ConfirmArchiveClose {
+                root: root.clone(),
+                name: "site.zip".into(),
+                count: 2,
+            },
         ] {
             let id = Id::NULL.with(match &dialog {
                 Dialog::ConfirmDelete { .. } => "fm-confirm-delete",
                 Dialog::ConfirmArchiveDiscard { .. } => "fm-confirm-archive-discard",
+                Dialog::ConfirmArchiveClose { .. } => "fm-confirm-archive-close",
                 Dialog::ConfirmRun { .. } => "fm-confirm-run",
                 Dialog::SelectPattern { .. } => "fm-pattern-dialog",
                 _ => "fm-name-dialog",
@@ -2652,4 +2658,63 @@ fn show_archive_changes_outside_the_archive_opens_a_window() {
     assert!(h.state().archives.changes_shown.is_none());
     let mount = h.state().archives.for_uri(&root).cloned().expect("mount");
     assert!(mount.is_dirty(), "closing the list keeps the changes");
+}
+
+/// File › Close Archive inside an archive with staged changes asks first; Discard and
+/// Close drops them and closes the archive.
+#[test]
+fn close_archive_with_changes_asks_and_discard_closes() {
+    use std::sync::Arc;
+    let tokens = Tokens::dark();
+    let mem = fm_testkit::MemFs::new();
+    mem.put_file(
+        &VfsUri::parse("/home/alice/locked.zip").expect("uri"),
+        include_bytes!("fixtures/locked.zip"),
+    )
+    .expect("put");
+    let mut s = Session::new().expect("session");
+    s.backends.register(Arc::new(mem));
+    s.dispatch("archive.enter", &json!({"uri": "/home/alice/locked.zip"}))
+        .expect("enter");
+    let root = s.layout.state(1).expect("pane").location.clone();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !s.dirs.state(&root).is_ready() {
+        s.poll();
+        assert!(std::time::Instant::now() < deadline, "listing");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let vfs = s.backends.require(&root).expect("backend");
+    vfs.create_dir(&root.join("drafts").expect("d"))
+        .expect("mkdir");
+    let dialog = fm_ui::dialogs::dialog_for("archive.unmount", &s).expect("asks first");
+    assert!(matches!(
+        dialog,
+        Dialog::ConfirmArchiveClose { count: 1, .. }
+    ));
+    let mut dialogs = Dialogs::default();
+    dialogs.request(dialog);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(800.0, 500.0))
+        .build_ui_state(
+            move |ui, s: &mut Session| {
+                fm_ui::theme::apply_to(ui.ctx(), &tokens);
+                dialogs.show(ui.ctx(), s, &tokens);
+            },
+            s,
+        );
+    h.run_steps(3);
+    assert!(
+        h.query_by_label("locked.zip has 1 unsaved change.")
+            .is_some()
+    );
+    h.get_by_label("Discard and Close").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Discard and Close").is_none());
+    let closed = h
+        .state()
+        .archives
+        .for_uri(&root)
+        .and_then(|m| m.opened())
+        .is_none();
+    assert!(closed, "the archive was closed without its changes");
 }

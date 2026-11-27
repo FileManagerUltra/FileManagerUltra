@@ -18,6 +18,13 @@ pub enum Dialog {
         root: VfsUri,
         name: String,
     },
+    /// Close Archive on an archive with staged changes: save them, discard them, or keep
+    /// the archive open.
+    ConfirmArchiveClose {
+        root: VfsUri,
+        name: String,
+        count: usize,
+    },
     /// Path of a subtitle file to show with the current Media video.
     Subtitle {
         path: String,
@@ -143,6 +150,9 @@ pub fn subtitle_dialog(s: &Session) -> Dialog {
 /// The dialog a command needs before it can run, if any. The app calls this for shortcuts and
 /// menu items; `None` means dispatch the command directly.
 pub fn dialog_for(id: &str, s: &Session) -> Option<Dialog> {
+    if id == "archive.unmount" {
+        return close_archive_dialog(s, &s.layout.state(s.layout.focused())?.location);
+    }
     if id == "media.subtitle.load" {
         return Some(subtitle_dialog(s));
     }
@@ -420,6 +430,25 @@ impl Dialogs {
                     false
                 } else {
                     !(cancel || esc)
+                }
+            }
+            Dialog::ConfirmArchiveClose { root, name, count } => {
+                let choice = confirm_archive_close(ctx, tokens, name, *count);
+                // Enter keeps the work: Save and Close.
+                let choice = match choice {
+                    None if enter && !esc => Some("save"),
+                    other => other,
+                };
+                match choice {
+                    Some("cancel") => false,
+                    Some(unsaved) => {
+                        s.dispatch_or_notice(
+                            "archive.unmount",
+                            &json!({ "uri": root.to_string(), "unsaved": unsaved }),
+                        );
+                        false
+                    }
+                    None => !esc,
                 }
             }
             Dialog::ConfirmArchiveDiscard { root, name } => {
@@ -838,6 +867,52 @@ fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             s.unsaved_prompt = None;
         }
     }
+}
+
+/// The Close Archive question for an archive with staged changes at `uri` (an archive
+/// location or archive file), or `None` when closing loses nothing.
+pub fn close_archive_dialog(s: &Session, uri: &VfsUri) -> Option<Dialog> {
+    let (root, name, count) = fm_engine::archive_cmds::unsaved_for_close(s, uri)?;
+    Some(Dialog::ConfirmArchiveClose { root, name, count })
+}
+
+/// `Some("save" | "discard" | "cancel")` once the user chose.
+fn confirm_archive_close(
+    ctx: &Context,
+    tokens: &Tokens,
+    name: &str,
+    count: usize,
+) -> Option<&'static str> {
+    let mut choice = None;
+    let mut open = true;
+    crate::dialog_style::window(ctx, tokens, "Close archive", &mut open)
+        .id(Id::NULL.with("fm-confirm-archive-close"))
+        .show(ctx, |ui| {
+            crate::dialog_style::apply(ui, tokens);
+            let noun = if count == 1 { "change" } else { "changes" };
+            ui.label(
+                RichText::new(format!("{name} has {count} unsaved {noun}.")).color(tokens.text),
+            );
+            ui.label(
+                RichText::new("Save them into the archive before closing it, or discard them.")
+                    .color(tokens.text_muted),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("Save and Close").clicked() {
+                    choice = Some("save");
+                }
+                if ui.button("Discard and Close").clicked() {
+                    choice = Some("discard");
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some("cancel");
+                }
+            });
+        });
+    if !open {
+        return Some("cancel");
+    }
+    choice
 }
 
 fn confirm_archive_discard(ctx: &Context, tokens: &Tokens, name: &str) -> (bool, bool) {

@@ -55,6 +55,8 @@ pub struct Mounts {
     pub save_as_pending: Option<VfsUri>,
     /// The archive (root) whose list of staged changes is shown (`archive.changes`).
     pub changes_shown: Option<VfsUri>,
+    /// Archives (roots) to close once their save finishes (Close Archive › Save).
+    close_after_save: Vec<VfsUri>,
     /// Opened archives nothing shows or uses, since when (idle release).
     idle_since: HashMap<String, std::time::Instant>,
     last_idle_check: Option<std::time::Instant>,
@@ -955,7 +957,43 @@ pub(crate) fn target_mount(s: &Session, params: &Params) -> Result<Arc<LazyArchi
 
 /// The archive at `root` was saved, or its staged changes discarded: forget what was
 /// listed from it and read again what shows it.
+/// The archive at `root` was saved, or its staged changes discarded: read it again, and
+/// close it when Close Archive › Save was waiting for this save and it succeeded.
 pub(crate) fn after_save(s: &mut Session, root: &VfsUri) {
+    if let Some(at) = s.archives.close_after_save.iter().position(|r| r == root) {
+        s.archives.close_after_save.remove(at);
+        // Saved: close it now, without first reading it again (a read still running
+        // after the close would open it again). A failed or cancelled save keeps the
+        // changes, and the archive stays open and is read again as usual.
+        if s.archives.for_uri(root).is_some_and(|m| !m.is_dirty()) {
+            if let Err(err) = s.dispatch("archive.unmount", &Params::String(root.to_string())) {
+                s.notice = Some(err.to_string());
+            }
+            return;
+        }
+    }
+    refresh_after_save(s, root);
+}
+
+/// What Close Archive on `uri` (an archive location or archive file) would lose: the
+/// opened archive's root, file name and number of staged changes, when it has any. The
+/// UI then asks Save, Discard or Cancel instead of closing.
+pub fn unsaved_for_close(s: &Session, uri: &VfsUri) -> Option<(VfsUri, String, usize)> {
+    let mount = if uri.archive_handle().is_some() {
+        s.archives.for_uri(uri)
+    } else {
+        s.archives.of_file(uri)
+    }?;
+    let fs = mount.opened().filter(|fs| fs.is_dirty())?;
+    let name = mount
+        .container()
+        .file_name()
+        .unwrap_or("the archive")
+        .to_string();
+    Some((mount.root().clone(), name, fs.changes().len()))
+}
+
+fn refresh_after_save(s: &mut Session, root: &VfsUri) {
     let Some(mount) = s.archives.for_uri(root).cloned() else {
         return;
     };
@@ -1083,7 +1121,7 @@ pub fn unmount() -> CommandSpec {
         label: "Close Archive",
         menu: &["File", "Archive", "Close Archive"],
         shortcut: None,
-        params: "{uri?: string} — an archive location or archive file; default the focused pane's archive",
+        params: "{uri?: string, unsaved?: \"save\"|\"discard\"} — an archive location or archive file; default the focused pane's archive. With staged changes it refuses unless `unsaved` says what to do with them: save (it closes when the save finishes) or discard",
         enabled: |s| {
             s.layout
                 .state(s.layout.focused())
@@ -1098,8 +1136,36 @@ pub fn unmount() -> CommandSpec {
                     .map(|p| p.location.clone())
                     .ok_or_else(|| FmError::NotFound("focused pane".into()))?,
             };
+            let unsaved = match params.as_object().and_then(|m| m.get("unsaved")) {
+                None | Some(Params::Null) => None,
+                Some(Params::String(v)) if v == "save" || v == "discard" => Some(v.clone()),
+                Some(_) => {
+                    return Err(FmError::InvalidParams(
+                        "unsaved must be \"save\" or \"discard\"".into(),
+                    ));
+                }
+            };
             let container = container_for(&uri)
                 .ok_or_else(|| FmError::InvalidParams("not an archive".into()))?;
+            if let Some(choice) = unsaved
+                && let Some((root, _, _)) = unsaved_for_close(s, &uri)
+            {
+                if choice == "save" {
+                    // Closes in after_save once the save job succeeds.
+                    s.dispatch(
+                        "archive.save",
+                        &serde_json::json!({ "uri": root.to_string() }),
+                    )?;
+                    if !s.archives.close_after_save.contains(&root) {
+                        s.archives.close_after_save.push(root);
+                    }
+                    return Ok(());
+                }
+                s.dispatch(
+                    "archive.discard",
+                    &serde_json::json!({ "uri": root.to_string(), "confirm": true }),
+                )?;
+            }
             refuse_if_dirty(s, &fm_archive::handle_for(&container, 0, None))?;
             close(s, &container);
             if let Some(dir) = container.parent() {

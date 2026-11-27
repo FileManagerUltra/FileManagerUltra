@@ -51,6 +51,12 @@ Save SHALL run as a file job with progress and cancel. It SHALL first check that
 ### Requirement: Unsaved archive changes are never lost silently
 Closing the last pane or tab showing an archive with staged changes, and quitting the app, SHALL ask Save, Don't save or Cancel, listing the archives in the same single prompt as other unsaved work (see app-shell: one prompt before anything is lost). An archive with staged changes SHALL stay mounted while navigating elsewhere in the same tab, and the bar SHALL return when the pane comes back to it.
 
+Close Archive on an archive with staged changes (from File › Archive, the archive file's context menu or its tree row) SHALL ask *Save and Close* (the default), *Discard and Close* or *Cancel* instead of failing; the archive SHALL close only after its save succeeded, and stay open with its changes when the save fails or is cancelled. `archive.unmount` SHALL still refuse a changed archive unless `unsaved: "save"|"discard"` says what to do.
+
+#### Scenario: Close a changed archive
+- **WHEN** `site.zip` has staged changes and the user chooses Close Archive
+- **THEN** a dialog asks Save and Close, Discard and Close or Cancel, and Save and Close writes `site.zip` and then closes it
+
 #### Scenario: Quit with unsaved changes
 - **WHEN** `site.zip` has staged changes and the user quits
 - **THEN** the app asks whether to save `site.zip` before quitting, and Cancel keeps the app open

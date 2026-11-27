@@ -1406,3 +1406,52 @@ fn an_archive_file_finds_its_opened_archive_for_the_context_flyout() {
     assert_eq!(wait_done(&mut s).last(), Some(&OpState::Finished));
     assert!(!mount.is_dirty());
 }
+
+/// Close Archive on a changed archive: refused as is (the UI asks first), `unsaved:
+/// "discard"` drops the changes and closes, `unsaved: "save"` saves and closes once the
+/// save job finished; a bad choice is an error.
+#[test]
+fn closing_a_changed_archive_saves_or_discards_first() {
+    let opened =
+        |s: &Session, root: &VfsUri| s.archives.for_uri(root).and_then(|m| m.opened()).is_some();
+    for choice in ["discard", "save"] {
+        let dir = tempfile::tempdir().expect("tmp");
+        let zip = dir.path().join("site.zip");
+        std::fs::write(&zip, zip_with(&[("a.txt", b"a")])).expect("zip");
+        let mut s = Session::new().expect("session");
+        let root = open_zip(&mut s, &zip);
+        let vfs = s.backends.require(&root).expect("backend");
+        vfs.create_dir(&root.join("mine").expect("m"))
+            .expect("mkdir");
+        let file = VfsUri::parse(&uri(&zip)).expect("file");
+        let (found, name, count) =
+            fm_engine::archive_cmds::unsaved_for_close(&s, &file).expect("unsaved");
+        assert_eq!((found, name.as_str(), count), (root.clone(), "site.zip", 1));
+        assert!(
+            s.dispatch("archive.unmount", &json!({"uri": root.to_string()}))
+                .is_err(),
+            "closing as is would lose the change"
+        );
+        assert!(
+            s.dispatch(
+                "archive.unmount",
+                &json!({"uri": root.to_string(), "unsaved": 5})
+            )
+            .is_err()
+        );
+        s.dispatch(
+            "archive.unmount",
+            &json!({"uri": root.to_string(), "unsaved": choice}),
+        )
+        .expect("close");
+        if choice == "save" {
+            assert_eq!(wait_done(&mut s).last(), Some(&OpState::Finished));
+            poll_until(&mut s, "closed after the save", |s| !opened(s, &root));
+            assert_eq!(zip_names(&zip), vec!["a.txt", "mine/"], "saved");
+        } else {
+            assert!(!opened(&s, &root), "closed at once");
+            assert_eq!(zip_names(&zip), vec!["a.txt"], "the change is gone");
+        }
+        assert!(fm_engine::archive_cmds::unsaved_for_close(&s, &file).is_none());
+    }
+}

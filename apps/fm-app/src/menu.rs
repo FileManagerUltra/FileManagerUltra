@@ -596,6 +596,8 @@ pub(crate) fn dispatch_folder(
     use fm_ui::dialogs::Dialog;
     let folder = action.folder;
     let dialog = match action.id {
+        // Closing an archive with staged changes asks what to do with them first.
+        "archive.unmount" => fm_ui::dialogs::close_archive_dialog(session, &folder),
         FILE_MKDIR => Some(Dialog::Mkdir {
             dir: folder.clone(),
             name: String::new(),
