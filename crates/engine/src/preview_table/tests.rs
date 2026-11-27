@@ -164,9 +164,17 @@ fn dropping_the_view_ends_its_threads() {
 fn rows_arrive_without_blocking_the_caller() {
     let view = open_table(&big_csv(50_000), 4096);
     let start = Instant::now();
-    let _ = view.rows(40_000, 50);
+    let rows = view.rows(40_000, 50);
+    // Rows far past the sample are fetched only on request, so a caller that did not wait
+    // for I/O gets placeholders back (a wall-clock limit alone was flaky on busy CI).
     assert!(
-        start.elapsed() < Duration::from_millis(50),
-        "rows() waited for I/O"
+        rows.iter().all(Option::is_none),
+        "rows() read the file itself instead of requesting the rows"
     );
+    assert!(start.elapsed() < Duration::from_secs(2), "rows() blocked");
+    // The request is then served in the background.
+    assert!(wait(&view, |v| v
+        .rows(40_000, 50)
+        .iter()
+        .all(Option::is_some)));
 }
