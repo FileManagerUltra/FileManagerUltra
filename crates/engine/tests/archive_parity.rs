@@ -306,3 +306,54 @@ fn an_archive_opened_only_for_the_tree_is_not_stopped() {
     assert!(s.dirs.state(&root).is_ready(), "{:?}", s.dirs.state(&root));
     assert_eq!(location(&s), folder, "the pane never entered it");
 }
+
+/// Double-clicking an archive opens it in the pane it was clicked in, also in an SFTP or
+/// Network pane: no second pane appears (the plan and dispatch the app uses).
+#[test]
+fn double_clicking_an_archive_in_a_remote_pane_opens_it_there_only() {
+    use fm_engine::open_cmds::{OpenPlan, plan};
+    let outer = zip_with(&[("docs/", b""), ("docs/readme", b"hi")]);
+    for (kind, mem, folder) in backends() {
+        let mut s = Session::new().expect("session");
+        mem.mkdirs(&folder).expect("folder");
+        let file = folder.join("site.zip").expect("file");
+        mem.put_file(&file, &outer).expect("zip");
+        if folder.scheme() == Scheme::File {
+            s.backends.register(Arc::new(mem));
+        } else {
+            s.backends.register_at(folder.authority(), Arc::new(mem));
+        }
+        let pane = s.layout.focused();
+        {
+            let st = s.layout.state_mut(pane).expect("pane");
+            st.kind = match folder.scheme() {
+                Scheme::Sftp => fm_layout::PaneKind::Sftp,
+                Scheme::Smb => fm_layout::PaneKind::Network,
+                _ => fm_layout::PaneKind::Files,
+            };
+            st.navigate(folder.clone());
+        }
+        s.ensure_read(folder.clone()).expect("read");
+        poll_until(&mut s, "listing", Duration::from_secs(10), |s| {
+            s.dirs.state(&folder).is_ready()
+        });
+        let before = s.layout.panes().len();
+        let planned = plan(&mut s, &file);
+        match planned {
+            OpenPlan::Launch => s
+                .dispatch("file.open", &json!({ "uri": file.to_string() }))
+                .expect("open"),
+            OpenPlan::Navigate => s
+                .dispatch("nav.open", &json!(file.to_string()))
+                .expect("nav"),
+            other => panic!("{kind}: unexpected plan {other:?}"),
+        }
+        for _ in 0..50 {
+            s.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(s.layout.panes().len(), before, "{kind}: no extra pane");
+        assert_eq!(s.layout.focused(), pane, "{kind}: same pane focused");
+        assert_eq!(location(&s).scheme(), Scheme::Archive, "{kind}: entered");
+    }
+}

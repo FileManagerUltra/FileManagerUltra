@@ -86,7 +86,11 @@ impl EditorKind {
             // Anything else that is not a known binary type is treated as plain text: the
             // editor checks the bytes when it loads, and a double-clicked file that turns
             // out binary still opens in its default application.
-            _ if crate::editor_hub::binary_name(&lower) => return None,
+            _ if crate::editor_hub::binary_name(&lower)
+                || crate::archive_cmds::is_archive_name(&lower) =>
+            {
+                return None;
+            }
             _ => Self::Text,
         })
     }
@@ -463,6 +467,9 @@ mod tests {
         assert_eq!(EditorKind::of_name("notes"), Some(EditorKind::Text));
         assert_eq!(EditorKind::of_name("setup.exe"), None);
         assert_eq!(EditorKind::of_name("song.mp3"), None);
+        // Any part of a split archive is an archive, not text.
+        assert_eq!(EditorKind::of_name("films-encrypted.7z.001"), None);
+        assert_eq!(EditorKind::of_name("backup.zip.002"), None);
         // Rich text is a document for its own app, not RTF codes to edit.
         assert_eq!(EditorKind::of_name("letter.RTF"), None);
         assert_eq!(EditorKind::of_name("main.rs"), Some(EditorKind::Code));

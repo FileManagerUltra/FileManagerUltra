@@ -136,6 +136,8 @@ pub fn plan(s: &mut Session, uri: &VfsUri) -> OpenPlan {
             // (a playlist is text, but double-clicking it means play).
             Some(_) => OpenPlan::Launch,
             None if crate::media_playlist_cmds::is_playlist(uri) => OpenPlan::Launch,
+            // Archives (also any part of a split set, `x.7z.001`) are browsed by file.open.
+            None if crate::archive_cmds::is_archive_name(&entry.name) => OpenPlan::Launch,
             None if s.editor_target_for(uri)
                 == Some(crate::editor_prefs::EditorTarget::Internal)
                 && crate::editor_hub::check_editable(&entry).is_ok() =>
@@ -657,6 +659,7 @@ mod tests {
             "notes.xyz",
             "panel.md.bak-20261123b",
             "list.m3u",
+            "films-encrypted.7z.001",
         ] {
             std::fs::write(dir.path().join(name), "x").expect("write");
         }
@@ -690,6 +693,12 @@ mod tests {
         }
         let list = folder.join("list.m3u").expect("join");
         assert_eq!(plan(&mut s, &list), OpenPlan::Launch, "playlists play");
+        let part = folder.join("films-encrypted.7z.001").expect("join");
+        assert_eq!(
+            plan(&mut s, &part),
+            OpenPlan::Launch,
+            "a split archive part is browsed, not edited"
+        );
         s.prefs.editor.open.log = crate::editor_prefs::EditorTarget::External;
         assert_eq!(plan(&mut s, &log), OpenPlan::Launch);
         assert_eq!(

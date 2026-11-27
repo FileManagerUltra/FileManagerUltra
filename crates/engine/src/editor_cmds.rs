@@ -209,6 +209,7 @@ impl Session {
         let entry = self.editor_entry(&uri);
         check_editable(&entry)?;
         let origin = self.layout.focused();
+        let before = self.layout.panes();
         let pane = match pane {
             Some(p) => {
                 if self.pane_kind(p) != Some(PaneKind::Preview) {
@@ -255,8 +256,10 @@ impl Session {
             col: 0,
         });
         self.editor_load(pane, uri, caret, 0)?;
+        let made_here = !before.contains(&pane);
         if let Some(doc) = self.editor_mut(pane) {
             doc.activated = activate;
+            doc.made_for = (activate && made_here).then_some(origin);
         }
         Ok(())
     }

@@ -543,3 +543,44 @@ fn legacy_code_page_html_and_php_open_with_their_language() {
         assert_eq!(doc.encoding, fm_editor::Encoding::Latin1, "{name}");
     }
 }
+
+#[test]
+fn a_double_click_remembers_whether_the_editor_pane_was_made_for_it() {
+    let mem = Arc::new(MemFs::new());
+    mem.put_file(&uri("/w/notes.xyz"), b"plain\n").expect("put");
+    // No Preview pane yet: the editor makes one, and remembers where the click was.
+    let mut s = Session::new().expect("session");
+    s.backends.register(mem);
+    let files = s.layout.focused();
+    s.dispatch(
+        "editor.open",
+        &json!({"uri": "/w/notes.xyz", "activate": true}),
+    )
+    .expect("open");
+    let pane = s.layout.focused();
+    assert_ne!(pane, files, "a Preview pane was made");
+    assert_eq!(s.editor(pane).and_then(|d| d.made_for), Some(files));
+    // An existing Preview pane is reused and stays, whatever the file turns out to be.
+    s.layout.focus_pane(files).expect("files");
+    s.dispatch(
+        "editor.open",
+        &json!({"uri": "/w/notes.xyz", "activate": true}),
+    )
+    .expect("again");
+    settle(&mut s, "load", |s| {
+        s.editor(pane).is_some_and(|d| d.phase == Phase::Ready)
+    });
+    assert_eq!(s.layout.focused(), pane);
+    // F4 and other opens never count as made for a double-click.
+    let (mut s, files, _) = session(
+        {
+            let m = Arc::new(MemFs::new());
+            m.put_file(&uri("/w/a.txt"), b"a\n").expect("put");
+            m
+        },
+        &uri("/w"),
+    );
+    s.layout.focus_pane(files).expect("files");
+    let pane = open(&mut s, &uri("/w/a.txt"));
+    assert_eq!(s.editor(pane).and_then(|d| d.made_for), None);
+}

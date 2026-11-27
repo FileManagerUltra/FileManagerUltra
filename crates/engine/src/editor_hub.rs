@@ -914,14 +914,22 @@ impl Session {
                     // A double-clicked file of unknown type that is not text after all
                     // opens as before, in its default application.
                     if hands_off_to_app(doc.activated, &why) {
-                        hand_off = Some(doc.uri.clone());
+                        hand_off = Some((doc.uri.clone(), doc.made_for));
                     }
                     doc.blocked = Some(why);
                     doc.phase = Phase::Ready;
                     doc.load_job = None;
                 }
-                if let Some(uri) = hand_off {
+                if let Some((uri, made_for)) = hand_off {
                     self.editor_close(pane);
+                    // The Preview pane made for this open goes again; the user is back
+                    // where they double-clicked.
+                    if let Some(origin) = made_for
+                        && self.layout.state(origin).is_some()
+                    {
+                        let _ = self.layout.close(pane);
+                        let _ = self.layout.focus_pane(origin);
+                    }
                     let params = serde_json::json!({ "uri": uri.to_string() });
                     if let Err(e) = self.dispatch("file.open", &params) {
                         self.notice = Some(e.to_string());

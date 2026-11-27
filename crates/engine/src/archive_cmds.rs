@@ -293,6 +293,19 @@ pub fn container_of(uri: &VfsUri) -> Option<ArchiveRef> {
     REFS.read().ok()?.get(handle).cloned()
 }
 
+/// Where `uri` really lives: outside archives itself, inside one (or nested ones) the
+/// outermost archive file, so `sftp://host/a.zip` for a folder in an archive on a server.
+pub fn outer_location(uri: &VfsUri) -> VfsUri {
+    let mut at = uri.clone();
+    for _ in 0..=fm_archive::limits::MAX_NESTING {
+        match container_of(&at) {
+            Some(r) => at = r.container,
+            None => break,
+        }
+    }
+    at
+}
+
 /// How many archives deep `uri` is (0 outside archives).
 pub fn nesting(uri: &VfsUri) -> usize {
     let mut depth = 0;

@@ -172,6 +172,9 @@ pub struct EditorDoc {
     /// Opened by Enter or double-click (`editor.open {activate: true}`): a file that
     /// turns out to be binary goes to its default application instead of a blocked card.
     pub activated: bool,
+    /// The pane the user double-clicked in, when this editor's Preview pane was created
+    /// for that open: a hand-off to the default application closes it again.
+    pub made_for: Option<fm_layout::PaneId>,
     /// What to do once the buffer is saved or its edits are discarded.
     pub pending: Option<Pending>,
     /// A file the user chose to stay away from (Cancel in the leave warning).
@@ -262,6 +265,7 @@ impl EditorDoc {
             real: None,
             blocked: None,
             activated: false,
+            made_for: None,
             pending: None,
             declined: None,
             autosave_failed: None,

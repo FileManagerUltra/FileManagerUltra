@@ -92,7 +92,8 @@ impl Session {
     }
 
     /// An SFTP pane that is not on a live server (fresh, restored, or just disconnected)
-    /// shows the Saved servers folder.
+    /// shows the Saved servers folder. Inside an archive the pane counts as being where the
+    /// archive file is, so opening an archive on the server keeps the pane in it.
     pub(crate) fn normalize_sftp_panes(&mut self) {
         let stray: Vec<PaneId> = self
             .layout
@@ -100,10 +101,11 @@ impl Session {
             .iter()
             .filter(|(_, st)| st.kind == PaneKind::Sftp && st.tree.root.scheme() != Scheme::Servers)
             .filter(|(_, st)| {
-                st.location.scheme() != Scheme::Sftp
-                    || (self.backends.get_for(&st.location).is_none()
+                let at = crate::archive_cmds::outer_location(&st.location);
+                at.scheme() != Scheme::Sftp
+                    || (self.backends.get_for(&at).is_none()
                         && !matches!(
-                            self.remote.state(Scheme::Sftp, st.location.authority()),
+                            self.remote.state(Scheme::Sftp, at.authority()),
                             Some(crate::remote::ConnState::Connecting)
                         )
                         && self.remote.sftp_prompt.is_none())
