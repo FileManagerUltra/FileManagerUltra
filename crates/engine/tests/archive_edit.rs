@@ -282,11 +282,12 @@ fn a_split_set_changed_on_disk_is_not_overwritten() {
 }
 
 #[test]
-fn a_split_copy_is_one_file_named_by_the_base() {
+fn a_split_copy_keeps_the_part_size() {
     let dir = tempfile::tempdir().expect("tmp");
     let p = dir.path();
     let old = zip_with(&[("a.txt", &[7u8; 300])]);
-    write_parts(p, "set.zip", &old, old.len() / 2 + 1);
+    let size = old.len() / 2 + 1;
+    write_parts(p, "set.zip", &old, size);
     let mut s = Session::new().expect("session");
     let root = open_zip(&mut s, &p.join("set.zip.001"));
     let vfs = s.backends.require(&root).expect("backend");
@@ -305,8 +306,25 @@ fn a_split_copy_is_one_file_named_by_the_base() {
         "{:?}",
         s.fileops.jobs()
     );
-    assert_eq!(files_in(&out), vec!["set.zip"]);
-    assert_eq!(zip_names(&out.join("set.zip")), vec!["a.txt", "mine/"]);
+    let copy = files_in(&out);
+    assert!(
+        copy.len() >= 2 && copy.iter().all(|f| f.starts_with("set.zip.0")),
+        "numbered parts named by the base: {copy:?}"
+    );
+    let mut joined = Vec::new();
+    for (i, f) in copy.iter().enumerate() {
+        let bytes = std::fs::read(out.join(f)).expect("part");
+        if i + 1 < copy.len() {
+            assert_eq!(bytes.len(), size, "{f} has the original part size");
+        } else {
+            assert!(!bytes.is_empty() && bytes.len() <= size, "{f}");
+        }
+        joined.extend(bytes);
+    }
+    let full = p.join("joined.zip");
+    std::fs::write(&full, joined).expect("joined");
+    assert_eq!(zip_names(&full), vec!["a.txt", "mine/"]);
+    std::fs::remove_file(&full).expect("rm");
     assert_eq!(
         files_in(p),
         vec!["out", "set.zip.001", "set.zip.002"],

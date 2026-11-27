@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quitting or closing asks one question at most: unsaved workspaces, filled-in PDFs, archives with unsaved changes and work still running are listed together in one prompt with Save, Don't save and Cancel, instead of one prompt after another.
 
 ### Fixed
+- Save as copy of an archive split into parts (`name.7z.001`, …) now writes the copy in parts of the same size, instead of one large file.
 - Pressing Enter in the Delete permanently dialog now deletes, as the dialog suggests; before, Enter went to the file list behind it and opened the selected file (an archive was entered instead of deleted). Panes no longer react to keys while any dialog is open.
 - The password field of an encrypted archive keeps the keyboard when you click it, so you can type and paste the password, also when two panes (for example a file list and the Preview pane) ask for the same archive at once.
 - Older web pages, PHP scripts and other text saved in a Western code page (Windows-1252 or ISO-8859-1) now preview as text with syntax colouring and correct accented letters, instead of as a hex dump.

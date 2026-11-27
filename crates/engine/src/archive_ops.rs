@@ -725,6 +725,12 @@ pub(crate) fn save(
     let cvfs = mount.container_vfs().clone();
     // A numbered set is written back as numbered parts, replacing the originals.
     let parts = fs.parts().filter(|_| target.copy_to.is_none()).cloned();
+    // A copy of a numbered set is cut into parts of the same size (`copy.7z.001`, …).
+    let copy_parts = target
+        .copy_to
+        .as_ref()
+        .and(fs.parts())
+        .and_then(|set| set.part_size);
     let changed = || {
         FmError::backend(
             "archive",
@@ -769,7 +775,7 @@ pub(crate) fn save(
                 .file_name()
                 .ok_or_else(|| FmError::InvalidParams("the copy needs a name".into()))?;
             let (stem, suffix) = fm_archive::format::split_suffix(name);
-            let free_uri = free(dvfs.as_ref(), &dir, &stem, &suffix, false)?;
+            let free_uri = free(dvfs.as_ref(), &dir, &stem, &suffix, copy_parts.is_some())?;
             (dir, dvfs, free_uri)
         }
     };
@@ -782,7 +788,7 @@ pub(crate) fn save(
     let result = (|| -> Result<OpReport, FmError> {
         let local_dir = dir
             .local_path()
-            .filter(|_| dvfs.is_native_local() && parts.is_none());
+            .filter(|_| dvfs.is_native_local() && parts.is_none() && copy_parts.is_none());
         let temp = match &local_dir {
             Some(d) => Temp {
                 path: d.join(format!(".{final_name}.fmtmp-{}", std::process::id())),
@@ -829,25 +835,42 @@ pub(crate) fn save(
             temp.cleanup();
             return Err(FmError::Cancelled);
         }
-        let placed = match (&local_dir, &parts) {
-            (_, Some(set)) => replace_parts(dvfs.as_ref(), &dir, set, &temp.path, cancelled),
-            (Some(d), None) => {
-                std::fs::rename(&temp.path, d.join(&final_name)).map_err(FmError::Io)
-            }
-            (None, None) => {
+        let placed = match (&local_dir, &parts, copy_parts) {
+            (_, Some(set), _) => replace_parts(dvfs.as_ref(), &dir, set, &temp.path, cancelled)
+                .map(|()| final_uri.clone()),
+            (_, None, Some(size)) => write_parts(
+                dvfs.as_ref(),
+                &dir,
+                &final_name,
+                &temp.path,
+                size,
+                cancelled,
+            )
+            .and_then(|written| {
+                written
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| FmError::backend("archive", "no part was written"))
+            }),
+            (Some(d), None, None) => std::fs::rename(&temp.path, d.join(&final_name))
+                .map_err(FmError::Io)
+                .map(|()| final_uri.clone()),
+            (None, None, None) => {
                 let tmp_uri = dir.join(&format!(".{final_name}.fmtmp-{}", std::process::id()))?;
-                upload(dvfs.as_ref(), &temp.path, &tmp_uri, cancelled).and_then(|()| {
-                    swap_in(dvfs.as_ref(), &tmp_uri, &final_uri, &dir).inspect_err(|_| {
-                        let _ = dvfs.remove(&tmp_uri);
+                upload(dvfs.as_ref(), &temp.path, &tmp_uri, cancelled)
+                    .and_then(|()| {
+                        swap_in(dvfs.as_ref(), &tmp_uri, &final_uri, &dir).inspect_err(|_| {
+                            let _ = dvfs.remove(&tmp_uri);
+                        })
                     })
-                })
+                    .map(|()| final_uri.clone())
             }
         };
         temp.cleanup();
-        placed?;
+        let created = placed?;
         Ok(OpReport {
             done: 1,
-            created: vec![final_uri.clone()],
+            created: vec![created],
             ..OpReport::default()
         })
     })();

@@ -63,7 +63,11 @@ For a writable zip or 7z, "Set password…", "Change password…" and "Remove pa
 - **THEN** the saved archive opens without a password and its file names are readable
 
 ### Requirement: Saving split archives
-Saving an archive stored as numbered parts SHALL write it again as numbered parts of the original part size, verify the joined result, and replace the original parts so that a failure at any point leaves either the old set or the new set complete. Backups left by an interrupted save SHALL be detected on the next mount, which offers to restore them. Surplus old parts SHALL be removed only after the new set is in place.
+Saving an archive stored as numbered parts SHALL write it again as numbered parts of the original part size, verify the joined result, and replace the original parts so that a failure at any point leaves either the old set or the new set complete. Backups left by an interrupted save SHALL be detected on the next mount, which offers to restore them. Surplus old parts SHALL be removed only after the new set is in place. "Save as copy" of such an archive SHALL write numbered parts of the same part size, named by the archive the parts make up (`backup.7z.001`, …), with the same password and name encryption as a save in place.
+
+#### Scenario: Save a copy of an encrypted split 7z
+- **WHEN** the user edits `films.7z.001` (10 MB parts, encrypted with a password) and chooses Save as copy into another folder
+- **THEN** that folder holds `films.7z.001`, `films.7z.002`, … of 10 MB each except the last, and the copy opens with the same password
 
 #### Scenario: Add a file to a split 7z
 - **WHEN** the user copies a 300 MB file into `backup.7z.001` (100 MB parts, 5 parts) and saves

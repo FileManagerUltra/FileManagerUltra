@@ -120,7 +120,8 @@ pub fn save_as() -> CommandSpec {
                 .container()
                 .file_name()
                 .ok_or_else(|| FmError::InvalidParams("the archive has no name".into()))?;
-            // A copy of a split archive is one file, named by what the parts make up.
+            // A copy of a split archive is named by what the parts make up; the save cuts
+            // it into parts of the original size (`name.7z.001`, …).
             let name = fm_archive::split::parse(name)
                 .filter(|p| p.kind == fm_archive::split::SplitKind::Numbered)
                 .map_or(name.to_string(), |p| p.base);
