@@ -109,19 +109,9 @@ fn count(n: u64) -> String {
     out
 }
 
-/// View options in the preview toolbar: Preview/Source, delimiter, header, Record.
+/// View options in the preview toolbar: delimiter, header, Record (the Source switch is
+/// one of the bar's shared tools).
 pub(super) fn toolbar_options(ui: &mut Ui, v: &TableView, source: bool, actions: &mut Vec<Action>) {
-    if ui
-        .add(egui::Button::selectable(!source, "Preview"))
-        .on_hover_text(if source {
-            "Show the table"
-        } else {
-            "Show the file's text"
-        })
-        .clicked()
-    {
-        actions.push(("preview.toggle_source", json!({})));
-    }
     if source {
         return;
     }

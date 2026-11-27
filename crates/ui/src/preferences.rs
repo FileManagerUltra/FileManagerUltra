@@ -23,6 +23,7 @@ enum Topic {
     Files,
     FileOperations,
     Preview,
+    Editor,
     Media,
     Terminal,
     Connections,
@@ -32,12 +33,13 @@ enum Topic {
 }
 
 impl Topic {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::General,
         Self::Appearance,
         Self::Files,
         Self::FileOperations,
         Self::Preview,
+        Self::Editor,
         Self::Media,
         Self::Terminal,
         Self::Connections,
@@ -53,6 +55,7 @@ impl Topic {
             Self::Files => "Files",
             Self::FileOperations => "Copy and move",
             Self::Preview => "Preview",
+            Self::Editor => "Editor",
             Self::Media => "Media",
             Self::Terminal => "Terminal",
             Self::Connections => "Connections",
@@ -68,6 +71,13 @@ impl Topic {
 pub fn open_media(ctx: &Context, s: &mut Session) {
     if s.dispatch_or_notice("app.preferences", &serde_json::Value::Null) {
         ctx.data_mut(|data| data.insert_temp(Id::NULL.with("fm-preferences-topic"), Topic::Media));
+    }
+}
+
+/// Open Preferences on the Editor page (e.g. from the editor's "Save changes?" hint).
+pub fn open_editor(ctx: &Context, s: &mut Session) {
+    if s.dispatch_or_notice("app.preferences", &serde_json::Value::Null) {
+        ctx.data_mut(|data| data.insert_temp(Id::NULL.with("fm-preferences-topic"), Topic::Editor));
     }
 }
 
@@ -348,6 +358,77 @@ fn choose<T: PartialEq + Copy>(
     )
     .and_then(|index| options.get(index))
     .map(|(_, value)| *value)
+}
+
+/// "What opens what": one row per kind of file (its name, with examples in grey below),
+/// and the same segmented choice lined up in a column. Returns the row and the new choice.
+fn open_table<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    tokens: &Tokens,
+    key: &str,
+    rows: &[(&str, &str, T)],
+    options: &[(&str, T)],
+) -> Option<(usize, T)> {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let width = options
+        .iter()
+        .map(|(text, _)| {
+            ui.fonts_mut(|f| f.layout_no_wrap((*text).to_string(), font.clone(), tokens.text))
+                .size()
+                .x
+        })
+        .fold(0.0f32, f32::max)
+        + 28.0;
+    let last = options.len().saturating_sub(1);
+    let mut picked = None;
+    egui::Grid::new(Id::NULL.with(("fm-preferences-open-table", key)))
+        .num_columns(2)
+        .spacing(egui::vec2(32.0, 12.0))
+        .min_col_width(180.0)
+        .show(ui, |ui| {
+            for (row, (title, detail, current)) in rows.iter().enumerate() {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    ui.label(*title);
+                    ui.label(
+                        RichText::new(*detail)
+                            .size((tokens.font_size - 2.0).max(9.0))
+                            .color(tokens.text_muted),
+                    );
+                });
+                let names: Vec<String> = options
+                    .iter()
+                    .map(|(text, _)| format!("{title}: {text}"))
+                    .collect();
+                let faces: Vec<Face<'_>> = options
+                    .iter()
+                    .zip(&names)
+                    .enumerate()
+                    .map(|(i, ((text, _), name))| Face::Segment {
+                        text,
+                        name,
+                        width,
+                        first: i == 0,
+                        last: i == last,
+                    })
+                    .collect();
+                let selected = options.iter().position(|(_, value)| value == current);
+                let choice = focus_nav::choice_row(
+                    ui,
+                    tokens,
+                    Id::NULL.with(("fm-preferences-open", key, row)),
+                    None,
+                    &faces,
+                    selected,
+                )
+                .and_then(|index| options.get(index));
+                if let Some((_, value)) = choice {
+                    picked = Some((row, *value));
+                }
+                ui.end_row();
+            }
+        });
+    picked
 }
 
 fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
@@ -664,13 +745,14 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
                 },
             );
         }
+        Topic::Editor => editor_topic(ui, s, tokens),
         Topic::Media => {
             section(
                 ui,
                 tokens,
                 "Opening files",
                 Some(
-                    "What a double-click or Enter does with an audio or video file on this computer.",
+                    "What Enter or a double-click does with audio and video files on this computer. Open With is always in the right-click menu.",
                 ),
                 |ui| media_open_choices(ui, s, tokens),
             );
@@ -797,6 +879,29 @@ fn settings(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens, topic: Topic) {
             );
         }
         Topic::Preview => {
+            section_heading(ui, tokens, "Scrolling");
+            let mut pct = s.prefs.scroll_speed_pct.clamp(
+                *fm_engine::prefs::SCROLL_SPEED_RANGE.start(),
+                *fm_engine::prefs::SCROLL_SPEED_RANGE.end(),
+            );
+            ui.horizontal(|ui| {
+                let caption = ui.label("Scroll speed");
+                let response = ui
+                    .add(
+                        egui::Slider::new(&mut pct, fm_engine::prefs::SCROLL_SPEED_RANGE)
+                            .step_by(25.0)
+                            .suffix(" %"),
+                    )
+                    .labelled_by(caption.id)
+                    .on_hover_text(
+                        "How far one turn of the mouse wheel scrolls previews and the editor",
+                    );
+                if response.changed() {
+                    set(s, "scroll_speed_pct", json!(pct));
+                }
+            });
+            hint(ui, tokens, "Applies to previews and the editor.");
+            ui.add_space(18.0);
             section_heading(ui, tokens, "Playback");
             let mut autoplay = s.prefs.preview_audio_autoplay;
             if ui
@@ -1230,31 +1335,300 @@ fn renderer_row(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
     );
 }
 
+/// Preferences → Editor (capabilities `text-editor`, `editor-open-preference`).
+/// A clickable sample of a code colour scheme, in the app theme's lightness.
+fn scheme_card(
+    ui: &mut egui::Ui,
+    tokens: &Tokens,
+    scheme: fm_engine::editor_prefs::EditorScheme,
+    selected: bool,
+) -> egui::Response {
+    use egui::text::{LayoutJob, TextFormat};
+    let code = crate::theme::CodePalette::of(scheme, tokens.dark);
+    let font = egui::FontId::monospace((tokens.font_size - 1.0).max(9.0));
+    let row = (font.size * 1.45).round();
+    let lines: [&[(&str, egui::Color32, bool)]; 4] = [
+        &[
+            ("fn ", code.keyword, false),
+            ("total", code.function, false),
+            ("(xs: &[", code.punctuation, false),
+            ("u32", code.type_name, false),
+            ("]) {", code.punctuation, false),
+        ],
+        &[("    // add them up", code.comment, true)],
+        &[
+            ("    let ", code.keyword, false),
+            ("n", code.text, false),
+            (" = ", code.operator, false),
+            ("42", code.number, false),
+            (";", code.punctuation, false),
+        ],
+        &[
+            ("    log(", code.text, false),
+            ("\"done\"", code.string, false),
+            (")", code.text, false),
+        ],
+    ];
+    let size = egui::vec2(230.0, row * 4.0 + 46.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::RadioButton, true, selected, scheme.label())
+    });
+    let painter = ui.painter();
+    let radius = tokens.corner_radius.max(6.0);
+    painter.rect_filled(rect, radius, code.bg);
+    let stroke = if selected {
+        egui::Stroke::new(2.5, tokens.accent)
+    } else if response.hovered() {
+        egui::Stroke::new(1.5, tokens.accent.gamma_multiply(0.6))
+    } else {
+        egui::Stroke::new(1.0, tokens.border)
+    };
+    painter.rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
+    for (i, parts) in lines.iter().enumerate() {
+        let mut job = LayoutJob::default();
+        for (text, color, italics) in parts.iter() {
+            job.append(
+                text,
+                0.0,
+                TextFormat {
+                    font_id: font.clone(),
+                    color: *color,
+                    italics: *italics,
+                    ..Default::default()
+                },
+            );
+        }
+        let galley = ui.fonts_mut(|f| f.layout_job(job));
+        let y = rect.top() + 12.0 + row * i as f32;
+        if i == 2 {
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(rect.left() + 2.0, y - 2.0),
+                    egui::vec2(rect.width() - 4.0, row),
+                ),
+                0.0,
+                code.line_bg,
+            );
+        }
+        painter.galley(egui::pos2(rect.left() + 12.0, y), galley, code.text);
+    }
+    let name = ui.fonts_mut(|f| {
+        f.layout_no_wrap(
+            scheme.label().to_string(),
+            egui::FontId::proportional(tokens.font_size),
+            code.text,
+        )
+    });
+    painter.galley(
+        egui::pos2(rect.left() + 12.0, rect.bottom() - name.size().y - 10.0),
+        name,
+        code.text,
+    );
+    if selected {
+        let c = egui::pos2(rect.right() - 18.0, rect.bottom() - 18.0);
+        painter.circle_filled(c, 8.0, tokens.accent);
+        let st = egui::Stroke::new(2.0, tokens.bg);
+        painter.line_segment([c + egui::vec2(-4.0, 0.0), c + egui::vec2(-1.0, 3.0)], st);
+        painter.line_segment([c + egui::vec2(-1.0, 3.0), c + egui::vec2(4.0, -3.0)], st);
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn editor_topic(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
+    use fm_engine::editor_prefs::{EditorKind, EditorTarget};
+    section(
+        ui,
+        tokens,
+        "Colours and spacing",
+        Some(
+            "Used by the editor and by code in the Preview pane. Each scheme has a dark and a light version that follow the app's theme.",
+        ),
+        |ui| {
+            use fm_engine::editor_prefs::EditorScheme;
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
+                for scheme in EditorScheme::ALL {
+                    let selected = s.prefs.editor.scheme == scheme;
+                    if scheme_card(ui, tokens, scheme, selected).clicked() && !selected {
+                        s.dispatch_or_notice(
+                            "prefs.editor_scheme",
+                            &json!({"scheme": scheme.id()}),
+                        );
+                    }
+                }
+            });
+            let mut pct = s.prefs.editor.line_spacing_pct.clamp(
+                fm_engine::editor_prefs::MIN_LINE_SPACING,
+                fm_engine::editor_prefs::MAX_LINE_SPACING,
+            );
+            ui.horizontal(|ui| {
+                let caption = ui.label("Line spacing");
+                let response = ui
+                    .add(
+                        egui::Slider::new(
+                            &mut pct,
+                            fm_engine::editor_prefs::MIN_LINE_SPACING
+                                ..=fm_engine::editor_prefs::MAX_LINE_SPACING,
+                        )
+                        .step_by(5.0)
+                        .suffix(" %"),
+                    )
+                    .labelled_by(caption.id)
+                    .on_hover_text("Height of each editor line, as a percentage of the text size");
+                if response.changed() {
+                    s.dispatch_or_notice("prefs.editor_line_spacing", &json!({"percent": pct}));
+                }
+            });
+        },
+    );
+    section(
+        ui,
+        tokens,
+        "Opening files",
+        Some(
+            "What Enter, a double-click and F4 do with each kind of text file. Open in External Editor is always in the right-click menu.",
+        ),
+        |ui| {
+            let rows: Vec<(&str, &str, EditorTarget)> = EditorKind::ALL
+                .iter()
+                .map(|kind| {
+                    let (title, detail) = match kind {
+                        EditorKind::Text => ("Text", ".txt, README, .csv"),
+                        EditorKind::Code => ("Code", ".rs, .py, .js, .sh and more"),
+                        EditorKind::Markup => ("Markup", ".md, .html, .xml, .css"),
+                        EditorKind::Config => ("Settings", ".toml, .json, .yaml, .ini"),
+                        EditorKind::Log => ("Logs", ".log"),
+                    };
+                    (title, detail, s.prefs.editor.open.get(*kind))
+                })
+                .collect();
+            let options = [
+                ("Built-in editor", EditorTarget::Internal),
+                ("External editor", EditorTarget::External),
+            ];
+            if let Some((row, target)) = open_table(ui, tokens, "editor", &rows, &options)
+                && let Some(kind) = EditorKind::ALL.get(row)
+            {
+                let key = match target {
+                    EditorTarget::Internal => "internal",
+                    EditorTarget::External => "external",
+                };
+                s.dispatch_or_notice(
+                    "prefs.editor_open",
+                    &json!({"kind": kind.key(), "target": key}),
+                );
+            }
+        },
+    );
+    section(
+        ui,
+        tokens,
+        "Saving",
+        Some(
+            "Files are written through a temporary copy, and never over a file that changed on disk without asking.",
+        ),
+        |ui| {
+            let mut autosave = s.prefs.editor.autosave;
+            if ui
+                .checkbox(&mut autosave, "Autosave on focus loss")
+                .on_hover_text(
+                    "Save when you click another pane, switch application, open another file or close the pane. Off: you are asked instead",
+                )
+                .changed()
+            {
+                s.dispatch_or_notice("prefs.editor_autosave", &json!({"enabled": autosave}));
+            }
+        },
+    );
+    section(ui, tokens, "Editing", None, |ui| {
+        let mut steps = s.prefs.editor.undo_steps();
+        ui.horizontal(|ui| {
+            let caption = ui.label("Undo steps to remember");
+            let response = ui
+                .add(
+                    egui::DragValue::new(&mut steps)
+                        .range(fm_editor::MIN_STEPS..=fm_editor::MAX_STEPS)
+                        .speed(10.0),
+                )
+                .labelled_by(caption.id)
+                .on_hover_text("Per open file; older steps are dropped. History is also capped at 64 MiB of text");
+            if response.changed() {
+                s.dispatch_or_notice("prefs.editor_undo_steps", &json!({"steps": steps}));
+            }
+        });
+        let mut wrap = s.prefs.editor.wrap;
+        if ui.checkbox(&mut wrap, "Wrap long lines").changed() {
+            s.dispatch_or_notice("prefs.editor_view", &json!({"wrap": wrap}));
+        }
+        let mut numbers = s.prefs.editor.line_numbers;
+        if ui.checkbox(&mut numbers, "Show line numbers").changed() {
+            s.dispatch_or_notice("prefs.editor_view", &json!({"line_numbers": numbers}));
+        }
+    });
+    section(
+        ui,
+        tokens,
+        "Syntax colouring",
+        Some("Larger files are shown as plain text so typing stays smooth."),
+        |ui| {
+            let mut on = s.prefs.editor.syntax;
+            if ui.checkbox(&mut on, "Colour source code").changed() {
+                s.dispatch_or_notice("prefs.editor_syntax", &json!({"enabled": on}));
+            }
+            let mut rainbow = s.prefs.editor.rainbow;
+            if ui
+                .add_enabled(on, egui::Checkbox::new(&mut rainbow, "Rainbow brackets"))
+                .on_hover_text(
+                    "Colour brackets by how deeply they are nested; unmatched brackets show in red",
+                )
+                .changed()
+            {
+                s.dispatch_or_notice("prefs.editor_rainbow", &json!({"enabled": rainbow}));
+            }
+            let mut mib = s.prefs.editor.syntax_max_mib;
+            ui.horizontal(|ui| {
+                let caption = ui.label("Up to (MiB)");
+                let response = ui
+                    .add_enabled(
+                        on,
+                        egui::DragValue::new(&mut mib)
+                            .range(1..=fm_engine::editor_prefs::MAX_SYNTAX_MIB),
+                    )
+                    .labelled_by(caption.id);
+                if response.changed() {
+                    s.dispatch_or_notice("prefs.editor_syntax", &json!({"max_mib": mib}));
+                }
+            });
+        },
+    );
+}
+
 fn media_open_choices(ui: &mut egui::Ui, s: &mut Session, tokens: &Tokens) {
     use fm_engine::prefs::MediaOpenTarget;
-    for (label, kind, current) in [
+    let rows = [
         (
-            "When I open an audio file",
-            "audio",
+            "Audio",
+            ".mp3, .flac, .ogg, .m4a, .wav…",
             s.prefs.media_open_audio,
         ),
         (
-            "When I open a video file",
-            "video",
+            "Video",
+            ".mp4, .mkv, .webm, .mov, .avi…",
             s.prefs.media_open_video,
         ),
-    ] {
-        let targets = [
-            ("Open in default app", MediaOpenTarget::DefaultApp),
-            ("Play in Media pane", MediaOpenTarget::MediaPane),
-        ];
-        if let Some(target) = choose(ui, tokens, kind, label, &targets, current) {
-            let key = match target {
-                MediaOpenTarget::DefaultApp => "default",
-                MediaOpenTarget::MediaPane => "media",
-            };
-            s.dispatch_or_notice("prefs.media_open", &json!({"kind": kind, "target": key}));
-        }
+    ];
+    let options = [
+        ("Media pane", MediaOpenTarget::MediaPane),
+        ("Default app", MediaOpenTarget::DefaultApp),
+    ];
+    if let Some((row, target)) = open_table(ui, tokens, "media", &rows, &options) {
+        let kind = if row == 0 { "audio" } else { "video" };
+        let key = match target {
+            MediaOpenTarget::DefaultApp => "default",
+            MediaOpenTarget::MediaPane => "media",
+        };
+        s.dispatch_or_notice("prefs.media_open", &json!({"kind": kind, "target": key}));
     }
 }
 

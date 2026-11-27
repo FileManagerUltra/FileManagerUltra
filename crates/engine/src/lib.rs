@@ -30,6 +30,15 @@ pub mod diff_find_cmds;
 pub mod dircache;
 pub mod display_prefs_cmds;
 pub mod dnd_cmds;
+pub mod editor_cmds;
+pub mod editor_doc;
+pub mod editor_fold_cmds;
+pub mod editor_hub;
+pub mod editor_io;
+pub mod editor_live;
+pub mod editor_prefs;
+#[cfg(test)]
+mod editor_tests;
 pub mod ffmpeg_install;
 pub mod file_cmds;
 pub mod fileops;

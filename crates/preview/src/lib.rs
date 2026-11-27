@@ -19,6 +19,7 @@ pub mod pdf_prev;
 pub mod platform;
 pub mod player;
 pub mod raw_prev;
+pub mod snapshot;
 pub mod sniff;
 pub mod structured;
 pub mod subtitles;

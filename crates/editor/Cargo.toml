@@ -1,0 +1,59 @@
+[package]
+name = "fm-editor"
+description = "Text editor core: rope buffer, edits, undo, encodings, find, syntax (no UI, no egui)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+# One feature per grammar (C code, compiled statically): a build can drop languages to
+# save binary size. `default` is the curated set from add-text-editor.
+default = ["lang-rust", "lang-json", "lang-python", "lang-javascript", "lang-typescript", "lang-c", "lang-cpp", "lang-go", "lang-java", "lang-html", "lang-css", "lang-xml", "lang-php", "lang-yaml", "lang-toml", "lang-markdown", "lang-bash"]
+lang-rust = ["dep:tree-sitter-rust"]
+lang-json = ["dep:tree-sitter-json"]
+lang-python = ["dep:tree-sitter-python"]
+lang-javascript = ["dep:tree-sitter-javascript"]
+lang-typescript = ["dep:tree-sitter-typescript"]
+lang-c = ["dep:tree-sitter-c"]
+lang-cpp = ["dep:tree-sitter-cpp"]
+lang-go = ["dep:tree-sitter-go"]
+lang-java = ["dep:tree-sitter-java"]
+lang-html = ["dep:tree-sitter-html"]
+lang-css = ["dep:tree-sitter-css"]
+lang-xml = ["dep:tree-sitter-xml"]
+lang-php = ["dep:tree-sitter-php"]
+lang-yaml = ["dep:tree-sitter-yaml"]
+lang-toml = ["dep:tree-sitter-toml-ng"]
+lang-markdown = ["dep:tree-sitter-md"]
+lang-bash = ["dep:tree-sitter-bash"]
+
+[dependencies]
+ropey.workspace = true
+regex.workspace = true
+tree-sitter.workspace = true
+streaming-iterator.workspace = true
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-javascript = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-cpp = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-java = { workspace = true, optional = true }
+tree-sitter-html = { workspace = true, optional = true }
+tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-xml = { workspace = true, optional = true }
+tree-sitter-php = { workspace = true, optional = true }
+tree-sitter-yaml = { workspace = true, optional = true }
+tree-sitter-toml-ng = { workspace = true, optional = true }
+tree-sitter-md = { workspace = true, optional = true }
+tree-sitter-bash = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true

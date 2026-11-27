@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 fm-vfs.workspace = true
+fm-editor.workspace = true
 fm-media.workspace = true
 fm-pdf.workspace = true
 regex.workspace = true

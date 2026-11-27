@@ -46,6 +46,12 @@ pub const PREVIEW_WRAP: &str = "preview.toggle_wrap";
 pub const PREVIEW_SELECT_ALL: &str = "preview.text.select_all";
 pub const PREVIEW_COPY_TEXT: &str = "preview.text.copy";
 pub const PREVIEW_FIND: &str = "preview.find.open";
+pub const EDITOR_TOGGLE: &str = "editor.toggle";
+pub const EDITOR_SAVE: &str = "editor.save";
+pub const EDITOR_GOTO: &str = "editor.goto_prompt";
+pub const EDITOR_FIND: &str = "editor.find";
+pub const EDITOR_EXTERNAL: &str = "editor.open_external";
+pub const EDITOR_BLUR: &str = "editor.window_blur";
 pub const PREVIEW_SCALE_IN: &str = "preview.scale.in";
 pub const PREVIEW_SCALE_OUT: &str = "preview.scale.out";
 pub const PREVIEW_SCALE_RESET: &str = "preview.scale.reset";
@@ -142,6 +148,12 @@ pub const BOOKMARK_ADD: &str = "bookmark.add";
 #[cfg(test)]
 pub fn all_ids() -> &'static [&'static str] {
     &[
+        EDITOR_TOGGLE,
+        EDITOR_SAVE,
+        EDITOR_GOTO,
+        EDITOR_FIND,
+        EDITOR_EXTERNAL,
+        EDITOR_BLUR,
         QUIT,
         ABOUT,
         LICENSES,
@@ -282,6 +294,18 @@ pub fn all_ids() -> &'static [&'static str] {
 pub fn shortcuts() -> Vec<(&'static str, egui::KeyboardShortcut)> {
     use egui::{Key, Modifiers};
     vec![
+        (
+            EDITOR_TOGGLE,
+            egui::KeyboardShortcut::new(Modifiers::NONE, Key::F4),
+        ),
+        (
+            EDITOR_SAVE,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::S),
+        ),
+        (
+            EDITOR_GOTO,
+            egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::G),
+        ),
         (
             PREFERENCES,
             egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma),
@@ -826,6 +850,9 @@ pub fn menu_bar(ui: &mut egui::Ui, session: &mut Session, dialogs: &mut Dialogs)
             item(ui, session, dialogs, FILE_RENAME);
             item(ui, session, dialogs, FILE_DUPLICATE);
             ui.separator();
+            item(ui, session, dialogs, EDITOR_TOGGLE);
+            item(ui, session, dialogs, EDITOR_SAVE);
+            item(ui, session, dialogs, EDITOR_EXTERNAL);
             item(ui, session, dialogs, OPEN_WITH);
             item(ui, session, dialogs, COMPARE_WITH);
             item(ui, session, dialogs, PROPERTIES);
@@ -1115,7 +1142,11 @@ fn consume_shortcuts_inner(
     // File and bare-key shortcuts (Backspace, Tab) must not fire while a dialog or text field owns the keyboard.
     // The SFTP connect popup is a form too: Tab walks its fields instead of swapping panes.
     let on_form = fm_ui::dialogs::window_owns_keyboard(session);
-    let typing = dialogs.is_open() || ctx.text_edit_focused() || on_form;
+    // A focused editor types like a text field: bare keys (Backspace, Delete, Tab, F-keys)
+    // and Ctrl+Z/C/V/A belong to it.
+    let editor_keys =
+        fm_ui::editor::owns_keyboard(ctx) && session.editor(session.layout.focused()).is_some();
+    let typing = dialogs.is_open() || ctx.text_edit_focused() || on_form || editor_keys;
     // Most modifiers first, so Cmd+Backspace wins over plain Backspace.
     let mut table = shortcuts();
     table.sort_by_key(|(_, sc)| std::cmp::Reverse(modifier_count(&sc.modifiers)));
@@ -1153,15 +1184,24 @@ fn consume_shortcuts_inner(
         {
             continue;
         }
+        // Editor chords (Ctrl+S, Ctrl+G) do nothing without an editor: leave them to others.
+        if id.starts_with("editor.") && id != EDITOR_TOGGLE && !session.command_enabled(id) {
+            continue;
+        }
         let consumed = ctx.input_mut(|input| input.consume_shortcut(&shortcut));
         if consumed {
-            // In a Preview pane Ctrl+F searches the document, not the folder.
+            // In a Preview pane Ctrl+F searches the document, not the folder (the editor's
+            // own find in Edit mode).
             let id = if id == FIND_FILES
                 && session.focused_kind() == Some(PaneKind::Preview)
                 && !dialogs.is_open()
                 && !on_form
             {
-                PREVIEW_FIND
+                if session.editor(session.layout.focused()).is_some() {
+                    EDITOR_FIND
+                } else {
+                    PREVIEW_FIND
+                }
             } else {
                 id
             };
@@ -1500,6 +1540,8 @@ mod tests {
             Key::L => "L",
             Key::Z => "Z",
             Key::F2 => "F2",
+            Key::F4 => "F4",
+            Key::G => "G",
             Key::F11 => "F11",
             Key::F5 => "F5",
             Key::F6 => "F6",

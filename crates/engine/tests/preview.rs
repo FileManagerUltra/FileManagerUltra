@@ -1725,3 +1725,38 @@ fn an_archive_previews_as_a_card_without_mounting_it() {
     };
     assert!(doc.hint.is_some());
 }
+
+/// A rotated, gzipped log previews as a log (the viewer reads it compressed), not as an
+/// archive card; another single compressed file still shows the card.
+#[test]
+fn a_gzipped_log_previews_as_a_log_not_an_archive() {
+    use std::io::Write;
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    enc.write_all(b"2026-11-26 10:00:00 INFO started\n2026-11-26 10:00:01 WARN slow disk\n")
+        .expect("gzip");
+    let log = enc.finish().expect("gzip");
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    enc.write_all(b"{\"a\": 1}").expect("gzip");
+    let json = enc.finish().expect("gzip");
+    let mut r = rig(&[("alternatives.log.2.gz", &log), ("data.json.gz", &json)]);
+    r.cursor("alternatives.log.2.gz");
+    let p = r.preview;
+    assert!(
+        pump(&mut r.s, |s| matches!(
+            s.preview_slot(p).map(|x| &x.body),
+            Some(Body::Log(_))
+        )),
+        "the log viewer shows it"
+    );
+    r.cursor("data.json.gz");
+    assert!(pump(&mut r.s, |s| matches!(
+        s.preview_slot(p)
+            .and_then(|x| x.subject.as_ref())
+            .map(|e| e.name.as_str()),
+        Some("data.json.gz")
+    )));
+    assert!(
+        matches!(&*r.wait_static(), Preview::Meta(_)),
+        "archive card"
+    );
+}

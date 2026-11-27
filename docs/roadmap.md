@@ -15,7 +15,7 @@ Additional change, done and archived: `git-status-and-diff` (git status markers,
 
 **Latest release:** 0.3.2 (2026-11-23): CSV/TSV table view and drag-to-pan pictures in the Preview pane, Ctrl+wheel and pinch zoom per pane, and fixes to Synchronize Folders, terminal start folders and sharp photos at 100%. 0.3.1 (2026-11-20) added PDF fill-in and signing. 0.3.0 (2026-11-19) brought Synchronize Folders and the first signed and notarized macOS download. 0.2.3 (2026-11-15) brought per-pane and per-terminal zoom, Ctrl+Tab workspace switching, a diagnostic log and Direct3D 12 drawing on Windows. 0.2.0 (2026-11-12) brought the Media pane, Find Files redesign and Activity panel. Archives (`add-archive-vfs`) are unreleased: see `[Unreleased]` in `CHANGELOG.md`. The Mac App Store build (sandboxed) is planned as its own change. Free Windows code signing through SignPath Foundation is prepared but not yet applied for (`docs/development.md`, "Windows code signing"). Release artifacts for all three platforms are built and published by `.github/workflows/release.yml`.
 
-**Current focus:** finish `add-archive-vfs` (see "Next: archives, disk images and Docker as folders"), then release it; `add-disk-images` and `add-docker` follow.
+**Current focus:** finish `add-archive-vfs` (see "Next: archives, disk images and Docker as folders"), then release it; `add-disk-images` and `add-docker` follow. In parallel, `add-text-editor` (Edit mode of the Preview pane: large files, tree-sitter colouring, autosave, per-kind internal/external choice; `docs/architecture.md` §12d2) and its follow-up `add-editor-folding-live-preview` (code folding, rainbow brackets, a live preview pane) are implemented and unreleased; scroll sync between editor and live preview is left for later.
 
 Session persistence is already delivered by `workspaces` (saved pane layouts and
 startup behavior). Release packaging is also configured in `.github/workflows/release.yml`:
@@ -168,13 +168,11 @@ would make version control a first-class workflow:
 - **Branch switching**: show the current branch in the pane header or status bar, list
   local and remote branches, and switch (refusing or asking when the working tree has
   changes that would be overwritten).
-- **Maybe: a simple editor** for small edits to text files (fix a typo, change a config
-  line) without leaving the app, with save, undo and the same unsaved-changes prompt as
-  archives and PDFs.
+- The text editor is now its own change (`add-text-editor`, Edit mode of the Preview
+  pane); Git integration can build on it later (e.g. stage from the editor).
 - Open questions for the proposal: `fm-git` is read-only `gix` today, so writing
   (checkout, stage, commit?) needs a scope decision and its own safety rules; how far
-  to go beyond switching (stage/commit/stash); the editor's scope (plain text only,
-  size cap, encodings) and whether it belongs in the Preview pane.
+  to go beyond switching (stage/commit/stash).
 
 ### File synchronization
 

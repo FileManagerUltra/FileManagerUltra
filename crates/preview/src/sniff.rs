@@ -103,6 +103,12 @@ pub fn is_log_name(name: &str) -> bool {
     false
 }
 
+/// A gzipped file the preview reads as a document rather than an archive to browse: a
+/// rotated log (`x.log.2.gz`, `syslog.3.gz`). The log viewer decompresses it itself.
+pub fn is_compressed_log(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".gz") && (is_log_name(name) || is_system_log_name(name))
+}
+
 fn is_system_log_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     let stem = lower.strip_suffix(".gz").unwrap_or(&lower);
@@ -380,6 +386,11 @@ mod tests {
             );
         }
         assert_eq!(sniff("/var/log/syslog.2.gz", &[0x1f, 0x8b]), Kind::Log);
+        assert!(is_compressed_log("alternatives.log.2.gz"));
+        assert!(is_compressed_log("syslog.3.gz"));
+        assert!(!is_compressed_log("alternatives.log.1"), "not compressed");
+        assert!(!is_compressed_log("photos.tar.gz"));
+        assert!(!is_compressed_log("data.json.gz"));
         assert_eq!(
             sniff("/var/log/messages-20261027.gz", &[0x1f, 0x8b]),
             Kind::Log

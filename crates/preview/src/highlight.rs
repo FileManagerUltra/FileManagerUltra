@@ -1,4 +1,8 @@
 //! Syntax highlighting into semantic [`Class`]es (colours live in the UI theme).
+//!
+//! Languages the editor has a tree-sitter grammar for are coloured by tree-sitter (the
+//! same parser and rules as Edit mode, so a file looks alike in both, and several times
+//! faster than syntect on a full preview window). Other languages fall back to syntect.
 
 use std::sync::OnceLock;
 
@@ -17,6 +21,11 @@ pub enum Class {
     Key,
     Tag,
     Punct,
+    /// Escapes in strings, links.
+    Escape,
+    Operator,
+    /// Markup headings.
+    Heading,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,10 +142,14 @@ fn plain(text: &str) -> Vec<Vec<Span>> {
         .collect()
 }
 
-/// Highlight at most `max_lines` lines of `text` for language token `lang`.
+/// Highlight at most `max_lines` lines of `text` for language token `lang` (a file
+/// extension, a file name or a Markdown fence language).
 pub fn highlight(text: &str, lang: &str, max_lines: usize) -> Vec<Vec<Span>> {
-    let set = syntaxes();
     let first = text.lines().next().unwrap_or("");
+    if let Some(lines) = tree_sitter(text, lang, first, max_lines) {
+        return lines;
+    }
+    let set = syntaxes();
     let Some(syntax) = find(set, lang, first) else {
         return fallback(text, lang, max_lines);
     };
@@ -187,6 +200,99 @@ pub fn highlight(text: &str, lang: &str, max_lines: usize) -> Vec<Vec<Span>> {
         out.push(spans);
     }
     out
+}
+
+/// Longest a tree-sitter parse may take for a preview before syntect is used instead.
+const PARSE_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The editor's language for a preview language token.
+fn editor_lang(lang: &str, first: &str) -> Option<fm_editor::Lang> {
+    let token = lang.trim().to_ascii_lowercase();
+    let ext = match token.as_str() {
+        "rust" => "rs",
+        "python" | "python3" => "py",
+        "javascript" | "node" => "js",
+        "typescript" => "ts",
+        "shell" | "console" | "shellsession" | "bash" | "zsh" => "sh",
+        "golang" => "go",
+        "c++" => "cpp",
+        "markdown" => "md",
+        "yml" => "yaml",
+        "lock" => "toml",
+        other => other,
+    };
+    fm_editor::detect_lang(&format!("x.{ext}"), first)
+        .or_else(|| fm_editor::detect_lang(&token, first))
+}
+
+fn class_of(kind: fm_editor::Kind) -> Class {
+    use fm_editor::Kind as K;
+    match kind {
+        K::Keyword => Class::Keyword,
+        K::String => Class::String,
+        K::Escape | K::Link => Class::Escape,
+        K::Comment => Class::Comment,
+        K::Number | K::Emphasis => Class::Number,
+        K::Constant => Class::Constant,
+        K::Function => Class::Function,
+        K::Type => Class::Type,
+        K::Property | K::Attribute => Class::Key,
+        K::Variable => Class::Plain,
+        K::Operator => Class::Operator,
+        K::Punctuation => Class::Punct,
+        K::Tag => Class::Tag,
+        K::Heading => Class::Heading,
+    }
+}
+
+/// Colours from the editor's tree-sitter grammar, or `None` when it has none for `lang`
+/// (or the parse runs out of time).
+fn tree_sitter(text: &str, lang: &str, first: &str, max_lines: usize) -> Option<Vec<Vec<Span>>> {
+    let lang = editor_lang(lang, first)?;
+    let mut syntax = fm_editor::Syntax::new(lang).ok()?;
+    let buf = fm_editor::Buffer::from_text(text);
+    if lang != fm_editor::Lang::Sql {
+        let (tree, version) = syntax
+            .job(&buf, Some(PARSE_BUDGET))
+            .run(&fm_editor::ParseCtl::default())
+            .ok()?;
+        syntax.install(tree, version);
+    }
+    let lines: Vec<&str> = text.split_inclusive('\n').take(max_lines).collect();
+    let colours = syntax.highlight(&buf, 0..lines.len());
+    let out = lines
+        .iter()
+        .enumerate()
+        .map(|(i, raw)| {
+            let line = raw.trim_end_matches(['\n', '\r']);
+            if line.chars().count() > MAX_HIGHLIGHT_CHARS {
+                return vec![Span {
+                    text: clip(line),
+                    class: Class::Plain,
+                }];
+            }
+            let mut spans = Vec::new();
+            let mut at = 0usize;
+            for span in colours.get(i).map(Vec::as_slice).unwrap_or(&[]) {
+                let (start, end) = (span.start.min(line.len()), span.end.min(line.len()));
+                if start < at || start >= end {
+                    continue;
+                }
+                if let Some(gap) = line.get(at..start) {
+                    push(&mut spans, gap, Class::Plain);
+                }
+                if let Some(piece) = line.get(start..end) {
+                    push(&mut spans, piece, class_of(span.kind));
+                    at = end;
+                }
+            }
+            if let Some(tail) = line.get(at..) {
+                push(&mut spans, tail, Class::Plain);
+            }
+            spans
+        })
+        .collect();
+    Some(out)
 }
 
 fn fallback(text: &str, lang: &str, max_lines: usize) -> Vec<Vec<Span>> {
@@ -284,8 +390,14 @@ mod tests {
     fn toml_fallback_and_unknown_language() {
         let out = highlight("# c\n[pkg]\nname = \"x\"\n", "toml", 10);
         assert_eq!(out[0][0].class, Class::Comment);
-        assert_eq!(out[1][0].class, Class::Type);
+        assert!(
+            out[1].iter().any(|s| s.class != Class::Plain),
+            "{:?}",
+            out[1]
+        );
         assert!(out[2].iter().any(|s| s.class == Class::String));
+        // The hand-written tokenizer still covers TOML when no grammar is built in.
+        assert_eq!(toml_line("[pkg]")[0].class, Class::Type);
         let plain = highlight("hello\n", "zzz", 10);
         assert_eq!(plain[0][0].class, Class::Plain);
     }
@@ -305,6 +417,42 @@ mod tests {
         }
         let clipped = clip(&"é".repeat(MAX_LINE_CHARS + 5));
         assert_eq!(clipped.chars().count(), MAX_LINE_CHARS + 1);
+    }
+
+    #[test]
+    fn tree_sitter_colours_known_languages_and_syntect_the_rest() {
+        // Markdown fence names reach the editor's grammars.
+        assert_eq!(
+            editor_lang("rust", "").map(|l| l.label()),
+            Some(fm_editor::Lang::Rust.label())
+        );
+        assert!(editor_lang("shell", "").is_some());
+        assert!(editor_lang("ruby", "").is_none(), "no grammar: syntect");
+        let rs = highlight("let s = \"a\\n\"; // x\n", "rust", 10);
+        let c = classes(&rs);
+        assert!(
+            c.contains(&Class::Keyword) && c.contains(&Class::Comment),
+            "{c:?}"
+        );
+        assert!(
+            c.contains(&Class::Escape),
+            "escapes as in the editor: {c:?}"
+        );
+        // Ruby has no tree-sitter grammar here; syntect still colours it.
+        let rb = highlight("def hello\n  puts 'hi'\nend\n", "rb", 10);
+        let c = classes(&rb);
+        assert!(
+            c.contains(&Class::Keyword) || c.contains(&Class::String),
+            "{c:?}"
+        );
+        // Text survives the round trip line by line.
+        let src = "fn a() {}\n\n    // é\n";
+        let out = highlight(src, "rs", 10);
+        let joined: Vec<String> = out
+            .iter()
+            .map(|l| l.iter().map(|s| s.text.as_str()).collect())
+            .collect();
+        assert_eq!(joined, vec!["fn a() {}", "", "    // é"]);
     }
 
     #[test]

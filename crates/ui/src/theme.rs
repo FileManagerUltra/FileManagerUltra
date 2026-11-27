@@ -114,7 +114,263 @@ pub struct Tokens {
     pub term_selection: Color32,
     /// The 16 ANSI colours (0-7 normal, 8-15 bright).
     pub ansi: [Color32; 16],
+    /// Rainbow brackets: one colour per nesting depth, cycling (unmatched brackets use
+    /// `error`). Each keeps 4.5:1 contrast on `bg` and `hover_bg` (tested).
+    pub rainbow: [Color32; 6],
+    /// Colours for code: the editor and the code preview (the user's editor scheme).
+    pub code: CodePalette,
 }
+
+/// One colour scheme for code. Every colour keeps 4.5:1 contrast on `bg` and `line_bg`
+/// (7:1 for the high-contrast scheme), tested.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CodePalette {
+    /// Editor and code-view background.
+    pub bg: Color32,
+    /// The caret's line.
+    pub line_bg: Color32,
+    /// Plain text and identifiers.
+    pub text: Color32,
+    /// Line numbers (the caret's line number uses `text`).
+    pub gutter: Color32,
+    pub keyword: Color32,
+    pub string: Color32,
+    pub escape: Color32,
+    pub comment: Color32,
+    pub number: Color32,
+    pub function: Color32,
+    pub type_name: Color32,
+    pub property: Color32,
+    pub tag: Color32,
+    pub punctuation: Color32,
+    pub operator: Color32,
+    pub heading: Color32,
+}
+
+const fn rgb(v: u32) -> Color32 {
+    Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
+}
+
+impl CodePalette {
+    /// The app's palette, dark.
+    pub const fn app_dark() -> Self {
+        Self {
+            bg: rgb(0x14161a),
+            line_bg: rgb(0x242932),
+            text: rgb(0xe6e8eb),
+            gutter: rgb(0x7d8594),
+            keyword: rgb(0xc49bf0),
+            string: rgb(0xa6d189),
+            escape: rgb(0x7fd8e8),
+            comment: rgb(0x9aa2b4),
+            number: rgb(0xf2a36b),
+            function: rgb(0x82aaff),
+            type_name: rgb(0xe8c47c),
+            property: rgb(0x79d4c4),
+            tag: rgb(0xf28b9b),
+            punctuation: rgb(0xa3abbd),
+            operator: rgb(0x7fd8e8),
+            heading: rgb(0x82aaff),
+        }
+    }
+
+    /// The app's palette, light.
+    pub const fn app_light() -> Self {
+        Self {
+            bg: rgb(0xf7f8fa),
+            line_bg: rgb(0xe9ecf0),
+            text: rgb(0x1b1e23),
+            gutter: rgb(0x6e7681),
+            keyword: rgb(0x6d28d9),
+            string: rgb(0x2f6b12),
+            escape: rgb(0x0a6577),
+            comment: rgb(0x596273),
+            number: rgb(0xa43f06),
+            function: rgb(0x1a55bd),
+            type_name: rgb(0x7a5600),
+            property: rgb(0x0b6b64),
+            tag: rgb(0xb02a43),
+            punctuation: rgb(0x4b5563),
+            operator: rgb(0x0a6577),
+            heading: rgb(0x1a55bd),
+        }
+    }
+
+    /// Warm: soft grey background, orange keywords, green strings, teal numbers.
+    pub const fn warm_dark() -> Self {
+        Self {
+            bg: rgb(0x1e1f22),
+            line_bg: rgb(0x26282e),
+            text: rgb(0xbcbec4),
+            gutter: rgb(0x6f737a),
+            keyword: rgb(0xcf8e6d),
+            string: rgb(0x6aab73),
+            escape: rgb(0xcf8e6d),
+            comment: rgb(0x8f939a),
+            number: rgb(0x2aacb8),
+            function: rgb(0x56a8f5),
+            type_name: rgb(0xbcbec4),
+            property: rgb(0xc77dbb),
+            tag: rgb(0xd5b778),
+            punctuation: rgb(0xa1a3ab),
+            operator: rgb(0xbcbec4),
+            heading: rgb(0x56a8f5),
+        }
+    }
+
+    /// Warm, light.
+    pub const fn warm_light() -> Self {
+        Self {
+            bg: rgb(0xffffff),
+            line_bg: rgb(0xf5f8fe),
+            text: rgb(0x080808),
+            gutter: rgb(0x8c8f94),
+            keyword: rgb(0x0033b3),
+            string: rgb(0x067d17),
+            escape: rgb(0x0037a6),
+            comment: rgb(0x6b6f75),
+            number: rgb(0x1750eb),
+            function: rgb(0x00627a),
+            type_name: rgb(0x080808),
+            property: rgb(0x871094),
+            tag: rgb(0x0033b3),
+            punctuation: rgb(0x3c3f45),
+            operator: rgb(0x080808),
+            heading: rgb(0x0033b3),
+        }
+    }
+
+    /// High contrast, dark: black background, 7:1 or more for every colour.
+    pub const fn contrast_dark() -> Self {
+        Self {
+            bg: rgb(0x000000),
+            line_bg: rgb(0x1a1a1a),
+            text: rgb(0xffffff),
+            gutter: rgb(0xbdbdbd),
+            keyword: rgb(0xffb86b),
+            string: rgb(0xa6f28a),
+            escape: rgb(0x7fe3ff),
+            comment: rgb(0xc8c8c8),
+            number: rgb(0xffd866),
+            function: rgb(0x8cc8ff),
+            type_name: rgb(0x7ff0d8),
+            property: rgb(0xffa8d8),
+            tag: rgb(0xff9e9e),
+            punctuation: rgb(0xe6e6e6),
+            operator: rgb(0xe6e6e6),
+            heading: rgb(0x8cc8ff),
+        }
+    }
+
+    /// High contrast, light: white background, 7:1 or more for every colour.
+    pub const fn contrast_light() -> Self {
+        Self {
+            bg: rgb(0xffffff),
+            line_bg: rgb(0xeef0f3),
+            text: rgb(0x000000),
+            gutter: rgb(0x4b5563),
+            keyword: rgb(0x5b16b8),
+            string: rgb(0x174f04),
+            escape: rgb(0x004c61),
+            comment: rgb(0x3f4652),
+            number: rgb(0x8a3300),
+            function: rgb(0x0a3fa8),
+            type_name: rgb(0x004d47),
+            property: rgb(0x7a1060),
+            tag: rgb(0x9b1028),
+            punctuation: rgb(0x1f2937),
+            operator: rgb(0x1f2937),
+            heading: rgb(0x0a3fa8),
+        }
+    }
+
+    /// Rainbow brackets for the high-contrast scheme: 7:1 or more, like its other colours.
+    pub const fn contrast_rainbow(dark: bool) -> [Color32; 6] {
+        if dark {
+            [
+                rgb(0xffd866),
+                rgb(0xffa8d8),
+                rgb(0x8cc8ff),
+                rgb(0xa6f28a),
+                rgb(0xffb86b),
+                rgb(0x7ff0d8),
+            ]
+        } else {
+            [
+                rgb(0x8a3300),
+                rgb(0x5b16b8),
+                rgb(0x0a3fa8),
+                rgb(0x174f04),
+                rgb(0x9b1028),
+                rgb(0x004d47),
+            ]
+        }
+    }
+
+    /// The scheme's version for a dark or light app theme.
+    pub const fn of(scheme: fm_engine::editor_prefs::EditorScheme, dark: bool) -> Self {
+        use fm_engine::editor_prefs::EditorScheme as S;
+        match (scheme, dark) {
+            (S::App, true) => Self::app_dark(),
+            (S::App, false) => Self::app_light(),
+            (S::Warm, true) => Self::warm_dark(),
+            (S::Warm, false) => Self::warm_light(),
+            (S::HighContrast, true) => Self::contrast_dark(),
+            (S::HighContrast, false) => Self::contrast_light(),
+        }
+    }
+
+    /// Every foreground colour with its name (tests and the Preferences sample).
+    pub fn foregrounds(&self) -> [(&'static str, Color32); 13] {
+        [
+            ("text", self.text),
+            ("keyword", self.keyword),
+            ("string", self.string),
+            ("escape", self.escape),
+            ("comment", self.comment),
+            ("number", self.number),
+            ("function", self.function),
+            ("type", self.type_name),
+            ("property", self.property),
+            ("tag", self.tag),
+            ("punctuation", self.punctuation),
+            ("operator", self.operator),
+            ("heading", self.heading),
+        ]
+    }
+}
+
+/// How far one wheel notch scrolls in the Preview pane and its editor, relative to egui's
+/// default (before the user's Preferences › Preview › Scroll speed).
+pub const WHEEL_BOOST: f32 = 3.0;
+
+/// Scroll bars of the Preview pane and its editor: slim, rounded handles that stay faintly
+/// visible (so the position is always readable) and widen under the pointer.
+pub fn scroll_style() -> egui::style::ScrollStyle {
+    egui::style::ScrollStyle {
+        floating: true,
+        bar_width: SCROLL_BAR_WIDE,
+        floating_width: SCROLL_BAR_SLIM,
+        floating_allocated_width: 0.0,
+        handle_min_length: 28.0,
+        bar_inner_margin: 2.0,
+        bar_outer_margin: 2.0,
+        foreground_color: true,
+        dormant_background_opacity: 0.0,
+        active_background_opacity: 0.12,
+        interact_background_opacity: 0.2,
+        dormant_handle_opacity: SCROLL_HANDLE_REST,
+        active_handle_opacity: 0.6,
+        interact_handle_opacity: 0.85,
+        ..egui::style::ScrollStyle::floating()
+    }
+}
+
+/// Scroll handle width at rest and under the pointer (shared with the editor's own bars).
+pub const SCROLL_BAR_SLIM: f32 = 5.0;
+pub const SCROLL_BAR_WIDE: f32 = 10.0;
+/// Handle opacity at rest (of the text colour).
+pub const SCROLL_HANDLE_REST: f32 = 0.35;
 
 /// Fixed backgrounds for pictures (SVG): the same in every theme, unlike the tokens.
 pub const PICTURE_WHITE: Color32 = Color32::from_rgb(0xff, 0xff, 0xff);
@@ -208,6 +464,15 @@ impl Tokens {
                 Color32::from_rgb(0x6f, 0xe3, 0xd0),
                 Color32::from_rgb(0xff, 0xff, 0xff),
             ],
+            rainbow: [
+                Color32::from_rgb(0xe5, 0xc0, 0x7b),
+                Color32::from_rgb(0xd1, 0x9c, 0xf0),
+                Color32::from_rgb(0x6c, 0xb6, 0xff),
+                Color32::from_rgb(0x8f, 0xd1, 0x6a),
+                Color32::from_rgb(0xf0, 0xa3, 0x5e),
+                Color32::from_rgb(0x56, 0xd4, 0xdd),
+            ],
+            code: CodePalette::app_dark(),
         }
         .with_archive_tint()
     }
@@ -296,6 +561,15 @@ impl Tokens {
                 Color32::from_rgb(0x12, 0x9c, 0x9c),
                 Color32::from_rgb(0x1b, 0x1e, 0x23),
             ],
+            rainbow: [
+                Color32::from_rgb(0x8a, 0x5a, 0x00),
+                Color32::from_rgb(0x8a, 0x3f, 0xbf),
+                Color32::from_rgb(0x0b, 0x5c, 0xc4),
+                Color32::from_rgb(0x2a, 0x6e, 0x0e),
+                Color32::from_rgb(0xa6, 0x4a, 0x0a),
+                Color32::from_rgb(0x00, 0x72, 0x7a),
+            ],
+            code: CodePalette::app_light(),
         }
         .with_archive_tint()
     }
@@ -313,20 +587,58 @@ impl Tokens {
         }
     }
 
-    /// Syntax class -> colour, drawn from the semantic palette.
+    /// Syntax class -> colour, from the user's code scheme (the code preview).
     pub fn syntax(&self, class: fm_preview::Class) -> Color32 {
         use fm_preview::Class as C;
+        let c = &self.code;
         match class {
-            C::Plain | C::Punct => self.text,
-            C::Comment => self.text_muted,
-            C::String => self.ansi[2],
-            C::Number | C::Constant => self.ansi[3],
-            C::Keyword => self.ansi[5],
-            C::Function => self.ansi[4],
-            C::Type => self.ansi[6],
-            C::Key => self.accent_text,
-            C::Tag => self.ansi[1],
+            C::Plain => c.text,
+            C::Punct => c.punctuation,
+            C::Comment => c.comment,
+            C::String => c.string,
+            C::Number | C::Constant => c.number,
+            C::Keyword => c.keyword,
+            C::Function => c.function,
+            C::Type => c.type_name,
+            C::Key => c.property,
+            C::Tag => c.tag,
+            C::Escape => c.escape,
+            C::Operator => c.operator,
+            C::Heading => c.heading,
         }
+    }
+
+    /// Editor syntax token -> colour: the same scheme as the read-only code preview, so a
+    /// file looks alike in both (capability `text-editor`).
+    pub fn editor_syntax(&self, kind: fm_editor::Kind) -> Color32 {
+        use fm_editor::Kind as K;
+        let c = &self.code;
+        match kind {
+            K::Keyword => c.keyword,
+            K::String => c.string,
+            K::Escape | K::Link => c.escape,
+            K::Comment => c.comment,
+            K::Number | K::Constant | K::Emphasis => c.number,
+            K::Function => c.function,
+            K::Type => c.type_name,
+            K::Property | K::Attribute => c.property,
+            K::Variable => c.text,
+            K::Operator => c.operator,
+            K::Punctuation => c.punctuation,
+            K::Tag => c.tag,
+            K::Heading => c.heading,
+        }
+    }
+
+    /// Rainbow bracket colour for a nesting depth (unmatched: the error colour).
+    pub fn bracket(&self, depth: usize, unmatched: bool) -> Color32 {
+        if unmatched {
+            return self.error;
+        }
+        self.rainbow
+            .get(depth % self.rainbow.len())
+            .copied()
+            .unwrap_or(self.text)
     }
 
     /// Log level -> colour.
@@ -425,6 +737,10 @@ impl Tokens {
         t.padding = pad;
         t.font_size = prefs.ui_font_size();
         t.term_font_size = prefs.term_font_size();
+        t.code = CodePalette::of(prefs.editor.scheme, t.dark);
+        if prefs.editor.scheme == fm_engine::editor_prefs::EditorScheme::HighContrast {
+            t.rainbow = CodePalette::contrast_rainbow(t.dark);
+        }
         t
     }
 
@@ -845,6 +1161,64 @@ mod tests {
         assert_eq!(blend(a, b, 2.0), b, "clamped");
     }
 
+    #[test]
+    fn every_code_scheme_is_readable() {
+        use fm_engine::editor_prefs::EditorScheme;
+        for scheme in EditorScheme::ALL {
+            for dark in [true, false] {
+                let p = CodePalette::of(scheme, dark);
+                let need = if scheme == EditorScheme::HighContrast {
+                    7.0
+                } else {
+                    4.5
+                };
+                for (name, c) in p.foregrounds() {
+                    for bg in [p.bg, p.line_bg] {
+                        assert!(
+                            contrast(c, bg) >= need,
+                            "{scheme:?} dark={dark} {name} {:.2}",
+                            contrast(c, bg)
+                        );
+                    }
+                }
+                assert!(contrast(p.gutter, p.bg) >= 3.0, "{scheme:?} gutter");
+                // Rainbow brackets stay readable on every scheme (7:1 in high contrast).
+                let rainbow = if scheme == EditorScheme::HighContrast {
+                    CodePalette::contrast_rainbow(dark)
+                } else if dark {
+                    Tokens::dark().rainbow
+                } else {
+                    Tokens::light().rainbow
+                };
+                for c in rainbow {
+                    for bg in [p.bg, p.line_bg] {
+                        assert!(contrast(c, bg) >= need, "{scheme:?} rainbow {c:?}");
+                    }
+                }
+            }
+        }
+        let t = Tokens::dark();
+        for (name, c) in t.code.foregrounds() {
+            assert!(
+                contrast(c, t.selection_bg) >= 3.0,
+                "{name} on the selection"
+            );
+        }
+    }
+
+    #[test]
+    fn rainbow_brackets_are_readable_in_both_themes() {
+        for t in [Tokens::dark(), Tokens::light()] {
+            for c in t.rainbow {
+                for bg in [t.bg, t.hover_bg] {
+                    assert!(contrast(c, bg) >= 4.5, "{c:?} on {bg:?}");
+                }
+            }
+            assert_eq!(t.bracket(7, false), t.rainbow[1]);
+            assert_eq!(t.bracket(0, true), t.error);
+        }
+    }
+
     /// The pane header's zoom button: icon and percentage in `text` on the header (`panel`) or
     /// its hover fill, zoomed outline and focus ring in `accent_text` (WCAG 2.2: 1.4.3 text
     /// 4.5:1, 1.4.11 non-text 3:1), for both themes and any accent.
@@ -1071,7 +1445,13 @@ mod tests {
                 term_cursor,
                 term_selection,
                 ansi,
+                rainbow,
+                code,
             } = tokens;
+            assert_eq!(
+                code.bg, bg,
+                "the default code scheme sits on the app background"
+            );
             for (name, color) in [
                 ("bg", bg),
                 ("panel", panel),
@@ -1134,6 +1514,7 @@ mod tests {
             assert!(corner_radius >= 0.0 && border_width > 0.0);
             let _ = dark;
             assert!(ansi.iter().all(|c| c.a() == 255));
+            assert!(rainbow.iter().all(|c| c.a() == 255));
             assert_ne!(ansi[1], ansi[2], "ANSI colours must be distinct");
         }
         check(Tokens::dark());

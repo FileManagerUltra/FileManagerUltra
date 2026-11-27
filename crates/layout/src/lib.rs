@@ -11,10 +11,10 @@ mod state;
 
 pub use node::{Axis, Edge, MAX_RATIO, MIN_RATIO, PaneNode};
 pub use state::{
-    DEFAULT_COL_WIDTHS, DEFAULT_TREE_WIDTH, DiffMode, DiffSide, DiffState, Focus, History,
-    ListingState, MAX_COL_WIDTH, MAX_TERM_SCALE, MIN_COL_WIDTH, MIN_TERM_SCALE, MediaPaneState,
-    PaneKind, PaneState, PlacesState, PreviewSource, SortDir, SortKey, SortSpec, TreeState,
-    zoom_step,
+    DEFAULT_COL_WIDTHS, DEFAULT_TREE_WIDTH, DiffMode, DiffSide, DiffState, EditViewState, Focus,
+    History, ListingState, MAX_COL_WIDTH, MAX_TERM_SCALE, MIN_COL_WIDTH, MIN_TERM_SCALE,
+    MediaPaneState, PaneKind, PaneState, PlacesState, PreviewSource, SortDir, SortKey, SortSpec,
+    TreeState, zoom_step,
 };
 
 /// Stable id of a pane (leaf). Never reused within a layout.
@@ -86,10 +86,18 @@ impl Layout {
             }
         }
         for st in self.states.values_mut() {
-            if let PreviewSource::Pane(p) = st.preview_source {
-                st.preview_source = map
-                    .get(&p)
-                    .map_or(PreviewSource::Follow, |n| PreviewSource::Pane(*n));
+            match st.preview_source {
+                PreviewSource::Pane(p) => {
+                    st.preview_source = map
+                        .get(&p)
+                        .map_or(PreviewSource::Follow, |n| PreviewSource::Pane(*n));
+                }
+                PreviewSource::Editor(p) => {
+                    st.preview_source = map
+                        .get(&p)
+                        .map_or(PreviewSource::Follow, |n| PreviewSource::Editor(*n));
+                }
+                PreviewSource::Follow => {}
             }
         }
         let remap = |p: PaneId| map.get(&p).copied();
@@ -189,7 +197,8 @@ impl Layout {
         self.root.close_leaf(target);
         self.states.remove(&target);
         for st in self.states.values_mut() {
-            if st.preview_source == PreviewSource::Pane(target) {
+            if matches!(st.preview_source, PreviewSource::Pane(p) | PreviewSource::Editor(p) if p == target)
+            {
                 st.preview_source = PreviewSource::Follow;
             }
         }
@@ -893,6 +902,29 @@ mod tests {
             PreviewSource::Follow
         );
         assert_eq!(l.preview_target(p), Some(b));
+    }
+
+    #[test]
+    fn a_live_preview_follows_focus_again_when_its_editor_closes() {
+        let mut l = Layout::single(VfsUri::root_file());
+        let editor = l.split(1, Axis::Horizontal, 0.5).expect("split");
+        let live = l.split(editor, Axis::Horizontal, 0.5).expect("split");
+        for p in [editor, live] {
+            l.state_mut(p).expect("state").kind = PaneKind::Preview;
+        }
+        l.state_mut(live).expect("state").preview_source = PreviewSource::Editor(editor);
+        let mut moved = l.clone();
+        let map = moved.relabel(10);
+        let (new_editor, new_live) = (map[&editor], map[&live]);
+        assert_eq!(
+            moved.state(new_live).expect("state").preview_source,
+            PreviewSource::Editor(new_editor)
+        );
+        l.close(editor).expect("close");
+        assert_eq!(
+            l.state(live).expect("state").preview_source,
+            PreviewSource::Follow
+        );
     }
 
     #[test]

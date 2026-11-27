@@ -7,6 +7,7 @@ pub mod ctx;
 pub mod delete;
 pub mod names;
 pub mod plan;
+pub mod replace;
 pub mod symlink;
 pub mod transfer;
 pub mod trash;
@@ -24,6 +25,7 @@ pub use ctx::{
 pub use delete::{delete_permanent, trash_items};
 pub use names::validate_name;
 pub use plan::{Plan, PlanLimits, plan_duplicating, plan_transfer};
+pub use replace::replace_contents;
 pub use symlink::SymlinkPolicy;
 pub use trash::{
     MAX_TRASH_CHILDREN, MAX_TRASH_ENTRIES, TrashChild, TrashChildren, TrashEntry, TrashListing,

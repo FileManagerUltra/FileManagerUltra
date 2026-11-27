@@ -662,8 +662,10 @@ fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
         return;
     };
     let quitting = prompt.after == AfterPrompt::Quit;
-    let unsaved =
-        !(prompt.names.is_empty() && prompt.pdfs.is_empty() && prompt.archives.is_empty());
+    let unsaved = !(prompt.names.is_empty()
+        && prompt.pdfs.is_empty()
+        && prompt.archives.is_empty()
+        && prompt.editors.is_empty());
     let mut choice: Option<&str> = None;
     let mut open = true;
     let remember_id = Id::NULL.with("fm-unsaved-remember");
@@ -706,6 +708,13 @@ fn unsaved_dialog(ctx: &Context, s: &mut Session, tokens: &Tokens) {
             );
             let archives: Vec<String> = prompt.archives.iter().map(|(_, n)| n.clone()).collect();
             list(ui, "Archives with unsaved changes:", &archives, None);
+            let edited: Vec<String> = prompt.editors.iter().map(|(_, n)| n.clone()).collect();
+            list(
+                ui,
+                "Files with unsaved edits:",
+                &edited,
+                Some("Autosave on focus loss is off; turn it on in Preferences › Editor."),
+            );
             list(
                 ui,
                 "Still running:",

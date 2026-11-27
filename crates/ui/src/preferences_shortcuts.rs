@@ -16,6 +16,7 @@ enum Group {
     Operations,
     Preview,
     LogsAndDiff,
+    Editor,
     Terminal,
     TextAndDialogs,
 }
@@ -31,6 +32,7 @@ impl Group {
             Self::Operations => "File operations",
             Self::Preview => "Preview and thumbnails",
             Self::LogsAndDiff => "Logs and diffs",
+            Self::Editor => "Text editor",
             Self::Terminal => "Terminal pane",
             Self::TextAndDialogs => "Text fields and dialogs",
         }
@@ -59,6 +61,7 @@ fn group(spec: &CommandSpec) -> Group {
         }
         id if id.starts_with("preview.") => Group::Preview,
         id if id.starts_with("term.") => Group::Terminal,
+        id if id.starts_with("editor.") => Group::Editor,
         _ => Group::Application,
     }
 }
@@ -94,6 +97,10 @@ fn context(spec: &CommandSpec) -> &'static str {
         Group::Preview => "Focused Preview; text fields keep their editing shortcuts.",
         Group::LogsAndDiff if spec.id.starts_with("preview.diff.") => "An active diff in Preview.",
         Group::LogsAndDiff => "Log preview.",
+        Group::Editor if spec.id == "editor.toggle" => {
+            "Files pane: edit the item under the cursor; Preview pane: switch preview and Edit mode."
+        }
+        Group::Editor => "Preview pane in Edit mode.",
         Group::Terminal => "Focused terminal; other control keys belong to the shell.",
         Group::TextAndDialogs => "Focused field or dialog.",
     }
@@ -262,6 +269,36 @@ fn rows(s: &Session, mac: bool) -> Vec<Row> {
             "Clear preview text selection",
             "Escape",
             "Preview body when Find is closed.",
+        ),
+        (
+            Group::Editor,
+            "Toggle line comment",
+            "Ctrl+/",
+            "Languages with line comments.",
+        ),
+        (
+            Group::Editor,
+            "Move lines up or down",
+            "Alt+Up / Alt+Down",
+            "The caret's line or the selected lines.",
+        ),
+        (
+            Group::Editor,
+            "Duplicate lines",
+            "Alt+Shift+Down",
+            "The caret's line or the selected lines.",
+        ),
+        (
+            Group::Editor,
+            "Delete lines",
+            "Ctrl+Shift+K",
+            "The caret's line or the selected lines.",
+        ),
+        (
+            Group::Editor,
+            "Indent or outdent",
+            "Tab / Shift+Tab",
+            "The editor keeps Tab while it has focus; click another pane to leave it.",
         ),
         (
             Group::Terminal,

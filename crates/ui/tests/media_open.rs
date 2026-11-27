@@ -237,10 +237,8 @@ fn preferences_offer_the_open_choice_per_kind() {
     h.run();
     h.get_by_label("Media").click();
     h.run();
-    h.get_by_label("When I open a video file");
-    let radios = h.get_all_by_label("Play in Media pane").collect::<Vec<_>>();
-    assert_eq!(radios.len(), 2, "one per kind");
-    radios[1].click();
+    h.get_by_label("Audio: Media pane");
+    h.get_by_label("Video: Media pane").click();
     h.run();
     assert_eq!(h.state().prefs.media_open_video, MediaOpenTarget::MediaPane);
     assert_eq!(

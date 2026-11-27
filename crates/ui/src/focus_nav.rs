@@ -229,6 +229,16 @@ pub(crate) fn paint_focus_ring(ui: &Ui, tokens: &Tokens) {
 /// What a choice option shows.
 pub(crate) enum Face<'a> {
     Text(&'a str),
+    /// One part of a segmented control: options drawn joined, `width` wide each, with
+    /// rounded outer ends on the `first` and `last` part.
+    Segment {
+        text: &'a str,
+        /// Accessible name, e.g. "Video: Media pane" (the row's context with the option).
+        name: &'a str,
+        width: f32,
+        first: bool,
+        last: bool,
+    },
     /// A colour swatch; the name is its accessible label and tooltip.
     Swatch(egui::Color32, &'a str),
 }
@@ -251,9 +261,13 @@ pub(crate) fn choice_row(
     }
     // With nothing selected, the first option is the Tab stop.
     let stop = selected.filter(|i| *i < count).unwrap_or(0);
+    let segmented = options.iter().all(|f| matches!(f, Face::Segment { .. }));
     ui.horizontal_wrapped(|ui| {
         if let Some(text) = label {
             ui.label(text);
+        }
+        if segmented {
+            ui.spacing_mut().item_spacing.x = 0.0;
         }
         for (index, face) in options.iter().enumerate() {
             let option_id = id.with(index);
@@ -348,6 +362,63 @@ fn option(
                     galley,
                     visuals.text_color(),
                 );
+            }
+            response
+        }
+        Face::Segment {
+            text,
+            name,
+            width,
+            first,
+            last,
+        } => {
+            let font = egui::TextStyle::Button.resolve(ui.style());
+            let color = if selected {
+                tokens.accent_text
+            } else {
+                tokens.text
+            };
+            let galley = ui
+                .painter()
+                .layout_no_wrap((*text).to_string(), font, color);
+            let size = egui::vec2(
+                width.max(galley.size().x + 24.0),
+                (galley.size().y + 10.0).max(ui.spacing().interact_size.y + 4.0),
+            );
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            let response = ui.interact(rect, id, sense);
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::Role::RadioButton, true, selected, *name)
+            });
+            if ui.is_rect_visible(rect) {
+                let r = tokens.corner_radius.max(5.0) as u8;
+                let corners = egui::CornerRadius {
+                    nw: if *first { r } else { 0 },
+                    sw: if *first { r } else { 0 },
+                    ne: if *last { r } else { 0 },
+                    se: if *last { r } else { 0 },
+                };
+                let painter = ui.painter();
+                if selected {
+                    painter.rect_filled(rect, corners, tokens.selection_bg);
+                } else if response.hovered() {
+                    painter.rect_filled(rect, corners, tokens.hover_bg);
+                }
+                painter.rect_stroke(
+                    rect,
+                    corners,
+                    egui::Stroke::new(tokens.border_width.max(1.0), tokens.border),
+                    egui::StrokeKind::Inside,
+                );
+                if response.has_focus() {
+                    painter.rect_stroke(
+                        rect.shrink(1.0),
+                        corners,
+                        egui::Stroke::new(2.0, tokens.accent),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                painter.galley(rect.center() - galley.size() / 2.0, galley, color);
             }
             response
         }

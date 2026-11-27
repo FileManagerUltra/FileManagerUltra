@@ -1,5 +1,5 @@
 //! One question before anything is lost (quit, closing a pane, closing a workspace tab):
-//! unsaved workspaces, filled-in PDFs and archives with staged changes, and, on quit,
+//! unsaved workspaces, filled-in PDFs, archives with staged changes, edited text, and, on quit,
 //! work still running, are listed together in a single "Save / Don't save / Cancel"
 //! prompt instead of one prompt after another.
 
@@ -17,6 +17,11 @@ pub(crate) struct PendingClose {
     pub after: AfterPrompt,
     pub pdfs: Vec<PaneId>,
     pub archives: Vec<VfsUri>,
+    /// Editors being saved before the quit or close.
+    pub editors: Vec<PaneId>,
+    /// Ask again once the saves are done (autosave ran first; workspaces and PDFs may
+    /// still need the prompt).
+    pub regather: bool,
 }
 
 impl Session {
@@ -118,7 +123,13 @@ impl Session {
             AfterPrompt::Quit => self.background_work(),
             _ => Vec::new(),
         };
-        if workspaces.is_empty() && pdfs.is_empty() && archives.is_empty() && busy.is_empty() {
+        let editors = self.closing_editors(after, &closing);
+        if workspaces.is_empty()
+            && pdfs.is_empty()
+            && archives.is_empty()
+            && editors.is_empty()
+            && busy.is_empty()
+        {
             return None;
         }
         Some(UnsavedPrompt {
@@ -127,13 +138,90 @@ impl Session {
             workspaces: workspaces.into_iter().map(|(u, _)| u).collect(),
             pdfs,
             archives,
+            editors,
             busy,
         })
+    }
+
+    /// Editors with unsaved text that `after` would close.
+    fn closing_editors(&self, after: &AfterPrompt, closing: &[PaneId]) -> Vec<(PaneId, String)> {
+        self.editors
+            .unsaved()
+            .into_iter()
+            .filter(|(p, _)| matches!(after, AfterPrompt::Quit) || closing.contains(p))
+            .collect()
+    }
+
+    /// With autosave on, edited text is saved before closing instead of asked about.
+    /// True when saves started; the close continues when they are done.
+    fn autosave_before_close(&mut self, after: &AfterPrompt) -> bool {
+        if !self.prefs.editor.autosave {
+            return false;
+        }
+        let closing = self.closing_panes(after);
+        let panes: Vec<PaneId> = self
+            .closing_editors(after, &closing)
+            .into_iter()
+            .map(|(p, _)| p)
+            .filter(|p| {
+                self.editors
+                    .docs
+                    .get(p)
+                    .is_some_and(|d| d.savable() && d.conflict.is_none() && !d.leave_prompt)
+            })
+            .collect();
+        if panes.is_empty() {
+            return false;
+        }
+        self.pending_close = Some(PendingClose {
+            after: after.clone(),
+            pdfs: Vec::new(),
+            archives: Vec::new(),
+            editors: panes.clone(),
+            regather: true,
+        });
+        for pane in panes {
+            if let Err(e) = self.editor_save(pane, None, true) {
+                self.pending_close = None;
+                self.notice = Some(e.to_string());
+                return true;
+            }
+        }
+        true
+    }
+
+    /// An editor save finished: a quit or close waiting for it goes on once every save
+    /// it waited for is done.
+    pub(crate) fn editor_close_progress(&mut self) {
+        let Some(pending) = self.pending_close.clone() else {
+            return;
+        };
+        if pending.editors.is_empty() {
+            return;
+        }
+        let waiting = pending
+            .editors
+            .iter()
+            .any(|p| self.editors.docs.get(p).is_some_and(|d| d.dirty()));
+        if waiting {
+            return;
+        }
+        if pending.regather {
+            self.pending_close = None;
+            if let Err(e) = self.close_or_ask(pending.after) {
+                self.notice = Some(e.to_string());
+            }
+        } else {
+            self.close_save_finished(&OpState::Finished);
+        }
     }
 
     /// Quit, close a pane or close a tab: ask once when something would be lost, else do
     /// it now.
     pub(crate) fn close_or_ask(&mut self, after: AfterPrompt) -> Result<(), FmError> {
+        if self.autosave_before_close(&after) {
+            return Ok(());
+        }
         if let Some(prompt) = self.gather_unsaved(&after) {
             self.unsaved_prompt = Some(prompt);
             return Ok(());
@@ -217,6 +305,13 @@ impl Session {
                     }
                     after_save(self, root);
                 }
+                for (pane, _) in &prompt.editors {
+                    if let Some(doc) = self.editor_mut(*pane) {
+                        doc.clean_version = doc.buffer.version();
+                        doc.leave_prompt = false;
+                        doc.pending = None;
+                    }
+                }
                 self.finish_close(&prompt.after)
             }
             "save" => {
@@ -229,11 +324,22 @@ impl Session {
                     after: prompt.after.clone(),
                     pdfs: prompt.pdfs.iter().map(|(p, _)| *p).collect(),
                     archives: prompt.archives.iter().map(|(r, _)| r.clone()).collect(),
+                    editors: prompt.editors.iter().map(|(p, _)| *p).collect(),
+                    regather: false,
                 };
-                if pending.pdfs.is_empty() && pending.archives.is_empty() {
+                if pending.pdfs.is_empty()
+                    && pending.archives.is_empty()
+                    && pending.editors.is_empty()
+                {
                     return self.finish_close(&prompt.after);
                 }
                 self.pending_close = Some(pending.clone());
+                for p in &pending.editors {
+                    if let Err(e) = self.editor_save(*p, None, true) {
+                        self.pending_close = None;
+                        return Err(e);
+                    }
+                }
                 for p in &pending.pdfs {
                     if let Err(e) =
                         self.start_save(*p, crate::pdf_form_cmds::SaveTarget::Copy, true, None)
@@ -280,7 +386,11 @@ impl Session {
             .archives
             .iter()
             .any(|r| self.archives.for_uri(r).is_some_and(|m| m.is_dirty()));
-        if !pdf_open && !archive_open {
+        let editor_open = pending
+            .editors
+            .iter()
+            .any(|p| self.editors.docs.get(p).is_some_and(|d| d.dirty()));
+        if !pdf_open && !archive_open && !editor_open {
             self.pending_close = None;
             if let Err(e) = self.finish_close(&pending.after) {
                 self.notice = Some(e.to_string());
