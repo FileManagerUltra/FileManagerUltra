@@ -364,7 +364,16 @@ impl Vfs for LocalFs {
 
     fn create_symlink(&self, target: &str, link: &VfsUri) -> Result<(), FmError> {
         let path = self.path(link)?;
-        make_symlink(target, &path).map_err(|e| map_io(e, &shown(link)))
+        make_symlink(target, &path).map_err(|e| {
+            // ERROR_PRIVILEGE_NOT_HELD: std has no ErrorKind for it.
+            if cfg!(windows) && e.raw_os_error() == Some(1314) {
+                FmError::Unsupported(
+                    "Windows creates symbolic links only with Developer Mode on or as administrator",
+                )
+            } else {
+                map_io(e, &shown(link))
+            }
+        })
     }
 
     #[cfg(unix)]

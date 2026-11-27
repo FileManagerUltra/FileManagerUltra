@@ -71,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A repository folder now shows the modified marker when a file directly in its root is edited, not only when a file in a subfolder is.
 - On Windows, zip archives made from files on an SFTP or SMB server (or re-saved after editing an archive) now keep the files' Unix permissions, such as the executable bit, instead of losing them.
 - The folder chooser no longer changes height when the line naming the chosen folder is long; a long path is shortened with an ellipsis and shown in full on hover.
+- On Windows, when a symbolic link cannot be created while copying or extracting, the error now says that Windows needs Developer Mode or administrator rights for it, instead of "A required privilege is not held by the client".
 
 - Git colours and markers in a file list no longer vanish for a moment when you come back to the window after it has been idle for a while.
 - Extracting a hostile archive cannot write outside the new folder: names with `..`, absolute paths and drive letters stay inside it, nothing is written through a link, device files and FIFOs are left out, and setuid/setgid bits are never kept. A file in an archive that turns out larger than its header says stops with an error and leaves no partial file.

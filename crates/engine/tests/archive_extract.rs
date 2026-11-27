@@ -171,7 +171,10 @@ fn a_hostile_tar_extracts_only_inside_its_folder() {
         "win",
         "win/x.txt",
     ];
-    if cfg!(unix) {
+    // Windows creates the link only with Developer Mode or as administrator; otherwise
+    // it is reported as failed with a message saying so (checked below).
+    let rel_made = std::fs::symlink_metadata(out.join("rel")).is_ok();
+    if cfg!(unix) || rel_made {
         want.push("rel");
     }
     want.sort_unstable();
@@ -221,7 +224,19 @@ fn a_hostile_tar_extracts_only_inside_its_folder() {
         assert!(left.contains(&name), "{name} listed as left out: {left:?}");
     }
     assert!(summary.skipped >= 3, "{summary:?}");
-    assert!(summary.failed.is_empty(), "{:?}", summary.failed);
+    // Only the link Windows refused may fail, and only with the actionable message.
+    let failed: Vec<_> = summary
+        .failed
+        .iter()
+        .filter(|(item, why)| {
+            let rel_refused = !rel_made
+                && cfg!(windows)
+                && item.ends_with("/rel")
+                && why.contains("Developer Mode");
+            !rel_refused
+        })
+        .collect();
+    assert!(failed.is_empty(), "{:?}", summary.failed);
 }
 
 /// A deflated zip whose central directory and local header claim `declared` bytes for
