@@ -12,7 +12,7 @@ Licences.
 | Dancing Script (The Dancing Script Project Authors) | Typed visual signatures in PDFs (drawn as outlines, never embedded in saved files) | SIL Open Font License 1.1, [text](crates/pdf/assets/DancingScript-OFL.txt) | <https://github.com/googlefonts/DancingScript> |
 | Foxit standard fonts, from PDFium (bundled by the `hayro` PDF renderer) | Drawing text in PDFs that do not embed their fonts | BSD-3-Clause, [text](crates/pdf/licenses/Foxit-fonts-BSD-3-Clause.txt) | <https://pdfium.googlesource.com/pdfium/> |
 | Adobe CMap resources (bundled by the `hayro` PDF renderer) | Chinese, Japanese and Korean text in PDFs | BSD-3-Clause, [text](crates/pdf/licenses/Adobe-CMaps-BSD-3-Clause.txt) | <https://github.com/adobe-type-tools/cmap-resources> |
-| Eclipse ELK layered layout, Rust port `merman-elk-layered` 0.10.0 | Layout of Mermaid diagrams | Eclipse Public License 2.0, [text](crates/preview/licenses/EPL-2.0.txt) | <https://crates.io/crates/merman-elk-layered/0.10.0> |
+| Eclipse ELK layered layout, Rust port `merman-elk-layered` 0.11.0 | Layout of Mermaid diagrams | Eclipse Public License 2.0, [text](crates/preview/licenses/EPL-2.0.txt) | <https://crates.io/crates/merman-elk-layered/0.11.0> |
 | bzip2 / libbzip2 (Julian R Seward and others), Rust translation `libbz2-rs-sys` 0.2.7 (Trifecta Tech Foundation) | bzip2 in archives (.tar.bz2, zip, 7z) | bzip2 and libbzip2 License v1.0.6, [text](crates/preview/licenses/bzip2-1.0.6.txt) | <https://crates.io/crates/libbz2-rs-sys/0.2.7> |
 
 The EPL-2.0 code is used unmodified as a separate crate; its source code is available from

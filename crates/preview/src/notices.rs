@@ -50,9 +50,9 @@ pub const NOTICES: &[Notice] = &[
     },
     Notice {
         name: "Eclipse ELK layout",
-        purpose: "Layout of Mermaid diagrams (Rust port merman-elk-layered 0.10.0)",
+        purpose: "Layout of Mermaid diagrams (Rust port merman-elk-layered 0.11.0)",
         licence: "EPL-2.0",
-        source: "https://crates.io/crates/merman-elk-layered/0.10.0",
+        source: "https://crates.io/crates/merman-elk-layered/0.11.0",
         text: include_str!("../licenses/EPL-2.0.txt"),
     },
     Notice {
@@ -98,7 +98,7 @@ mod tests {
         // Windows checkouts may turn the lock file's line endings into CRLF.
         let lock = include_str!("../../../Cargo.lock").replace("\r\n", "\n");
         assert!(
-            lock.contains("name = \"merman-elk-layered\"\nversion = \"0.10.0\""),
+            lock.contains("name = \"merman-elk-layered\"\nversion = \"0.11.0\""),
             "update the notice and licence text when merman-elk-layered changes"
         );
     }
