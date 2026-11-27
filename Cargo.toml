@@ -69,7 +69,7 @@ trash = "5"
 opener = { version = "0.9", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 semver = "1"
-notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+notify = { version = "9", default-features = false, features = ["macos_fsevent"] }
 # fm-git only: pure-Rust git (no network, no hooks, no external programs)
 gix = { version = "0.90", default-features = false, features = ["sha1", "status", "revision", "index", "blob-diff", "excludes", "attributes"] }
 similar = "3"
@@ -80,7 +80,7 @@ vt100 = "0.18"
 cpal = "0.18"
 symphonia = { version = "0.6.1", features = ["aac", "alac", "mp3", "isomp4"] }
 rubato = { version = "0.16", default-features = false }
-rtrb = "0.3"
+rtrb = "0.4"
 
 # external — OS media controls (fm-app only)
 # System media controls (MPRIS, SMTC, Now Playing; add-media-pane design 17). zbus keeps
