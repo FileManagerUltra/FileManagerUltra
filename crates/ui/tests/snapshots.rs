@@ -678,6 +678,7 @@ fn error_with_retry_dark() {
     session.dirs.begin_load(uri.clone(), 1);
     session.dirs.apply(
         &uri,
+        1,
         fm_engine::ReadOutcome::Err("Permission denied (fixture)".to_string()),
     );
     let Some(renderer) = renderer_or_skip() else {

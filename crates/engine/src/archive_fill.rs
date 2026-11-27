@@ -174,7 +174,7 @@ mod tests {
             "the open is over"
         );
         s.dirs
-            .apply(&root, ReadOutcome::Err("it failed".into()))
+            .apply(&root, 9, ReadOutcome::Err("it failed".into()))
             .expect("job result");
         assert!(matches!(s.dirs.state(&root), DirState::Failed { .. }));
     }

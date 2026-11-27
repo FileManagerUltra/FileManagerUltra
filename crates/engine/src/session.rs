@@ -175,7 +175,9 @@ pub struct Session {
     pub volumes: crate::devices::Devices,
     pub(crate) devices: DeviceCache,
     /// Staged read results, written by workers, drained by [`Session::poll`].
-    inbox: Arc<Mutex<HashMap<VfsUri, ReadOutcome>>>,
+    /// Staged directory-read outcomes by job: a stale read of the same folder (several
+    /// archive workers) can never take a newer read's result.
+    inbox: Arc<Mutex<HashMap<JobId, ReadOutcome>>>,
     /// In-flight read jobs: uri → job id (dedup) and job id → uri (drain).
     reads: HashMap<JobId, VfsUri>,
     inflight: HashMap<VfsUri, JobId>,
@@ -391,7 +393,7 @@ impl Session {
         let inbox = self.inbox.clone();
         let lost = self.remote.lost.clone();
         let staged_uri = uri.clone();
-        let job = self.jobs.submit(lane, move |_ctx| {
+        let job = self.jobs.submit(lane, move |ctx| {
             // One blocking call on the lane; cancellation is checked by the
             // lane itself around the job, not inside std::fs.
             let outcome = match backend.read_dir(&staged_uri) {
@@ -406,7 +408,7 @@ impl Session {
                 }
             };
             if let Ok(mut guard) = inbox.lock() {
-                guard.insert(staged_uri.clone(), outcome);
+                guard.insert(ctx.id(), outcome);
             }
             Ok(())
         });
@@ -513,11 +515,14 @@ impl Session {
                     continue;
                 }
             };
+            // Taken whether or not the read is still wanted, so stale outcomes never pile up.
+            let outcome = self.inbox.lock().ok().and_then(|mut g| g.remove(&job));
             let Some(uri) = self.reads.remove(&job) else {
                 continue;
             };
-            self.inflight.remove(&uri);
-            let outcome = self.inbox.lock().ok().and_then(|mut g| g.remove(&uri));
+            if self.inflight.get(&uri) == Some(&job) {
+                self.inflight.remove(&uri);
+            }
             let outcome = match outcome {
                 Some(o) => o,
                 None => match ev {
@@ -526,7 +531,7 @@ impl Session {
                     _ => ReadOutcome::Err("directory read did not complete".to_string()),
                 },
             };
-            if self.dirs.apply(&uri, outcome).is_some() {
+            if self.dirs.apply(&uri, job, outcome).is_some() {
                 self.after_read(&uri);
                 changed = true;
             }

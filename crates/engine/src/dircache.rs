@@ -118,12 +118,14 @@ impl DirCache {
         self.slots.insert(uri, Slot::Loading { job });
     }
 
-    /// Rewrite the slot from a staged outcome. Returns the uri if this job was
-    /// the one loading it (so the caller can refresh views), else `None`.
-    pub fn apply(&mut self, uri: &VfsUri, outcome: ReadOutcome) -> Option<u64> {
+    /// Rewrite the slot from the staged outcome of `job`. Returns the new revision if
+    /// `job` is the read the slot is waiting for (so the caller can refresh views), else
+    /// `None`: an older read of the same folder that finishes late (several workers on
+    /// one lane) never replaces the newer one.
+    pub fn apply(&mut self, uri: &VfsUri, job: JobId, outcome: ReadOutcome) -> Option<u64> {
         let is_mine = matches!(
             self.slots.get(uri),
-            Some(Slot::Loading { .. } | Slot::Filling { .. })
+            Some(Slot::Loading { job: j } | Slot::Filling { job: j, .. }) if *j == job
         );
         if !is_mine {
             return None;
@@ -249,7 +251,7 @@ mod tests {
         c.begin_load(u.clone(), 7);
         assert_eq!(c.state(&u), DirState::Loading { job: 7 });
         let rev = c
-            .apply(&u, ReadOutcome::Ok(Arc::from(vec![entry("a")])))
+            .apply(&u, 7, ReadOutcome::Ok(Arc::from(vec![entry("a")])))
             .expect("applied");
         assert_eq!(rev, 0);
         let st = c.state(&u);
@@ -278,6 +280,7 @@ mod tests {
         assert_eq!(c.unfinished().count(), 1);
         c.apply(
             &u,
+            4,
             ReadOutcome::Ok(Arc::from(vec![entry("a"), entry("b"), entry("c")])),
         )
         .expect("job result");
@@ -288,7 +291,7 @@ mod tests {
         // A failed open replaces the partial listing.
         c.begin_load(u.clone(), 5);
         c.set_partial(&u, Arc::from(vec![entry("a")]));
-        c.apply(&u, ReadOutcome::Err("boom".into()))
+        c.apply(&u, 5, ReadOutcome::Err("boom".into()))
             .expect("failed");
         assert!(matches!(c.state(&u), DirState::Failed { .. }));
     }
@@ -298,10 +301,12 @@ mod tests {
         let mut c = DirCache::new();
         let u = uri("/d");
         c.begin_load(u.clone(), 1);
-        let r1 = c.apply(&u, ReadOutcome::Ok(Arc::from(vec![]))).expect("a");
+        let r1 = c
+            .apply(&u, 1, ReadOutcome::Ok(Arc::from(vec![])))
+            .expect("a");
         c.begin_load(u.clone(), 2);
         let r2 = c
-            .apply(&u, ReadOutcome::Ok(Arc::from(vec![entry("x")])))
+            .apply(&u, 2, ReadOutcome::Ok(Arc::from(vec![entry("x")])))
             .expect("b");
         assert!(r2 > r1);
     }
@@ -312,7 +317,7 @@ mod tests {
         let u = uri("/locked");
         c.begin_load(u.clone(), 3);
         let rev = c
-            .apply(&u, ReadOutcome::Err("permission denied".into()))
+            .apply(&u, 3, ReadOutcome::Err("permission denied".into()))
             .expect("apply");
         match c.state(&u) {
             DirState::Failed { revision, message } => {
@@ -329,8 +334,26 @@ mod tests {
         let u = uri("/d");
         c.begin_load(u.clone(), 1);
         c.invalidate(&u); // watcher nuked it before the job landed
-        assert!(c.apply(&u, ReadOutcome::Ok(Arc::from(vec![]))).is_none());
+        assert!(c.apply(&u, 1, ReadOutcome::Ok(Arc::from(vec![]))).is_none());
         assert_eq!(c.state(&u), DirState::Absent);
+    }
+
+    #[test]
+    fn an_older_read_finishing_late_never_replaces_the_newer_one() {
+        let mut c = DirCache::new();
+        let u = uri("/archive");
+        c.begin_load(u.clone(), 1);
+        // Re-read (closed and opened again) while read 1 still runs on another worker.
+        c.begin_load(u.clone(), 2);
+        assert!(
+            c.apply(&u, 1, ReadOutcome::Ok(Arc::from(vec![entry("old")])))
+                .is_none(),
+            "read 1 is stale"
+        );
+        assert_eq!(c.state(&u), DirState::Loading { job: 2 });
+        c.apply(&u, 2, ReadOutcome::Err("Part 2 is missing".into()))
+            .expect("read 2 is the one");
+        assert!(matches!(c.state(&u), DirState::Failed { .. }));
     }
 
     #[test]
@@ -338,7 +361,7 @@ mod tests {
         let mut c = DirCache::new();
         let u = uri("/d");
         c.begin_load(u.clone(), 1);
-        c.apply(&u, ReadOutcome::Ok(Arc::from(vec![entry("a")])));
+        c.apply(&u, 1, ReadOutcome::Ok(Arc::from(vec![entry("a")])));
         assert!(c.refresh(&u, Arc::from(vec![entry("a")])).is_none());
         assert_eq!(c.state(&u).revision(), Some(0));
         assert!(
@@ -352,7 +375,7 @@ mod tests {
         let mut c = DirCache::new();
         let u = uri("/d");
         c.begin_load(u.clone(), 1);
-        c.apply(&u, ReadOutcome::Ok(Arc::from(vec![entry("a")])));
+        c.apply(&u, 1, ReadOutcome::Ok(Arc::from(vec![entry("a")])));
         c.invalidate(&u);
         assert_eq!(c.state(&u), DirState::Absent);
     }
