@@ -214,7 +214,8 @@ fn a_hostile_tar_extracts_only_inside_its_folder() {
     let left: Vec<&str> = summary
         .left_out
         .iter()
-        .map(|(item, _)| item.rsplit('/').next().unwrap_or(item))
+        // Display paths use `\` on Windows.
+        .map(|(item, _)| item.rsplit(['/', '\\']).next().unwrap_or(item))
         .collect();
     for name in ["sda", "fifo", "hard-out"] {
         assert!(left.contains(&name), "{name} listed as left out: {left:?}");

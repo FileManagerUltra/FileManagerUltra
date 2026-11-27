@@ -254,7 +254,8 @@ pub(crate) mod tests {
             let mut w = zip::ZipWriter::new(&mut out);
             let opts = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated)
-                .unix_permissions(0o644);
+                .unix_permissions(0o644)
+                .system(zip::System::Unix);
             w.add_directory("www/", opts).expect("dir");
             w.start_file("www/index.html", opts).expect("file");
             w.write_all(b"<h1>hi</h1>").expect("w");

@@ -139,7 +139,9 @@ fn save_zip<W: Write + Seek>(
             .last_modified_time(zip_time(item.modified))
             .large_file(item.size >= u64::from(u32::MAX));
         if let Some(mode) = item.mode {
-            o = o.unix_permissions(mode & 0o7777);
+            // Mark the entry as Unix-made: on Windows the zip crate defaults to DOS,
+            // and readers then ignore the stored permission bits.
+            o = o.unix_permissions(mode & 0o7777).system(zip::System::Unix);
         }
         match &item.kind {
             WalkKind::Dir => zw

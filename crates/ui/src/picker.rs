@@ -295,7 +295,11 @@ pub fn show(ctx: &Context, s: &mut Session, tokens: &Tokens) {
                             }
                             (None, false) => "Select a file in the list".to_string(),
                         };
-                        ui.label(RichText::new(hint).color(tokens.text));
+                        // One line, so a long path never grows the window; full text on hover.
+                        ui.add(
+                            egui::Label::new(RichText::new(&hint).color(tokens.text)).truncate(),
+                        )
+                        .on_hover_text(&hint);
                         ui.horizontal(|ui| {
                             let here = fm_engine::picker_cmds::choosable(&picker.folder);
                             let label = if folder_kind {

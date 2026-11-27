@@ -1036,10 +1036,18 @@ fn sync_window_stays_on_screen_with_a_large_font_on_a_small_screen() {
 fn picker_size_is_stable_and_places_navigate() {
     let tokens = Tokens::dark();
     let dir = tempfile::tempdir().expect("tmp");
+    // A path long enough to wrap the "Will choose" line if it were allowed to (Windows
+    // temp paths are), so the window must not change height when the folder changes.
+    let start = dir
+        .path()
+        .join("a-rather-long-folder-name-for-the-picker")
+        .join("and-another-long-folder-name-below-it")
+        .join("so-the-path-is-wider-than-the-column");
+    std::fs::create_dir_all(&start).expect("mkdir");
     let mut s = Session::new().expect("session");
     s.dispatch(
         "picker.open",
-        &json!({"purpose": "x", "start": dir.path().to_string_lossy()}),
+        &json!({"purpose": "x", "start": start.to_string_lossy()}),
     )
     .expect("picker");
     let mut h = Harness::builder()
